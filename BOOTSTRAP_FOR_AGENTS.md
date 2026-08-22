@@ -1,16 +1,17 @@
-<!-- gbrain-runbook-stamp: 0.45.10.0 -->
+<!-- gbrain-runbook-stamp: 0.46.24.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
 
 # BOOTSTRAP_FOR_AGENTS.md — become your human's persistent agent
 
-You are an AI agent (Claude Code or Codex) reading this because a human pasted a
-block asking you to set yourself up as their persistent personal agent, with gbrain
-as your memory. This runbook is the judgment layer; the deterministic work lives in
-`gbrain bootstrap` subcommands with exit codes. Follow it top to bottom.
+You are an AI agent (Claude Code, Codex, or opencode) reading this because a human
+pasted a block asking you to set yourself up as their persistent personal agent, with
+gbrain as your memory. This runbook is the judgment layer; the deterministic work lives
+in `gbrain bootstrap` subcommands with exit codes. Follow it top to bottom.
 
-**Scope note:** this path is for Claude Code and Codex (desktop apps or CLIs).
+**Scope note:** this path is for Claude Code, Codex, and opencode (desktop apps or
+CLIs; opencode = the SST terminal agent, opencode.ai — not OpenClaw).
 Running OpenClaw or Hermes? Use `INSTALL_FOR_AGENTS.md` instead.
 
 **End state:** this folder is your workspace — identity files rendered from your
@@ -70,6 +71,12 @@ approve those prompts when they appear." If approvals are globally disabled, ask
 human to enable workspace-write + network for this session. Count the approval taps
 you needed; report the count at the end (it feeds the install-time measurement).
 
+If the gbrain PLUGIN is already installed and enabled (codex: `[plugins."gbrain@…"]
+enabled = true`; Claude Code: `enabledPlugins["gbrain@…"] = true`), the hooks phase
+skips its own `mcp add` on that harness — the plugin already provides the MCP server
+(one owner per name). That skip is healthy, not an error; force the hand-wired
+registration only with `--mcp-even-if-plugin`.
+
 ## Phase walkthrough (commentary — the CLI's list wins)
 
 1. **Preflight.** `git`, `bun`, `gh` present. Install what's missing per the trust
@@ -82,23 +89,32 @@ you needed; report the count at the end (it feeds the install-time measurement).
    `gh auth login -h github.com -p https -w` (you run it; they click Authorize).
    Then `gbrain bootstrap status` — it is idempotent and resume-aware; after any
    partial failure, re-run it and continue where it points.
-2. **Engine.** `gbrain init --pglite` (2 seconds, no server). Search mode defaults
-   to balanced silently — do NOT ask; the human can change it any time with
+2. **Engine.** `gbrain init --pglite` (2 seconds, no server). Search mode is
+   auto-selected silently (conservative when keyless, tokenmax with an
+   expansion key) and printed with an `[AGENT]` cost matrix — surface that
+   matrix to the human and confirm before running high-volume queries (see
+   INSTALL_FOR_AGENTS.md Step 3.5); they can change it any time with
    `gbrain search modes`. The one thing to raise here is the OPTIONAL provider
    key — with no key you run keyless: keyword search plus memory you author
-   yourself through the write tools; everything works, one key upgrades search to
-   semantic and enables automatic fact extraction. Never pressure for a key. If the
+   yourself through the write tools; everything works. One key upgrades
+   capabilities per provider: OpenAI unlocks semantic search + automatic fact
+   extraction; Voyage unlocks semantic search; Anthropic unlocks automatic fact
+   extraction. Never pressure for a key. If the
    human provides one, pass it to the CLI prompt — it goes to the 0600 config file,
    never into the interview answers, never into chat logs you keep.
 3. **Interview.** `gbrain bootstrap interview --init`, then ask the questions from
    the bank (the CLI prints them) in three batches, recording each answer verbatim
    with `--set KEY "value"`. Push once on vague answers to the required questions.
-   Claude Code only: with the final batch, also ask the ONE operational consent —
-   MCP scope. It is not one of the 12 interview questions; consents ride alongside
-   the bank. The choice: project (recommended — any other repo you open cannot
-   read your brain) vs user (your agent everywhere, but any repo you open can
-   reach it — read and write — and two open sessions contend for the database).
-   Record it with
+   Claude Code and opencode: with the final batch, also ask the ONE operational
+   consent — MCP scope. It is not one of the 12 interview questions; consents ride
+   alongside the bank. On Claude Code the choice: project (recommended — any other
+   repo you open cannot read your brain) vs user (your agent everywhere, but any
+   repo you open can reach it — read and write — and two open sessions contend for
+   the database). On opencode the recommendation INVERTS: user-global is the
+   default and the sharing-safe choice (opencode spawns project-config-defined
+   servers with NO trust prompt, so a committed project entry executes on every
+   collaborator's machine) — offer project only as a deliberate opt-in and state
+   that consequence. Record it with
    `gbrain bootstrap interview --set MCP_SCOPE <project|user>` BEFORE the
    read-back, so the confirmation covers it. On Codex, skip this question
    entirely — the wiring step states the Codex reality instead.
@@ -130,6 +146,14 @@ you needed; report the count at the end (it feeds the install-time measurement).
      on this machine can reach the brain (read and write) through its MCP
      tools; the off-ramps are `codex mcp remove gbrain` (registration only) or
      `gbrain bootstrap uninstall` (full teardown).
+   - opencode: writes the MCP entry directly into opencode's JSONC config (no
+     CLI exec needed) and relies on the AGENTS.md protocol, which opencode loads
+     natively — say plainly that opencode gets pull-based context, not per-turn
+     push. Scope follows the recorded MCP_SCOPE answer (user-global default; a
+     project answer writes the committed-candidate `opencode.json` and the CLI
+     prints the sharing warning). Restart opencode after wiring — it reads config
+     at session start. Off-ramps: the entry's `"enabled": false`, or
+     `gbrain bootstrap uninstall`.
 7. **Private repo.** `gbrain bootstrap repo` — creates a PRIVATE GitHub repo from
    the workspace, verifies the privacy bit through the API, pushes. If the human
    started from a repo they created themselves (create-repo-first: an EMPTY private
@@ -147,7 +171,9 @@ you needed; report the count at the end (it feeds the install-time measurement).
    through the real write path, graph floor, token sweep, secret scan, repo
    privacy, hooks smoke, capability report (keyless or keyed). Exit 0 or it is not
    done. Paste the report. Then relay the first-run tour it prints (three prompts
-   the human should try, starting with restarting the session).
+   the human should try, starting with restarting the session) AND the hand-off
+   block below it — the ownership line and the cold-start offer are the two
+   things the human must actually understand, not fine print.
 
 ## Machine two
 
@@ -209,7 +235,25 @@ placeholder). Trust the CLI's detection over your own guesses.
 
 ## Hand off
 
-Finish by telling the human: the private repo URL (or the local-only status), the
-capability mode (keyless vs keyed), the three commands they will actually reuse
-(`gbrain doctor`, `gbrain bootstrap verify`, `gbrain sources push`), and the
-first-run tour. Then delete nothing — this runbook was fetched, not installed.
+Two things the human must UNDERSTAND before you finish — say them plainly, in
+this order, and confirm they landed:
+
+1. **They own the brain.** Every memory you keep is a markdown file in THEIR
+   private GitHub repo — name the URL. Owning it means: they can read it any
+   time, take it to a second machine (`gbrain bootstrap attach`), or delete the
+   repo and the brain is gone. If they went local-only, say that instead, with
+   `gbrain bootstrap repo` as the any-time upgrade.
+2. **The first skill to run is cold-start.** An empty brain is a database; a
+   filled one is a memory — and every flagship skill (book-mirror, briefings,
+   meeting prep) only becomes magical once the brain holds their real life.
+   OFFER to run the cold-start skill now: it imports Gmail, calendar, and
+   contacts through ClawVisor (clawvisor.com — an OAuth vault; you never hold
+   raw tokens), or offline archives (Google Takeout, a notes folder) if they
+   prefer no third-party gateway. Every phase is consent-gated and
+   independently valuable — they can stop after any one. If they say "later",
+   that is a complete install; they can say "fill my brain" any time.
+
+Then the routine facts: the capability mode (keyless vs keyed), and the three
+commands they will actually reuse (`gbrain doctor`, `gbrain bootstrap verify`,
+`gbrain sources push`). Then delete nothing — this runbook was fetched, not
+installed.

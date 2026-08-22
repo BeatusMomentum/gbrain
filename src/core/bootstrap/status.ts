@@ -209,7 +209,7 @@ export const PHASES: PhaseSpec[] = [
     title: 'Identity interview (confirmed read-back)',
     resume_hint:
       'gbrain bootstrap interview --init, then --set each answer, then --confirm <hash>. ' +
-      'Claude Code only: also record the MCP scope consent (--set MCP_SCOPE <project|user>) BEFORE --confirm',
+      'Claude Code and opencode: also record the MCP scope consent (--set MCP_SCOPE <project|user>) BEFORE --confirm',
     detect: (ws) => {
       const exists = existsSync(interviewStatePath(ws));
       const st = interviewStatus(ws);
@@ -265,12 +265,27 @@ export const PHASES: PhaseSpec[] = [
     // outside the harness being wired). Advisory prose; the grep pins in
     // scripts/check-bootstrap-templates.sh §(e) are the enforcement.
     resume_hint:
-      'gbrain bootstrap hooks --harness <claude-code|codex> — MCP scope consent is ' +
-      'Claude Code only (recorded during the interview, pre-confirm); Codex registrations are always user-global (no scope flag)',
+      'gbrain bootstrap hooks --harness <claude-code|codex|opencode> — MCP scope consent applies on ' +
+      'Claude Code and opencode (recorded during the interview, pre-confirm; opencode defaults to ' +
+      'user-global — the sharing-safe choice, since it spawns project-config servers with no trust gate); ' +
+      'Codex registrations are always user-global (no scope flag)',
     detect: (ws, ctx) => {
       const regs = ctx.receipt?.registrations ?? [];
       if (regs.length > 0) {
-        return { state: 'done', detail: regs.map((r) => `${r.host} (${r.scope})`).join(', ') };
+        // A registration whose detail carries 'mcp' ('mcp' or 'mcp+hooks')
+        // means MCP actually registered. A 'hooks'-only detail means the host
+        // binary was missing at wire time (hooks landed, MCP did not) — the
+        // phase is PARTIAL, not done, so a resuming agent re-runs it once the
+        // CLI is on PATH instead of trusting a false "done".
+        const mcpRegistered = regs.some((r) => (r.detail ?? '').includes('mcp'));
+        if (mcpRegistered) {
+          return { state: 'done', detail: regs.map((r) => `${r.host} (${r.scope})`).join(', ') };
+        }
+        return {
+          state: 'partial',
+          detail: 'hooks installed but MCP not registered (the harness CLI was not on PATH) — ' +
+            're-run `gbrain bootstrap hooks --harness <claude-code|codex>` once it is',
+        };
       }
       if (hooksInstalled(ws)) return { state: 'done', detail: 'hooks present in .claude/settings.local.json' };
       return { state: 'pending' };

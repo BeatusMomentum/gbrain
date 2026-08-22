@@ -28,7 +28,7 @@ import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from './legacy-token-scope.ts';
+import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, normalizeTokenScopes } from './legacy-token-scope.ts';
 
 /**
  * A slug-prefix write binding is only meaningful if every entry actually
@@ -735,15 +735,17 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     try {
       oauthRows = await this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-               c.source_id, c.federated_read, c.bound_slug_prefixes
+               c.source_id, c.federated_read, c.bound_slug_prefixes,
+               c.surface, c.surface_set_by
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
       `;
     } catch (err) {
       // Degrade ladder for brains that haven't run apply-migrations yet:
-      // bound_slug_prefixes (v85) → federated_read (v61) → source_id (v60) →
-      // pre-v0.34 base projection. Auth must keep working the whole way down.
+      // surface/surface_set_by (v127) → bound_slug_prefixes (v85) →
+      // federated_read (v61) → source_id (v60) → pre-v0.34 base projection.
+      // Auth must keep working the whole way down.
       //
       // `isUndefinedColumnError(err, name)` canNOT actually tell us WHICH
       // column was missing — with SQLSTATE 42703 present it returns true for
@@ -753,42 +755,62 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // rethrows once the narrowest one still fails. (Branching on the name
       // is what made the first cut of this hard-fail every token
       // verification on a pre-v61 brain.)
-      // Any of the three optional columns may be the missing one, and on the
+      // Any of the optional columns may be the missing one, and on the
       // message-fallback path (drivers that don't surface SQLSTATE) the name
-      // is what identifies it — so probe all three at every rung.
+      // is what identifies it — so probe all five at every rung (ENG-9:
+      // surface + surface_set_by ship in one migration and go missing
+      // together, so BOTH names are probed).
       const missingOAuthColumn = (e: unknown): boolean =>
+        isUndefinedColumnError(e, 'surface') ||
+        isUndefinedColumnError(e, 'surface_set_by') ||
         isUndefinedColumnError(e, 'bound_slug_prefixes') ||
         isUndefinedColumnError(e, 'federated_read') ||
         isUndefinedColumnError(e, 'source_id');
       if (!missingOAuthColumn(err)) throw err;
       try {
-        // v85 missing: keep source_id + federated_read, drop the fence column.
+        // v127 missing: drop the surface columns first, keep the fence
+        // column (WP4 amendment 17 — the NEW top rung). Surface degrade is
+        // fail-OPEN by design: the serve-http ceiling still bounds every
+        // request, so a missing per-client surface only means "server
+        // surface applies", never a widened catalog.
         oauthRows = await this.sql`
           SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-                 c.source_id, c.federated_read
+                 c.source_id, c.federated_read, c.bound_slug_prefixes
           FROM oauth_tokens t
           LEFT JOIN oauth_clients c ON c.client_id = t.client_id
           WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
         `;
-      } catch (err2) {
-        if (!missingOAuthColumn(err2)) throw err2;
+      } catch (errS) {
+        if (!missingOAuthColumn(errS)) throw errS;
         try {
-          // v61 missing: source_id only.
+          // v85 missing: keep source_id + federated_read, drop the fence column.
           oauthRows = await this.sql`
-            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
+                   c.source_id, c.federated_read
             FROM oauth_tokens t
             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
             WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           `;
-        } catch (err3) {
-          if (!missingOAuthColumn(err3)) throw err3;
-          // Truly pre-v60: pre-v0.34 projection.
-          oauthRows = await this.sql`
-            SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
-            FROM oauth_tokens t
-            LEFT JOIN oauth_clients c ON c.client_id = t.client_id
-            WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
-          `;
+        } catch (err2) {
+          if (!missingOAuthColumn(err2)) throw err2;
+          try {
+            // v61 missing: source_id only.
+            oauthRows = await this.sql`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.source_id
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+            `;
+          } catch (err3) {
+            if (!missingOAuthColumn(err3)) throw err3;
+            // Truly pre-v60: pre-v0.34 projection.
+            oauthRows = await this.sql`
+              SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name
+              FROM oauth_tokens t
+              LEFT JOIN oauth_clients c ON c.client_id = t.client_id
+              WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
+            `;
+          }
         }
       }
     }
@@ -841,6 +863,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // restored dump missing one column) where bindings DO exist and every
       // bound client would otherwise be silently unfenced.
       const fenceProjectionDegraded = !('bound_slug_prefixes' in row);
+      // WP4 (D2): per-client tool surface. Raw TEXT threaded as-is — the
+      // value space is OPEN (amendment 18; future tiers write tier names into
+      // this column), so parsing/warning happens at the serve-http resolution
+      // site, not here. Undefined when the column is NULL, the projection
+      // degraded (v127 rung), or the brain predates v127. Surface degrade is
+      // fail-open by design: the server ceiling still bounds every request.
+      const rowSurface = typeof row.surface === 'string' ? row.surface : undefined;
+      const rowSurfaceSetBy = typeof row.surface_set_by === 'string' ? row.surface_set_by : undefined;
       return {
         token,
         clientId: row.client_id as string,
@@ -860,6 +890,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts on every direct slug-mutating write op.
         boundSlugPrefixes,
         ...(fenceProjectionDegraded ? { fenceProjectionDegraded: true } : {}),
+        // WP4: per-client surface + operator-lock marker (amendment 19).
+        ...(rowSurface !== undefined ? { surface: rowSurface } : {}),
+        ...(rowSurfaceSetBy !== undefined ? { surfaceSetBy: rowSurfaceSetBy } : {}),
       } as CoreAuthInfo as SdkAuthInfo;
     }
 
@@ -870,22 +903,36 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     let legacyRows: Record<string, unknown>[];
     try {
       legacyRows = await this.sql`
-        SELECT name, permissions FROM access_tokens
+        SELECT name, permissions, scopes FROM access_tokens
         WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
       `;
     } catch (err) {
       if (isUndefinedColumnError(err, 'permissions')) {
-        legacyRows = await this.sql`
-          SELECT name FROM access_tokens
-          WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
-        `;
+        // Pre-v38 brain: no permissions column. scopes is ORIGINAL schema, so
+        // it must stay in the degraded SELECT — dropping it here would route
+        // normalizeTokenScopes(undefined) into the grandfather branch and
+        // silently promote a scoped token to full admin on any brain whose
+        // permissions projection fails (ship-review P1). Only if scopes
+        // ITSELF is missing (out-of-tree schema) does the ladder fall to
+        // name-only — and that brain predates scoped minting entirely.
+        try {
+          legacyRows = await this.sql`
+            SELECT name, scopes FROM access_tokens
+            WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+          `;
+        } catch (err2) {
+          if (!isUndefinedColumnError(err2, 'scopes')) throw err2;
+          legacyRows = await this.sql`
+            SELECT name FROM access_tokens
+            WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+          `;
+        }
       } else {
         throw err;
       }
     }
 
     if (legacyRows.length > 0) {
-      // Legacy tokens get full admin access (grandfather in).
       // For legacy tokens, name = clientId = clientName (single identifier).
       // Update last_used_at
       await this.sql`
@@ -901,17 +948,25 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // dispatch site defaults to the fail-closed ['world']. An explicit []
       // grant is preserved as deny-all.
       const takesHoldersAllowList = parseTakesHoldersAllowList(permissions?.takes_holders);
+      // #4043 least-privilege: the original-schema `scopes TEXT[]` column is
+      // the scope store. NULL/absent (every token minted before this feature)
+      // → grandfathered full access, byte-identical behavior. An array is
+      // filtered to known scopes and honored as-is — including [] as deny.
+      const grantedScopes = normalizeTokenScopes(legacyRows[0].scopes);
       return {
         token,
         clientId: name,
         clientName: name,
-        scopes: ['read', 'write', 'admin'],
+        scopes: grantedScopes ?? ['read', 'write', 'admin'],
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // Legacy tokens without an explicit permissions.source_id grant keep
         // the historical 'default' source floor. Array grants become
         // allowedSources for federated reads, matching legacy HTTP transport.
         sourceId,
         allowedSources,
+        // #3242 parity with src/mcp/http-transport.ts: only the historical
+        // no-grant floor may widen unqualified reads to the federated set.
+        hasSourceGrant: permissions?.source_id != null,
         takesHoldersAllowList,
       } as CoreAuthInfo as SdkAuthInfo;
     }
@@ -1206,11 +1261,22 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
    */
   async rescopeClient(
     clientId: string,
-    opts: { sourceId?: string; federatedRead?: string[]; boundSlugPrefixes?: string[] | null },
-  ): Promise<{ clientId: string; clientName: string; sourceId: string; federatedRead: string[]; boundSlugPrefixes?: string[] | null }> {
-    const { sourceId, federatedRead, boundSlugPrefixes } = opts;
-    if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined) {
-      throw new Error('rescope-client requires --source, --federated-read, and/or --bound-slug-prefixes');
+    opts: {
+      sourceId?: string;
+      federatedRead?: string[];
+      boundSlugPrefixes?: string[] | null;
+      /**
+       * WP4 (D2/amendment 19): per-client tool surface. Tri-state —
+       * undefined = untouched, null = clear (both surface AND
+       * surface_set_by go NULL), value = set + surface_set_by='operator'
+       * (the operator lock: request_tools persist cannot override it).
+       */
+      surface?: 'verbs' | 'starter' | 'full' | null;
+    },
+  ): Promise<{ clientId: string; clientName: string; sourceId: string; federatedRead: string[]; boundSlugPrefixes?: string[] | null; surface?: string | null; surfaceOld?: string | null }> {
+    const { sourceId, federatedRead, boundSlugPrefixes, surface } = opts;
+    if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined) {
+      throw new Error('rescope-client requires --source, --federated-read, --bound-slug-prefixes, and/or --surface');
     }
     if (sourceId !== undefined) assertValidSourceId(sourceId);
     if (federatedRead !== undefined) {
@@ -1218,6 +1284,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         throw new Error('--federated-read cannot be empty (pass at least one source id)');
       }
       for (const s of federatedRead) assertValidSourceId(s);
+    }
+    // WP4: only the three known surfaces are OPERATOR-writable here; the
+    // column value space stays open (amendment 18) for future tier writers,
+    // but this surface validates so a typo'd rescope fails loud, not silent.
+    if (surface !== undefined && surface !== null
+        && surface !== 'verbs' && surface !== 'starter' && surface !== 'full') {
+      throw new Error(`--surface must be verbs | starter | full | clear (got "${String(surface)}")`);
     }
     // v0.42.72.0: bound_slug_prefixes rescope, so channel-membership churn
     // (the qm-harness roster case) updates the write fence in place instead
@@ -1233,21 +1306,42 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       assertValidSlugPrefixes(boundSlugPrefixes);
     }
     let rows: Record<string, unknown>[];
+    // WP4: when the surface axis is being touched, capture the OLD value
+    // first so callers can write the amendment-32 audit row ({old, new}).
+    let surfaceOld: string | null | undefined;
     try {
-      // Only touch bound_slug_prefixes when the caller actually passed it.
-      // Naming the column unconditionally would make a plain
+      if (surface !== undefined) {
+        const prior = await this.sql`
+          SELECT surface FROM oauth_clients WHERE client_id = ${clientId}
+        `;
+        surfaceOld = prior.length > 0 ? ((prior[0].surface as string | null) ?? null) : null;
+      }
+      // Only touch bound_slug_prefixes / surface when the caller actually
+      // passed them. Naming a column unconditionally would make a plain
       // `rescope-client --source wiki` fail on a brain that has the v60/v61
-      // OAuth columns but not v85's bound_* set — a regression on an axis
-      // the caller never asked about.
-      rows = boundSlugPrefixes === undefined
-        ? await this.sql`
+      // OAuth columns but not v85's bound_* set (or v127's surface set) — a
+      // regression on an axis the caller never asked about.
+      const surfaceSetBy = surface === null ? null : 'operator';
+      if (boundSlugPrefixes === undefined && surface === undefined) {
+        rows = await this.sql`
             UPDATE oauth_clients
                SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
                    federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read)
              WHERE client_id = ${clientId}
              RETURNING client_id, client_name, source_id, federated_read
-          `
-        : await this.sql`
+          `;
+      } else if (boundSlugPrefixes === undefined) {
+        rows = await this.sql`
+            UPDATE oauth_clients
+               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
+                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
+                   surface = ${surface ?? null}::text,
+                   surface_set_by = ${surfaceSetBy}::text
+             WHERE client_id = ${clientId}
+             RETURNING client_id, client_name, source_id, federated_read, surface, surface_set_by
+          `;
+      } else if (surface === undefined) {
+        rows = await this.sql`
             UPDATE oauth_clients
                SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
                    federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
@@ -1255,11 +1349,25 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
              WHERE client_id = ${clientId}
              RETURNING client_id, client_name, source_id, federated_read, bound_slug_prefixes
           `;
+      } else {
+        rows = await this.sql`
+            UPDATE oauth_clients
+               SET source_id = COALESCE(${sourceId ?? null}::text, source_id),
+                   federated_read = COALESCE(${federatedRead ? pgArray(federatedRead) : null}::text[], federated_read),
+                   bound_slug_prefixes = ${boundSlugPrefixes ? pgArray(boundSlugPrefixes) : null}::text[],
+                   surface = ${surface ?? null}::text,
+                   surface_set_by = ${surfaceSetBy}::text
+             WHERE client_id = ${clientId}
+             RETURNING client_id, client_name, source_id, federated_read, bound_slug_prefixes, surface, surface_set_by
+          `;
+      }
     } catch (err) {
       if (
         isUndefinedColumnError(err, 'source_id') ||
         isUndefinedColumnError(err, 'federated_read') ||
-        isUndefinedColumnError(err, 'bound_slug_prefixes')
+        isUndefinedColumnError(err, 'bound_slug_prefixes') ||
+        isUndefinedColumnError(err, 'surface') ||
+        isUndefinedColumnError(err, 'surface_set_by')
       ) {
         throw new Error('rescope-client requires an up-to-date OAuth schema; run `gbrain apply-migrations --yes` and retry.');
       }
@@ -1284,6 +1392,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       boundSlugPrefixes: 'bound_slug_prefixes' in row
         ? (Array.isArray(row.bound_slug_prefixes) ? (row.bound_slug_prefixes as string[]) : null)
         : undefined,
+      // WP4: undefined = surface untouched this call; null = cleared.
+      ...(surface !== undefined
+        ? { surface: (row.surface as string | null) ?? null, surfaceOld: surfaceOld ?? null }
+        : {}),
     };
   }
 
