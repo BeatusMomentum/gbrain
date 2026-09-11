@@ -60,7 +60,8 @@ suite('client capability grants — Postgres and admin HTTP', () => {
       { ...resolveGrantProfile({ profile: 'delegating-agent', sourceId: 'default', boundTools: ['search'] }), budgetUsdPerDay: '3.00', boundMaxConcurrent: 2 });
     clients.push(client.clientId);
     const data = JSON.stringify({ __owner_client_id: client.clientId, source_id: 'default', allowed_tools: ['search'] });
-    const [job] = await engine.executeRaw("INSERT INTO minion_jobs (name, status, data) VALUES ('subagent', 'waiting', $1::text::jsonb) RETURNING id", [data]); jobs.push(Number(job.id));
+    const [job] = await engine.executeRaw("INSERT INTO minion_jobs (name, status, data, submission_authority) VALUES ('subagent', 'waiting', $1::text::jsonb, '{\"version\":1,\"kind\":\"application\"}'::jsonb) RETURNING id", [data]);
+    await engine.executeRaw('UPDATE minion_jobs SET submission_authority = NULL WHERE id = $1', [job.id]); jobs.push(Number(job.id));
     const attempts = await Promise.allSettled([1, 2].map(() => rescopeClientGrant(engine, client.clientId, { budgetUsdPerDay: null, boundMaxConcurrent: 8 }, { actor: 'pg-test', expectedRevision: 1 })));
     expect(attempts.filter(a => a.status === 'fulfilled')).toHaveLength(1);
     expect(attempts.filter(a => a.status === 'rejected')).toHaveLength(1);
@@ -146,13 +147,17 @@ suite('client capability grants — Postgres and admin HTTP', () => {
       const query = new URLSearchParams({ client_id: created.clientId, redirect_uri: redirectUri, response_type: 'code', scope: 'read write', state: 'state-example',
         code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', resource: base + '/mcp' });
       const authorizeUrl = base + '/authorize?' + query;
-      expect((await fetch(authorizeUrl, { redirect: 'manual' })).status).toBe(401);
-      const consent = await fetch(authorizeUrl, { headers: { Cookie: cookie }, redirect: 'manual' }); expect(consent.status).toBe(200);
-      const nonce = (await consent.text()).match(/name="nonce" value="([a-f0-9]+)"/)?.[1]; expect(nonce).toBeTruthy();
-      const approval = await fetch(base + '/authorize/consent', { method: 'POST', redirect: 'manual', headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ nonce: nonce!, decision: 'approve' }) });
-      expect(approval.status).toBe(303);
-      const issued = await fetch(base + approval.headers.get('location'), { headers: { Cookie: cookie }, redirect: 'manual' }); expect(issued.status).toBe(302);
-      const location = new URL(issued.headers.get('location')!); expect(location.searchParams.get('state')).toBe('state-example');
+      const consent = await fetch(authorizeUrl, { redirect: 'manual' }); expect(consent.status).toBe(302);
+      const pending = new URL(consent.headers.get('location')!, base).searchParams.get('oauth_request');
+      expect(pending).toBeTruthy();
+      expect((await fetch(base + '/admin/api/oauth-requests/' + pending)).status).toBe(401);
+      const detailsResponse = await fetch(base + '/admin/api/oauth-requests/' + pending, { headers: { Cookie: cookie } });
+      expect(detailsResponse.status).toBe(200);
+      const details = await detailsResponse.json() as any;
+      expect(details.allowedOperations).toContain('remember');
+      const approval = await post('/admin/api/oauth-requests/' + pending, { csrf: details.csrf, decision: 'approve' });
+      expect(approval.status).toBe(200);
+      const location = new URL((await approval.json() as any).redirectUrl); expect(location.searchParams.get('state')).toBe('state-example');
       const code = location.searchParams.get('code'); expect(code).toBeTruthy();
       const tokenRequest = (values: Record<string, string>) => fetch(base + '/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ client_id: created.clientId, ...(created.clientSecret ? { client_secret: created.clientSecret } : {}), ...values }) });

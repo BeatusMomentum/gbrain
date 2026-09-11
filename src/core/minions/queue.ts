@@ -8,6 +8,7 @@
  *   await queue.prune({ olderThan: new Date(Date.now() - 30 * 86400000) });
  */
 
+import { APPLICATION_AUTHORITY, assertSameAuthority, assertNoUnreviewedJobs, authorizeJobExecution, currentSubmissionAuthority, parseSubmissionAuthority, type SubmissionAuthority } from './submission-authority.ts';
 import type { BrainEngine } from '../engine.ts';
 import type {
   MinionJob, MinionJobInput, MinionJobStatus, InboxMessage, TokenUpdate,
@@ -40,6 +41,7 @@ import {
 } from '../audit/batch-retry-audit.ts';
 /** Trusted 4th argument, kept outside user-spread job options. */
 export interface TrustedSubmitOpts {
+  submissionAuthority?: SubmissionAuthority;
   /** Allow PROTECTED_JOB_NAMES; CLI or operation-local callers only. */
   allowProtectedSubmit?: boolean;
   /** Allow PGLite embed-backfill only for an explicit inline-worker caller. */
@@ -164,7 +166,9 @@ function coalesceReturn(
   row: Record<string, unknown>,
   audit: Omit<CoalesceAuditEvent, 'returned_job_id'>,
   sink: (ev: CoalesceAuditEvent) => void,
+  authority: SubmissionAuthority,
 ): MinionJob {
+  assertSameAuthority(row.submission_authority, authority);
   const coalesced = rowToMinionJob(row);
   coalesced.coalesced = true;
   sink({ ...audit, returned_job_id: coalesced.id });
@@ -212,7 +216,15 @@ export class MinionQueue {
     // Normalize first so the protected-name check and the insert use the same
     // canonical form. Without the trim-before-check, `queue.add(' shell ', ...)`
     // would evade the guard and insert a job literally named 'shell'.
+    if (currentSubmissionAuthority() && currentSubmissionAuthority()!.kind !== 'application') throw new Error('Remote jobs cannot submit descendant jobs');
+    const authority = parseSubmissionAuthority(trusted?.submissionAuthority ?? APPLICATION_AUTHORITY);
+    if (!authority) throw new Error('Unsupported submission authority');
+    const delegatedClientId = authority.kind === 'remote_agent' ? authority.principal.id : trusted?.delegatedClientId;
+    if (authority.kind === 'remote_agent' && trusted?.delegatedClientId !== undefined && trusted.delegatedClientId !== delegatedClientId) {
+      throw new Error('Delegated submission identity differs from its authority');
+    }
     const jobName = (name || '').trim();
+    if (authority.kind !== 'application') await authorizeJobExecution(this.engine, { name: jobName, data: data ?? {}, submission_authority: authority });
     if (jobName.length === 0) {
       throw new Error('Job name cannot be empty');
     }
@@ -289,6 +301,7 @@ export class MinionQueue {
     // then insert fresh and run the work twice (adversarial-review finding).
     const hashablePayload = Object.keys(data ?? {}).some(k => !PARAM_HASH_EXCLUDED_KEYS.has(k));
     const coalesceActive =
+      authority.kind === 'application' &&
       (opts?.coalesce_params ?? policy.coalesceParams) &&
       !opts?.parent_job_id &&
       !opts?.idempotency_key &&
@@ -325,7 +338,7 @@ export class MinionQueue {
 
     const result = await this.engine.transaction(async (tx) => {
       // Client lock spans grant validation, capacity check and insertion.
-      const delegatedLimit = await lockDelegatedSubmission(tx, trusted?.delegatedClientId, jobName, data);
+      const delegatedLimit = await lockDelegatedSubmission(tx, delegatedClientId, jobName, data);
       // 1. Idempotency fast path — if a row already exists for this key, return it
       //    without doing any other work. The unique partial index guarantees
       //    no second row can be inserted with the same non-null key.
@@ -341,6 +354,7 @@ export class MinionQueue {
         );
         if (existing.length > 0) {
           const existingJob = rowToMinionJob(existing[0]);
+          assertSameAuthority(existingJob.submission_authority, authority);
           if (existingJob.status === 'dead' || existingJob.status === 'cancelled') {
             await tx.executeRaw(
               `UPDATE minion_jobs SET idempotency_key = NULL WHERE id = $1`,
@@ -393,11 +407,11 @@ export class MinionQueue {
             queue: admissionQueue,
             name: jobName,
             param_hash: paramHash,
-          }, ev => { coalesceAudit = ev; });
+          }, ev => { coalesceAudit = ev; }, authority);
         }
       }
 
-      await checkDelegatedCapacity(tx, trusted?.delegatedClientId, delegatedLimit);
+      await checkDelegatedCapacity(tx, delegatedClientId, delegatedLimit);
 
       // 1a2. Name-global waiting quota (admission; config-only, no shipped
       // default — user decision D2C). Counts the name across ALL queues:
@@ -503,7 +517,7 @@ export class MinionQueue {
                 name: jobName,
                 pending_count: pendingCount,
                 max_pending: maxPending,
-              }, ev => { coalesceAudit = ev; });
+              }, ev => { coalesceAudit = ev; }, authority);
             }
           }
         }
@@ -533,7 +547,7 @@ export class MinionQueue {
                 name: jobName,
                 waiting_count: waitingCount,
                 max_waiting: maxWaiting,
-              }, ev => { coalesceAudit = ev; });
+              }, ev => { coalesceAudit = ev; }, authority);
             }
           }
         }
@@ -550,6 +564,7 @@ export class MinionQueue {
           throw new Error(`parent_job_id ${opts.parent_job_id} not found`);
         }
         const parent = rowToMinionJob(parentRows[0]);
+        if (parent.submission_authority && parent.submission_authority.kind !== 'application') throw new Error('Remote jobs cannot have descendants');
 
         depth = parent.depth + 1;
         if (depth > maxSpawnDepth) {
@@ -594,11 +609,11 @@ export class MinionQueue {
       const baseCols = `name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
             depth, max_children, timeout_ms, lock_duration_ms, remove_on_complete, remove_on_fail, idempotency_key,
-            quiet_hours, stagger_key, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until`;
+            quiet_hours, stagger_key, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until, submission_authority`;
       const baseVals = `$1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21`;
-      const baseValsWithOwner = `${baseVals}, $22, $23, $24`;
+      const baseValsWithOwner = `${baseVals}, $22, $23, $24, $25::jsonb`;
       const cols = hasMaxStalled ? `${baseCols}, max_stalled` : baseCols;
-      const vals = hasMaxStalled ? `${baseValsWithOwner}, $25` : baseValsWithOwner;
+      const vals = hasMaxStalled ? `${baseValsWithOwner}, $26` : baseValsWithOwner;
 
       const insertSql = opts?.idempotency_key
         ? `INSERT INTO minion_jobs (${cols})
@@ -644,6 +659,7 @@ export class MinionQueue {
         opts?.private_queue_owner_job_id ?? null,
         opts?.private_queue_owner_token ?? null,
         privateQueueLeaseUntil,
+        authority,
       ];
       if (hasMaxStalled) params.push(clampedMaxStalled);
 
@@ -660,6 +676,7 @@ export class MinionQueue {
           throw new Error(`idempotency_key ${opts.idempotency_key} insert returned no row and no existing row found`);
         }
         const raced = rowToMinionJob(existing[0]);
+        assertSameAuthority(raced.submission_authority, authority);
         raced.coalesced = true; // third coalesce path: lost the insert race
         return raced;
       }
@@ -885,6 +902,7 @@ export class MinionQueue {
     reason?: string;
     maxQueues?: number;
   } = {}): Promise<PrivateQueueRecoveryResult> {
+    await assertNoUnreviewedJobs(this.engine);
     const result: PrivateQueueRecoveryResult = {
       scanned_queues: 0,
       cancelled_queues: 0,
@@ -1151,6 +1169,7 @@ export class MinionQueue {
    * (the channel where the notice prints); this method just sweeps.
    */
   async handleWaitingTTL(opts?: { maxPerTick?: number }): Promise<{ cancelled: number; by_name: Record<string, number> }> {
+    await assertNoUnreviewedJobs(this.engine);
     const maxPerTick = Math.max(1, Math.floor(opts?.maxPerTick ?? 500));
     const ttlNames = await resolveTtlNames(this.engine);
     const by_name: Record<string, number> = {};
@@ -1217,6 +1236,9 @@ export class MinionQueue {
    */
   async retryJob(id: number): Promise<MinionJob | null> {
     return this.engine.transaction(async tx => {
+      const [prior] = await tx.executeRaw<Record<string, unknown>>('SELECT * FROM minion_jobs WHERE id = $1', [id]);
+      if (!prior) return null;
+      await authorizeJobExecution(tx, rowToMinionJob(prior));
       if (!await admitDelegatedRetry(tx, id)) return null;
       const rows = await tx.executeRaw<Record<string, unknown>>(
         `UPDATE minion_jobs SET status = 'waiting', error_text = NULL,
@@ -1435,6 +1457,7 @@ export class MinionQueue {
    */
   async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
+    await assertNoUnreviewedJobs(this.engine);
 
     // Direct (session-mode) pool: claim opens the lock that renewLock then
     // heartbeats. Both must live on a connection the transaction-mode pooler
@@ -1454,6 +1477,7 @@ export class MinionQueue {
     const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
+        claim_generation = claim_generation + 1,
         lock_token = $1,
         lock_until = now() + ((CASE WHEN COALESCE(lock_duration_ms, ($6::jsonb ->> name)::int) IS NULL THEN $2
                                     ELSE LEAST(GREATEST(COALESCE(lock_duration_ms, ($6::jsonb ->> name)::int), 5000), 3600000) END)::double precision * interval '1 millisecond'),
@@ -1468,7 +1492,7 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND name = ANY($4)
+         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)
          ORDER BY priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
@@ -1492,6 +1516,7 @@ export class MinionQueue {
    * but will be caught the next one (after re-claim). Never double-handled.
    */
   async handleTimeouts(): Promise<MinionJob[]> {
+    await assertNoUnreviewedJobs(this.engine);
     return this.engine.transaction(async (tx) => {
       // #1737: count the timed-out run as a spent attempt (terminal, no retry).
       // Safe against double-count: the worker sweep runs handleStalled ->
@@ -1631,6 +1656,7 @@ export class MinionQueue {
    *   timeout_ms null  -> 2 * lockDurationMs * max_stalled
    */
   async handleWallClockTimeouts(lockDurationMs: number): Promise<MinionJob[]> {
+    await assertNoUnreviewedJobs(this.engine);
     return this.engine.transaction(async (tx) => {
       // W0 (D5.12): same parents-first discover/lock/kill shape as
       // handleTimeouts; shared tail in killJobs().
@@ -2047,6 +2073,7 @@ export class MinionQueue {
 
   /** Promote delayed jobs whose delay_until has passed. Returns promoted jobs. */
   async promoteDelayed(): Promise<MinionJob[]> {
+    await assertNoUnreviewedJobs(this.engine);
     const rows = await this.lockRetry(() => this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting', delay_until = NULL,
         started_at = NULL,
@@ -2059,6 +2086,7 @@ export class MinionQueue {
 
   /** Detect and handle stalled jobs. Single CTE, no off-by-one. Returns affected jobs. */
   async handleStalled(graceMsOverride?: number): Promise<{ requeued: MinionJob[]; dead: MinionJob[] }> {
+    await assertNoUnreviewedJobs(this.engine);
     // W0 fix-wave (Tier-1 #4): the dead-letter branch previously emitted NO
     // child_done and never unblocked aggregator parents — a child that died
     // via max-stall stranded its parent in 'waiting-children' forever (the
@@ -2197,6 +2225,9 @@ export class MinionQueue {
 
   /** Resume a paused job back to waiting. */
   async resumeJob(id: number): Promise<MinionJob | null> {
+    const prior = await this.getJob(id);
+    if (!prior) return null;
+    await authorizeJobExecution(this.engine, prior);
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
       `UPDATE minion_jobs SET status = 'waiting',
         lock_token = NULL, lock_until = NULL, updated_at = now()
@@ -2266,6 +2297,8 @@ export class MinionQueue {
     const source = await this.getJob(id);
     if (!source) return null;
     if (!['completed', 'failed', 'dead'].includes(source.status)) return null;
+    const authority = await authorizeJobExecution(this.engine, source);
+    if (authority.kind !== 'application' && dataOverrides && Object.keys(dataOverrides).length) throw new Error('Remote job replay cannot override accepted data; submit a new job');
 
     const { data, clientId } = prepareDelegatedReplay(source.name, source.data, dataOverrides);
 
@@ -2276,7 +2309,8 @@ export class MinionQueue {
       backoff_type: source.backoff_type,
       backoff_delay: source.backoff_delay,
       backoff_jitter: source.backoff_jitter,
-    }, clientId ? { allowProtectedSubmit: true, delegatedClientId: clientId } : undefined);
+    }, { submissionAuthority: authority, delegatedClientId: clientId,
+      allowProtectedSubmit: authority.kind === 'remote_agent' || (authority.kind === 'application' && isProtectedJobName(source.name)) });
   }
 
   /** Remove a child's dependency on its parent. */

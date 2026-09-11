@@ -1,3 +1,11 @@
+import { prepareRemoteJob, prepareRemoteAgent, assertRemoteJobControl } from '../minions/submission-authority.ts';
+import type { MinionJob } from '../minions/types.ts';
+
+function publicJob(job: MinionJob) {
+  const { submission_authority: _authority, ...visible } = job;
+  return { ...visible, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]' };
+}
+
 /**
  * Jobs (Minions) operation cluster — pure move from operations.ts (v0.46.x
  * tranche 2). Op consts stay module-private; `jobsOperations` below lists
@@ -9,7 +17,6 @@
 
 import type { Operation, OperationContext } from './contract.ts';
 import { OperationError } from './contract.ts';
-import { normalizeSlugPrefix } from './context.ts';
 import { hasScope } from '../scope.ts';
 import {
   assertEmbedBackfillQueueAdmission,
@@ -72,10 +79,10 @@ async function assertJobOwned(ctx: OperationContext, id: number, owner: string):
 
 const submit_job: Operation = {
   name: 'submit_job',
-  description: 'Submit a background job to the Minions queue. Built-in types are registered by registerBuiltinHandlers (src/commands/jobs.ts) — e.g. sync, embed, lint, import, extract, backlinks, autopilot-cycle, subagent, and more; submitting an unknown name with --follow prints the full list. The `shell` type is CLI-only and rejected over MCP.',
+  description: 'Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.',
   params: {
-    name: { type: 'string', required: true, description: 'Job type (e.g. sync, embed, lint, import, extract, backlinks, autopilot-cycle; shell is CLI-only). Full registry: registerBuiltinHandlers in src/commands/jobs.ts.' },
-    data: { type: 'object', description: 'Job payload (JSON)' },
+    name: { type: 'string', required: true, description: 'Remote job type: sync, import, lint, or lint-fix. Local CLI also supports other registered types.' },
+    data: { type: 'object', description: 'Remote sync accepts optional pull/noPull (one boolean); other remote jobs accept no parameters. Source and paths are derived from the grant.' },
     queue: { type: 'string', description: 'Queue name (default: "default")' },
     priority: { type: 'number', description: 'Priority (0 = highest, default: 0)' },
     max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
@@ -87,27 +94,9 @@ const submit_job: Operation = {
   scope: 'admin',
   handler: async (ctx, p) => {
     const name = typeof p.name === 'string' ? p.name.trim() : '';
-    const jobData = { ...((p.data as Record<string, unknown>) || {}) };
-    // Derived-identity fence for `data.client_id` (same posture as
-    // send_job_message's sender fence): it is a spend-attribution identity —
-    // handlers settle LLM/embedding spend against it via getJobClientId →
-    // recordMinionJobSpend (minion-spend.ts), charging that OAuth client's
-    // mcp_spend_log / daily cap. A remote caller must NEVER pick it
-    // (spoofing another client's bill/cap): overwrite with the
-    // AUTHENTICATED client id — the same identity source run_onboard's A23
-    // stamping uses — or strip the key when no authenticated identity
-    // exists (spend then records clientId=null, global accounting only).
-    // Trusted local callers (ctx.remote === false) pass through unchanged.
-    if (ctx.remote !== false) {
-      delete jobData.__owner_client_id;
-      delete jobData.__delegation_grant;
-      const authClientId = ctx.auth?.clientId;
-      if (typeof authClientId === 'string' && authClientId.length > 0) {
-        jobData.client_id = authClientId;
-      } else {
-        delete jobData.client_id;
-      }
-    }
+    let jobData = { ...((p.data as Record<string, unknown>) || {}) };
+    const remoteSubmission = ctx.remote !== false ? await prepareRemoteJob(ctx, name, p.data) : undefined;
+    if (remoteSubmission) jobData = remoteSubmission.data;
     const translateAdmissionError = (e: unknown): never => {
       if (e instanceof InvalidEmbedBackfillSourceIdError) {
         throw new OperationError('invalid_params', e.message);
@@ -149,7 +138,9 @@ const submit_job: Operation = {
     const queue = new MinionQueue(ctx.engine);
     // Trusted flag fires ONLY for an explicit local CLI submission of a protected
     // name. Strict `=== false` so an untyped/cast context can't escalate.
-    const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+    const trusted = remoteSubmission
+      ? { submissionAuthority: remoteSubmission.authority }
+      : ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
 
     // v0.35.8.0: pre-enqueue shell-job validation, parity with the CLI submit
     // path. Closes the bug class where shell.ts handler-time validation ran
@@ -211,7 +202,7 @@ const submit_job: Operation = {
     // Amendments 24/25: post-enqueue queue-state probe (time-bounded,
     // fail-open). The job is already persisted; a probe failure degrades to
     // {probe_failed: true}, never an error on a successful submission.
-    return { ...job, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]', queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
+    return { ...publicJob(job), queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
   },
 };
 
@@ -309,6 +300,13 @@ const submit_agent: Operation = {
     const budgetCapText = snapshot.budgetUsdPerDay;
     const requestedTools = snapshot.tools;
     const requestedSlugPrefixes = snapshot.slugPrefixes;
+    const jobData: Record<string, unknown> = {
+      prompt: p.prompt, max_turns: maxTurns, model: resolvedModel,
+      allowed_tools: requestedTools, allowed_slug_prefixes: requestedSlugPrefixes,
+      source_id: snapshot.sourceId, __owner_client_id: clientId,
+      __delegation_grant: snapshot,
+    };
+    const authority = await prepareRemoteAgent(ctx, jobData);
     if (ctx.dryRun) {
       return {
         dry_run: true, action: 'submit_agent', client_id: clientId,
@@ -321,17 +319,11 @@ const submit_agent: Operation = {
     }
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    const jobData: Record<string, unknown> = {
-      prompt: p.prompt, max_turns: maxTurns, model: resolvedModel,
-      allowed_tools: requestedTools, allowed_slug_prefixes: requestedSlugPrefixes,
-      source_id: snapshot.sourceId, __owner_client_id: clientId,
-      __delegation_grant: snapshot,
-    };
     let job;
     try {
       job = await queue.add('subagent', jobData,
         { queue: (p.queue as string) || 'default' },
-        { allowProtectedSubmit: true, delegatedClientId: clientId });
+        { allowProtectedSubmit: true, delegatedClientId: clientId, submissionAuthority: authority });
     } catch (error) {
       const { isQueueQuotaExceededError } = await import('../minions/admission.ts');
       if (isQueueQuotaExceededError(error)) throw new OperationError('rate_limited', error.message, 'Retry after existing work completes.');
@@ -495,7 +487,7 @@ const get_job: Operation = {
     if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return { ...job, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]' };
+    return publicJob(job);
   },
 };
 
@@ -524,7 +516,7 @@ const list_jobs: Operation = {
     } as Parameters<typeof queue.getJobs>[0]);
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return jobs.map(j => ({ ...j, private_queue_owner_token: j.private_queue_owner_token == null ? null : '[redacted]' }));
+    return jobs.map(publicJob);
   },
 };
 
@@ -549,7 +541,7 @@ const cancel_job: Operation = {
     if (!cancelled) throw new OperationError('invalid_params', `Cannot cancel job ${p.id} (may already be in terminal status)`);
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return { ...cancelled, private_queue_owner_token: cancelled.private_queue_owner_token == null ? null : '[redacted]' };
+    return publicJob(cancelled);
   },
 };
 
@@ -565,11 +557,14 @@ const retry_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
+    const prior = await queue.getJob(p.id as number);
+    if (!prior) throw new OperationError('invalid_params', 'Job not found');
+    await assertRemoteJobControl(ctx, prior);
     const retried = await queue.retryJob(p.id as number);
     if (!retried) throw new OperationError('invalid_params', `Cannot retry job ${p.id} (must be failed or dead)`);
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return { ...retried, private_queue_owner_token: retried.private_queue_owner_token == null ? null : '[redacted]' };
+    return publicJob(retried);
   },
 };
 
@@ -622,6 +617,9 @@ const resume_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'resume_job', id: p.id };
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
+    const prior = await queue.getJob(p.id as number);
+    if (!prior) throw new OperationError('invalid_params', 'Job not found');
+    await assertRemoteJobControl(ctx, prior);
     const job = await queue.resumeJob(p.id as number);
     if (!job) throw new OperationError('invalid_params', `Job not found or not paused: ${p.id}`);
     return { id: job.id, status: job.status };
@@ -641,6 +639,9 @@ const replay_job: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'replay_job', id: p.id };
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
+    const prior = await queue.getJob(p.id as number);
+    if (!prior) throw new OperationError('invalid_params', 'Job not found');
+    await assertRemoteJobControl(ctx, prior, p.data_overrides);
     const job = await queue.replayJob(p.id as number, p.data_overrides as Record<string, unknown> | undefined);
     if (!job) throw new OperationError('invalid_params', `Job not found or not in terminal state: ${p.id}`);
     return { id: job.id, name: job.name, status: job.status, source_id: p.id };

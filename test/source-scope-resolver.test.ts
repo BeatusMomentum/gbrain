@@ -94,10 +94,8 @@ describe('resolveRequestedScope — explicit source_id', () => {
     expect(resolveRequestedScope(ctxOf({ remote: false }), 'anything')).toEqual({ sourceId: 'anything' });
   });
 
-  test('remote with no federated grant array preserves legacy explicit source selection', () => {
-    // allowedSources undefined → no federated restriction to enforce; the scalar
-    // sourceId path governs. An explicit [] is a distinct restricted grant.
-    expect(resolveRequestedScope(ctxOf({ remote: true }), 'z')).toEqual({ sourceId: 'z' });
+  test('remote scalar grants reject explicit sources outside their floor', () => {
+    expect(() => resolveRequestedScope(ctxOf({ remote: true }), 'z')).toThrow(OperationError);
   });
 
   test('empty federated grant cannot escape its scalar source through an explicit request', () => {

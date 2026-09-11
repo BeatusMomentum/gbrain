@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { LATEST_VERSION } from '../../src/core/migrate.ts';
 import { MinionQueue } from '../../src/core/minions/queue.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -28,7 +29,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
   auditDir = mkdtempSync(join(tmpdir(), 'gbrain-delegated-execution-'));
 });
-beforeEach(async () => { await resetPgliteState(engine); await engine.setConfig('version', '147'); });
+beforeEach(async () => { await resetPgliteState(engine); await engine.setConfig('version', String(LATEST_VERSION)); });
 afterEach(() => { __setChatTransportForTests(null); });
 afterAll(async () => { await engine.disconnect(); rmSync(auditDir, { recursive: true, force: true }); });
 

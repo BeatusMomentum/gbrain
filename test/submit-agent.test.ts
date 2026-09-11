@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+import { prepareRemoteAgent } from '../src/core/minions/submission-authority.ts';
+import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -14,7 +17,7 @@ beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); a
 afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => {
   await resetPgliteState(engine);
-  await engine.setConfig('version', '147');
+  await engine.setConfig('version', String(LATEST_VERSION));
   auditDir = mkdtempSync(join(tmpdir(), 'gbrain-delegation-test-'));
 });
 afterEach(() => rmSync(auditDir, { recursive: true, force: true }));
@@ -31,7 +34,7 @@ async function seed(opts: { tools?: string[]; prefixes?: string[] | null; cap?: 
 }
 function ctx(extra: Record<string, unknown> = {}): any {
   return { engine, config: {}, logger: console, remote: true, dryRun: false,
-    auth: { clientId: 'client', scopes: ['agent'], sourceId: 'default' }, ...extra };
+    auth: { clientId: 'client', principal: { kind: 'oauth_client', id: 'client' }, scopes: ['agent'], sourceId: 'default' }, ...extra };
 }
 async function submit(params: Record<string, unknown> = {}, context = ctx()): Promise<any> {
   return withEnv({ GBRAIN_AUDIT_DIR: auditDir }, () => operationsByName.submit_agent.handler(context, { prompt: 'read the fixture', ...params }));
@@ -44,6 +47,14 @@ describe('delegation admission and submitted permission ceiling', () => {
     await expect(submit({}, ctx({ auth: undefined }))).rejects.toThrow('OAuth client');
     await expect(submit({}, ctx({ remote: false }))).rejects.toThrow('local CLI');
   });
+  it('requires the verified principal for both preview and enqueue', async () => {
+    await seed();
+    for (const dryRun of [false, true]) {
+      for (const principal of [undefined, { kind: 'legacy_token', id: 'client' }, { kind: 'oauth_client', id: 'another-client' }]) {
+        await expect(submit({}, ctx({ dryRun, auth: { ...ctx().auth, principal } }))).rejects.toThrow('verified OAuth principal');
+      }
+    }
+  });
   it('refuses unknown and revoked clients', async () => {
     await expect(submit()).rejects.toThrow('No OAuth client found');
     await seed();
@@ -54,8 +65,11 @@ describe('delegation admission and submitted permission ceiling', () => {
     await expect(seed({ tools: [] })).rejects.toThrow('oauth_clients_complete_agent_grant');
   });
   it('rejects removed or unknown registry tools', async () => {
-    await seed({ tools: ['invented_tool'] });
-    await expect(submit()).rejects.toThrow('delegated_tools_unavailable');
+    for (const removed of ['invented_tool', 'file_list', 'file_url']) {
+      await engine.executeRaw('DELETE FROM oauth_clients');
+      await seed({ tools: [removed] });
+      await expect(submit()).rejects.toThrow('delegated_tools_unavailable');
+    }
   });
   it('preview validates source and model without inserting work', async () => {
     await seed();
@@ -121,11 +135,21 @@ describe('delegation admission and submitted permission ceiling', () => {
     expect(jobs).toHaveLength(2);
     expect(jobs[0].data.__delegation_grant.tools).toEqual(['get_page','put_page']);
   });
+  it('durable remote authority enforces the client slot without a separate identity option', async () => {
+    await seed();
+    const snapshot = submissionSnapshot(await currentDelegationGrant(engine, 'client'), {});
+    const data = { prompt: 'fixture', allowed_tools: snapshot.tools, allowed_slug_prefixes: snapshot.slugPrefixes,
+      source_id: snapshot.sourceId, __owner_client_id: snapshot.clientId, __delegation_grant: snapshot };
+    const authority = await prepareRemoteAgent(ctx(), data);
+    const queue = new MinionQueue(engine);
+    await queue.add('subagent', data, {}, { allowProtectedSubmit: true, submissionAuthority: authority });
+    await expect(queue.add('subagent', data, {}, { allowProtectedSubmit: true, submissionAuthority: authority })).rejects.toThrow('quota');
+  });
   it('counts delayed and paused jobs against the same owner cap', async () => {
     await seed();
     const first = await submit();
     for (const status of ['delayed','paused','waiting-children','active']) {
-      await engine.executeRaw('UPDATE minion_jobs SET status=$1 WHERE id=$2', [status, first.id]);
+      await engine.executeRaw("UPDATE minion_jobs SET status=$1, claim_generation=claim_generation+CASE WHEN $1='active' THEN 1 ELSE 0 END WHERE id=$2", [status, first.id]);
       await expect(submit({ prompt: 'another request' })).rejects.toThrow();
     }
   });

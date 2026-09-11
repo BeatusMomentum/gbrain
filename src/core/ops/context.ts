@@ -559,14 +559,14 @@ export function resolveRequestedScope(
     return ctx.remote === false ? {} : sourceScopeOpts(ctx);
   }
   if (sourceIdParam !== undefined) {
-    const allowed = ctx.auth?.allowedSources;
-    // An explicit empty federated set retains only the legacy scalar floor.
-    // It must never turn a caller-supplied source into unrestricted access.
-    const granted = allowed?.length ? allowed : ctx.sourceId ? [ctx.sourceId] : [];
-    if (ctx.remote !== false && allowed !== undefined && !granted.includes(sourceIdParam)) {
+    const scope = sourceScopeOpts(ctx);
+    const granted = scope.sourceIds !== undefined
+      ? scope.sourceIds.includes(sourceIdParam)
+      : scope.sourceId === sourceIdParam;
+    if (ctx.remote !== false && !granted) {
       throw new OperationError(
         'permission_denied',
-        `source '${sourceIdParam}' is outside your granted sources`,
+        'Requested source is outside your granted sources',
         'Request access to this source, or omit source_id to search within your grant.',
       );
     }

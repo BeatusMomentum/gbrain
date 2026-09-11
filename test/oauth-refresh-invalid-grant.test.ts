@@ -1,3 +1,4 @@
+import { authorizeAsOwner, pgliteOAuthTransaction, TEST_PKCE_VERIFIER, TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 // #4532 — exchangeRefreshToken failures must be InvalidGrantError, not bare
 // Error.
 //
@@ -14,8 +15,6 @@ import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { hashToken } from '../src/core/utils.ts';
-const PKCE_VERIFIER = 'oauth-refresh-verifier-example-'.repeat(3);
-const PKCE_CHALLENGE = Buffer.from(hashToken(PKCE_VERIFIER), 'hex').toString('base64url');
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
 import { InvalidGrantError, ServerError, OAuthError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 
@@ -31,7 +30,7 @@ beforeAll(async () => {
     const result = await db.query(query, values as any[]);
     return result.rows;
   };
-  provider = new GBrainOAuthProvider({ sql, tokenTtl: 60, refreshTtl: 300 });
+  provider = new GBrainOAuthProvider({ transaction: pgliteOAuthTransaction(db), sql, tokenTtl: 60, refreshTtl: 300 });
 }, 120_000);
 
 afterAll(async () => {
@@ -46,13 +45,13 @@ async function mintTokens() {
   const client = (await provider.clientsStore.getClient(clientId))!;
   let redirectUrl = '';
   const mockRes = { redirect: (url: string) => { redirectUrl = url; } } as any;
-  await provider.authorize(client, {
-    codeChallenge: PKCE_CHALLENGE,
+  await authorizeAsOwner(provider, client, {
+    codeChallenge: TEST_PKCE_CHALLENGE,
     redirectUri: 'http://localhost:3000/callback',
     scopes: ['read', 'write'],
   }, mockRes);
   const code = new URL(redirectUrl).searchParams.get('code')!;
-  const tokens = await provider.exchangeAuthorizationCode(client, code, PKCE_VERIFIER);
+  const tokens = await provider.exchangeAuthorizationCode(client, code, TEST_PKCE_VERIFIER, client.redirect_uris![0]);
   return { client, tokens };
 }
 

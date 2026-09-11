@@ -25,7 +25,7 @@ export async function admitDelegatedRetry(tx: BrainEngine, id: number): Promise<
   if (!rows.length) return false;
   const { clientId } = prepareDelegatedReplay(rows[0].name, rows[0].data);
   if (!clientId) return true;
-  const limit = await lockDelegatedSubmission(tx, clientId, rows[0].name, rows[0].data);
+  const limit = await lockDelegatedSubmission(tx, clientId, rows[0].name, rows[0].data, id);
   // Another retry may have won while this transaction waited for the client.
   const current = await tx.executeRaw("SELECT id FROM minion_jobs WHERE id=$1 AND status IN ('failed','dead')", [id]);
   if (!current.length) return false;
@@ -34,13 +34,13 @@ export async function admitDelegatedRetry(tx: BrainEngine, id: number): Promise<
 }
 
 /** Caller holds this transaction through any coalescing and the final INSERT. */
-export async function lockDelegatedSubmission(tx: BrainEngine, clientId: string | undefined, name: string, data?: Record<string, unknown>): Promise<number | null> {
+export async function lockDelegatedSubmission(tx: BrainEngine, clientId: string | undefined, name: string, data?: Record<string, unknown>, jobId?: number): Promise<number | null> {
   if (!clientId) return null;
   if (name !== 'subagent' || data?.__owner_client_id !== clientId) throw new Error('invalid delegated submission owner');
   await tx.executeRaw('SELECT client_id FROM oauth_clients WHERE client_id = $1 FOR UPDATE', [clientId]);
   const submitted = snapshotFromJob(data);
   if (!submitted) throw new DelegationDeniedError(['snapshot_missing']);
-  return (await effectiveDelegation(tx, submitted)).maxConcurrent;
+  return (await effectiveDelegation(tx, submitted, jobId)).maxConcurrent;
 }
 
 /** Across every queue and nonterminal state; coalesced existing work adds no slot. */

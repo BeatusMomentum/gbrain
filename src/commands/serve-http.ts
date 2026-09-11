@@ -27,7 +27,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
-import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { mountConfidentialOAuth, mountOAuthConsent } from './serve-http-oauth.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -39,7 +40,6 @@ import { publicHarnessMetadata } from '../core/harness/registry.ts';
 import { GRANT_PROFILES } from '../core/grants/model.ts';
 import { provisionHarnessGrant } from './mcp-provision.ts';
 import { retainCredentialDelivery } from '../core/harness/delivery.ts';
-import { mountOAuthOwnerConsent } from './serve-http-consent.ts';
 import { readClientGrant, rescopeClientGrant } from '../core/grants/service.ts';
 import { parseAdminGrantRequest, previewNewAdminGrant, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery } from './serve-http-grants.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
@@ -165,7 +165,6 @@ import {
 } from './auth.ts';
 import { registerClientNameLockKey } from './agent-register.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
-import { isRetryableError } from '../core/retry-matcher.ts';
 import {
   computeContentHash,
   validateIngestionEvent,
@@ -911,6 +910,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   const oauthProvider = new GBrainOAuthProvider({
     sql,
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
     tokenTtl,
     dcrDisabled: !enableDcr,
     allowClientCredentialsDcr: enableDcrInsecure === true,
@@ -1085,188 +1085,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: { error: 'rate_limited', message: 'Too many admin auth attempts. Try again shortly.' },
   });
 
-  app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
-    if (req.body?.grant_type !== 'client_credentials') {
-      return next(); // Fall through to confidential-client handler or SDK
-    }
-
-    try {
-      const { client_id, client_secret, scope } = req.body;
-      if (!client_id || !client_secret) {
-        res.status(400).json({ error: 'invalid_request', error_description: 'client_id and client_secret required' });
-        return;
-      }
-
-      const tokens = await oauthProvider.exchangeClientCredentials(client_id, client_secret, scope);
-      res.json(tokens);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      res.status(400).json({ error: 'invalid_grant', error_description: msg });
-    }
-  });
-
-  // ---------------------------------------------------------------------------
-  // v0.37.7.0 #1166: Custom authorization_code + refresh_token handler for
-  // CONFIDENTIAL clients. The MCP SDK's clientAuth middleware does plaintext
-  // `client.client_secret !== presented_secret` compare; we store
-  // SHA-256 hashes, so the SDK's compare always fails for confidential
-  // clients. This middleware verifies the secret hash ourselves before
-  // calling the provider's exchange methods directly.
-  //
-  // Public clients (token_endpoint_auth_method='none') fall through to
-  // the SDK's handler — the v0.34.1.0 PKCE path stays canonical.
-  // ---------------------------------------------------------------------------
-  app.post('/token', ccRateLimiter, async (req, res, next) => {
-    const grantType = req.body?.grant_type;
-    if (grantType !== 'authorization_code' && grantType !== 'refresh_token') {
-      return next();
-    }
-
-    // Detect confidential auth: either client_secret in body
-    // (client_secret_post) OR Authorization: Basic header
-    // (client_secret_basic). Public PKCE clients omit both.
-    const bodySecret: string | undefined = req.body?.client_secret;
-    let clientId: string | undefined = req.body?.client_id;
-    let presentedSecret: string | undefined = bodySecret;
-    const authHeader = (req.headers.authorization ?? '').toString();
-    if (!presentedSecret && authHeader.startsWith('Basic ')) {
-      try {
-        const decoded = Buffer.from(authHeader.slice('Basic '.length), 'base64').toString('utf8');
-        const idx = decoded.indexOf(':');
-        if (idx > -1) {
-          clientId ||= decodeURIComponent(decoded.slice(0, idx));
-          presentedSecret = decodeURIComponent(decoded.slice(idx + 1));
-        }
-      } catch {
-        // Malformed Basic header → falls through; SDK will reject
-      }
-    }
-    if (!clientId || !presentedSecret) {
-      return next(); // Public client path; SDK handles.
-    }
-
-    try {
-      const client = await oauthProvider.verifyConfidentialClientSecret(clientId, presentedSecret);
-      let tokens;
-      if (grantType === 'authorization_code') {
-        const code = req.body.code;
-        const redirectUri = req.body.redirect_uri;
-        const codeVerifier = req.body.code_verifier;
-        if (!code) {
-          res.status(400).json({ error: 'invalid_request', error_description: 'code required' });
-          return;
-        }
-        tokens = await oauthProvider.exchangeAuthorizationCode(client, code, codeVerifier, redirectUri,
-          typeof req.body.resource === 'string' ? new URL(req.body.resource) : undefined);
-      } else {
-        const refreshToken = req.body.refresh_token;
-        const scopeParam = typeof req.body.scope === 'string' ? req.body.scope.split(/\s+/) : undefined;
-        if (!refreshToken) {
-          res.status(400).json({ error: 'invalid_request', error_description: 'refresh_token required' });
-          return;
-        }
-        tokens = await oauthProvider.exchangeRefreshToken(client, refreshToken, scopeParam,
-          typeof req.body.resource === 'string' ? new URL(req.body.resource) : undefined);
-      }
-      res.json(tokens);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      // RFC 6749: invalid_client for auth failures, invalid_grant for
-      // code/token problems. "Invalid client" → 401; everything else 400.
-      if (msg === 'Invalid client' || msg === 'Client has been revoked') {
-        res.status(401).json({ error: 'invalid_client', error_description: msg });
-      } else {
-        res.status(400).json({ error: 'invalid_grant', error_description: msg });
-      }
-    }
-  });
-
-  // The SDK's /revoke handler compares the presented secret with
-  // client.client_secret as plaintext. GBrain stores only a SHA-256 hash, so
-  // confidential clients need the same hash-aware validation used above for
-  // authorization_code and refresh_token exchanges. Public clients present no
-  // secret and continue through to the SDK's PKCE-compatible handler.
-  app.post('/revoke', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
-    res.setHeader('Cache-Control', 'no-store');
-
-    const rawClientId: unknown = req.body?.client_id;
-    const rawBodySecret: unknown = req.body?.client_secret;
-    const authHeader = (req.headers.authorization ?? '').toString();
-
-    // RFC 6749 §2.3: one client-authentication method per request. Reject
-    // duplicates/arrays from express.urlencoded rather than letting them reach
-    // hashToken() as non-strings and become a misleading invalid_client error.
-    const hasBasicAuth = /^Basic\b/i.test(authHeader);
-    if (
-      (rawClientId !== undefined && typeof rawClientId !== 'string') ||
-      (rawBodySecret !== undefined && typeof rawBodySecret !== 'string') ||
-      (hasBasicAuth && (rawClientId !== undefined || rawBodySecret !== undefined))
-    ) {
-      res.status(400).json({ error: 'invalid_request', error_description: 'Malformed or mixed client authentication' });
-      return;
-    }
-
-    let clientId = typeof rawClientId === 'string' ? rawClientId : undefined;
-    let presentedSecret = typeof rawBodySecret === 'string' && rawBodySecret.length > 0
-      ? rawBodySecret
-      : undefined;
-    if (hasBasicAuth) {
-      try {
-        const match = authHeader.match(/^Basic\s+([^\s]+)$/i);
-        if (!match) throw new Error('Malformed Basic authentication');
-        const decoded = Buffer.from(match[1], 'base64').toString('utf8');
-        const idx = decoded.indexOf(':');
-        if (idx < 1) throw new Error('Malformed Basic authentication');
-        clientId = decodeURIComponent(decoded.slice(0, idx).replace(/\+/g, ' '));
-        presentedSecret = decodeURIComponent(decoded.slice(idx + 1).replace(/\+/g, ' '));
-        if (!presentedSecret) throw new Error('Malformed Basic authentication');
-      } catch {
-        res.setHeader('WWW-Authenticate', 'Basic realm="gbrain"');
-        res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client' });
-        return;
-      }
-    }
-    if (!clientId || !presentedSecret) return next();
-
-    const parsedRequest = OAuthTokenRevocationRequestSchema.safeParse(req.body);
-    if (!parsedRequest.success || parsedRequest.data.token.length === 0) {
-      res.status(400).json({ error: 'invalid_request', error_description: 'Valid token required' });
-      return;
-    }
-
-    let client;
-    try {
-      client = await oauthProvider.verifyConfidentialClientSecret(clientId, presentedSecret);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : '';
-      if (msg === 'Invalid client' || msg === 'Client has been revoked') {
-        if (hasBasicAuth) res.setHeader('WWW-Authenticate', 'Basic realm="gbrain"');
-        res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client' });
-        return;
-      }
-      console.error('[serve-http] revoke client verification failed:', msg || 'Unknown error');
-      const retryable = isRetryableError(e);
-      res.status(retryable ? 503 : 500).json({
-        error: retryable ? 'temporarily_unavailable' : 'server_error',
-        error_description: retryable ? 'Token revocation temporarily unavailable' : 'Token revocation failed',
-      });
-      return;
-    }
-
-    try {
-      await oauthProvider.revokeToken(client, parsedRequest.data);
-      // RFC 7009 §2.2: successful revocation, including an unknown token, is 200.
-      res.status(200).end();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      console.error('[serve-http] token revocation failed:', msg);
-      const retryable = isRetryableError(e);
-      res.status(retryable ? 503 : 500).json({
-        error: retryable ? 'temporarily_unavailable' : 'server_error',
-        error_description: retryable ? 'Token revocation temporarily unavailable' : 'Token revocation failed',
-      });
-    }
-  });
+  mountConfidentialOAuth(app, oauthProvider, ccRateLimiter);
 
   // ---------------------------------------------------------------------------
   // MCP SDK Auth Router (OAuth endpoints)
@@ -1299,6 +1118,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // derived from the same value so the two can never drift apart.
   const mcpResourceUrl = new URL('/mcp', issuerUrl);
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
+  // The SDK validates expiry/scopes but leaves audience enforcement to us.
+  // Legacy grants without a resource retain their existing compatibility.
+  const resourceVerifier = {
+    async verifyAccessToken(token: string) {
+      const auth = await oauthProvider.verifyAccessToken(token);
+      if (auth.resource && auth.resource.toString() !== mcpResourceUrl.toString()) {
+        throw new InvalidTokenError('Token is bound to a different resource');
+      }
+      return auth;
+    },
+  };
 
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
@@ -1370,11 +1200,6 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     next();
   });
 
-  mountOAuthOwnerConsent(app, {
-    provider: oauthProvider,
-    publicOrigin: new URL(mcpResourceUrl).origin,
-    sessionValid: id => Boolean(id && (adminSessions.get(id) ?? 0) > Date.now()),
-  });
   app.use(authRouter);
   app.get('/.well-known/gbrain', (_req, res) => {
     res.json({ version: VERSION, protocol: 'mcp', endpoint: mcpResourceUrl.toString(), profiles: GRANT_PROFILES,
@@ -1488,7 +1313,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const nonce = randomBytes(32).toString('hex');
     magicLinkNonces.set(nonce, Date.now() + NONCE_TTL_MS);
     const baseUrl = publicUrl || `http://localhost:${port}`;
-    res.json({ url: `${baseUrl}/admin/auth/${nonce}`, expires_in: NONCE_TTL_MS / 1000 });
+    const pendingId = req.body?.oauth_request;
+    const pendingQuery = oauthProvider.grants.hasPending(pendingId) ? `?oauth_request=${pendingId}` : '';
+    res.json({ url: `${baseUrl}/admin/auth/${nonce}${pendingQuery}`, expires_in: NONCE_TTL_MS / 1000 });
   });
 
   // GET /admin/auth/:nonce — single-use magic link redemption.
@@ -1531,7 +1358,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     adminSessions.set(sessionId, sessionExpiresAt);
 
     res.cookie('gbrain_admin', sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
-    res.redirect('/admin/');
+    const pendingId = req.query.oauth_request;
+    res.redirect(oauthProvider.grants.hasPending(pendingId)
+      ? `/admin/?oauth_request=${pendingId}#oauth-consent` : '/admin/');
   });
 
   // Admin auth middleware
@@ -1550,7 +1379,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     next();
   }
 
-  // #3893 (reimplemented from @y2688): Prometheus exposition. Admin-gated —
+  mountOAuthConsent(app, oauthProvider, requireAdmin, adminAuthRateLimiter);
+
   app.post('/admin/api/grants', requireAdmin, express.json(), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
@@ -1562,6 +1392,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
   });
 
+  // #3893 (reimplemented from @y2688): Prometheus exposition. Admin-gated —
   // request/error/latency series profile a personal brain's usage, so this
   // is not a public surface (the original PR served it unauthenticated).
   app.get('/metrics', requireAdmin, (_req: Request, res: Response) => {
@@ -2259,10 +2090,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     try {
       const { clientId } = req.body;
       if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
-      // Soft-delete the client
-      await sql`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = ${clientId} AND deleted_at IS NULL`;
-      // Revoke all active tokens for this client
-      await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      await oauthProvider.revokeClient(clientId);
       res.json({ revoked: true });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
@@ -2331,7 +2159,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       if (req.path !== '/admin') {
         return next();
       }
-      res.redirect('/admin/');
+      const pendingId = req.query.oauth_request;
+    res.redirect(oauthProvider.grants.hasPending(pendingId)
+      ? `/admin/?oauth_request=${pendingId}#oauth-consent` : '/admin/');
     });
     app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
       if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
@@ -2409,7 +2239,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
+  app.post('/mcp', requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
@@ -2878,7 +2708,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post(
     '/ingest',
     ingestRateLimiter,
-    requireBearerAuth({ verifier: oauthProvider, requiredScopes: ['write'], resourceMetadataUrl }),
+    requireBearerAuth({ verifier: resourceVerifier, requiredScopes: ['write'], resourceMetadataUrl }),
     express.raw({ type: '*/*', limit: ingestMaxBytes }),
     async (req: Request, res: Response) => {
       const startTime = Date.now();

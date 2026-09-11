@@ -11,6 +11,7 @@ import { readInstallReceipt, writeInstallReceipt } from '../src/core/agent-insta
 import { createPgliteBackup, rebaseManagedConfig, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
 import { writeBackupArchive } from '../src/core/backup/archive.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
 import { acquireLock, releaseLock, PgliteBusyError } from '../src/core/pglite-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -55,7 +56,16 @@ beforeAll(async () => {
   await withEnv({ DATABASE_URL: 'postgres://wrong.invalid/foreign', GBRAIN_DATABASE_URL: 'postgres://wrong.invalid/foreign', OPENAI_API_KEY: 'must-not-persist', GBRAIN_BRAIN_ID: 'foreign', GBRAIN_SOURCE: 'foreign' }, () => setupInAgent({ root, harness: 'grok-bot', bundle, sourceRef }));
   await withBrain(root, async engine => {
     await engine.executeRaw(`INSERT INTO facts (fact, source, source_id) VALUES ($1, 'fixture', 'default')`, ['unique DB-only durable fact']);
-    await engine.executeRaw(`INSERT INTO minion_jobs (name, status, data) VALUES ('subagent', 'waiting', '{}'), ('subagent', 'active', '{}'), ('subagent', 'delayed', '{}'), ('subagent', 'waiting-children', '{}'), ('subagent', 'paused', '{}'), ('subagent', 'completed', '{}')`);
+    const queue = new MinionQueue(engine);
+    for (const status of ['waiting', 'active', 'delayed', 'waiting-children', 'paused', 'completed']) {
+      // Current application submission stamps durable authority. Model each
+      // lifecycle state without executing work; active represents one claim.
+      const job = await queue.add('subagent', {}, {}, { allowProtectedSubmit: true });
+      if (status !== 'waiting') await engine.executeRaw(
+        "UPDATE minion_jobs SET status=$1, claim_generation=claim_generation+CASE WHEN $1='active' THEN 1 ELSE 0 END WHERE id=$2",
+        [status, job.id],
+      );
+    }
     await engine.executeRaw(`INSERT INTO sources (id, name, local_path) VALUES ('external', 'External fixture', $1)`, [join(temporary, 'outside')]);
     await engine.executeRaw(`INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, source_id, source_path) VALUES ('recovery-note', 'note', 'Recovery fixture', '', '', '{}', 'fixture', 'default', $1)`, [join(root, 'memory', 'note.md')]);
   });
@@ -152,19 +162,24 @@ process.exit(await child.exited);
 });
 
 test('existing database files after an interrupted init do not certify unfinished schema migrations', async () => {
-  const receipt = readInstallReceipt(root)!;
-  const schema = await withBrain(root, async engine => {
+  // This setup recovery has no running work. The separate backup fixture keeps
+  // its active jobs for the restore-quarantine assertions below.
+  const interruptedRoot = join(temporary, 'interrupted-root');
+  await setupInAgent({ root: interruptedRoot, harness: 'grok-bot', bundle, sourceRef });
+  const receipt = readInstallReceipt(interruptedRoot)!;
+  const schema = await withBrain(interruptedRoot, async engine => {
+    await engine.executeRaw("INSERT INTO facts (fact, source, source_id) VALUES ('interrupted init durable fact', 'fixture', 'default')");
     const current = Number(await engine.getConfig('version'));
     await engine.setConfig('version', String(current - 1));
     return current;
   });
   receipt.initialized = false; receipt.state = 'installing';
   writeInstallReceipt(receipt);
-  const repaired = await setupInAgent({ root, harness: 'grok-bot', bundle, sourceRef });
+  const repaired = await setupInAgent({ root: interruptedRoot, harness: 'grok-bot', bundle, sourceRef });
   expect(repaired.status).toBe('repaired');
-  expect(readInstallReceipt(root)!.schema_version).toBe(schema);
-  expect(readInstallReceipt(root)!.pending_runtime_migration).toBe(false);
-  expect(await withBrain(root, e => e.executeRaw('SELECT fact FROM facts'))).toContainEqual({ fact: 'unique DB-only durable fact' });
+  expect(readInstallReceipt(interruptedRoot)!.schema_version).toBe(schema);
+  expect(readInstallReceipt(interruptedRoot)!.pending_runtime_migration).toBe(false);
+  expect(await withBrain(interruptedRoot, e => e.executeRaw('SELECT fact FROM facts'))).toContainEqual({ fact: 'interrupted init durable fact' });
 });
 
 test('separate installed CLI processes remember, recall and forget despite hostile routing', async () => {

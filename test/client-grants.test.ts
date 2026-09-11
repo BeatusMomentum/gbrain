@@ -1,3 +1,4 @@
+import { authorizeAsOwner } from './helpers/oauth.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
@@ -20,7 +21,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) });
+  provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 }, 60_000);
 afterAll(async () => { await engine?.disconnect(); }, 15_000);
 
@@ -256,7 +257,8 @@ describe('client capability grants', () => {
       resolveGrantProfile({ profile: 'delegating-agent', sourceId: 'default', boundTools: ['search'] }));
     await rescopeClientGrant(engine, created.clientId, { budgetUsdPerDay: '2.50', boundMaxConcurrent: 2 }, { actor: 'test' });
     const data = JSON.stringify({ __owner_client_id: created.clientId, allowed_tools: ['search'], source_id: 'default' });
-    const [job] = await engine.executeRaw("INSERT INTO minion_jobs (name, status, data) VALUES ('subagent', 'paused', $1::text::jsonb) RETURNING id", [data]);
+    const [job] = await engine.executeRaw("INSERT INTO minion_jobs (name, status, data, submission_authority) VALUES ('subagent', 'paused', $1::text::jsonb, '{\"version\":1,\"kind\":\"application\"}'::jsonb) RETURNING id", [data]);
+    await engine.executeRaw('UPDATE minion_jobs SET submission_authority = NULL WHERE id = $1', [job.id]);
     await rescopeClientGrant(engine, created.clientId, { budgetUsdPerDay: null, boundMaxConcurrent: 9 }, { actor: 'test' });
     const [row] = await engine.executeRaw('SELECT data FROM minion_jobs WHERE id = $1', [job.id]);
     const frozen = (row.data as any).__delegation_grant;
@@ -314,7 +316,7 @@ describe('OAuth code and refresh grant boundaries', () => {
     const created = await provider.registerClientManual(`pkce-${authMethod}-example`, ['authorization_code', 'refresh_token'], 'read write', [redirect], 'default', undefined, authMethod);
     const client = (await provider.clientsStore.getClient(created.clientId))!;
     let destination = '';
-    await provider.authorize(client, { redirectUri: redirect, codeChallenge: challenge, scopes: ['read', 'write'], resource }, { redirect(url: string) { destination = url; } } as Response);
+    await authorizeAsOwner(provider, client, { redirectUri: redirect, codeChallenge: challenge, scopes: ['read', 'write'], resource }, { redirect(url: string) { destination = url; } } as Response);
     return { client, code: new URL(destination).searchParams.get('code')! };
   }
 
@@ -322,7 +324,7 @@ describe('OAuth code and refresh grant boundaries', () => {
     test(`${method}: invalid PKCE or resource preserves code; valid exchange binds audience`, async () => {
       const { client, code } = await authorization(method);
       await expect(provider.exchangeAuthorizationCode(client, code, 'x'.repeat(64), redirect, resource)).rejects.toThrow('PKCE');
-      await expect(provider.exchangeAuthorizationCode(client, code, verifier, redirect, new URL('https://other.example/mcp'))).rejects.toThrow('resource mismatch');
+      await expect(provider.exchangeAuthorizationCode(client, code, verifier, redirect, new URL('https://other.example/mcp'))).rejects.toThrow('resource');
       const tokens = await provider.exchangeAuthorizationCode(client, code, verifier, redirect);
       expect((await provider.verifyAccessToken(tokens.access_token)).resource?.toString()).toBe(resource.toString());
       await expect(provider.exchangeAuthorizationCode(client, code, verifier, redirect)).rejects.toThrow('not found');

@@ -14,6 +14,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
+import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -203,66 +204,75 @@ export async function forgetFactInFence(
   // fence keeps the live row for the next absorb to resurrect.
   const resolved = await resolvePageWriteTarget(engine, slug, row.source_id);
   if (!resolved.ok) return legacyExpire();
-  const filePath = resolved.filePath;
-  const tmpPath = `${filePath}.tmp`;
+  // Continue this accepted withdrawal under the source lock. Restarting the
+  // whole operation here would observe the expiry we just committed and skip
+  // its filesystem mirror as an already-forgotten request.
+  const mirrorWithdrawal = async (): Promise<ForgetFactResult> => {
+    const filePath = resolved.filePath;
+    const tmpPath = `${filePath}.tmp`;
 
-  if (!existsSync(filePath)) {
-    // File deleted out from under us — only the DB has the row.
-    // Legacy path is the safe behavior; the operator can fix the
-    // tree mismatch separately.
-    return legacyExpire();
-  }
-
-  return withPageLock(slug, async () => {
-    const body = readFileSync(filePath, 'utf-8');
-    // Fence missing the row (DB drifted from markdown) or its markers (race /
-    // corruption): fall through to legacy expire so the user's intent
-    // succeeds; doctor surfaces the drift separately.
-    const newBody = strikeFenceRow(body, targetRowNum, reason, today);
-    if (newBody === null) return legacyExpire(true);
-
-    // Atomic .tmp + parse-validate + rename.
-    writeFileSync(tmpPath, newBody, 'utf-8');
-    const tmpBody = readFileSync(tmpPath, 'utf-8');
-    const validate = parseFactsFence(tmpBody);
-    if (validate.warnings.length > 0) {
-      // Quarantine .tmp; leave the canonical file alone; fall back to
-      // DB expire so the user's forget intent still succeeds.
-      return legacyExpire(true);
+    if (!existsSync(filePath)) {
+      // File deleted out from under us — only the DB has the row.
+      // Legacy path is the safe behavior; the operator can fix the
+      // tree mismatch separately.
+      return legacyExpire();
     }
-    renameSync(tmpPath, filePath);
 
-    // Stamp the DB to match: valid_until = today, expired_at = now().
-    // This keeps DB query patterns (active facts WHERE expired_at IS NULL)
-    // accurate the moment the forget commits, without waiting for the
-    // next extract_facts cycle phase to reconcile.
-    await engine.executeRaw(
-      `UPDATE facts SET valid_until = $1, expired_at = now()
-       WHERE id = $2 AND expired_at IS NULL`,
-      [today, factId],
-    );
+    return withPageLock(slug, async () => {
+      const body = readFileSync(filePath, 'utf-8');
+      // Fence missing the row (DB drifted from markdown) or its markers (race /
+      // corruption): fall through to legacy expire so the user's intent
+      // succeeds; doctor surfaces the drift separately.
+      const newBody = strikeFenceRow(body, targetRowNum, reason, today);
+      if (newBody === null) return legacyExpire(true);
 
-    // #4696: mirror the rewritten file into the DB body, or the reconcile
-    // (which reads pages.compiled_truth) resurrects the claim before the
-    // next sync absorbs the file — and sync is commit-anchored, so that
-    // window lasts until the user commits. Parse + sanitize the FILE bytes
-    // as import-file.ts does. Body-only: content_chunks still carry the
-    // live claim, so the row KEEPS its old content_hash and the next sync
-    // re-imports + re-chunks. Stamping the importer's hash here made sync
-    // skip the page and the struck claim kept surfacing in chunk search.
-    // Never persist an EMPTY hash: a row that had none gets a row-shaped
-    // hash of its pre-mirror content, which the rewritten file can't match.
-    // Best-effort — file + facts row are already correct.
-    try {
-      const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
-      const page = await engine.getPage(slug, { sourceId: row.source_id });
-      if (page) {
-        await engine.refreshPageBody(slug, row.source_id,
-          sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-          page.content_hash || contentHash(page));
+      // Atomic .tmp + parse-validate + rename.
+      assertSourceFilesystemActive();
+      writeFileSync(tmpPath, newBody, 'utf-8');
+      const tmpBody = readFileSync(tmpPath, 'utf-8');
+      const validate = parseFactsFence(tmpBody);
+      if (validate.warnings.length > 0) {
+        // Quarantine .tmp; leave the canonical file alone; fall back to
+        // DB expire so the user's forget intent still succeeds.
+        return legacyExpire(true);
       }
-    } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
+      renameSync(tmpPath, filePath);
 
-    return { ok: true, path: 'fence', reason };
-  }, { timeoutMs: 5_000 });
+      // Stamp the DB to match: valid_until = today, expired_at = now().
+      // This keeps DB query patterns (active facts WHERE expired_at IS NULL)
+      // accurate the moment the forget commits, without waiting for the
+      // next extract_facts cycle phase to reconcile.
+      await engine.executeRaw(
+        `UPDATE facts SET valid_until = $1, expired_at = now()
+         WHERE id = $2 AND expired_at IS NULL`,
+        [today, factId],
+      );
+
+      // #4696: mirror the rewritten file into the DB body, or the reconcile
+      // (which reads pages.compiled_truth) resurrects the claim before the
+      // next sync absorbs the file — and sync is commit-anchored, so that
+      // window lasts until the user commits. Parse + sanitize the FILE bytes
+      // as import-file.ts does. Body-only: content_chunks still carry the
+      // live claim, so the row KEEPS its old content_hash and the next sync
+      // re-imports + re-chunks. Stamping the importer's hash here made sync
+      // skip the page and the struck claim kept surfacing in chunk search.
+      // Never persist an EMPTY hash: a row that had none gets a row-shaped
+      // hash of its pre-mirror content, which the rewritten file can't match.
+      // Best-effort — file + facts row are already correct.
+      try {
+        const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
+        const page = await engine.getPage(slug, { sourceId: row.source_id });
+        if (page) {
+          await engine.refreshPageBody(slug, row.source_id,
+            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+            page.content_hash || contentHash(page));
+        }
+      } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
+
+      return { ok: true, path: 'fence', reason };
+    }, { timeoutMs: 5_000 });
+  };
+  return hasSourceFilesystemLock(resolved.writeRoot)
+    ? mirrorWithdrawal()
+    : withSourceFilesystemLock(engine, resolved.writeRoot, mirrorWithdrawal);
 }

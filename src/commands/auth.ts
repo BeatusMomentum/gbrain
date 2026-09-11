@@ -538,6 +538,7 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
       case '--bound-tools': {
         const v = requireValue();
         out.boundTools = v.split(',').map(s => s.trim()).filter(Boolean);
+        if (out.boundTools.length === 0) throw new Error('--bound-tools requires at least one tool name');
         i += 2; break;
       }
       case '--delegated-slug-prefixes': out.delegatedSlugPrefixes = requireValue().split(',').map(s => s.trim()).filter(Boolean); i += 2; break;

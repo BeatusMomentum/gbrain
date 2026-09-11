@@ -15,11 +15,11 @@
 // No brace expansion, no ?, no [ ].
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
   "src/core/harness/**": ["test/e2e/harness-access.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
   "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts"],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
-  "src/commands/serve-http-consent.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the
   // key-gated live DeepSeek replay (self-skips without OPENROUTER_API_KEY).
   "src/core/ai/openrouter-families.ts": ["test/e2e/openrouter-deepseek-subagent-replay.live.test.ts"],
@@ -105,6 +105,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // reduce coverage vs the fail-closed run-everything default for unmapped paths.
   "src/core/cycle/inline-drain.ts": [
     "test/e2e/dream-synthesize-pglite.test.ts",
+    "test/e2e/minions-authority-parity.test.ts",
     "test/e2e/minions-concurrency.test.ts",
     "test/e2e/minions-resilience.test.ts",
     "test/e2e/minions-shell.test.ts",
@@ -268,7 +269,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // (per the plan-eng-review E1 decision); the daemon + built-in sources
   // + ingest_capture Minion handler all feed the in-process roundtrip
   // E2E AND the HTTP contract E2E for the webhook route.
+  "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts"],
+  "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
+  "src/commands/serve-http-oauth.ts": ["test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http.ts": [
+    "test/e2e/serve-http-consent.test.ts",
     "test/e2e/serve-http-ingest-webhook.test.ts",
     "test/e2e/serve-http-oauth.test.ts",
     "test/e2e/harness-access.test.ts",

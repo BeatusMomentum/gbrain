@@ -3,7 +3,7 @@ import { readClientGrant, grantValidationContext, delegationReasons, type Client
 import { validGrantPrefixes, normalizeGrantBrain } from '../grants/model.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
-import { UnrecoverableError } from './types.ts';
+import { UnrecoverableError } from './errors.ts';
 
 /** Immutable submission ceiling. Current grants may narrow it, never enlarge it. */
 export interface DelegationSnapshot {

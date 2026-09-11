@@ -72,7 +72,7 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
     const prospective = { clientId: '', clientName: input.name, revision: 0, revoked: false, ...resolved } as ClientGrant;
     validateClientGrant(prospective, await grantValidationContext(tx));
     if (input.dryRun) return { grant: prospective, before: null, dry_run: true, credentials: null as HarnessCredentials | null, credential_action: 'none' };
-    const provider = new GBrainOAuthProvider({ sql });
+    const provider = new GBrainOAuthProvider({ sql, transaction: fn => fn(sql) });
     const registered = await provider.registerClientManual(input.name, ['client_credentials'], prospective.scopes.join(' '), [], sourceId,
       prospective.federatedRead, 'client_secret_post', {
         boundTools: prospective.boundTools ?? undefined, boundSourceId: prospective.boundSourceId ?? undefined,

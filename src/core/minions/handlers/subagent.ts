@@ -37,7 +37,7 @@ import type {
 import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig, isConfigTruthy } from '../../config.ts';
-import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
+import { buildBrainTools, selectAllowedTools } from '../tools/brain-allowlist.ts';
 import {
   acquireLease,
   releaseLease,
@@ -474,9 +474,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // #1586: cycle-resolved source scope for tool-call OperationContexts.
       sourceId: data.source_id,
     });
-    const selectedTools = data.allowed_tools !== undefined
-      ? filterAllowedTools(registry, data.allowed_tools)
-      : registry;
+    const selectedTools = selectAllowedTools(registry, data.allowed_tools);
     const guardTools = (tools: ToolDef[], deferEmbeds = false) => guardDelegatedTools(engine, config, submitted, ctx.id, tools, deps.toolRegistry !== undefined, deferEmbeds);
     const toolDefs = guardTools(selectedTools);
 
@@ -546,9 +544,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         // that scoped its job read-only must not gain write capability by
         // setting mode: oneshot (put_page filtered out → no_put_page_tool
         // fallback → the equally-filtered loop).
-        const oneshotSelectedTools = data.allowed_tools !== undefined
-          ? filterAllowedTools(oneshotRegistry, data.allowed_tools)
-          : oneshotRegistry;
+        const oneshotSelectedTools = selectAllowedTools(oneshotRegistry, data.allowed_tools);
         const oneshotTools = guardTools(oneshotSelectedTools, true);
         const outcome = await runSubagentOneshot({
           engine,
