@@ -83,6 +83,7 @@ const get_page: Operation = {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy slug match.' },
     include_content: { type: 'boolean', description: 'Full markdown + revision, for editing.' },
+    content_only: { type: 'boolean', description: 'With include_content: only the round-trip fields (slug, type, title, revision, tags, content).' },
     include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
     include_timeline_entries: { type: 'boolean', description: 'Also return timeline rows.' },
     source_id: { type: 'string', description: "One source, or '__all__'." },
@@ -93,6 +94,9 @@ const get_page: Operation = {
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
     const includeTimelineEntries = (p.include_timeline_entries as boolean) === true;
+    // Only meaningful with include_content: a round-trip reader needs `content`
+    // + `revision`, not the same text again as compiled_truth + timeline.
+    const contentOnly = includeContent && (p.content_only as boolean) === true;
     // #4329: honor a per-call source_id (pre-fix it was silently dropped).
     // resolveRequestedScope (inside federatedSearchScope) enforces the remote
     // caller's grant on the explicit value.
@@ -198,6 +202,25 @@ const get_page: Operation = {
     // Opt-in (include_content: true): get_page is the most-called read op, and
     // `content` roughly duplicates compiled_truth + timeline — always emitting
     // it would double every reader's payload for the round-trip minority.
+    if (contentOnly) {
+      // Everything a get→edit→put_page round trip needs, without the duplicate
+      // compiled_truth / timeline / frontmatter the full shape carries next to
+      // `content` (a 30 KB page otherwise comes back as ~62 KB).
+      const deletedAt = (visibleBody as { deleted_at?: unknown }).deleted_at;
+      return {
+        slug: visibleBody.slug,
+        type: visibleBody.type,
+        title: visibleBody.title,
+        revision: snapshot!.revision,
+        tags,
+        content: serializePageToMarkdown(visibleBody as Page, tags),
+        ...(includeTimelineEntries
+          ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
+        ...(deletedAt ? { deleted_at: deletedAt } : {}),
+        ...(resolved_slug ? { resolved_slug } : {}),
+        ...(content_flag ? { content_flag } : {}),
+      };
+    }
     return {
       ...visibleBody,
       revision: snapshot!.revision,
