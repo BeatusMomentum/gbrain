@@ -36,9 +36,13 @@ function syncDirectory(directory: string): void {
     if (!(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? ''))) throw error;
   } finally { if (fd !== undefined) closeSync(fd); }
 }
+/** An idle refresh must not touch inode metadata, so chmod only when the mode differs (#5297). */
+function ensureMode(path: string, mode: number): void {
+  if ((statSync(path).mode & 0o777) !== mode) chmodSync(path, mode);
+}
 /** Returns whether the record changed; a changed record is already durable with its directory entry. */
 function writePrivateRecord(file: string, value: string): boolean {
-  if (existsSync(file) && readFileSync(file, 'utf8') === value) { chmodSync(file, 0o600); return false; }
+  if (existsSync(file) && readFileSync(file, 'utf8') === value) { ensureMode(file, 0o600); return false; }
   const temporary = `${file}.${randomUUID()}.tmp`;
   const fd = openSync(temporary, 'wx', 0o600);
   try { writeFileSync(fd, value); fsyncSync(fd); } finally { closeSync(fd); }
@@ -99,7 +103,7 @@ function resolveFilesystemPath(path: string, realpath: (path: string) => string)
 export function recordManagedRoots(brainId: string, records: ManagedRootRecord[], modeEpoch?: number): void {
   if (!/^[a-f0-9-]{36}$/i.test(brainId)) throw new OperationError('storage_error', 'Invalid managed-root brain identity.');
   if (!records.length) return;
-  const directory = registryDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 }); chmodSync(directory, 0o700);
+  const directory = registryDirectory(); mkdirSync(directory, { recursive: true, mode: 0o700 }); ensureMode(directory, 0o700);
   let changed = false;
   for (const record of records) {
     const root = canonicalFilesystemPath(record.local_path);
