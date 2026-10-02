@@ -53,19 +53,25 @@ function markerExists(path: string): boolean {
 }
 /** Shared refusal marker helps installations with separate homes. It NEVER grants ownership. */
 export function hasManagedRootMarker(path: string): boolean {
+  return managedRootMarkerFor(path) !== null;
+}
+/** The nearest ownership marker covering `path`: the root it marks and the marker file that proves it. */
+export function managedRootMarkerFor(path: string): { root: string; marker: string } | null {
   let current = canonicalFilesystemPath(path);
   for (;;) {
     // A prepared claim is already a durable refusal, including when its target
     // directory does not yet exist. Ownership still requires SQL/native proof.
     const reservation = join(dirname(current), `.gbrain-owner-${createHash('sha256').update(current).digest('hex')}.json`);
-    if (markerExists(reservation)) return true;
+    if (markerExists(reservation)) return { root: current, marker: reservation };
     if (existsSync(current) && statSync(current).isDirectory()) {
-      if (markerExists(join(current, '.gbrain-owner.json'))) return true;
+      for (const marker of [join(current, '.gbrain-owner.json'), join(current, '.gbrain-managed')]) {
+        if (markerExists(marker)) return { root: current, marker };
+      }
       const metadata = gitMetadataDirectory(current);
-      if (markerExists(join(current, '.gbrain-managed')) || metadata && markerExists(join(metadata, 'gbrain-managed.json'))) return true;
+      if (metadata && markerExists(join(metadata, 'gbrain-managed.json'))) return { root: current, marker: join(metadata, 'gbrain-managed.json') };
     }
     const parent = dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return null;
     current = parent;
   }
 }
@@ -117,20 +123,24 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
 }
 /** Available before connect, including while another process owns local PGLite. */
 export function registeredManagedRoots(): string[] {
+  return registeredManagedRootRecords().map(record => record.root);
+}
+/** The registry records with the source each root was recorded for (when the binding named one). */
+export function registeredManagedRootRecords(): Array<{ root: string; source_id?: string }> {
   const directory = registryDirectory();
   let files: string[];
   try { files = readdirSync(directory); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
-  const roots: string[] = [];
+  const records: Array<{ root: string; source_id?: string }> = [];
   for (const file of files.filter(file => file.endsWith('.json'))) {
     try {
       const value = JSON.parse(readFileSync(join(directory, file), 'utf8'));
       if (value.version !== 1 || typeof value.root !== 'string' || !isAbsolute(value.root)) throw new Error('invalid record');
-      roots.push(canonicalFilesystemPath(value.root));
+      records.push({ root: canonicalFilesystemPath(value.root), ...(typeof value.source_id === 'string' ? { source_id: value.source_id } : {}) });
     } catch {
       throw new OperationError('writer_coordinator_required', 'Managed-root ownership records are unreadable.',
         'Repair the local persistence registry through writer administration before running filesystem maintenance.');
     }
   }
-  return roots;
+  return records;
 }
