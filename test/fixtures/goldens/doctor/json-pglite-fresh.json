@@ -1268,7 +1268,7 @@
         },
         {
           "category": "meta",
-          "message": "Active pack gbrain-base-v2@1.2.0+1a2aee67 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.2.0+6c7be06e is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

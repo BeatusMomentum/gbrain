@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 207315,
-    "stdoutSha256": "bae588a07ca919e17dfe70adbc6b4642f1e6cb67ef353d1e6a1b25dbe7807a75",
+    "stdoutBytes": 208089,
+    "stdoutSha256": "a63cbbb5e6793515080dcb661c072dc74b491e1ff8fb8c1b3c4bbc9ba9c9bfd0",
     "toolNames": [
       "remember",
       "entity",
@@ -2946,17 +2946,37 @@
         "description": "Find disconnected pages. Default mode \"islanded\" (no live inbound AND no outbound link) matches get_health.orphan_pages; mode \"inbound\" is the legacy no-inbound-only view. Essential for content enrichment cycles.",
         "name": "find_orphans",
         "parameters": {
+          "count_only": "boolean?",
           "include_pseudo": "boolean?",
-          "mode": "string?"
+          "limit": "number?",
+          "mode": "string?",
+          "offset": "number?",
+          "source_id": "string?"
         },
         "schema": {
           "properties": {
+            "count_only": {
+              "description": "Return the totals with no rows.",
+              "type": "boolean"
+            },
             "include_pseudo": {
               "description": "Include auto-generated and pseudo pages (default: false)",
               "type": "boolean"
             },
+            "limit": {
+              "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan and next_offset names the next page.",
+              "type": "number"
+            },
             "mode": {
               "description": "#4524: orphan definition — 'islanded' (default; agrees with get_health.orphan_pages and doctor) or 'inbound' (legacy: no inbound links, even when the page links out).",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Skip the first N orphans (ordered by source_id, then slug).",
+              "type": "number"
+            },
+            "source_id": {
+              "description": "Only orphans from this source (it must be inside your source grant). Each row carries source_id and type.",
               "type": "string"
             }
           },

@@ -23,8 +23,8 @@
               "string",
               "array<string>"
             ],
-            "sql": "SELECT COUNT(*)::int AS count FROM facts WHERE source_id = $1 AND consolidated_at IS NULL AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND source != ALL($2::text[])",
-            "textSha256": "3cd47e8d9f8fe89e72128a27558b20d282056a7ce0310887d7d20a66e2b5607a"
+            "sql": "SELECT COUNT(*)::int AS count FROM facts WHERE source_id = $1 AND entity_slug IS NOT NULL AND consolidated_at IS NULL AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND source != ALL($2::text[])",
+            "textSha256": "1cd9fe0c315bfe9772c2498fa482e76353f8b456681482610b77b0fd03363b3e"
           }
         ]
       },
