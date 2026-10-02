@@ -27,7 +27,8 @@ import {
 } from '../core/embedding-migration.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../core/embed-backfill-lock.ts';
-import { PGVECTOR_HNSW_VECTOR_MAX_DIMS } from '../core/vector-index.ts';
+import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswIndexExpected } from '../core/vector-index.ts';
+import { annIndexValidity, buildDeferredAnnIndexes, canonicalChunkAnnIndex, mergeDeferredAnnIndexes, parseDeferredAnnIndexes } from '../core/embedding-ann-build.ts';
 import { redactPgUrl } from '../core/url-redact.ts';
 import { runEmbedCore, type EmbedResult, type parsePaceArgs } from './embed.ts';
 import { parseMigrateEmbeddingsFlags } from '../core/embedding-migration-cli.ts';
@@ -801,6 +802,8 @@ export async function executeMigrationFlow(
       reranker,
     };
     if (remaining === 0 && !embedResult.lock_lost) {
+      // #5088: ANN indexes are built only now, after the drain, and before the marker clears.
+      await buildMigrationAnnIndexes(engine, plan.to_dims, assertOwned);
       // Completion smoke check (D11): warn-don't-block self-retrieval. The
       // outcome is stamped into the completion marker (content-free) so
       // `--status` can READ it later without re-spending on live probes.
@@ -853,6 +856,26 @@ export async function executeMigrationFlow(
       try { await h.release(); } catch { /* best-effort; TTL is the backstop */ }
     }
   }
+}
+
+/**
+ * #5088: build the marker's deferred ANN indexes, plus the canonical chunk
+ * index when the cap policy expects it and it is missing or INVALID. Each
+ * built index leaves the marker in its own transaction, so a kill resumes.
+ */
+async function buildMigrationAnnIndexes(engine: BrainEngine, targetDims: number, assertOwned: (tx?: BrainEngine) => Promise<void>): Promise<void> {
+  const canonical = canonicalChunkAnnIndex();
+  const expected = hnswIndexExpected('vector', targetDims) && await annIndexValidity(engine, canonical.name) !== true ? [canonical] : [];
+  await buildDeferredAnnIndexes(engine, {
+    targetDims,
+    readPending: async () => mergeDeferredAnnIndexes(parseDeferredAnnIndexes((await readMigrationState(engine)).state?.deferred_ann_indexes), expected),
+    writePending: pending => engine.transaction(async tx => {
+      await assertOwned(tx);
+      const raw = await tx.getConfig(MIGRATION_STATE_KEY);
+      if (raw) await tx.setConfig(MIGRATION_STATE_KEY, JSON.stringify({ ...JSON.parse(raw) as MigrationState, deferred_ann_indexes: pending }));
+    }),
+    assertOwned: () => assertOwned(),
+  });
 }
 
 export interface RunMigrateEmbeddingsOpts {

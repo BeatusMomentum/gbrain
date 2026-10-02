@@ -32,6 +32,7 @@ import {
   MIGRATION_STATE_KEY,
 } from '../../src/core/embedding-migration.ts';
 import { runSchemaTransition } from '../../src/core/embedding-migration.ts';
+import { annIndexValidity, buildDeferredAnnIndexes } from '../../src/core/embedding-ann-build.ts';
 import type { ChunkInput } from '../../src/core/types.ts';
 
 const RUN = hasDatabase();
@@ -104,7 +105,8 @@ d('embedding migration (live Postgres + pgvector)', () => {
     resetGateway();
     // Restore the shared test DB's column width for subsequent e2e files.
     if (engine && originalDims && (await columnDims()) !== originalDims) {
-      await runSchemaTransition(engine, originalDims);
+      let pending = await runSchemaTransition(engine, originalDims);
+      await buildDeferredAnnIndexes(engine, { targetDims: originalDims, readPending: async () => pending, writePending: async next => { pending = next; }, log: () => {} });
     }
     await teardownDB();
     for (const [k, v] of Object.entries(savedEnv)) {
@@ -202,11 +204,13 @@ d('embedding migration (live Postgres + pgvector)', () => {
     expect(await engine.getConfig('embedding_model')).toBe(toModel);
     expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeTruthy();
 
-    // HNSW index rebuilt inside the same transaction.
+    // #5088: the HNSW index is NOT rebuilt inside the transition; the marker
+    // records it and the build phase runs after the re-embed.
     const idx = await engine.executeRaw<{ indexname: string }>(
       `SELECT indexname FROM pg_indexes WHERE tablename = 'content_chunks' AND indexname = 'idx_chunks_embedding'`,
     );
-    expect(idx.length).toBe(1);
+    expect(idx.length).toBe(0);
+    expect(JSON.parse((await engine.getConfig(MIGRATION_STATE_KEY))!).deferred_ann_indexes.map((i: { name: string }) => i.name)).toEqual(['idx_chunks_embedding']);
 
     // Re-embed through the real pipeline at the new width. NOTE: no
     // resetGateway() here — it would clear the installed fake transport.
@@ -241,6 +245,11 @@ d('embedding migration (live Postgres + pgvector)', () => {
       [qvec],
     );
     expect(rows.length).toBe(3);
+
+    let pending = JSON.parse((await engine.getConfig(MIGRATION_STATE_KEY))!).deferred_ann_indexes;
+    const built = await buildDeferredAnnIndexes(engine, { targetDims, readPending: async () => pending, writePending: async next => { pending = next; }, log: () => {} });
+    expect(built.built).toEqual(['idx_chunks_embedding']);
+    expect(await annIndexValidity(engine, 'idx_chunks_embedding')).toBe(true);
 
     await completeEmbeddingMigration(engine, plan);
     expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeFalsy();
