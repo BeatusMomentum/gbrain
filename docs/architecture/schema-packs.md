@@ -169,6 +169,15 @@ that gives `attended` a phrase `regex` decides attendance itself and keeps its
 outgoing semantics. Brains extracted before this rule re-derive with
 `gbrain extract links --source db --include-frontmatter`.
 
+A link type's `inference.regex` runs before the in-code link matchers, so a
+pack regex decides the verb for a markdown link when it matches. A rule marked
+`ner_only: true` runs only for NER body mentions (`gbrain extract ner`). The
+bundled `gbrain-base` and `gbrain-base-v2` packs mark their `founded`,
+`works_at`, `invested_in` and `advises` sketch regexes this way, so a bare
+"started" or "joined" near a markdown link no longer labels it `founded` or
+`works_at`; the tuned in-code matchers decide those links. Brains extracted
+before this change re-derive with `gbrain extract links --source db`.
+
 ## How the agent uses the active pack
 
 Every read + write path consults the active pack at runtime:

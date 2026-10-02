@@ -139,21 +139,36 @@ describe('frontmatterLinkTypeFromPack (T7b)', () => {
 // same text routed fine on gbrain-base.
 import { readFileSync } from 'node:fs';
 import { parseYamlMini } from '../src/core/schema-pack/index.ts';
+import { inferNerLinkType } from '../src/core/extract-ner.ts';
 
 describe('#2117: gbrain-base-v2 NER verb routes', () => {
   const p = new URL('../src/core/schema-pack/base/gbrain-base-v2.yaml', import.meta.url);
   const v2 = parseSchemaPackManifest(parseYamlMini(readFileSync(p, 'utf-8')), {
     path: p.pathname,
   });
+  const p1 = new URL('../src/core/schema-pack/base/gbrain-base.yaml', import.meta.url);
+  const v1 = parseSchemaPackManifest(parseYamlMini(readFileSync(p1, 'utf-8')), { path: p1.pathname });
 
-  test('founded/invested_in/advises/works_at resolve via pack regexes', () => {
-    expect(inferLinkTypeFromPack(v2, 'person', 'co-founded Acme Corp last year')).toBe('founded');
-    expect(inferLinkTypeFromPack(v2, 'person', 'invested in Acme Series A')).toBe('invested_in');
-    expect(inferLinkTypeFromPack(v2, 'person', 'advises widget-co on hiring')).toBe('advises');
-    expect(inferLinkTypeFromPack(v2, 'person', 'works at widget-co')).toBe('works_at');
+  test('founded/invested_in/advises/works_at resolve via pack regexes for NER', () => {
+    expect(inferNerLinkType(v2, 'person', 'co-founded Acme Corp last year')).toBe('founded');
+    expect(inferNerLinkType(v2, 'person', 'invested in Acme Series A')).toBe('invested_in');
+    expect(inferNerLinkType(v2, 'person', 'advises widget-co on hiring')).toBe('advises');
+    expect(inferNerLinkType(v2, 'person', 'works at widget-co')).toBe('works_at');
   });
 
   test('non-matching text still falls through to null', () => {
-    expect(inferLinkTypeFromPack(v2, 'person', 'a sentence with no verb signal')).toBeNull();
+    expect(inferNerLinkType(v2, 'person', 'a sentence with no verb signal')).toBeNull();
+  });
+
+  // #5882: the sketch regexes are NER-only, so markdown link typing falls
+  // through to the tuned in-code matchers instead of labelling a bare
+  // "started" founded or a bare "joined" works_at.
+  test('the sketch regexes never claim a markdown link context', () => {
+    for (const pack of [v2, v1]) {
+      expect(inferLinkTypeFromPack(pack, 'meeting', 'the migration work started on Monday')).not.toBe('founded');
+      expect(inferLinkTypeFromPack(pack, 'note', 'the migration work started on Monday')).toBeNull();
+      expect(inferLinkTypeFromPack(pack, 'note', 'she joined the call late')).toBeNull();
+      expect(inferLinkTypeFromPack(pack, 'note', 'co-founded Acme Corp last year')).toBeNull();
+    }
   });
 });
