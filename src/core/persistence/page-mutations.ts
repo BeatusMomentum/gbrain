@@ -17,7 +17,7 @@ import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal } from './model.ts';
-import { normalizeSubagentPageInput } from './page-input.ts';
+import { normalizeSubagentPageInput, undeclaredPageTypeWarning } from './page-input.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { isUnboundSourcePage, readUnboundWritePolicy, unboundSourceError } from './unbound-source.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
@@ -110,6 +110,8 @@ export async function submitPageMutation(ctx: OperationContext,
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
   delete intent.request_id;
   if (input.operation === 'put_page') await normalizeSubagentPageInput(ctx, intent);
+  const typeWarning = input.operation === 'put_page' && input.managedFileImport !== true
+    ? await undeclaredPageTypeWarning(ctx, { ...intent, slug }, sourceId) : null;
   if (input.operation === 'capture') {
     if (typeof p.content !== 'string' || !normalizeForHash(p.content) || detectBinaryNullByte(Buffer.from(p.content)) !== -1) {
       throw new OperationError('invalid_params', 'Capture requires nonempty text without binary NUL bytes.');
@@ -196,5 +198,6 @@ export async function submitPageMutation(ctx: OperationContext,
   const row = await admitWrite(ctx.engine, { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
-  return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs));
+  const response = writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs));
+  return typeWarning ? { ...response, type_warning: typeWarning } : response;
 }
