@@ -33,7 +33,10 @@ type ParamDefLike = {
   enum?: string[];
   default?: unknown;
   items?: ParamDefLike;
+  required?: boolean;
+  properties?: Record<string, ParamDefLike>;
 };
+// #5616 (O-DX-3): object members map to closed `properties` + `required`.
 function referenceParamDefToSchema(p: ParamDefLike): Record<string, unknown> {
   return {
     type: p.type === 'array' ? 'array' : p.type,
@@ -41,6 +44,11 @@ function referenceParamDefToSchema(p: ParamDefLike): Record<string, unknown> {
     ...(p.enum ? { enum: p.enum } : {}),
     ...(p.default !== undefined ? { default: p.default } : {}),
     ...(p.items ? { items: referenceParamDefToSchema(p.items) } : {}),
+    ...(p.properties ? {
+      properties: Object.fromEntries(Object.entries(p.properties).map(([k, v]) => [k, referenceParamDefToSchema(v)])),
+      required: Object.entries(p.properties).filter(([, v]) => v.required).map(([k]) => k),
+      additionalProperties: false,
+    } : {}),
   };
 }
 function legacyInlineMap(ops: typeof operations) {

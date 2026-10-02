@@ -24,7 +24,8 @@ export interface McpToolDef {
 }
 
 /**
- * Convert a single ParamDef to a JSON Schema fragment. Recursive on `items`.
+ * Convert a single ParamDef to a JSON Schema fragment. Recursive on `items`
+ * and object `properties` (closed, with member `required`).
  *
  * Single source of truth for ParamDef→JSON Schema mapping. Consumed by:
  * - buildToolDefs (stdio MCP server.ts via tool-defs.ts)
@@ -47,6 +48,11 @@ export function paramDefToSchema(p: ParamDef): Record<string, unknown> {
     ...(p.enum ? { enum: p.enum } : {}),
     ...(p.default !== undefined ? { default: p.default } : {}),
     ...(p.items ? { items: paramDefToSchema(p.items) } : {}),
+    ...(p.properties ? {
+      properties: Object.fromEntries(Object.entries(p.properties).map(([k, v]) => [k, paramDefToSchema(v)])),
+      required: Object.entries(p.properties).filter(([, v]) => v.required).map(([k]) => k),
+      additionalProperties: false,
+    } : {}),
   };
 }
 
