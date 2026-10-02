@@ -8,11 +8,11 @@
  */
 import { afterAll, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const home = mkdtempSync(join(tmpdir(), 'gbrain-init-skills-'));
+const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-init-skills-')));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 function skillFiles(dir: string): string[] {
@@ -30,8 +30,7 @@ test('fresh PGLite init publishes the packaged memory skills on this platform', 
   for (const key of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'DATABASE_URL', 'GBRAIN_DATABASE_URL']) delete env[key];
   const result = spawnSync(process.execPath, ['run', join(import.meta.dir, '..', 'src', 'cli.ts'), 'init', '--pglite', '--non-interactive', '--no-embedding'],
     { env, encoding: 'utf8', timeout: 120_000 });
-  expect(`${result.stderr}`).not.toContain('Skill publication requires bounded regular files');
-  expect(result.status).toBe(0);
+  expect({ status: result.status, stderr: result.status === 0 ? '' : result.stderr }).toEqual({ status: 0, stderr: '' });
   const skills = skillFiles(join(home, '.gbrain', 'content')).map(path => path.split(/[\\/]/).at(-2)).sort();
   expect(skills).toEqual(expect.arrayContaining(['memory-recall']));
 }, 150_000);

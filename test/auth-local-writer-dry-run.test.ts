@@ -8,12 +8,12 @@
  */
 import { afterAll, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateCommandFlags } from '../src/cli.ts';
 
-const home = mkdtempSync(join(tmpdir(), 'gbrain-local-writer-dry-run-'));
+const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-local-writer-dry-run-')));
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 function gbrain(args: string[]) {
@@ -30,7 +30,8 @@ test('the validator accepts --dry-run on every auth subcommand that parses it', 
 });
 
 test('auth local-writer register --replace --dry-run previews the regrant and changes nothing', () => {
-  expect(gbrain(['init', '--pglite', '--non-interactive', '--no-embedding']).status).toBe(0);
+  const init = gbrain(['init', '--pglite', '--non-interactive', '--no-embedding']);
+  expect({ status: init.status, stderr: init.status === 0 ? '' : init.stderr }).toEqual({ status: 0, stderr: '' });
   const before = JSON.parse(gbrain(['auth', 'local-writer', 'list', '--json']).stdout);
   const preview = gbrain(['auth', 'local-writer', 'register', 'cli', '--source-ids', 'default', '--replace', '--dry-run', '--json']);
   expect(preview.stderr).not.toContain('unknown flag');
