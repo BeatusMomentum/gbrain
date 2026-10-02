@@ -39,6 +39,7 @@ export const ERROR_CATALOGUE = {
   embedding_auth_failed: { code: 'embedding_auth_failed', docs: 'docs/guides/write-refusals.md#embedding_auth_failed' },
   activation_source_path_missing: { code: 'source_changed', docs: 'docs/guides/write-refusals.md#activation_source_path_missing' },
   facts_absorb_write_refused: { code: 'facts_absorb_write_refused', docs: 'docs/guides/write-refusals.md#facts_absorb_write_refused' },
+  source_checkout_missing: { code: 'recovery_required', docs: 'docs/guides/write-refusals.md#source_checkout_missing' },
   managed_pull_skipped: { code: 'managed_pull_skipped', docs: 'docs/guides/write-refusals.md#managed_pull_skipped' },
 } as const satisfies Record<string, CatalogueEntry>;
 
