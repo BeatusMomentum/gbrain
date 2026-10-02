@@ -26,6 +26,20 @@ describe.skipIf(!databaseUrl)('#5842 export-db-only quiescence on Postgres', () 
   afterEach(async () => {
     if (home) rmSync(home, { recursive: true, force: true });
     await teardownDB();
+    // The export binds the default source to a canonical worktree owned by the
+    // deleted HOME; setupDB does not clear ownership tables, so leaving them
+    // would park every later file's writes on a dead owner.
+    const sql = postgres(databaseUrl!, { max: 1, onnotice: () => {} });
+    try {
+      await sql`UPDATE persistence_brain SET enabled = false, activated_at = NULL WHERE singleton = 1`;
+      await sql`DELETE FROM gbrain_cycle_locks`;
+      for (const table of ['persistence_requests', 'persistence_topology_changes', 'persistence_source_bindings',
+        'persistence_worktrees', 'persistence_host_bindings', 'persistence_local_writers', 'shared_skill_state']) {
+        await sql.unsafe(`TRUNCATE ${table} CASCADE`);
+      }
+      await sql`UPDATE sources SET local_path = NULL, last_commit = NULL, last_sync_at = NULL WHERE id = 'default'`;
+      await sql`DELETE FROM config WHERE key LIKE 'shared_skills.%'`;
+    } finally { await sql.end(); }
   });
 
   async function run(args: string[]) {
