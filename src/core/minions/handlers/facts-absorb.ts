@@ -5,6 +5,8 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 import { loadConfig, loadConfigWithEngine } from '../../config.ts';
 import type { FactsBackstopResult } from '../../facts/backstop.ts';
+import { UnrecoverableError } from '../errors.ts';
+import { ERROR_CATALOGUE } from '../../error-catalogue.ts';
 
 /** Shared predicate: an inline result reporting execution-time unavailability. */
 export function factsAbsorbUnavailable(result: FactsBackstopResult): boolean {
@@ -73,8 +75,14 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
     ).catch(async (err: unknown) => {
-      const { writeFactsAbsorbFailure } = await import('../../facts/absorb-log.ts');
+      const { writeFactsAbsorbFailure, writeRefusalCode, DETERMINISTIC_WRITE_REFUSALS } = await import('../../facts/absorb-log.ts');
       await writeFactsAbsorbFailure(engine, slug, err, sourceId);
+      // #5362: a deterministic write refusal goes straight to dead; retrying re-runs inference before the same refusal.
+      const refusal = writeRefusalCode(err);
+      if (refusal && DETERMINISTIC_WRITE_REFUSALS.includes(refusal)) {
+        throw new UnrecoverableError(`facts_absorb_write_refused (${refusal}): ${(err as Error).message} Not retried. ` +
+          `Fix the cause (gbrain sources writer status ${sourceId}), then gbrain jobs retry ${job.id}. See ${ERROR_CATALOGUE.facts_absorb_write_refused.docs}`);
+      }
       throw err;
     });
     // Execution-time chat_unavailable in a KEYED worker is config drift —

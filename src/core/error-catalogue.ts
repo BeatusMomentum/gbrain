@@ -38,6 +38,7 @@ export const ERROR_CATALOGUE = {
   colon_slug_windows_write_through: { code: 'colon_slug_windows_write_through', docs: 'docs/guides/write-refusals.md#colon_slug_windows_write_through' },
   embedding_auth_failed: { code: 'embedding_auth_failed', docs: 'docs/guides/write-refusals.md#embedding_auth_failed' },
   activation_source_path_missing: { code: 'source_changed', docs: 'docs/guides/write-refusals.md#activation_source_path_missing' },
+  facts_absorb_write_refused: { code: 'facts_absorb_write_refused', docs: 'docs/guides/write-refusals.md#facts_absorb_write_refused' },
   managed_pull_skipped: { code: 'managed_pull_skipped', docs: 'docs/guides/write-refusals.md#managed_pull_skipped' },
 } as const satisfies Record<string, CatalogueEntry>;
 
