@@ -140,6 +140,7 @@ describe('frontmatterLinkTypeFromPack (T7b)', () => {
 import { readFileSync } from 'node:fs';
 import { parseYamlMini } from '../src/core/schema-pack/index.ts';
 import { inferNerLinkType } from '../src/core/extract-ner.ts';
+import { extractPageLinks } from '../src/core/link-extraction.ts';
 
 describe('#2117: gbrain-base-v2 NER verb routes', () => {
   const p = new URL('../src/core/schema-pack/base/gbrain-base-v2.yaml', import.meta.url);
@@ -163,6 +164,19 @@ describe('#2117: gbrain-base-v2 NER verb routes', () => {
   // #5882: the sketch regexes are NER-only, so markdown link typing falls
   // through to the tuned in-code matchers instead of labelling a bare
   // "started" founded or a bare "joined" works_at.
+  test('markdown extraction on gbrain-base-v2: a bare "started" or "joined" no longer types the link (#5882)', async () => {
+    const resolver = { resolve: async () => null };
+    const note = await extractPageLinks('notes/kickoff-example',
+      'The migration work [Acme](../companies/acme-example.md) started on Monday. [Alice](../people/alice-example.md) joined the call late.',
+      {}, 'note', resolver, { skipFrontmatter: true, pack: v2 });
+    const types = Object.fromEntries(note.candidates.map(c => [c.targetSlug, c.linkType]));
+    expect(types['companies/acme-example']).not.toBe('founded');
+    expect(types['people/alice-example']).not.toBe('works_at');
+    const founder = await extractPageLinks('people/bob-example', '[Bob](bob-example.md) co-founded [Acme](../companies/acme-example.md) in 2019.',
+      {}, 'person', resolver, { skipFrontmatter: true, pack: v2 });
+    expect(founder.candidates.find(c => c.targetSlug === 'companies/acme-example')?.linkType).toBe('founded');
+  });
+
   test('the sketch regexes never claim a markdown link context', () => {
     for (const pack of [v2, v1]) {
       expect(inferLinkTypeFromPack(pack, 'meeting', 'the migration work started on Monday')).not.toBe('founded');
