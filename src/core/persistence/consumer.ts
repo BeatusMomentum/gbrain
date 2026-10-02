@@ -10,6 +10,14 @@ import { publicationConcurrency } from './pool-capacity.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+
+/** #5233: one-line, redacted, length-capped error text for the consumer's stderr line. */
+function errorDetail(error: unknown): string | undefined {
+  const message = (error as { message?: unknown } | null)?.message;
+  if (typeof message !== 'string' || !message.trim()) return undefined;
+  return redactConnectionInfo(message).replace(/\s+/g, ' ').replaceAll('"', "'").trim().slice(0, 200);
+}
 
 /**
  * #5401: one resident projection invocation takes up to this many pages and
@@ -142,7 +150,8 @@ export class PersistenceConsumer {
    * probe every few seconds would keep ceil(idle_timeout / interval) sockets
    * alive. Idle probes therefore share one reserved connection; the rest of
    * the pool drains through idle_timeout. Pools too small to spare a long-hold
-   * permit fall back to pooled probes.
+   * permit fall back to pooled probes. The lane always comes from the ordinary
+   * pool, never the direct/session route, whose clients are scarcer (#5233).
    */
   private async acquireIdleLane(signal?: AbortSignal): Promise<ReservedConnection | undefined> {
     if (this.idleLane) return this.idleLane.conn;
@@ -152,7 +161,7 @@ export class PersistenceConsumer {
     if (!pool?.poolMax || pool.poolMax < 3 || Object.values(pool.tracked).some(count => count > 0)) return undefined;
     const held = Promise.withResolvers<void>();
     const reserved = Promise.withResolvers<ReservedConnection>();
-    const done = this.engine.withReservedConnection(async conn => { reserved.resolve(conn); await held.promise; })
+    const done = this.engine.withReservedConnection(async conn => { reserved.resolve(conn); await held.promise; }, { route: 'ordinary' })
       .catch(error => { reserved.reject(error); });
     const aborted = Promise.withResolvers<undefined>();
     const onAbort = () => aborted.resolve(undefined);
@@ -364,14 +373,15 @@ export class PersistenceConsumer {
     this.lastError = { code: typeof code === 'string' && (/^[A-Z0-9]{5}$/.test(code) || isWriteErrorCode(code)) ? code : 'storage_error', at: new Date().toISOString(),
       ...(this.lastPhaseError ? { phase: this.lastPhaseError } : {}) };
     if (this.opts.onError) this.opts.onError(error);
-    else this.log(this.lastPhaseError ?? 'execution', this.lastError.code);
+    else this.log(this.lastPhaseError ?? 'execution', this.lastError.code, errorDetail(error));
     this.lastPhaseError = undefined;
   }
-  private log(phase: string, code: string): void {
+  private log(phase: string, code: string, detail?: string): void {
     const key = `${phase}:${code}`, at = Date.now();
     if (this.lastLog && (at - this.lastLog.at < 1000 || this.lastLog.key === key && at - this.lastLog.at < 30_000)) return;
     this.lastLog = { key, at };
-    if (!this.opts.onError) process.stderr.write(`[persistence] phase=${phase} reason=${code}; unfinished work remains tracked; inspect writer status.\n`);
+    if (!this.opts.onError) process.stderr.write(`[persistence] phase=${phase} reason=${code}${detail ? ` message="${detail}"` : ''}`
+      + '; unfinished work remains tracked; fix: gbrain sources writer status --json; docs: docs/ENGINES.md#persistence-consumer-log\n');
   }
   private async execute(row: WriteRequest): Promise<boolean> {
     let renewing: Promise<unknown> | undefined;

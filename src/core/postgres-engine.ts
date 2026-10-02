@@ -617,10 +617,10 @@ export class PostgresEngine implements BrainEngine {
   }
 
   /** Long holds share a budget across every engine that uses the same physical pool. */
-  async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
+  async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: 'ordinary' }): Promise<T> {
     let pool = this.sql;
     let releasePermit: (() => void) | null = null;
-    if (!this._pageTransaction && this.connectionManager?.isDualPoolActive()) {
+    if (!this._pageTransaction && opts?.route !== 'ordinary' && this.connectionManager?.isDualPoolActive()) {
       try {
         const direct = await this.connectionManager.ddl();
         releasePermit = tryAcquirePoolLongHold(direct, this.connectionManager.describeMode().direct_pool_size ?? DEFAULT_DIRECT_POOL_SIZE);

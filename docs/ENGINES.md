@@ -577,6 +577,19 @@ checkpoint did not advance. The message names both errors (redacted, at most
 200 characters each). Fix the cause they name, then run
 `gbrain backfill <kind> --resume`.
 
+<a id="persistence-consumer-log"></a>**`[persistence] phase=<phase> reason=<code>`**
+(stderr). The resident write consumer could not finish a phase. `reason` is
+the SQLSTATE (for example `53300` when a pooler's client limit is reached),
+a write-error code, `storage_error`, or `deadline_exceeded` when the phase
+overran its five-second budget. `message` is the redacted error text, one line,
+at most 200 characters. Unfinished work stays tracked and is retried; nothing
+is lost. Run `gbrain sources writer status --json` to see what is waiting. The
+line is rate-limited (one per second, one per phase and code every 30 seconds).
+An idle consumer keeps one ordinary-pool connection for its work probe and
+never holds a direct or session-pooler connection, so a
+`GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
+idle `gbrain serve` processes.
+
 ## JSONB writes: never double-encode
 
 Writing a JS value into a `jsonb` column has exactly two correct forms. Get this
