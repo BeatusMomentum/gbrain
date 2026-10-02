@@ -15,6 +15,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
+import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 
 // --- Admin ---
 
@@ -66,7 +67,11 @@ const get_health: Operation = {
     } catch {
       migrations = { error: 'ledger_unreadable' };
     }
-    return { ...health, migrations };
+    // #4732: name the column embed_coverage and missing_embeddings measured
+    // (the same resolution getHealth uses), so a 0% coverage on an embedded
+    // brain points at a mis-routed column instead of a paid re-embed.
+    const { name: embedding_column } = await resolveActiveEmbeddingColumnFromEngine(ctx.engine, { fallbackToLegacy: true });
+    return { ...health, embedding_column, migrations };
   },
   scope: 'admin',
   cliHints: { name: 'health' },

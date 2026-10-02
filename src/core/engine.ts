@@ -766,9 +766,9 @@ export interface BrainEngine {
   /**
    * Run `fn` with a dedicated connection (Postgres: reserved backend;
    * PGLite: pass-through). See `ReservedConnection` for semantics and
-   * usage constraints. Release is automatic.
+   * usage constraints. Release is automatic. `route: 'ordinary'` skips the direct route.
    */
-  withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T>;
+  withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: 'ordinary' }): Promise<T>;
 
   // Pages CRUD
   /**

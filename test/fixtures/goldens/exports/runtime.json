@@ -306,6 +306,7 @@
         "markPagesExtractedBatch",
         "mergeOntologyFact",
         "migrateFactsToCanonical",
+        "onCheckout",
         "purgeDeletedPages",
         "putContradictionCacheEntry",
         "putDreamVerdict",

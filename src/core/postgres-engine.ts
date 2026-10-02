@@ -40,7 +40,7 @@ import {
   type BatchAuditSite,
 } from './retry.ts';
 import { isConnectionEndedError } from './retry-matcher.ts';
-import { CheckoutGauge, type PoolGaugeSnapshot } from './pool-gauge.ts';
+import { CheckoutGauge, PoisonedDiscardCounter, type PoolGaugeSnapshot } from './pool-gauge.ts';
 import {
   valueHash,
   normalizeDimension,
@@ -187,6 +187,8 @@ export class PostgresEngine implements BrainEngine {
    * via the prototype chain (same process, same pools). Fail-open.
    */
   private checkoutGauge = new CheckoutGauge();
+  private poisonedDiscards = new PoisonedDiscardCounter();
+  private readonly onPoisoned = (pool: 'read' | 'direct', status: string) => this.poisonedDiscards.record(pool, status);
   /**
    * #1471: module-singleton OWNERSHIP token. `true` only for the engine whose
    * connect() actually created the shared db.ts `sql` singleton (returned
@@ -368,6 +370,7 @@ export class PostgresEngine implements BrainEngine {
         // idempotent CREATE migrations flood stdout). Opt back in with
         // GBRAIN_PG_NOTICES=1.
         onnotice: process.env.GBRAIN_PG_NOTICES === '1' ? undefined : () => {},
+        onpoisoned: (status: string) => this.onPoisoned('read', status),
       };
       if (Object.keys(timeouts).length > 0) {
         opts.connection = timeouts;
@@ -387,6 +390,7 @@ export class PostgresEngine implements BrainEngine {
         url,
         parent: config.parentConnectionManager,
         readPoolOwnedExternally: true, // we own _sql; manager just routes
+        onpoisoned: this.onPoisoned,
       });
       this.connectionManager.setReadPool(this._sql);
     } else {
@@ -395,7 +399,7 @@ export class PostgresEngine implements BrainEngine {
       // decided atomically inside connect() (no await between its null-check and
       // pool assignment), so two concurrent module connects can't both claim
       // ownership. Store the token; only the owner tears the singleton down.
-      this._ownsModuleSingleton = await db.connect(config);
+      this._ownsModuleSingleton = await db.connect(config, { onpoisoned: status => this.onPoisoned('read', status) });
       this._connectionStyle = 'module';
 
       // v0.30.1: connection-manager wraps the module singleton.
@@ -404,6 +408,7 @@ export class PostgresEngine implements BrainEngine {
           url,
           parent: config.parentConnectionManager,
           readPoolOwnedExternally: true, // db.ts owns the pool
+          onpoisoned: this.onPoisoned,
         });
         this.connectionManager.setReadPool(db.getConnection());
       }
@@ -597,6 +602,7 @@ export class PostgresEngine implements BrainEngine {
     if (!this._pageTransaction) this.checkoutGauge.acquire('tx');
     try {
       return await (conn.begin(async (handle) => {
+        if (!this._pageTransaction) this.checkoutGauge.checkedOut();
         const tx = composablePostgresTransaction(handle);
         // Create a scoped engine with tx as its connection, no shared state mutation
         const txEngine = Object.create(this) as PostgresEngine;
@@ -612,10 +618,10 @@ export class PostgresEngine implements BrainEngine {
   }
 
   /** Long holds share a budget across every engine that uses the same physical pool. */
-  async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>): Promise<T> {
+  async withReservedConnection<T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: 'ordinary' }): Promise<T> {
     let pool = this.sql;
     let releasePermit: (() => void) | null = null;
-    if (!this._pageTransaction && this.connectionManager?.isDualPoolActive()) {
+    if (!this._pageTransaction && opts?.route !== 'ordinary' && this.connectionManager?.isDualPoolActive()) {
       try {
         const direct = await this.connectionManager.ddl();
         releasePermit = tryAcquirePoolLongHold(direct, this.connectionManager.describeMode().direct_pool_size ?? DEFAULT_DIRECT_POOL_SIZE);
@@ -637,6 +643,7 @@ export class PostgresEngine implements BrainEngine {
       releasePermit();
       throw e;
     }
+    this.checkoutGauge.checkedOut();
     try {
       const conn: ReservedConnection = {
         async executeRaw<R = Record<string, unknown>>(
@@ -676,12 +683,16 @@ export class PostgresEngine implements BrainEngine {
    * it optionally, same pattern as `engine.reconnect`). Fail-open: returns
    * null instead of throwing.
    */
-  getPoolDiagnostics(): { tracked: PoolGaugeSnapshot; poolMax: number | null } | null {
+  /** #5801: observe connection acquisition (see CheckoutGauge.onCheckout). Duck-typed like getPoolDiagnostics. */
+  onCheckout(listener: () => void): () => void { return this.checkoutGauge.onCheckout(listener); }
+
+  getPoolDiagnostics(): { tracked: PoolGaugeSnapshot; poolMax: number | null; poisonedDiscards: number } | null {
     try {
       const max = (this.sql as unknown as { options?: { max?: number } }).options?.max;
       return {
         tracked: this.checkoutGauge.snapshot(),
         poolMax: typeof max === 'number' ? max : null,
+        poisonedDiscards: this.poisonedDiscards?.count ?? 0,
       };
     } catch {
       return null;
@@ -3024,7 +3035,7 @@ export class PostgresEngine implements BrainEngine {
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
         reserved = signal && typeof conn.reserve === 'function' ? await reserveWithCancellation(opts => conn.reserve(opts), signal) : undefined;
-        if (reserved) conn = reserved;
+        if (reserved) { conn = reserved; this.checkoutGauge.checkedOut(); }
         owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
         if (signal && !hasPostgresCancellationCapability(owner)) throw postgresCancellationUnavailable();

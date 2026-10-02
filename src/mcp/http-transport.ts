@@ -260,11 +260,11 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       const rowId = row.id as string;
       const rowName = row.name as string;
       // Debounced last_used_at update — only writes once per token per 60s.
-      // SQL-level WHERE clause keeps this race-tolerant even under concurrent requests.
-      sql`UPDATE access_tokens
-          SET last_used_at = now()
-          WHERE id = ${rowId}
-            AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')`
+      // SQL-level WHERE clause keeps this race-tolerant even under concurrent requests;
+      // SKIP LOCKED keeps a row lock held elsewhere from parking a pool slot (#5730).
+      sql`UPDATE access_tokens SET last_used_at = now()
+          WHERE id IN (SELECT id FROM access_tokens WHERE id = ${rowId}
+            AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`
         .catch(() => { /* fire-and-forget */ });
       // v0.28: extract per-token takes-holder allow-list. Fail-safe default
       // is ['world'] — a token with no permissions row sees public claims only.

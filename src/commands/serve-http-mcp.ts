@@ -4,6 +4,7 @@
  * verifier, the per-request effective surface, tools/list and tools/call
  * through the shared dispatcher, request logging and the admin SSE feed.
  */
+import { createHash } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -340,6 +341,12 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
     tokenSourceId,
   );
 
+  // #4817: written before dispatch, so a request that never returns (a spin
+  // the stall watchdog later kills) still leaves its op name and an argument
+  // digest behind. The digest identifies the request without logging content.
+  let argsDigest = 'none';
+  try { argsDigest = createHash('sha256').update(JSON.stringify(params ?? null)).digest('hex').slice(0, 16); } catch { /* unserializable */ }
+  process.stderr.write(`[gbrain-serve] dispatch op=${name} args_sha256=${argsDigest}\n`);
   let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
   try {
     toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {

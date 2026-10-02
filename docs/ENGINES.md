@@ -516,7 +516,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS |
 | `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
 | `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
-| `pool_exhausted` | 53300 / session-slot exhaustion — `export GBRAIN_POOL_SIZE=2` guidance |
+| `pool_exhausted` | 53300 / session-slot exhaustion — [pool sizing](#pool-sizing) guidance: `export GBRAIN_POOL_SIZE=6` per long-running process, fewer processes |
 | `conn_refused` | ECONNREFUSED — docker-start arm for gbrain's own container; pooler rewrite for Supabase direct URLs |
 | `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent + Supabase suggests a paused project |
 | `network_unreachable` | ENETUNREACH/ETIMEDOUT — often an IPv6-only direct host; session-pooler rewrite |
@@ -549,6 +549,87 @@ restores die-on-startup. Scope: Postgres startup failures only — PGLite startu
 keep die-on-startup (that lane's repair is `gbrain pglite-repair`), and
 mid-session outages ride the engine's own reconnect plus the per-call
 classified envelopes.
+
+### Pool sizing
+
+<a id="pool-sizing"></a>Each gbrain process opens its own ordinary pool of
+`GBRAIN_POOL_SIZE` connections (default 10; environment variable only, no
+config key). A long-running process (`gbrain serve`, `gbrain autopilot`,
+`gbrain jobs work`) needs at least **6**: two for write publication, one for the
+idle work probe, one each for the projection and effects workers, and one for
+reads and tool calls. Below that, boot or projection draining stalls under
+traffic. One-shot CLI commands can use `GBRAIN_POOL_SIZE=2`.
+
+Size the pooler for every process at once:
+
+```
+long-running processes x GBRAIN_POOL_SIZE
+  + processes with GBRAIN_DIRECT_DATABASE_URL x GBRAIN_DIRECT_POOL_SIZE (default 3)
+  + one-shot commands running at the same time x their pool
+  <= the pooler's client limit (Supabase Supavisor: the project's pool_size)
+```
+
+When the sum does not fit, run fewer long-running processes (for example one
+shared `gbrain serve --http` instead of one stdio `serve` per agent session),
+or raise the pooler's limit. Do not lower a long-running process below 6.
+`pool_exhausted` errors (SQLSTATE `53300`) and the
+[serve boot timeout](#serve-boot-timeout) print this guidance.
+
+<a id="serve-boot-timeout"></a>**`serve_boot_timeout`** (stderr, exit 1).
+`gbrain serve` did not finish booting within `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
+(default 60; 0 disables), so it released the database and exited. The line
+names the boot phase that never finished (`source_preflight`,
+`writeback_config`, `mcp_connect`, `source_scope`, `persistence_consumer`,
+`resolve_ipc_bind`, `startup_sweep`) and the pool pressure
+(`pool=<tracked checkouts>/<pool max>`). When the pool is below 6 or saturated,
+the fix is `export GBRAIN_POOL_SIZE=6` plus pooler sizing as above; otherwise
+check the configured provider endpoints for the named phase, or raise the
+timeout.
+
+### Pool and transaction diagnostics
+
+These warn lines and errors come from the Postgres engine's connection pools.
+Each one names a stable code, its cause, a command and this anchor.
+
+<a id="pg-connection-poisoned"></a>**`pg_connection_poisoned`** (warn).
+A pooled connection came back to the pool inside a transaction (ReadyForQuery
+status `T`) or a failed one (`E`), usually because a caller released a reserved
+connection without `COMMIT` or `ROLLBACK`. The driver terminates that connection
+instead of reusing it, so later statements never run inside the leftover
+transaction and never fail with SQLSTATE `25P02`. Queued statements move to a
+fresh connection. The line names the status byte and the pool (`read` or
+`direct`) and carries no query text. `getPoolDiagnostics().poisonedDiscards`
+counts discards per engine. There is no opt-out. Nothing needs to be repaired;
+if the line repeats, run `gbrain doctor --json` and report the warn lines with
+the operations that preceded them. A pool created with `max: 1` keeps the
+driver's documented single-connection idiom (`BEGIN` as an ordinary query)
+for unreserved statements.
+
+<a id="backfill-rollback-failed"></a>**`backfill_rollback_failed`** (error).
+A `gbrain backfill` batch failed, and its `ROLLBACK` failed too. The run stops
+rather than retrying on a connection whose transaction state is unknown; the
+driver discards that connection. Nothing from the batch was committed and the
+checkpoint did not advance. The message names both errors (redacted, at most
+200 characters each). Fix the cause they name, then run
+`gbrain backfill <kind> --resume`.
+
+<a id="persistence-consumer-log"></a>**`[persistence] phase=<phase> reason=<code>`**
+(stderr). The resident write consumer could not finish a phase. `reason` is
+the SQLSTATE (for example `53300` when a pooler's client limit is reached),
+a write-error code, `storage_error`, or `deadline_exceeded` when the phase
+overran its five-second budget. `message` is the redacted error text, one line,
+at most 200 characters. Connection-wait evidence follows on Postgres:
+`first_conn_ms` is the time from phase start until the phase obtained a
+connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
+one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
+`loop_lag_ms` is the longest event-loop delay during the phase (a busy or
+starved process). The same fields appear in the consumer's status snapshot
+under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting. The
+line is rate-limited (one per second, one per phase and code every 30 seconds).
+An idle consumer keeps one ordinary-pool connection for its work probe and
+never holds a direct or session-pooler connection, so a
+`GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
+idle `gbrain serve` processes.
 
 ## JSONB writes: never double-encode
 

@@ -50,6 +50,8 @@ export class MigrationsRunningError extends Error {
 }
 
 export interface MigrationOrchestrationLock {
+  /** Postgres lease acquisition token; quiescence checks exclude this runner's own row by it. */
+  leaseToken?: string;
   /** Throws MigrationsRunningError when the lease was lost to another runner. */
   assertHeld(): Promise<void>;
   release(): Promise<void>;
@@ -125,6 +127,7 @@ async function acquirePostgres(config: GBrainConfig): Promise<MigrationOrchestra
   }, LEASE_REFRESH_MS);
   timer.unref?.();
   return {
+    leaseToken: handle.acquisitionToken,
     assertHeld: async () => {
       if (await handle.refresh()) return;
       const snapshot = await inspectLock(engine, MIGRATION_ORCHESTRATION_LOCK_ID).catch(() => null);
