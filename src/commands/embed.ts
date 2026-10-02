@@ -1707,7 +1707,11 @@ async function embedAllStale(
       try {
         const wide = await engine.countStaleChunks({ ...sourceOpt, signature, includeNullSignature: true });
         const narrow = await engine.countStaleChunks({ ...sourceOpt, signature });
-        const leftBehind = wide - narrow;
+        // #5527: a NULL-signature page whose vectors already match the current
+        // model, width and text is only missing its stamp, not in another space.
+        const currentSpace = await countRestampOnlyChunks(engine, { signature, sourceId, includeNullSignature: true })
+          - await countRestampOnlyChunks(engine, { signature, sourceId });
+        const leftBehind = wide - narrow - currentSpace;
         if (leftBehind > 0) {
           serr(
             `  [embed] WARNING: ${leftBehind} embedded chunk(s) sit on pages with no recorded ` +
