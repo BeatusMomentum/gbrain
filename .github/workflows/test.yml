@@ -143,6 +143,8 @@ jobs:
         run: bun test --timeout 60000 test/guarded-http-tls.serial.test.ts
       - name: Colon-slug Windows refusals and bound explicit reads (#5032, #5081)
         run: bun test --timeout 60000 test/colon-slug-windows-5032.test.ts test/cross-lane-5081-5032.test.ts
+      - name: Windows durability, skill bundles and local-writer flags (#5595, #5475)
+        run: bun test --timeout 60000 test/fs-durable.test.ts test/persistence-windows-flush-5595.test.ts test/bundle-files-windows-5475.test.ts test/init-packaged-skills-native.test.ts test/auth-local-writer-dry-run.test.ts test/scripts/durable-flush-guard.test.ts
 
   dependency-audit:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
