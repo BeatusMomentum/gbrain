@@ -65,7 +65,7 @@ export async function runReport(args: string[]) {
 
   const page = `---
 title: "${title} -- ${dateStr}"
-type: report
+type: note
 report_type: ${reportType}
 date: ${dateStr}
 time: "${timePretty}"
