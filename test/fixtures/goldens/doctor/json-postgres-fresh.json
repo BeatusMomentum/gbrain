@@ -892,6 +892,12 @@
         },
         {
           "category": "ops",
+          "message": "Brain-wide maintenance jobs are finishing within their deadline.",
+          "name": "global_maintenance_timeouts",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "details": {
             "active_ids": [],
             "authorizable": {},

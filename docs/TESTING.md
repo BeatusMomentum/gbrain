@@ -267,6 +267,27 @@ E2E schedule does not shorten a PR critical path dominated by persistence.
 Report matched executed timings separately from dry-run partition estimates,
 including setup, queueing and retries; never count skip-only output as coverage.
 
+### Scale tier
+
+`bun run test:scale -- --pages 2000 [--seed 1] [--out <file.json>]` is the
+contributor scale loop (`scripts/scale/run.ts`). It generates a deterministic
+two-source brain from the seed (`scripts/scale/fixture.ts`; links, timeline
+bullets, partly overlapping bodies, island pages; no embeddings), imports it
+into a fresh in-memory PGLite brain under a temporary `GBRAIN_HOME`, runs
+`extract all --source db`, and writes a JSON report plus a summary: import
+rate (last 10% vs first 10% per-page cost), planner health (hot tables with
+statistics, the worst Nested Loop count in the backlink plan), and p50 over
+five runs after a warmup for `get_health`, `list_pages`, local and MCP-path
+`search`, `traverse_graph` depth 3, `get_backlinks` and `find_orphans`, each
+with a known-answer check. It is report-only: it exits 0 whatever the numbers
+say (a harness crash exits 1) and no CI job runs it yet. The gate shape,
+cadence and enforcement are defined once, by O-CEO-16 and O-ENG-16 in the
+fix-wave-8 plan: rate, planner-health and known-answer checks become enforced
+in the F4 scale tier, and interactive ceilings stay report-only until five
+consecutive nightly runs are stable. Reproduce a report with its printed seed
+and page count. The fixture's determinism is pinned by
+`test/scripts/scale-fixture.test.ts`.
+
 ### Authoring gate
 
 Before adding a test, answer four questions in the PR description or the test

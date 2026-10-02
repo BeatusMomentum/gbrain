@@ -2208,8 +2208,8 @@
         "idempotent": true,
         "name": "canonical_page_revisions_and_guards",
         "sql": {
-          "length": 3123,
-          "sha256": "acb90c437adee99064c907b71bdeca04b4f0600663ec122e759ef155ebe33b3c"
+          "length": 4650,
+          "sha256": "37f44616fc2a02dfaf6888c456b0bb2fc5f1ca8474fc48e147e903d981ff3b88"
         },
         "sqlFor": "absent",
         "transaction": "absent",

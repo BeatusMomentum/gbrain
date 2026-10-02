@@ -24,6 +24,12 @@ const MIGRATION_WAVE_TESTS = [
 ];
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  // Fix wave 8, Lane G: reindex auto-concurrency sizing (#5181).
+  "src/commands/reindex.ts": ["test/e2e/reindex-auto-workers-5181.test.ts"],
+  // Fix wave 8, Lane G: deferred ANN build after the embedding re-embed (#5088).
+  // Fix wave 8, Lane G: page revision rollout (#5216).
+  "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts"],
+  "src/core/embedding-ann-build.ts": ["test/e2e/migrate-embeddings-ann-build-5088-postgres.test.ts", "test/e2e/migrate-embeddings-postgres.test.ts"],
   // Fix wave 4, Lane D: the apply-migrations orchestration lease (#5693), source deletes and
   // orphan bindings (#5732), and deactivate racing admission (#5455).
   "src/core/migration-orchestration-lock.ts": ["test/e2e/apply-migrations-orchestration-lock.test.ts", "test/e2e/export-db-only-own-lease-postgres.test.ts"],

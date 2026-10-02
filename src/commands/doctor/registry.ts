@@ -78,6 +78,7 @@ import {
   salienceEntry,
 } from './checks/knowledge-health.ts';
 import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/queue-assets.ts';
+import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-timeouts.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { decideHealthEntry } from './checks/decide.ts';
@@ -133,6 +134,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   effectiveDateEntry,
   salienceEntry,
   queueHealthEntry,
+  globalMaintenanceTimeoutsEntry,
   legacyJobAuthorityEntry,
   indexAuditEntry,
   imageAssetsEntry,

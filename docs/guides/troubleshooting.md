@@ -182,3 +182,26 @@ previous statement while you report it:
 
 The guard is retired in the next release; that release prints a one-time notice
 when the inert setting is still present.
+
+## Global maintenance timeouts
+
+**Doctor warns `global_maintenance_timeouts`, or late maintenance phases
+(orphans, purge, the brain-wide embed) never seem to run?** On a large brain
+one `autopilot-global-maintenance` job may not fit every phase before its
+deadline (30 minutes by default). Each job now stops starting phases that its
+deadline would cut off and the next job resumes at that phase, so one pass can
+span several jobs; the resume point is the config row
+`autopilot.global_maintenance.progress`. A phase that was running when a job
+died is skipped for the rest of that pass so the others still run, and doctor
+warns once it has killed three jobs in a row (or the last three jobs all died
+at the deadline).
+
+1. Run the named phase in the foreground, without the job deadline:
+   `gbrain dream --phase <name>` (for example `gbrain dream --phase embed`).
+2. Give the job more time if your brain needs it:
+   `gbrain config set autopilot.global_maintenance_timeout_ms 3600000`, or set
+   `GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS` in the autopilot service environment
+   (the variable wins over the config key; values below 60000 are ignored).
+   Unset both to return to the default.
+3. Confirm with `gbrain doctor`: `global_maintenance_timeouts` is `ok` after the
+   next job finishes within its deadline.

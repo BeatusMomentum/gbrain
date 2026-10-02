@@ -538,6 +538,7 @@ const list_pages: Operation = {
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
       excludePrivate,
+      listColumnsOnly: true,
       ...scope,
     });
     const truncated = rows.length > limit;
