@@ -204,7 +204,7 @@ const get_page: Operation = {
       ...(content_flag ? { content_flag } : {}),
     };
   },
-  scope: 'read',
+  scope: 'read', mutating: false,
   cliHints: { name: 'get', positional: ['slug'] },
 };
 
@@ -275,7 +275,7 @@ const fetch_page: Operation = {
       },
     };
   },
-  scope: 'read',
+  scope: 'read', mutating: false,
   cliHints: { name: 'fetch', positional: ['id'] },
 };
 
@@ -584,7 +584,7 @@ const list_pages: Operation = {
       ...(pg.deleted_at ? { deleted_at: pg.deleted_at } : {}),
     }));
   },
-  scope: 'read',
+  scope: 'read', mutating: false,
   cliHints: { name: 'list' },
 };
 

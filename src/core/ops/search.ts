@@ -449,7 +449,7 @@ const search: Operation = {
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap,
       rows => buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types }));
   },
-  scope: 'read',
+  scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
 };
 
@@ -898,7 +898,7 @@ const query: Operation = {
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap,
       async rows => ({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types })), crag }));
   },
-  scope: 'read',
+  scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },
 };
 
@@ -925,7 +925,7 @@ const assemble_evidence: Operation = {
     token_budget: { type: 'number', description: 'Token budget for the delivered evidence (default search.return_budget_default = 6000, auto search.return_budget_conversation = 24000; remote max 32000).' },
     detail: { type: 'string', enum: ['low', 'medium', 'high'], description: "As query: 'low' delivers compiled truth only (no timeline text)." },
   },
-  scope: 'read',
+  scope: 'read', mutating: false,
   annotations: { title: 'assemble evidence', readOnlyHint: true },
   handler: async (ctx, p) => {
     const hits = p.hits;
@@ -1013,7 +1013,7 @@ const search_modes: Operation = {
     'the payload spells this out). Never mutates; to change modes, tell the user to set the ' +
     'search.mode config key on the brain host.',
   params: {},
-  scope: 'read',
+  scope: 'read', mutating: false,
   area: 'search',
   handler: async (ctx) => {
     const { buildModesReport, redactReadinessForRemote } = await import('../search/modes-report.ts');

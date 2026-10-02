@@ -112,6 +112,10 @@ describe('buildToolDefs', () => {
     expect(defs.get('put_page')?.annotations).toEqual({ readOnlyHint: false });
     expect(defs.get('edit_page')?.annotations).toEqual({ readOnlyHint: false });
     expect(defs.get('recall')?.annotations?.readOnlyHint).toBe(true);
+    // The core reads in ops/pages.ts and ops/search.ts carry explicit tags, so agents see them as read-only.
+    for (const name of ['get_page', 'fetch', 'list_pages', 'search', 'query', 'assemble_evidence', 'search_modes']) {
+      expect({ name, readOnlyHint: defs.get(name)?.annotations?.readOnlyHint }).toEqual({ name, readOnlyHint: true });
+    }
     for (const op of operations) {
       if (op.mutating === true && !op.annotations) expect(defs.get(op.name)?.annotations?.readOnlyHint).toBe(false);
     }
