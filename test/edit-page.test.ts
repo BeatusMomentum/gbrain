@@ -205,16 +205,16 @@ describe('edit_page protected fences and privacy', () => {
 describe('edit_page timeline semantics', () => {
   test('removing a materialized timeline bullet deletes its row in one version; replay changes nothing', async () => {
     await seed('notes/t', 'Body.\n');
-    const entry = await call('add_timeline_entry', { slug: 'notes/t', date: '2026-03-04', summary: 'Example milestone', request_id: randomUUID() });
-    expect({ isError: entry.isError, text: entry.text }).toMatchObject({ isError: false });
-    expect((await engine.getTimeline('notes/t', { sourceId: 'default' })).length).toBe(1);
+    // A database-only row: the next coordinated write materializes it with a marker.
+    await engine.addTimelineEntry('notes/t', { date: '2026-03-04', summary: 'Example milestone', source: 'conformance' }, { sourceId: 'default' });
+    expect((await edit('notes/t', [{ old_text: 'Body.', new_text: 'Body, touched.' }])).isError).toBe(false);
     const view = (await read('notes/t')).content;
     const lines = view.split('\n');
     const bullet = lines.findIndex(line => line.includes('Example milestone'));
     expect(bullet).toBeGreaterThan(0);
-    const marker = lines[bullet - 1].includes('gbrain:materialized') ? `${lines[bullet - 1]}\n` : '';
+    expect(lines[bullet - 1]).toContain('gbrain:materialized');
     const versionsBefore = await versions('notes/t');
-    const removed = await edit('notes/t', [{ old_text: `${marker}${lines[bullet]}\n`, new_text: '' }]);
+    const removed = await edit('notes/t', [{ old_text: `${lines[bullet - 1]}\n${lines[bullet]}`, new_text: '' }]);
     expect({ isError: removed.isError, text: removed.text }).toMatchObject({ isError: false });
     expect((await read('notes/t')).content).not.toContain('Example milestone');
     expect(await engine.getTimeline('notes/t', { sourceId: 'default' })).toEqual([]);
