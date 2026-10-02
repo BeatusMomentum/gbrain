@@ -491,6 +491,10 @@
       },
       {
         "category": "ops",
+        "name": "global_maintenance_timeouts"
+      },
+      {
+        "category": "ops",
         "name": "legacy_job_authority"
       },
       {

@@ -228,6 +228,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pool_budget',
   'progressive_batch_audit_health',
   'queue_health',
+  // #4578: brain-wide maintenance jobs dying at their deadline.
+  'global_maintenance_timeouts',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.
   'legacy_job_authority',
   'reranker_health',

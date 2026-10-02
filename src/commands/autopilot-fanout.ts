@@ -659,6 +659,21 @@ export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = D
 }
 
 /**
+ * #4578: the global maintenance job deadline. Precedence:
+ * GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS > config autopilot.global_maintenance_timeout_ms
+ * > the autopilot full-cycle default. Values below one minute are ignored.
+ */
+export async function resolveGlobalMaintenanceTimeoutMs(engine: BrainEngine, fallbackMs: number): Promise<number> {
+  const parse = (raw: string | null | undefined) => {
+    const n = raw ? Number(raw) : NaN;
+    return Number.isSafeInteger(n) && n >= 60_000 ? n : null;
+  };
+  return parse(process.env.GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS)
+    ?? parse(await engine.getConfig('autopilot.global_maintenance_timeout_ms'))
+    ?? fallbackMs;
+}
+
+/**
  * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
  * that runs the `mixed` + `global` cycle phases ONCE per
  * window, instead of N per-source cycles each running them concurrently (the
@@ -688,6 +703,7 @@ export async function dispatchGlobalMaintenance(
     return { dispatched: false, reason: 'fresh' };
   }
 
+  const timeoutMs = await resolveGlobalMaintenanceTimeoutMs(engine, opts.timeoutMs);
   const job = await queue.add(
     'autopilot-global-maintenance',
     { repoPath: opts.repoPath, phases: MAINTENANCE_PHASES },
@@ -698,7 +714,7 @@ export async function dispatchGlobalMaintenance(
       // brain-wide pass is still in flight — so duplicates never stack.
       idempotency_key: `autopilot-global:${opts.slot}`,
       max_attempts: 2,
-      timeout_ms: opts.timeoutMs,
+      timeout_ms: timeoutMs,
       maxPending: 1,
     },
   );
