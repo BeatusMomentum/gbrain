@@ -165,13 +165,17 @@ for (const backend of backends) {
     const sourceId = `never-${backend}`;
     await engine().executeRaw('INSERT INTO sources(id,name,local_path,config,last_sync_at) VALUES($1,$1,$2,$3::text::jsonb,now())',
       [sourceId, '/example/never-observed', JSON.stringify({ remote_url: 'https://example.invalid/repo.git' })]);
+    // An API connector source is not a Git remote: it never reads as upstream unknown.
+    await engine().executeRaw('INSERT INTO sources(id,name,local_path,config,last_sync_at) VALUES($1,$1,$2,$3::text::jsonb,now())',
+      [`${sourceId}-connector`, '/example/connector', JSON.stringify({ kind: 'github', remote_url: 'https://example.invalid/repo.git' })]);
     try {
       const result = await checkSyncFreshness(engine());
       expect(result.status).toBe('warn');
       expect(result.message).toContain(`'${sourceId}' upstream unknown (never checked)`);
-      expect(result.details).toMatchObject({ synced_recently_count: 1, upstream_unknown_count: 1 });
+      expect(result.message).not.toContain(`'${sourceId}-connector'`);
+      expect(result.details).toMatchObject({ upstream_unknown_count: 1 });
     } finally {
-      await engine().executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
+      await engine().executeRaw('DELETE FROM sources WHERE id=ANY($1::text[])', [[sourceId, `${sourceId}-connector`]]);
     }
   });
 }

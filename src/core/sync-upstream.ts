@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import type { BrainEngine } from './engine.ts';
 import { ERROR_CATALOGUE } from './error-catalogue.ts';
-import { sourceConfigHasRemoteUrl } from './sources-load.ts';
+import { parseSourceConfig, sourceConfigHasRemoteUrl } from './sources-load.ts';
 
 export const UPSTREAM_OBSERVATION_MAX_AGE_HOURS = 24;
 
@@ -88,8 +88,8 @@ export function managedPullWarning(sourceId: string, checkout: string): ManagedP
 
 /**
  * O-DX-8: doctor's "upstream checked" verdict, separate from "local projection
- * current". A source with a `remote_url` and no observation, or one older than
- * 24 h, is upstream unknown; any source whose last observation saw upstream
+ * current". A Git source (no connector `kind`) with a `remote_url` and no
+ * observation, or one older than 24 h, is upstream unknown; any source whose last observation saw upstream
  * commits its synced commit lacks is behind. Null when neither applies.
  */
 export function upstreamFreshness(
@@ -99,7 +99,8 @@ export function upstreamFreshness(
   const checkedMs = source.upstream_checked_at ? new Date(source.upstream_checked_at).getTime() : null;
   const behind = source.upstream_behind ?? 0;
   const ageHours = checkedMs === null ? null : Math.floor((now - checkedMs) / 3_600_000);
-  const unknown = sourceConfigHasRemoteUrl(source.config) && (ageHours === null || ageHours >= UPSTREAM_OBSERVATION_MAX_AGE_HOURS);
+  const gitRemote = sourceConfigHasRemoteUrl(source.config) && parseSourceConfig(source.config).kind == null;
+  const unknown = gitRemote && (ageHours === null || ageHours >= UPSTREAM_OBSERVATION_MAX_AGE_HOURS);
   if (!unknown && behind <= 0) return null;
   const fix = managed ? managedRefreshFix(source.id, source.local_path ?? '<checkout>') : `gbrain sync --source ${source.id}`;
   const fact = unknown
