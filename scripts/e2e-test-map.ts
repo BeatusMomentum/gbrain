@@ -24,6 +24,8 @@ const MIGRATION_WAVE_TESTS = [
 ];
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  // Fix wave 8 lane D2 (#5828): the brain_score timeline grading helper.
+  "src/core/timeline-grading.ts": ["test/e2e/wave8-lane-d2-postgres.test.ts", "test/e2e/health-parity-postgres.test.ts"],
   // Fix wave 4, Lane D: the apply-migrations orchestration lease (#5693), source deletes and
   // orphan bindings (#5732), and deactivate racing admission (#5455).
   "src/core/migration-orchestration-lock.ts": ["test/e2e/apply-migrations-orchestration-lock.test.ts"],
