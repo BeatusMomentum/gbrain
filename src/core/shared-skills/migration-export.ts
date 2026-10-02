@@ -28,6 +28,8 @@ export interface DatabaseContentExportOptions {
   dryRun?: boolean;
   confirmQuiesced?: boolean;
   backup?: 'operator_verified' | 'acknowledged_unprotected';
+  /** Acquisition token of the calling runner's own `gbrain_cycle_locks` lease. */
+  ownLeaseToken?: string;
 }
 export interface DatabaseContentExportReceipt {
   version: 1;
@@ -135,7 +137,9 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; local_path: string | null }>('SELECT incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [options.sourceId]);
   if (!brain || !source) throw new OperationError('source_changed', 'The selected brain/source is not active.');
   await assertPackagedSkillSource(ctx.engine, options.sourceId);
-  if (!options.dryRun && options.confirmQuiesced && ((await ctx.engine.executeRaw('SELECT id FROM gbrain_cycle_locks LIMIT 1')).length ||
+  if (!options.dryRun && options.confirmQuiesced && ((await ctx.engine.executeRaw(
+    'SELECT id FROM gbrain_cycle_locks WHERE $1::uuid IS NULL OR acquisition_token IS DISTINCT FROM $1::uuid LIMIT 1',
+    [options.ownLeaseToken ?? null])).length ||
     (await ctx.engine.executeRaw("SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1")).length)) {
     throw new OperationError('writer_not_quiesced', 'Active maintenance locks or durable writes remain; finish or recover them before exporting.');
   }

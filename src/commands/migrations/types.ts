@@ -37,6 +37,8 @@ export interface OrchestratorOpts {
     sourceId: string;
     confirmQuiesced: boolean;
     backup?: 'operator_verified' | 'acknowledged_unprotected';
+    /** The runner's own orchestration lease, which the quiescence check ignores. */
+    ownLeaseToken?: string;
   };
 }
 

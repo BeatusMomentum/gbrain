@@ -318,14 +318,14 @@ async function resolveSchemaBehind(opts: {
   return true;
 }
 
-function orchestratorOptsFrom(cli: ApplyMigrationsArgs): OrchestratorOpts {
+function orchestratorOptsFrom(cli: ApplyMigrationsArgs, ownLeaseToken?: string): OrchestratorOpts {
   return {
     yes: cli.yes || cli.nonInteractive,
     mode: cli.mode,
     dryRun: cli.dryRun,
     hostDir: cli.hostDir,
     noAutopilotInstall: cli.noAutopilotInstall,
-    dbOnlyExport: cli.dbOnlyExport,
+    dbOnlyExport: cli.dbOnlyExport && { ...cli.dbOnlyExport, ownLeaseToken },
   };
 }
 
@@ -381,7 +381,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   let exitCode: number | undefined;
   try {
     await holdLock();
-    exitCode = await runLockedMigrations(cli, installed, holdLock, () => held.lock !== null);
+    exitCode = await runLockedMigrations(cli, installed, holdLock, () => held.lock);
   } catch (error) {
     if (!(error instanceof MigrationsRunningError)) throw error;
     console.error(`apply-migrations refused: ${error.message}`);
@@ -401,12 +401,12 @@ async function runLockedMigrations(
   cli: ReturnType<typeof parseArgs>,
   installed: string,
   holdLock: () => Promise<void>,
-  hasLock: () => boolean,
+  heldLock: () => MigrationOrchestrationLock | null,
 ): Promise<number | undefined> {
   // Without the orchestration lease (a schema too old for it), schema work goes
   // through initSchema(), which serializes on the schema lock.
   const migrateSchema = async (eng: BrainEngine, from: number): Promise<{ applied: number; current: number }> => {
-    if (hasLock()) { const { runMigrations } = await import('../core/migrate.ts'); return runMigrations(eng); }
+    if (heldLock()) { const { runMigrations } = await import('../core/migrate.ts'); return runMigrations(eng); }
     await eng.initSchema();
     const current = parseInt(await eng.getConfig('version') || String(from), 10);
     return { applied: Math.max(0, current - from), current };
@@ -611,7 +611,7 @@ async function runLockedMigrations(
     const recordCheckpoint = !m.reconcile || !plan.applied.includes(m);
     console.log(`\n=== Applying migration v${m.version}: ${m.featurePitch.headline} ===`);
     try {
-      const result = await m.orchestrator(orchestratorOptsFrom(cli));
+      const result = await m.orchestrator(orchestratorOptsFrom(cli, heldLock()?.leaseToken));
       if (result.status === 'failed' || result.phases.some(p => p.status === 'failed')) {
         console.error(result.status === 'failed'
           ? `Migration v${m.version} reported status=failed.`
