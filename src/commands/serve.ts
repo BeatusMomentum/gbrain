@@ -77,7 +77,7 @@ export interface ServeOptions {
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
   // Defaults to the real implementation when omitted.
-  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; sourceGuard?: boolean }) => Promise<void>;
+  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; sourceGuard?: boolean; access?: 'full' | 'read-only' }) => Promise<void>;
   // Test seam for the parent-process watchdog. The default
   // (`readLiveParentPid`) reads the live kernel PPID via `ps` on POSIX
   // because `process.ppid` is captured at process creation and does not
@@ -213,9 +213,16 @@ export async function runServe(
   // 'verbs' exposes exactly the seven protocol verbs (the quickstart surface);
   // 'starter' the ~20-op daily-driver set; 'full' (default) keeps every
   // operation — existing installs see no change.
-  const { parseSurfaceFlag, resolveSurface } = await import('../mcp/surface.ts');
+  const { parseSurfaceFlag, resolveSurface, parseAccessFlag } = await import('../mcp/surface.ts');
   const { loadConfig } = await import('../core/config.ts');
   const surface = resolveSurface(parseSurfaceFlag(args), loadConfig());
+  // #4768: stdio read-only access ceiling. HTTP refuses it: per-token grants
+  // (auth rescope-token --operations / rescope-client) are its operation control.
+  const access = parseAccessFlag(args);
+  if (access === 'read-only' && isHttp) {
+    throw new Error('--access read-only applies to stdio serve only; for HTTP narrow each token with ' +
+      'gbrain auth rescope-token <name> --operations <op,...> (see docs/mcp/ADMIN.md#read-only-stdio-serve)');
+  }
 
   // --source-guard (plugin lanes, EV1): fail-closed write routing for
   // user-global serves whose cwd is meaningless (plugin snapshots). Write/
@@ -325,7 +332,7 @@ export async function runServe(
       // v0.45.7: count derives from VERB_NAMES (7 with context_pack + delta)
       // so the banner can't drift from the frozen set again.
       ? `Starting GBrain MCP server (stdio) — serving ${VERB_NAMES.length} memory verbs (MEMORY_VERBS v1)...`
-      : 'Starting GBrain MCP server (stdio)...',
+      : `Starting GBrain MCP server (stdio${access === 'read-only' ? ', read-only' : ''})...`,
   );
 
   // stdout is reserved for JSON-RPC frames from here on. Ops that run
@@ -370,7 +377,7 @@ export async function runServe(
   }
 
   try {
-    await start(engine, { surface, ...(sourceGuard ? { sourceGuard } : {}) });
+    await start(engine, { surface, ...(sourceGuard ? { sourceGuard } : {}), ...(access === 'read-only' ? { access } : {}) });
     // `--stdio-idle-timeout` arms its timer during lifecycle installation,
     // but its stdin activity listener must wait until startMcpServer has
     // attached the MCP SDK transport listener. Attaching any `data` listener

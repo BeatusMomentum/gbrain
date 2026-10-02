@@ -138,6 +138,31 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
   return raw;
 }
 
+/**
+ * #4768: stdio access ceiling. `--access read-only` intersects the selected
+ * surface with operations that are read-scoped, non-mutating and need no
+ * capability scope, so tools/list, the capabilities resource, skill
+ * resources and dispatch all see one read-only set (`request_tools` is
+ * mutating, so discovery cannot widen it). It denies agent-requested
+ * mutations; owner maintenance (startup migrations, hook IPC banking) is a
+ * separate control. HTTP enforces per-token operation grants instead.
+ */
+export type McpAccess = 'full' | 'read-only';
+
+export function parseAccessFlag(args: string[]): McpAccess {
+  const idx = args.indexOf('--access');
+  if (idx < 0) return 'full';
+  const raw = args[idx + 1];
+  if (raw !== 'full' && raw !== 'read-only') {
+    throw new Error('--access takes read-only or full (default full); see docs/mcp/ADMIN.md#read-only-stdio-serve');
+  }
+  return raw;
+}
+
+export function isReadOnlyOperation(op: Pick<Operation, 'scope' | 'mutating' | 'requiredScopes'>): boolean {
+  return op.scope === 'read' && op.mutating !== true && !op.requiredScopes?.length;
+}
+
 /** Flag > config `mcp_surface` > 'full'. */
 export function resolveSurface(
   flag: McpSurface | null,

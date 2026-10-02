@@ -3104,6 +3104,7 @@ ADMIN
     --surface verbs|starter|full     Tool surface: the 7 memory verbs, the ~20-op
                                      starter set, or every op (default full).
                                      On --http this is the per-client CEILING.
+    --access read-only|full          stdio: list and dispatch only read operations
   serve --http [--port N]            HTTP MCP server with OAuth 2.1
     --token-ttl N                    Access token TTL in seconds (default: 3600)
     --enable-dcr                     Enable Dynamic Client Registration (DCR clients default to authorization_code)
@@ -3113,7 +3114,7 @@ ADMIN
         [--install] [--json]         Print the paste-ready command, or --install to run it
   auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
   auth --help                        Full subcommand list (register-client,
-                                     rescope-client, revoke-client, permissions, test, ...)
+                                     rescope-client, rescope-token, revoke-client, permissions, ...)
   watch [--json]                     Push-based context: pipe conversation turns in,
                                      volunteered brain pages stream out (#2095)
   call <tool> '<json>'               Raw tool invocation
