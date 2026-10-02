@@ -144,6 +144,7 @@
       "open_loops.open_loops_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "open_loops.open_loops_status_check": "c CHECK ((status = ANY (ARRAY['open'::text, 'done'::text, 'dropped'::text, 'stale'::text])))",
       "page_aliases.page_aliases_pkey": "p PRIMARY KEY (id)",
+      "page_aliases.page_aliases_source_fk": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "page_aliases.page_aliases_uniq": "u UNIQUE (source_id, alias_norm, slug)",
       "page_generation_clock.page_generation_clock_id_check": "c CHECK ((id = 1))",
       "page_generation_clock.page_generation_clock_pkey": "p PRIMARY KEY (id)",
@@ -222,6 +223,7 @@
       "shared_skill_state.shared_skill_state_singleton_check": "c CHECK ((singleton = 1))",
       "slug_aliases.slug_aliases_no_self": "c CHECK ((alias_slug <> canonical_slug))",
       "slug_aliases.slug_aliases_pkey": "p PRIMARY KEY (id)",
+      "slug_aliases.slug_aliases_source_fk": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "slug_aliases.slug_aliases_uniq": "u UNIQUE (source_id, alias_slug)",
       "source_ingestion_receipts.source_ingestion_receipts_approved_revision_check": "c CHECK ((approved_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))",
       "source_ingestion_receipts.source_ingestion_receipts_check": "c CHECK (((phase = 'COMPLETE'::text) = (outcome = 'complete'::text)))",
@@ -308,7 +310,7 @@
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=9beb118551a08451a228146373f50f2aa2ce0cfe89937e937d361b33224aa0aa",
       "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
-      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=9f7ebd3894599fd125d255f78ada3d945b14b15a114e340a43da0414a3de4208",
+      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e35a67bb4bbcb2555e88ff14c0be82245d5090062da28cf4a63eb13150089b55",
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "notify_minion_job_change()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=17f7c36408688409c80befd0a9ef9314e597d78a195418d1b94426e3d0b662f8",
       "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e12c37d5489202aaf708560db42e6c0c7c8886d198d412e1c5d915c3ae782559",
@@ -2576,7 +2578,9 @@
           "21 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "22 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "23 resolved_quality text/text NULL",
-          "24 embedding USER-DEFINED/vector NULL"
+          "24 embedding USER-DEFINED/vector NULL",
+          "25 embedding_model text/text NULL",
+          "26 embedded_text_hash text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

@@ -558,6 +558,14 @@
         "name": "unlinked_facts"
       },
       {
+        "category": "brain",
+        "name": "auto_chronicle"
+      },
+      {
+        "category": "brain",
+        "name": "fact_take_vectors"
+      },
+      {
         "category": "ops",
         "name": "chat_fallback_chain_inert"
       },

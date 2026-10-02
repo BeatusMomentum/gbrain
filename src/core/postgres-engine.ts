@@ -21,7 +21,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, StaleTakeOpts, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactInsertStatus,
@@ -2403,12 +2403,12 @@ export class PostgresEngine implements BrainEngine {
     return takesImpl.getTakeEmbeddings(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), ids);
   }
 
-  async countStaleTakes(): Promise<number> {
-    return takesImpl.countStaleTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'));
+  async countStaleTakes(opts?: StaleTakeOpts): Promise<number> {
+    return takesImpl.countStaleTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
   }
 
-  async listStaleTakes(): Promise<StaleTakeRow[]> {
-    return takesImpl.listStaleTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'));
+  async listStaleTakes(opts?: StaleTakeOpts): Promise<StaleTakeRow[]> {
+    return takesImpl.listStaleTakes(unscopedExecutor(this.engineSql, 'takes: unscoped on master (EO4 inventory)'), opts);
   }
 
   async updateTakeEmbeddings(rowsIn: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number> { return takesImpl.updateTakeEmbeddings(() => this.engineSql, (site, signal, fn, size) => this.batchRetry(site, signal, fn, size), rowsIn, opts); }

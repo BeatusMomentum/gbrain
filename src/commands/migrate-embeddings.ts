@@ -115,7 +115,7 @@ function renderPlan(ctx: MigrationPlanContext): string {
   lines.push(`  Brain: ${identity.engine} (${identity.target}); scope: brain-wide (all sources)`);
   lines.push(`  From: ${plan.from_model} (${plan.from_dims}d${plan.column_dims !== null && plan.column_dims !== plan.from_dims ? `; column is actually ${plan.column_dims}d` : ''})`);
   lines.push(`  To:   ${plan.to_model} (${plan.to_dims}d)`);
-  lines.push(`  Work: ${plan.chunks_to_embed} chunks to embed, ${plan.chunks_to_restamp} to restamp, ${plan.facts_to_embed ?? 0} active facts; ${plan.blocked_projection_pages ?? 0} projection-blocked pages.`);
+  lines.push(`  Work: ${plan.chunks_to_embed} chunks to embed, ${plan.chunks_to_restamp} to restamp, ${plan.facts_to_embed ?? 0} active facts, ${plan.takes_to_embed ?? 0} active takes; ${plan.blocked_projection_pages ?? 0} projection-blocked pages.`);
   lines.push('  Paid authorization: --max-cost-usd is a durable total cap; each attempt reserves its maximum input size and settles to reported usage; unknown prices refuse.');
   // DB-reality census: what pages say they were embedded with (env can lie
   // about From; the census cannot).
@@ -753,6 +753,7 @@ export async function executeMigrationFlow(
       catchUp: true,
       singleFlight: true,
       includeNullSignature: true,
+      takes: true,
       quiet: opts.quiet,
       heldLocks,
       assertOwned,
@@ -782,18 +783,21 @@ export async function executeMigrationFlow(
       includeNullSignature: true,
     });
     const remainingFacts = await countStaleFactEmbeddings(engine, plan.to_model, plan.to_dims);
+    const remainingTakes = await engine.countStaleTakes({ model: plan.to_model, dims: plan.to_dims });
     const finalReadiness = await prepareEmbeddingProjections(engine);
     const finalSources = (await engine.listAllSources({ includeArchived: true })).map(s => s.id).sort();
     const sourceChanged = JSON.stringify(sourceIds) !== JSON.stringify(finalSources);
     const configChanged = await engine.getConfig('embedding_model') !== plan.to_model
       || Number(await engine.getConfig('embedding_dimensions')) !== plan.to_dims;
     const chunkless = await engine.countChunklessPagesWithContent();
-    const remaining = remainingChunks + remainingFacts.count + finalReadiness.blocked + chunkless + (sourceChanged || configChanged ? 1 : 0);
+    const remaining = remainingChunks + remainingFacts.count + remainingTakes + finalReadiness.blocked + chunkless + (sourceChanged || configChanged ? 1 : 0);
 
     const base = {
       embedded: embedResult.embedded + embeddedFacts,
       facts_embedded: embeddedFacts,
       facts_remaining: remainingFacts.count,
+      takes_embedded: embedResult.takes?.embedded ?? 0,
+      takes_remaining: remainingTakes,
       blocked_projection_pages: finalReadiness.blocked,
       signatures_reconciled: reconciled,
       invalidated: applied.invalidated,
@@ -818,7 +822,7 @@ export async function executeMigrationFlow(
         envMatchesTarget: envFullyPinsTarget(plan.to_model, plan.to_dims), envPresent: detectEnvPresence().present,
       });
       if (!verified.complete) return { status: 'incomplete', remaining: Math.max(1,
-        verified.details.stale_wide + (verified.details.stale_facts ?? 0) + (verified.details.blocked_projection_pages ?? 0)), ...base };
+        verified.details.stale_wide + (verified.details.stale_facts ?? 0) + (verified.details.stale_takes ?? 0) + (verified.details.blocked_projection_pages ?? 0)), ...base };
       await assertOwned();
       await completeEmbeddingMigration(engine, plan, {
         verify_search: { status: verifySearch.status, samples: verifySearch.samples },
@@ -951,7 +955,7 @@ export async function runMigrateEmbeddings(
     console.log(`  File plane: ${filePlane ? `${filePlane.model ?? '(none)'} @ ${filePlane.dims ?? '?'}d` : '(no ~/.gbrain/config.json)'}`);
     console.log(`  DB plane:   ${report.db_plane.model ?? '(none)'} @ ${report.db_plane.dims ?? '?'}d`);
     console.log(`  Column:     content_chunks.embedding ${report.column_dims === null ? 'absent/unreadable' : `${report.column_dims}d`}${report.pinned_widths.map((p) => `; ${p.table} ${p.dims === null ? '?' : `${p.dims}d`}`).join('')}`);
-    console.log(`  Vectors:    ${report.missing_embeddings ?? '?'} chunk(s) missing; ${report.chunkless_pages ?? '?'} contentful page(s) without chunks; facts pending: ${report.facts_pending ?? 'n/a'}`);
+    console.log(`  Vectors:    ${report.missing_embeddings ?? '?'} chunk(s) missing; ${report.chunkless_pages ?? '?'} contentful page(s) without chunks; facts pending: ${report.facts_pending ?? 'n/a'}; takes pending: ${report.takes_pending ?? 'n/a'}`);
     console.log(`  Projection: ${report.blocked_projection_pages ?? '?'} page(s) blocked; bounded canonical recovery runs before invalidation.`);
     if (report.embed_skip_null_chunks !== null && report.embed_skip_null_chunks > 0) {
       console.log(`  Embed-skip: ${report.embed_skip_null_chunks} chunk(s) on embed_skip pages have NULL vectors — excluded from re-embedding by design (remove the frontmatter marker to re-embed them)`);
@@ -1064,7 +1068,7 @@ export async function runMigrateEmbeddings(
     }
     const confirm = opts.confirm ?? defaultConfirm;
     const priceNote = plan.price_known ? `~$${plan.est_cost_usd.toFixed(2)}` : 'an UNKNOWN amount';
-    const ok = await confirm(`Re-embed ${plan.chunks_to_embed} chunks and ${plan.facts_to_embed ?? 0} facts (${priceNote}) with total authorization ${flags.maxCostUsd === undefined ? 'retained from the existing run (required for new work)' : `$${flags.maxCostUsd}`}?`);
+    const ok = await confirm(`Re-embed ${plan.chunks_to_embed} chunks, ${plan.facts_to_embed ?? 0} facts and ${plan.takes_to_embed ?? 0} takes (${priceNote}) with total authorization ${flags.maxCostUsd === undefined ? 'retained from the existing run (required for new work)' : `$${flags.maxCostUsd}`}?`);
     if (!ok) {
       serr('Aborted. Nothing was changed.');
       exit(1);

@@ -26,6 +26,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { rawProvenanceCheck } from '../src/commands/doctor/checks/core-health.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -514,6 +515,41 @@ for (const managed of [true, false]) test(`#5733: ${managed ? 'managed' : 'unman
         expect(page.page.frontmatter).toMatchObject({ dream_generated: true, dream_cycle_date: '2026-02-03', dream_created_cycle_date: '2026-02-03' });
         expect(parseMarkdown(readFileSync(join(root, 'wiki/personal/patterns/stamped.md'), 'utf8')).frontmatter)
           .toMatchObject({ dream_generated: true, dream_cycle_date: '2026-02-03' });
+      });
+    } finally { __setChatTransportForTests(null); }
+  });
+}, 90_000);
+
+for (const managed of [true, false]) test(`#5884: ${managed ? 'managed' : 'unmanaged'} patterns output passes raw_provenance${managed ? ' on every run that rewrites it' : ''}`, async () => {
+  await fixture(async (engine, sourceId, root) => {
+    for (let i = 0; i < 3; i++) await seed(engine, sourceId, `wiki/personal/reflections/example-${i}`);
+    await engine.setConfig('dream.patterns.enabled', 'true');
+    await engine.setConfig('models.dream.patterns', 'anthropic:claude-sonnet-4-6');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    let calls = 0;
+    __setChatTransportForTests(async opts => {
+      calls++;
+      const write = calls % 2 === 1;
+      return { text: write ? '' : 'Saved the pattern.', blocks: write ? [{ type: 'tool-call', toolCallId: `pattern-write-${calls}`, toolName: 'brain_put_page', input: {
+        slug: 'wiki/personal/patterns/traced', content: `---\ntitle: Traced pattern\ntype: note\n---\nA recurring theme, run ${calls}, in [[wiki/personal/reflections/example-0]].`,
+      } }] : [{ type: 'text', text: 'Saved the pattern.' }], stopReason: write ? 'tool_calls' : 'end',
+      usage: { input_tokens: 100, output_tokens: 100, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: opts.model!, providerId: 'anthropic' };
+    });
+    try {
+      await withEnv({ ANTHROPIC_API_KEY: 'sk-test-maintenance' }, async () => {
+        for (const cycleDate of managed ? ['2026-02-03', '2026-02-04'] : ['2026-02-03']) {
+          const result = await runPhasePatterns(engine, { brainDir: root, sourceId, dryRun: false, once: true, cycleDate });
+          expect(result.details.patterns_written).toBe(1);
+          const page = (await engine.readPageSnapshot('wiki/personal/patterns/traced', { sourceId }))!;
+          expect(page.page.compiled_truth).toContain(`run ${calls - 1}`);
+          expect(page.page.frontmatter).toMatchObject({ dream_generated: true, raw_trace_exempt: true,
+            raw_trace_exempt_reason: 'derived from reflections under wiki/personal/reflections/; raw traces live on the cited reflection pages' });
+          expect(await rawProvenanceCheck(engine)).toMatchObject({ name: 'raw_provenance', status: 'ok' });
+        }
+        expect(parseMarkdown(readFileSync(join(root, 'wiki/personal/patterns/traced.md'), 'utf8')).frontmatter)
+          .toMatchObject({ raw_trace_exempt: true });
       });
     } finally { __setChatTransportForTests(null); }
   });

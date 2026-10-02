@@ -138,6 +138,10 @@ even if a custom base URL still serves its old model.
    path as `embed --facts --stale`, including same-width model swaps and
    facts-only brains. Expired, withdrawn, superseded and audit rows are not
    work. Unknown legacy fact provenance is never inferred from new config.
+   Active takes on live pages are re-embedded in the same drain (their
+   vectors record the model and claim text, and `takes.embedding` is resized
+   with the other text columns on a width change); the plan, `--status`
+   (`takes pending`) and the completion check all count them.
 7. **Build the vector index.** The transition in step 5 restores the btree
    and partial indexes on `content_chunks.embedding` right away (the re-embed
    needs them) and records every HNSW index it dropped on the rebuilt text

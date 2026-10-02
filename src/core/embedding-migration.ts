@@ -239,13 +239,9 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
  * The dim-pinned TEXT-embedding-space columns outside content_chunks.
  * `indexSql` is a factory because each table's index carries its own partial
  * WHERE clause + opclass, and the opclass must match the column TYPE
- * (vector_cosine_ops vs halfvec_cosine_ops).
- *
- * Deliberately OMITTED: `takes.embedding` — the live takes search path
- * (`searchTakes`, both engines) is trigram-based, not vector, so that column
- * has no read path this migration could break; its own stale lane
- * (`active AND embedding IS NULL`) covers regeneration if a vector consumer
- * lands later.
+ * (vector_cosine_ops vs halfvec_cosine_ops). `takes.embedding` is searched by
+ * `searchTakesVector` (think, takes search --semantic), so it moves with the
+ * model too (#5885); the re-embed drain refills it.
  */
 export const TEXT_EMBEDDING_DIM_PINNED_TABLES: ReadonlyArray<{
   table: string;
@@ -267,6 +263,14 @@ export const TEXT_EMBEDDING_DIM_PINNED_TABLES: ReadonlyArray<{
       `CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw
          ON facts USING hnsw (embedding ${opclass})
          WHERE embedding IS NOT NULL AND expired_at IS NULL`,
+  },
+  {
+    table: 'takes',
+    index: 'idx_takes_embedding_hnsw',
+    indexSql: (opclass) =>
+      `CREATE INDEX IF NOT EXISTS idx_takes_embedding_hnsw
+         ON takes USING hnsw (embedding ${opclass})
+         WHERE active AND embedding IS NOT NULL`,
   },
 ];
 
@@ -401,8 +405,18 @@ export async function readMigrationState(
   }
 }
 
+/** #5885 plan input: stale takes against the target, with claim characters for the cost estimate. */
+async function countStaleTakeEmbeddings(engine: BrainEngine, model: string, dims: number): Promise<{ count: number; chars: number }> {
+  const count = await engine.countStaleTakes({ model, dims });
+  if (count === 0) return { count, chars: 0 };
+  const rows = await engine.listStaleTakes({ model, dims });
+  return { count, chars: rows.reduce((sum, row) => sum + row.claim.length, 0) };
+}
+
 export interface EmbeddingMigrationPlan {
   facts_to_embed?: number;
+  /** #5885: active takes whose vector is missing or from another model, width or claim text. */
+  takes_to_embed?: number;
   blocked_projection_pages?: number;
   from_model: string;
   from_dims: number;
@@ -629,8 +643,9 @@ export async function planEmbeddingMigration(
   }
 
   const facts = await countStaleFactEmbeddings(engine, toModel, toDims);
+  const takes = await countStaleTakeEmbeddings(engine, toModel, toDims);
   const readiness = await prepareEmbeddingProjections(engine);
-  totalChars += facts.chars + falseStamped.chars;
+  totalChars += facts.chars + takes.chars + falseStamped.chars;
   const price = lookupEmbeddingPrice(toModel);
   const estCostUsd = price.kind === 'known'
     ? estimateCostFromChars(totalChars, price.pricePerMTok)
@@ -687,6 +702,7 @@ export async function planEmbeddingMigration(
   return {
     from_model: fromModel,
     facts_to_embed: facts.count,
+    takes_to_embed: takes.count,
     blocked_projection_pages: readiness.blocked,
     from_dims: fromDims,
     column_dims: col.dims,
@@ -729,6 +745,8 @@ export interface MigrationStatusReport {
    *  excluding the audit checkpoint rows extract-conversation-facts writes into
    *  `facts` — those are never embedded and never recalled (#4875). */
   facts_pending: number | null;
+  /** #5885: active takes on live pages whose vector is missing or not from the target model/width/claim. */
+  takes_pending: number | null;
   synopsis_tier_pages: number | null;
   /** Stale count vs the live marker's target (else null — no target known);
    *  `false_stamped` (#4305) = embedded chunks hidden behind pages falsely
@@ -820,6 +838,8 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
     : dbModel && dbDims && Number.isFinite(Number(dbDims))
       ? { model: dbModel, dims: Number(dbDims) }
       : null;
+  let takesPending: number | null = null;
+  try { takesPending = await engine.countStaleTakes(target ? { model: target.model, dims: target.dims } : undefined); } catch { /* report null */ }
   if (target) {
     try {
       factsPending = (await countStaleFactEmbeddings(engine, target.model, target.dims)).count;
@@ -864,6 +884,7 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
     chunkless_pages: chunkless,
     signature_census: census,
     facts_pending: factsPending,
+    takes_pending: takesPending,
     synopsis_tier_pages: synopsisTier,
     stale_vs_target: staleVsTarget,
     embed_skip_null_chunks: embedSkipNull,
@@ -975,6 +996,7 @@ export interface MigrationVerify {
   blockers: string[];
   details: {
     stale_facts?: number;
+    stale_takes?: number;
     blocked_projection_pages?: number;
     column_dims: number | null;
     pinned_widths: Array<{ table: string; dims: number | null }>;
@@ -1010,6 +1032,8 @@ export async function verifyMigrationComplete(
   const facts = await countStaleFactEmbeddings(engine, target.toModel, target.toDims);
   const readiness = await prepareEmbeddingProjections(engine);
   if (facts.count) blockers.push(`${facts.count} active fact(s) not in the target embedding space`);
+  const staleTakes = await engine.countStaleTakes({ model: target.toModel, dims: target.toDims });
+  if (staleTakes) blockers.push(`${staleTakes} active take(s) not in the target embedding space`);
   if (readiness.blocked) blockers.push(`${readiness.blocked} page projection(s) blocked; rerun migration for bounded canonical recovery`);
 
   // env≠target: the runtime would embed at a DIFFERENT model than the target
@@ -1127,6 +1151,7 @@ export async function verifyMigrationComplete(
     blockers,
     details: {
       stale_facts: facts.count,
+      stale_takes: staleTakes,
       blocked_projection_pages: readiness.blocked,
       column_dims: col.dims,
       pinned_widths: pinned,

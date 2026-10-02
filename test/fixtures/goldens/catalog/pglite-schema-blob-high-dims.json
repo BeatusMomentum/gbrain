@@ -239,7 +239,7 @@
       "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
-      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=9f7ebd3894599fd125d255f78ada3d945b14b15a114e340a43da0414a3de4208",
+      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e35a67bb4bbcb2555e88ff14c0be82245d5090062da28cf4a63eb13150089b55",
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=8e2e253471f22c3e70b2fa2e67ba9162ee3d2c764d175cb5b674db2b907d1e9d"
     },
