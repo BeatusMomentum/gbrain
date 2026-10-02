@@ -211,7 +211,7 @@ d('embedding migration (live Postgres + pgvector)', () => {
     );
     expect(idx.length).toBe(0);
     expect(JSON.parse((await engine.getConfig(MIGRATION_STATE_KEY))!).deferred_ann_indexes.map((i: { name: string }) => i.name).sort())
-      .toEqual(['idx_chunks_embedding', 'idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw']);
+      .toEqual(['idx_chunks_embedding', 'idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw', 'idx_takes_embedding_hnsw']);
 
     // Re-embed through the real pipeline at the new width. NOTE: no
     // resetGateway() here — it would clear the installed fake transport.
@@ -249,7 +249,7 @@ d('embedding migration (live Postgres + pgvector)', () => {
 
     let pending = JSON.parse((await engine.getConfig(MIGRATION_STATE_KEY))!).deferred_ann_indexes;
     const built = await buildDeferredAnnIndexes(engine, { targetDims, readPending: async () => pending, writePending: async next => { pending = next; }, log: () => {} });
-    expect(built.built.sort()).toEqual(['idx_chunks_embedding', 'idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw']);
+    expect(built.built.sort()).toEqual(['idx_chunks_embedding', 'idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw', 'idx_takes_embedding_hnsw']);
     for (const name of built.built) expect(await annIndexValidity(engine, name)).toBe(true);
 
     await completeEmbeddingMigration(engine, plan);

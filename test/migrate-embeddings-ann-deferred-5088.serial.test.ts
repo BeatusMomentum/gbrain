@@ -49,7 +49,7 @@ async function chunkIndexes(): Promise<Array<{ name: string; def: string }>> {
   return engine.executeRaw(`SELECT indexname AS name, indexdef AS def FROM pg_indexes WHERE tablename = 'content_chunks' ORDER BY indexname`);
 }
 const annNames = async () => (await chunkIndexes()).filter(i => /USING hnsw \(embedding /.test(i.def)).map(i => i.name);
-const PINNED_ANN = ['idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw'];
+const PINNED_ANN = ['idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw', 'idx_takes_embedding_hnsw'];
 const pinnedAnnNames = async () => (await engine.executeRaw<{ name: string }>(
   "SELECT indexname AS name FROM pg_indexes WHERE indexname = ANY($1::text[]) ORDER BY indexname", [PINNED_ANN])).map(r => r.name);
 const marker = async () => JSON.parse((await engine.getConfig(MIGRATION_STATE_KEY)) ?? 'null');

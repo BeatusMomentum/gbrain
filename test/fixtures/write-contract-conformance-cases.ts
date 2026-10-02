@@ -108,7 +108,9 @@ async function withFixture(databaseUrl: string | undefined, run: (fixture: Fixtu
 
 async function hold(engine: BrainEngine) {
   const binding = await getWorktreeBinding(engine, 'default');
-  const lock = await acquireWorktree(binding!);
+  // The consumer can still hold the worktree lock for a moment after the
+  // previous write settled (post-publication effects), so wait for it.
+  const lock = await acquireWorktree(binding!, 15_000);
   if (!lock) throw new Error('worktree lock unavailable');
   return lock;
 }
