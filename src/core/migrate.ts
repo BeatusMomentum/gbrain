@@ -9,7 +9,7 @@ import {
   isRetryableConnError,
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
-import { resumePageRevisionBackfill } from './page-state/revision-backfill.ts';
+import { resumePageRevisionBackfill } from './page-state/revision-backfill-schema.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 import { repairLinkSourceCheck, LINK_SOURCE_GATE_MIGRATION_VERSION } from './link-source-check-repair.ts';
 

@@ -70,3 +70,13 @@ test('a timeline row written after a clean pass withdraws the trust in that pass
   expect(next.details).toMatchObject({ count: 'lower_bound', materializable_rows: 0 });
   expect(next.message).toContain('scan incomplete');
 });
+
+test('a row repaired between runs of one pass is not counted when the pass ends', async () => {
+  await addDatabaseOnlyRow(0);
+  const first = await run();
+  expect(first.details).toMatchObject({ count: 'lower_bound', materializable_rows: 1 });
+  await engine.executeRaw("DELETE FROM timeline_entries WHERE source = 'legacy'");
+  await run();
+  const last = await run();
+  expect(last).toMatchObject({ status: 'ok', details: { count: 'exact', materializable_rows: 0, pages_inspected: PAGES } });
+});

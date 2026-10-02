@@ -10,7 +10,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PAGE_STATE_SCHEMA_STATEMENTS } from '../src/core/page-state/schema.ts';
-import { REVISION_BACKFILL_STATE_KEY, resumePageRevisionBackfill } from '../src/core/page-state/revision-backfill.ts';
+import { REVISION_BACKFILL_STATE_KEY, resumePageRevisionBackfill } from '../src/core/page-state/revision-backfill-schema.ts';
 import { assertPageRevision, REVISION_BACKFILL_PENDING } from '../src/core/page-state/types.ts';
 
 let engine: PGLiteEngine;

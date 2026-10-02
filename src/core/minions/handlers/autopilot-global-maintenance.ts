@@ -16,7 +16,7 @@ import type { CycleReport, PhaseResult } from '../../cycle.ts';
  * `gbrain dream --phase <name>` to run it without the job deadline.
  */
 export const GLOBAL_MAINTENANCE_PROGRESS_KEY = 'autopilot.global_maintenance.progress';
-/** Kept free at the end of a job for bookkeeping; phases budget sub-work against the deadline minus this. */
+/** A phase is not started when its last measured duration would end within this reserve of the job deadline. */
 const DEADLINE_RESERVE_MS = 60_000;
 
 export interface GlobalMaintenanceProgress {
@@ -135,7 +135,7 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine): Mini
         brainDir: repoPath,
         pull: false, // brain-wide DB/maintenance work never git-pulls
         signal: job.signal,
-        deadlineAtMs: phaseDeadline, // #2781: phases budget sub-work from remaining time
+        deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
         // The maintenance lane is where synthesize/patterns actually run on
         // multi-source brains (per-source payloads normalize down to the
         // freshness phases) — without the owner id its private queues would be

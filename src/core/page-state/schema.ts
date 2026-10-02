@@ -9,7 +9,7 @@ export const PAGE_VERSION_DELETION_SCHEMA_SQL = `ALTER TABLE page_versions ADD C
  * nullable, get their default separately, and become NOT NULL only when no
  * row needs a value: `sources` is backfilled here (a handful of rows), an
  * empty `pages` (fresh install) is constrained here, and existing pages are
- * backfilled in committed batches by page-state/revision-backfill.ts.
+ * backfilled in committed batches by page-state/revision-backfill-schema.ts.
  */
 export const PAGE_STATE_SCHEMA_STATEMENTS = [
   `DO $do$ BEGIN

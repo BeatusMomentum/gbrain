@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB, setConfigVersion } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { resumePageRevisionBackfill } from '../../src/core/page-state/revision-backfill.ts';
+import { resumePageRevisionBackfill } from '../../src/core/page-state/revision-backfill-schema.ts';
 
 const RUN = hasDatabase();
 const describeE2E = RUN ? describe : describe.skip;
