@@ -1,6 +1,7 @@
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, unlinkSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { atomicStagingPath, validateAtomicStagingPath } from '../atomic-write.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
@@ -38,21 +39,13 @@ function statIfPresent(path: string) {
   }
 }
 function flushParent(path: string): void {
-  let fd: number | undefined;
-  try {
-    fd = openSync(dirname(path), 'r');
-    // Publication can fail because an ancestor is a file. Flush the directory
-    // containing that ancestor, rather than treating fsync(file) as fsync(dir).
-    if (!fstatSync(fd).isDirectory()) {
-      closeSync(fd); fd = undefined;
-      flushParent(dirname(path)); return;
-    }
-    fsyncSync(fd);
-  }
+  try { flushDirectory(dirname(path)); }
   catch (error) {
+    // Publication can fail because an ancestor is a file or missing. Flush the
+    // nearest existing directory, rather than treating fsync(file) as fsync(dir).
     if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '') && dirname(path) !== path) { flushParent(dirname(path)); return; }
-    if (!(process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? ''))) throw error;
-  } finally { if (fd !== undefined) closeSync(fd); }
+    throw error;
+  }
 }
 
 /** Called under the owner lock. Partial/unknown stages are preserved, never guessed. */

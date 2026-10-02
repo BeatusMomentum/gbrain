@@ -6,6 +6,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { EngineConfig } from '../core/types.ts';
 import { loadConfig, isThinClient, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import { flushDirectory } from '../core/fs-durable.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { loadMounts } from '../core/brain-registry.ts';
 import { readRepairSidecar } from '../core/pglite-repair.ts';
@@ -146,8 +147,7 @@ export async function runAttendanceRepair(engine: BrainEngine, args: string[], a
       finally { closeSync(fd); }
       try { renameSync(temporary, checkpoint); }
       catch (error) { unlinkSync(temporary); throw error; }
-      const directory = openSync(dirname(checkpoint), constants.O_RDONLY);
-      try { fsyncSync(directory); } finally { closeSync(directory); }
+      flushDirectory(dirname(checkpoint));
     } });
   process.stdout.write(JSON.stringify({ digest: preview.digest, ...result }) + '\n');
   return result;

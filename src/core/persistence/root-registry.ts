@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { configDir } from '../config.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { OperationError } from '../ops/contract.ts';
 
 export interface ManagedRootRecord {
@@ -29,20 +30,13 @@ function enclosingGitMetadata(root: string): string | null {
     current = parent;
   }
 }
-function syncDirectory(directory: string): void {
-  let fd: number | undefined;
-  try { fd = openSync(directory, 'r'); fsyncSync(fd); }
-  catch (error) {
-    if (!(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? ''))) throw error;
-  } finally { if (fd !== undefined) closeSync(fd); }
-}
 /** Returns whether the record changed; a changed record is already durable with its directory entry. */
 function writePrivateRecord(file: string, value: string): boolean {
   if (existsSync(file) && readFileSync(file, 'utf8') === value) { chmodSync(file, 0o600); return false; }
   const temporary = `${file}.${randomUUID()}.tmp`;
   const fd = openSync(temporary, 'wx', 0o600);
   try { writeFileSync(fd, value); fsyncSync(fd); } finally { closeSync(fd); }
-  try { renameSync(temporary, file); syncDirectory(dirname(file)); }
+  try { renameSync(temporary, file); flushDirectory(dirname(file)); }
   finally { try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
   return true;
 }
@@ -115,7 +109,7 @@ export function recordManagedRoots(brainId: string, records: ManagedRootRecord[]
       if (!existsSync(marker)) writePrivateRecord(marker, JSON.stringify({ version: 1, managed: true, brain_id: brainId, ...(modeEpoch !== undefined ? { mode_epoch: modeEpoch } : {}) }));
     }
   }
-  if (changed) syncDirectory(directory);
+  if (changed) flushDirectory(directory);
 }
 /** Available before connect, including while another process owns local PGLite. */
 export function registeredManagedRoots(): string[] {

@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { sha256 } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
@@ -53,16 +54,6 @@ export interface PublicationHooks {
     | 'before_restore' | 'restoration_staging_flushed' | 'restoration_file_replaced' | 'restoration_directory_flushed' | 'after_restore', request: WriteRequest, index: number): void;
 }
 function fileHash(path: string): string | null { return existsSync(path) ? sha256(readFileSync(path)) : null; }
-function flushDirectory(path: string): void {
-  let fd: number | undefined;
-  try { fd = openSync(dirname(path), 'r'); fsyncSync(fd); }
-  catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // Windows cannot open a directory through Node's file descriptor API.
-    // Its atomic replacement is handled by the platform filesystem primitive.
-    if (!(process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes(code ?? ''))) throw error;
-  } finally { if (fd !== undefined) closeSync(fd); }
-}
 function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingFlush?: () => void, mode?: number | null): void {
   if (!isWriteTargetContained(file.path, file.root)) throw new OperationError('storage_error', 'Canonical file target escapes its source root.');
   if (file.publishMode === undefined) mkdirSync(dirname(file.path), { recursive: true });
@@ -71,15 +62,8 @@ function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingF
   const openMode = mode ?? file.publishMode;
   if (file.content === null) {
     try { unlinkSync(file.path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  } else atomicWriteFileSync(file.path, file.content, { durable: true, stagingPath, ...(openMode === undefined ? {} : { mode: openMode }), afterStagingFlush: () => {
-    afterStagingFlush?.();
-    if (mode !== undefined && mode !== null && stagingPath) {
-      chmodSync(stagingPath, mode);
-      const fd = openSync(stagingPath, 'r');
-      try { fsyncSync(fd); } finally { closeSync(fd); }
-    }
-  } });
-  flushDirectory(file.path);
+  } else atomicWriteFileSync(file.path, file.content, { durable: true, stagingPath, ...(openMode === undefined ? {} : { mode: openMode }), afterStagingFlush });
+  flushDirectory(dirname(file.path));
 }
 // Effect recovery uses the same confined durable publication primitive, under
 // its own recovery record and native root capability.

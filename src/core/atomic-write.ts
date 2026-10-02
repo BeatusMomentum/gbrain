@@ -36,6 +36,7 @@ import {
 import { randomBytes, randomUUID } from 'crypto';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { flushDirectory } from './fs-durable.ts';
 
 export interface AtomicWriteOpts {
   /** Preallocated by a durable recovery journal before any filesystem sink. */
@@ -157,15 +158,9 @@ export function atomicWriteFileSync(filePath: string, content: string | Uint8Arr
     renameSync(tmpPath, filePath);
     // Durability of the RENAME itself: fsync the parent directory so a power
     // loss can't silently drop the new directory entry (the target is never
-    // corrupt either way — this closes the write-vanished window). Dir fsync
-    // is unsupported on some platforms; best-effort by design.
-    try {
-      const dfd = openSync(dirname(filePath), 'r');
-      try { fsyncSync(dfd); } finally { closeSync(dfd); }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (opts?.durable && !(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes(code ?? ''))) throw error;
-    }
+    // corrupt either way — this closes the write-vanished window). Journaled
+    // publication (`durable`) needs it; other writers keep it best-effort.
+    flushDirectory(dirname(filePath), { bestEffort: !opts?.durable });
   } catch (err) {
     try {
       // A failed exclusive create owns nothing. A callback or another process
