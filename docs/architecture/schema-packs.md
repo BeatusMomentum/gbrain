@@ -95,6 +95,34 @@ silently; silence the ingest warnings with
 `gbrain config set schema.type_warnings false` (the `--with-db` lint rules
 are unaffected).
 
+## Undeclared page types
+
+A page type is **undeclared** when the active pack neither declares it as a
+page type nor lists it as an alias. gbrain stores such a type as written and
+reports it everywhere it measures conformance, all with the same
+classification as `schema lint --with-db`'s `stored_type_undeclared`:
+
+- `put_page` (MCP, `gbrain put`, `gbrain call put_page`) commits the page and
+  returns `type_warning` with `code: page_type_undeclared`, the cause, the fix
+  and this anchor. It warns rather than rejects; `capture` still rejects an
+  undeclared explicit type, and dream subagent writes still normalize it to
+  `note` with `legacy_type`.
+- `gbrain lint <dir>` flags it as `type-undeclared` on the `type:` line.
+- `gbrain schema review-orphans` / MCP `schema_review_orphans` list untyped
+  AND undeclared-type pages (`reason`, `undeclared_types`, a true
+  `orphan_count`); `schema_stats` reports `undeclared_pages` and counts them
+  against `coverage`.
+- doctor `schema_pack_consistency` (the MCP `run_doctor` report) warns on any
+  undeclared type, per source against that source's pack.
+
+Fix one by declaring it (`gbrain schema add-type <type> --primitive <p>
+--prefix <dir/>`) or by rewriting the pages with a declared type. On a managed
+brain the `unify-types` job cannot apply yet, so rewrite the page with
+`put_page` (read it with `get_page include_content:true`, change `type:`, put it
+back). gbrain's own outputs use declared types: `gbrain report` and the dream
+drift report write `type: note` with a `report_type`, and the meeting
+transcript sidecar is `type: source` under `sources/meetings/`.
+
 ## Resolution chain (7 tiers)
 
 When the engine decides "which pack is active for this query?", it walks
