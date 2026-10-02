@@ -59,7 +59,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
-          "countStaleTakes: () => Promise<number>",
+          "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
@@ -143,7 +143,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
-          "listStaleTakes: () => Promise<StaleTakeRow[]>",
+          "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
           "loadContradictionsTrend: (days: number) => Promise<Array<{ run_id: string; ran_at: string; judge_model: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }>>",
@@ -961,7 +961,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
-          "countStaleTakes: () => Promise<number>",
+          "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
@@ -1047,7 +1047,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
-          "listStaleTakes: () => Promise<StaleTakeRow[]>",
+          "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: (\"private\" | \"world\")[]; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
           "loadContradictionsTrend: (days: number) => Promise<Array<{ run_id: string; ran_at: string; judge_model: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }>>",
@@ -3026,7 +3026,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
-          "countStaleTakes: () => Promise<number>",
+          "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
@@ -3110,7 +3110,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
-          "listStaleTakes: () => Promise<StaleTakeRow[]>",
+          "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
           "loadContradictionsTrend: (days: number) => Promise<Array<{ run_id: string; ran_at: string; judge_model: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }>>",
@@ -3485,6 +3485,15 @@
       {
         "kind": "interface",
         "members": [
+          "dims?: number | undefined",
+          "model?: string | undefined",
+          "sourceId?: string | undefined"
+        ],
+        "name": "StaleTakeOpts"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "claim: string",
           "page_slug: string",
           "row_num: number",
@@ -3550,7 +3559,9 @@
       {
         "kind": "interface",
         "members": [
+          "claim: string",
           "embedding: Float32Array<ArrayBufferLike>",
+          "model: string",
           "take_id: number"
         ],
         "name": "TakeEmbeddingInput"
@@ -5595,7 +5606,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
-          "countStaleTakes: () => Promise<number>",
+          "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
           "db: PGlite",
@@ -5680,7 +5691,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
-          "listStaleTakes: () => Promise<StaleTakeRow[]>",
+          "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: (\"private\" | \"world\")[]; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
           "loadContradictionsTrend: (days: number) => Promise<Array<{ run_id: string; ran_at: string; judge_model: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }>>",

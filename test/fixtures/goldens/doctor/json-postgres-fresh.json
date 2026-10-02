@@ -387,7 +387,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 189 (latest: 189)",
+          "message": "Version 191 (latest: 191)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1038,6 +1038,24 @@
           },
           "message": "No active facts yet; nothing to link.",
           "name": "unlinked_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "enabled": false
+          },
+          "message": "auto_chronicle is off.",
+          "name": "auto_chronicle",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "applicable": false
+          },
+          "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
+          "name": "fact_take_vectors",
           "status": "ok"
         },
         {
