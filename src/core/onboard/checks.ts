@@ -15,6 +15,7 @@
 // process.exit. SQL via engine.executeRaw with `sourceScopeOpts(ctx)`
 // when ctx threads — onboard surface threads explicitly per A26.
 
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
@@ -26,6 +27,7 @@ export interface OnboardCheckResult {
     name: string;
     status: 'ok' | 'warn' | 'fail';
     message: string;
+    details?: Record<string, unknown>;
   };
   remediations: RemediationStep[];
 }
@@ -120,16 +122,29 @@ function coverageWithConfidence(sample: EntityCoverageSample): { coverage: numbe
 /**
  * embed_staleness: count of chunks awaiting embedding.
  *
- * Backed by content_chunks_stale_idx partial index (v100) so the count
- * is cheap even on big brains.
+ * Uses `engine.countStaleChunks()`, the embed worker's own predicate (the
+ * registry-active embedding column plus its embed_skip/quarantine
+ * exclusions), so the check and the worker agree. A failed count is "not
+ * verified" (#5432), never "No stale chunks".
  */
 export async function checkEmbedStaleness(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  const staleCount = await safeCount(
-    engine,
-    `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
-  );
+  let staleCount: number;
+  try {
+    staleCount = await engine.countStaleChunks();
+  } catch (e) {
+    const reason = redactConnectionInfo(e instanceof Error ? e.message : String(e)).slice(0, 200);
+    return {
+      check: {
+        name: 'embed_staleness',
+        status: 'warn',
+        message: `Not verified: the stale-chunk count failed (${reason}). Fix the cause, then re-run \`gbrain doctor\`.`,
+        details: { code: 'not_verified', verified: false, reason, fix: 'gbrain doctor', docs: 'docs/guides/troubleshooting.md#not-verified-doctor-checks' },
+      },
+      remediations: [],
+    };
+  }
   const remediations: RemediationStep[] = [];
   let status: 'ok' | 'warn' | 'fail' = 'ok';
   let message: string;

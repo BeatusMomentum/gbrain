@@ -5,6 +5,7 @@
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import type { Check } from '../doctor.ts';
+import type { MisroutedResult } from '../../core/multi-source-drift.ts';
 import { redactConnectionInfo } from '../../core/audit/redact-connection-info.ts';
 import { loadActivePackForLocalEngine } from '../../core/schema-pack/best-effort.ts';
 import { sanitizeTypeForDisplay, storedTypeMissesPack } from '../../core/schema-pack/type-usage.ts';
@@ -53,12 +54,12 @@ const SCHEMA_PACK_DOCS = 'docs/architecture/schema-packs.md#undeclared-page-type
  * #5432: a check that could not read its input says "not verified" (warn),
  * never ok. The redacted reason rides in `details.reason` for `--json`.
  */
-function notVerified(err: unknown, fix: string): Omit<Check, 'name'> {
+function notVerified(err: unknown, fix: string, docs = SCHEMA_PACK_DOCS): Omit<Check, 'name'> {
   const reason = redactConnectionInfo(err instanceof Error ? err.message : String(err)).slice(0, 200);
   return {
     status: 'warn',
     message: `Not verified: the check could not run (${reason}). Fix the cause, then re-run \`${fix}\`.`,
-    details: { code: 'not_verified', verified: false, reason, fix, docs: SCHEMA_PACK_DOCS },
+    details: { code: 'not_verified', verified: false, reason, fix, docs },
   };
 }
 
@@ -220,4 +221,85 @@ export function multiSourceDriftGitRootSkipNote(skippedIds: string[]): string {
     ` ${skippedIds.length} source(s) not checked (git-root-pinned, prefix-aware ` +
     `matching not yet implemented — #4712): ${skippedIds.join(', ')}.`
   );
+}
+
+const DRIFT_DOCS = 'docs/guides/troubleshooting.md#not-verified-doctor-checks';
+
+/**
+ * #5432: one multi_source_drift verdict for the local and remote doctor. A
+ * truncated walk or an unreadable source root/subdirectory is "not
+ * verified" (warn), never "no drift"; the walk bounds and unreadable sources
+ * ride in details.
+ */
+export function multiSourceDriftCheck(
+  result: MisroutedResult,
+  candidateSources: number,
+  host: 'local' | 'remote',
+): Check {
+  const details = {
+    walk_truncated: result.walk_truncated,
+    unreadable_sources: result.unreadable_sources,
+    git_root_skipped: result.git_root_skipped,
+    limit: result.limit,
+    timeout_ms: result.timeout_ms,
+    docs: DRIFT_DOCS,
+  };
+  const skipNote = result.git_root_skipped.length > 0 ? multiSourceDriftGitRootSkipNote(result.git_root_skipped) : '';
+  const unreadable = result.unreadable_sources;
+  const unreadableNote = unreadable.length > 0
+    ? ` Not verified for ${unreadable.length} source(s) whose local_path could not be read: ` +
+      unreadable.map((u) => `${u.source_id} (${u.reason === 'root_unreadable' ? 'root unreadable' : `${u.dirs} unreadable dir(s)`})`).join(', ') +
+      `. Fix the path or permissions (\`gbrain sources status\`), then re-run \`gbrain doctor\`.`
+    : '';
+  if (result.walk_truncated) {
+    return {
+      name: 'multi_source_drift',
+      status: 'warn',
+      message:
+        `Multi-source drift not verified — the FS walk hit its bound (${result.limit} files / ${result.timeout_ms} ms)` +
+        (host === 'remote' ? ' on the brain server' : '') +
+        `. Re-run with a larger bound: \`GBRAIN_DRIFT_LIMIT=<files> GBRAIN_DRIFT_TIMEOUT_MS=<ms> gbrain doctor\`.` +
+        unreadableNote,
+      details: { ...details, code: 'not_verified', verified: false },
+    };
+  }
+  if (result.count > 0) {
+    const sampleStr = result.sample.map((s) => `${s.slug} (intended=${s.intended_source})`).join(', ');
+    const advice = host === 'local'
+      ? multiSourceDriftAdvice(result.count, sampleStr)
+      : `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
+        `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
+        `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.`;
+    return { name: 'multi_source_drift', status: 'warn', message: advice + skipNote + unreadableNote, details: { ...details, code: 'drift_detected' } };
+  }
+  if (unreadable.length > 0) {
+    return {
+      name: 'multi_source_drift',
+      status: 'warn',
+      message: `No cross-source slug drift among readable sources.${unreadableNote}${skipNote}`,
+      details: { ...details, code: 'not_verified', verified: false },
+    };
+  }
+  // #4712: if EVERY candidate source was skipped as git-root-pinned, no walk
+  // ran — 'ok' would misreport "verified clean" when nothing was checked.
+  const allSkipped = result.git_root_skipped.length > 0 && result.git_root_skipped.length >= candidateSources;
+  if (allSkipped) {
+    return {
+      name: 'multi_source_drift',
+      status: 'warn',
+      message: `Multi-source drift check performed no verification${skipNote}`,
+      details: { ...details, code: 'not_verified', verified: false },
+    };
+  }
+  return {
+    name: 'multi_source_drift',
+    status: 'ok',
+    message: skipNote ? `No cross-source slug drift detected among checked sources.${skipNote}` : 'No cross-source slug drift detected.',
+    details,
+  };
+}
+
+/** #5432: the drift check itself failed (e.g. the sources query); report it instead of dropping the check. */
+export function multiSourceDriftNotVerified(err: unknown): Check {
+  return { name: 'multi_source_drift', ...notVerified(err, 'gbrain doctor', DRIFT_DOCS) };
 }
