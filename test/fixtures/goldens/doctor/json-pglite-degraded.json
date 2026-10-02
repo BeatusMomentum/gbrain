@@ -381,7 +381,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 190 (latest: 190)",
+          "message": "Version 192 (latest: 192)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1029,6 +1029,37 @@
           },
           "message": "No active facts yet; nothing to link.",
           "name": "unlinked_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "enabled": false
+          },
+          "message": "auto_chronicle is off.",
+          "name": "auto_chronicle",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "applicable": true,
+            "by_source": [],
+            "dims": 1024,
+            "facts": {
+              "missing": 0,
+              "other_model": 0,
+              "stale": 0
+            },
+            "model": "voyage:voyage-4",
+            "takes": {
+              "missing_or_changed": 0,
+              "other_model": 0,
+              "stale": 0
+            }
+          },
+          "message": "Every active fact and take has a voyage:voyage-4 vector for its current text.",
+          "name": "fact_take_vectors",
           "status": "ok"
         },
         {
