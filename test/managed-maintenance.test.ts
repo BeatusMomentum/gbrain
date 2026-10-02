@@ -27,12 +27,14 @@ import { withSubmissionAuthority } from '../src/core/minions/submission-authorit
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { rawProvenanceCheck } from '../src/commands/doctor/checks/core-health.ts';
+import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
 const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-maintenance-db-'));
 let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
+  __setMaintenanceWriteWaitForTests(5_000);
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
   if (backends.includes('pglite')) {
     const engine = new PGLiteEngine();
@@ -44,6 +46,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
+  __setMaintenanceWriteWaitForTests(null);
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.(); resetGateway(); rmSync(dataDir, { recursive: true, force: true });
 });
@@ -456,7 +459,8 @@ test('managed synthesis drives real children and publishes repaired provenance p
           const rows = await engine.executeRaw("SELECT id FROM minion_jobs WHERE status='completed' AND data->>'source_id'=$1 LIMIT 1", [sourceId]);
           if (rows.length) await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [binding.worktree_id]);
         } });
-        expect(pending.status).toBe('fail');
+        expect(pending.status).toBe('warn');
+        expect(pending.details.publish_pending).toBe(1);
         expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBe(completion);
         const retainedCalls = calls;
         await disposePersistenceConsumer(engine);

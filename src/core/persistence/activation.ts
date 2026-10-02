@@ -12,6 +12,7 @@ import { notQuiescedError } from './blocking-effects.ts';
 import { inspectLegacyWriterLocks } from './legacy-locks.ts';
 import { deleteLockRowExact } from '../db-lock.ts';
 import { catalogueError } from '../error-catalogue.ts';
+import { isConnectorSourceKind } from './connector-identity.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -29,7 +30,7 @@ async function configuredSources(engine: BrainEngine, lock = false): Promise<Sou
   const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; kind: string | null }>(
     `SELECT id,incarnation,local_path,config->>'kind' AS kind FROM sources WHERE archived=false ORDER BY id${lock ? ' FOR UPDATE' : ''}`);
   const fallback = await engine.getConfig('sync.repo_path');
-  return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: source.kind === 'google' || source.kind === 'github',
+  return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: isConnectorSourceKind(source.kind),
     root: source.local_path || (source.id === 'default' ? fallback : null) }));
 }
 /** #5206: a recorded source directory that vanished is a named blocker with its exits, never a bare ENOENT. */
