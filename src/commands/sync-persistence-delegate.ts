@@ -71,7 +71,7 @@ export async function maybeDelegateSyncToPersistence(hostConfig:GBrainConfig|nul
         console.error('[sync] embeds deferred — the owner drains them using its configured provider and keys.');
       }
     }
-    if(result.managedWrite||result.status==='blocked_by_failures'||result.reason==='pull_failed')setCliExitVerdict(1);
+    if(result.managedWrite||result.status==='blocked_by_failures'||result.reason==='pull_failed'||(await import('./sync/report.ts')).isFailedPartial(result))setCliExitVerdict(1);
     return true;
   }catch(error){
     if(error instanceof PersistenceIpcTransportError&&error.sent)error=new OperationError('write_pending','The sync acknowledgment was lost; accepted page requests retain their IDs.','Repeat the same sync options to resume the durable cursor.');

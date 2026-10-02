@@ -55,6 +55,7 @@ import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
 import { bundledPackPath } from '../core/schema-pack/bundled-assets.ts';
 import { gbrainPath, loadConfig, configPath, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { readDbSchemaPack } from '../core/schema-pack/best-effort.ts';
+import { sanitizeTypeForDisplay } from '../core/schema-pack/type-usage.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
   const sub = args[0];
@@ -845,9 +846,13 @@ async function runReviewOrphansCmd(args: string[]): Promise<void> {
     console.log(JSON.stringify({ schema_version: 1, ...result }, null, 2));
     return;
   }
-  console.log(`Orphan pages (no active-pack type match): ${result.orphan_count}`);
+  console.log(`Orphan pages (no active-pack type match): ${result.orphan_count}`
+    + (result.pack ? ` (pack ${result.pack})` : ' (no active pack resolved: only untyped pages checked)'));
+  for (const u of result.undeclared_types) {
+    console.log(`  type '${sanitizeTypeForDisplay(u.type)}' is not declared in the pack: ${u.count} page(s)`);
+  }
   for (const o of result.orphans.slice(0, 20)) {
-    console.log(`  ${o.slug}`);
+    console.log(`  ${o.slug}${o.reason === 'undeclared' ? ` (type ${sanitizeTypeForDisplay(o.type)})` : ' (untyped)'}`);
   }
   if (result.orphan_count > 20) {
     console.log(`  ... and ${result.orphan_count - 20} more (use --json to see all)`);
@@ -1005,8 +1010,11 @@ async function runStatsCmd(args: string[]): Promise<void> {
     }
     console.log(`Pack: ${result.pack_identity ?? '(no pack loaded)'}`);
     console.log(`Total pages: ${result.aggregate.total_pages}`);
-    console.log(`Typed: ${result.aggregate.typed_pages} (${(result.aggregate.coverage * 100).toFixed(1)}%)`);
+    console.log(`Typed: ${result.aggregate.typed_pages}; matching the active pack: ${(result.aggregate.coverage * 100).toFixed(1)}%`);
     console.log(`Untyped: ${result.aggregate.untyped_pages}`);
+    if (result.aggregate.undeclared_pages > 0) {
+      console.log(`Undeclared type: ${result.aggregate.undeclared_pages} (not a page type or alias of the active pack; list them with \`gbrain schema review-orphans\`)`);
+    }
     if (result.aggregate.by_type.length > 0) {
       console.log(`\nBy type:`);
       for (const t of result.aggregate.by_type) {

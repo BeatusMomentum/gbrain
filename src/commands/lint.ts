@@ -9,6 +9,7 @@ import { readSourceFileSync, writeSourceFileSync, hasSourceFilesystemLock, withS
  * - Broken citations (unclosed brackets, missing dates)
  * - Empty/stub sections
  * - Wrapping code fences from LLM output
+ * - Page types the active schema pack does not declare (type-undeclared)
  *
  * Usage:
  *   gbrain lint <dir>              # report issues
@@ -30,6 +31,9 @@ import { loadOperatorLiterals } from '../core/content-sanity-literals.ts';
 import { loadConfig, loadConfigWithEngine, gbrainPath } from '../core/config.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../core/brain-repo-durability.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { loadActivePack } from '../core/schema-pack/load-active.ts';
+import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts';
+import { safeCliToken, sanitizeTypeForDisplay, storedTypeMissesPack, type TypeUsagePack } from '../core/schema-pack/type-usage.ts';
 
 export interface LintIssue {
   file: string;
@@ -93,7 +97,12 @@ export interface LintContentOpts {
     /** #4702: built-in junk-pattern names to skip (see content-sanity.ts). */
     disabled_patterns?: string[];
   };
+  /** #5626: active schema pack vocabulary for the `type-undeclared` rule.
+   *  Null/omitted (no pack resolved) skips the rule. */
+  typePack?: LintTypePack | null;
 }
+
+export type LintTypePack = TypeUsagePack & { name: string };
 
 export function lintContent(content: string, filePath: string, opts: LintContentOpts = {}): LintIssue[] {
   const issues: LintIssue[] = [];
@@ -179,6 +188,17 @@ export function lintContent(content: string, filePath: string, opts: LintContent
         issues.push({
           file: filePath, line: 1, rule: 'missing-type',
           message: 'Frontmatter missing required field: type',
+          fixable: false,
+        });
+      } else if (opts.typePack && parsed.typeExplicit && storedTypeMissesPack(parsed.type, opts.typePack)) {
+        // #5626: same classification as the schema lint stored_type_undeclared rule.
+        const t = sanitizeTypeForDisplay(parsed.type);
+        issues.push({
+          file: filePath,
+          line: content.slice(0, 3 + fm.search(/^type:/m)).split('\n').length,
+          rule: 'type-undeclared',
+          message: `Page type '${t}' is not declared in active schema pack '${opts.typePack.name}' (not a page type or alias). ` +
+            `Use a declared type, or declare it: gbrain schema add-type ${safeCliToken(parsed.type) ?? '<type>'} (with its primitive and prefix)`,
           fixable: false,
         });
       }
@@ -369,9 +389,15 @@ export function fixContent(content: string): string {
  */
 async function resolveLintContentSanity(
   sharedEngine?: BrainEngine,
-): Promise<LintContentOpts['contentSanity']> {
+): Promise<{ contentSanity: LintContentOpts['contentSanity']; typePack: LintTypePack | null }> {
   const base = loadConfig();
   let cs = base?.content_sanity;
+  // #5626: the active pack resolves from the same engine (DB-plane
+  // schema_pack, tier 4) when one is reachable, else from file/env config.
+  let typePack: LintTypePack | null | undefined;
+  const packFromEngine = async (engine: BrainEngine) => {
+    typePack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
+  };
 
   // DB-plane lift. issue #1678: when the caller already holds a live engine
   // (the cycle's lint phase, the Minion lint handler), REUSE it — do NOT
@@ -388,6 +414,7 @@ async function resolveLintContentSanity(
     } catch {
       // best-effort; fall through to file/env values.
     }
+    await packFromEngine(sharedEngine);
   } else {
     // Standalone path (CLI `gbrain lint`, which is CLI_ONLY and shares no
     // engine): only attempt when the file/env config suggests an engine is
@@ -407,6 +434,7 @@ async function resolveLintContentSanity(
           await engine.connect({});
           const lifted = await loadConfigWithEngine(engine, base);
           cs = lifted?.content_sanity ?? cs;
+          await packFromEngine(engine);
         } finally {
           await engine.disconnect().catch(() => { /* best-effort cleanup */ });
         }
@@ -425,9 +453,17 @@ async function resolveLintContentSanity(
     ? []
     : loadOperatorLiterals();
 
+  if (typePack === undefined) {
+    try {
+      typePack = (await loadActivePack({ cfg: base, remote: false })).manifest;
+    } catch {
+      typePack = null;
+    }
+  }
+
   return {
-    ...cs,
-    operator_literals,
+    contentSanity: { ...cs, operator_literals },
+    typePack,
   };
 }
 
@@ -469,6 +505,9 @@ export interface LintOpts {
    *  `runLintCore` resolves via the file/env/DB chain. Tests inject
    *  this directly to bypass the FS + engine layers. */
   contentSanity?: LintContentOpts['contentSanity'];
+  /** #5626: optional pre-resolved pack vocabulary (null disables the
+   *  `type-undeclared` rule). When omitted, resolved with content sanity. */
+  typePack?: LintTypePack | null;
   /** issue #1678: a live, already-connected engine to REUSE for the
    *  content-sanity DB-plane config lift. Callers with a shared engine (the
    *  cycle lint phase, Minion lint handlers) MUST pass it so lint doesn't
@@ -544,11 +583,16 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const pages = isSingleFile ? [opts.target] : collectPages(opts.target, opts.exclude ?? []);
   opts.onPagesCollected?.(pages.length);
 
-  // Resolve content-sanity config once for this lint run (D1: lift DB
-  // config when reachable). Caller can pre-pass via opts.contentSanity
-  // (tests, Minion handler) to bypass the engine probe entirely.
-  const contentSanity = opts.contentSanity ?? await resolveLintContentSanity(opts.engine);
-  const lintOpts: LintContentOpts = { contentSanity };
+  // Resolve content-sanity config and the active pack once for this lint
+  // run (D1: lift DB config when reachable). Callers can pre-pass both
+  // (opts.contentSanity + opts.typePack) to bypass the engine probe.
+  const runtime = opts.contentSanity !== undefined && opts.typePack !== undefined
+    ? null
+    : await resolveLintContentSanity(opts.engine);
+  const lintOpts: LintContentOpts = {
+    contentSanity: opts.contentSanity ?? runtime?.contentSanity,
+    typePack: opts.typePack !== undefined ? opts.typePack : runtime?.typePack ?? null,
+  };
 
   // Durability-hardened brains (`gbrain sources harden`) promise every write
   // is committed AND pushed. An uncommitted lint repair would otherwise sit

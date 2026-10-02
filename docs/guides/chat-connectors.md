@@ -79,6 +79,28 @@ trigger a full re-fetch of your entire history — the exact traffic pattern mos
 likely to trip a provider's anti-abuse. The config table is durable and never
 GC'd.
 
+## Feed imported conversations to Dream
+
+Every imported session (connectors, `gbrain transcripts ingest` of a Hermes
+`state.db`, Claude or ChatGPT export) is a `type: conversation` page. Dream's
+synthesize phase reads those pages from the database, in the cycle's source
+(`gbrain dream --source <id>`), beside any `dream.synthesize.session_corpus_dir`
+files. `--date` / `--from` / `--to` filter on the page's `date` frontmatter;
+`dream.synthesize.min_chars` and `exclude_patterns` apply as for corpus files;
+a page is judged and synthesized again only after its text changes.
+
+| Setting | Effect |
+| --- | --- |
+| `session_corpus_dir` set, `conversation_pages` unset | corpus files + conversation pages |
+| `gbrain config set dream.synthesize.conversation_pages true` | conversation pages, with or without a corpus dir |
+| `gbrain config set dream.synthesize.conversation_pages false` | corpus files only |
+
+With neither a corpus dir nor `conversation_pages` set, synthesis is not
+configured; when the source holds conversation pages the phase warns
+`conversation_pages_not_consumed` and names the opt-in command (synthesis makes
+paid model calls, so it never starts on its own). Setting the key to `false`
+silences the warning.
+
 ## Automation lanes
 
 Scheduled sync is **opt-in per provider** and **daily by default**. It polls your

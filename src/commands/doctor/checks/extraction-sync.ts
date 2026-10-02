@@ -935,7 +935,8 @@ export async function computeAtomProvenanceDriftCheck(
           `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
           `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
           (oldestDays != null ? `; oldest ${oldestDays}d` : '') + su +
-          `. These still surface in search with a source_quote that no current page contains. Fix: ${fix}`,
+          `. This compares source_hash only (any edit to the source page changes it); it does not re-check whether ` +
+          `the atom's source_quote still appears in the page, so edited-source atoms may still be accurate. Fix: ${fix}`,
         details,
       };
     }

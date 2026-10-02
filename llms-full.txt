@@ -6309,6 +6309,12 @@ staleness is measurable and the next sweep skips fresh pages.
 
 A sweep with a failing item is partial: it keeps its cursor and does not stamp
 the source as freshly synced, so `gbrain doctor`'s `sync_freshness` shows it.
+`gbrain sync` prints `Sync PARTIAL [connector_item_failures]` with the failed
+item count and pages written (the failure reasons print above it) and exits 1,
+on `--source`, `--all` and delegated runs alike; a connector that stops early
+without naming a cause prints `[connector_partial]` and also exits 1. Only a
+sweep cut short by `--timeout` or cancellation stays `reason=timeout` with
+exit 0, because the next sweep continues it.
 An item that fails three sweeps in a row is held (below) and the cursor moves
 past it. Autopilot keeps a source synced after its first sync; a source that
 has never synced stays idle until you run `gbrain sync --source <id>` once.

@@ -108,7 +108,7 @@ import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defa
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
-import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
+import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides, gradeTimelinePages } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
@@ -2691,7 +2691,7 @@ export class PostgresEngine implements BrainEngine {
       !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides, { type: row.type }));
     const linkablePageCount = linkablePages.length;
     const orphanPages = linkablePages.filter(row => row.islanded).length;
-    const linkableTimelinePages = linkablePages.filter(row => row.has_timeline).length;
+    const { graded: timelineGradedCount, withTimeline: linkableTimelinePages } = await gradeTimelinePages(this, linkablePages); // #5828
     const deadLinks = Number(h.dead_links);
     const linkCount = Number(h.link_count);
 
@@ -2701,7 +2701,7 @@ export class PostgresEngine implements BrainEngine {
     // components (same vacuous-truth rule as the empty-brain fix below):
     // an all-archive brain has no curated graph to penalize.
     const timelineCoverageWhole =
-      linkablePageCount > 0 ? Math.min(linkableTimelinePages / linkablePageCount, 1) : 1;
+      timelineGradedCount > 0 ? Math.min(linkableTimelinePages / timelineGradedCount, 1) : 1;
     const noOrphans = linkablePageCount > 0 ? 1 - (orphanPages / linkablePageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
     // Per-component points. Sum equals brainScore by construction.

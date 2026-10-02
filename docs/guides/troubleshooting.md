@@ -16,6 +16,18 @@
 
 **`gbrain doctor` warns `timeline_orphans`?** Timeline rows from an earlier version of a page are still in the database after the dated bullet was edited or deleted. Preview with `gbrain extract timeline --prune-orphans --dry-run`, then remove them with `gbrain extract timeline --prune-orphans` (add `--source-id <id>` to limit it). Rows no page version ever produced, such as enrichment and meeting fan-out, are kept.
 
+**A doctor check says "Not verified"?** <a id="not-verified-doctor-checks"></a>The check could not read its input, so it reports `warn` instead of `ok`; `gbrain doctor --json` carries `details.code: "not_verified"` and the underlying reason in `details.reason`. Fix the cause, then re-run `gbrain doctor`:
+
+| Check | What it could not read | Fix |
+| --- | --- | --- |
+| `multi_source_drift` | a source's `local_path` root or a directory below it (`details.unreadable_sources`), or the walk hit its bound (`details.limit` files / `details.timeout_ms`) | fix the path or permissions (`gbrain sources status`); for a large source re-run with `GBRAIN_DRIFT_LIMIT=<files> GBRAIN_DRIFT_TIMEOUT_MS=<ms> gbrain doctor` |
+| `embed_staleness` | the stale-chunk count (the embed worker's own predicate) | the reason names the database error; re-run `gbrain doctor` once it is fixed |
+| `schema_pack_consistency`, `schema_pack_source_drift` | the pages or config query, or a source's active schema pack | `gbrain schema lint --with-db` runs the same classification locally; `gbrain schema active` debugs pack resolution |
+
+`bootstrap_push_health` and `gbrain bootstrap status` report only the push record of the workspace named by this machine's bootstrap receipt; another workspace's stale or failed push is listed as such (a warn naming that workspace), never as this workspace's state. `reranker_health` auth warnings are audit-log history (`details.live_probe_performed: false`), not a live check of the key. **Behavior change:** a doctor that used to read all green can now show these warns; each one is a check that did not run.
+
+**`brain_score` shows a low "timeline density (entity and event pages)"?** The 15-point timeline component grades only linkable pages whose type's active-pack primitive is `entity` or `temporal` (people, companies, meetings, emails, events…); reference documents such as notes, writing and guides have no events and are not graded, so do not stamp "page created" rows onto them. Types the pack does not declare are still graded. Raise the score by giving those entity and event pages real timeline entries (`gbrain extract timeline`).
+
 **`gbrain doctor` warns `slug_collisions`, or sync prints slug collisions?** Two or more files in a source map to the same page slug (for example `notes/Foo Bar.md` and `notes/foo-bar.md`), and only one is indexed. Rename all but one file in each group, commit, then sync.
 
 **Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).

@@ -93,7 +93,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
 
   const receipt = readReceipt(home);
   // One reader for every push-status surface [D8]; per-root files [D13].
-  const { readPushStatuses, pushStatusFilesExist } = await import('../../core/workspace-push.ts');
+  const { readPushStatuses, pushStatusFilesExist, pushStatusForWorkspace } = await import('../../core/workspace-push.ts');
   const pushStatuses = readPushStatuses();
   const statusFilesOnDisk = pushStatusFilesExist();
   const heartbeatFile = join(home, 'integrations', 'hooks', 'heartbeat.jsonl');
@@ -320,11 +320,11 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
             }
           } catch { dirty = false; known = false; }
         }
-        if (stale && dirty) {
+        if (dirty && ws && Date.now() - Date.parse(pushStatusForWorkspace(pushStatuses, ws)?.ts ?? '') > PUSH_STALE_MS) { // #5432: this root's own receipt
           checks.push({
             name: 'bootstrap_push_health',
             status: 'fail',
-            message: `last successful push ${staleIso} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
+            message: `last successful push ${pushStatusForWorkspace(pushStatuses, ws)?.ts} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
           });
         } else if (stale && !targetMatchesWs) {
           // Multiple tracked push targets (or the one target names a

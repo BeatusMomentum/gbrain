@@ -82,10 +82,10 @@ export interface SyncResult {
    *
    * `files_imported` reflects ACTUAL persisted count (not the
    * not-yet-attempted set). `reason` distinguishes the partial cause so
-   * cron operators can disambiguate timeout vs pull-timeout in monitoring.
+   * cron operators can disambiguate timeout vs pull-timeout in monitoring; connector item failures / early stop exit 1 (isFailedPartial).
    */
   filesImported?: number;
-  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable' | 'writer_pending' | 'writer_yield';
+  reason?: 'timeout' | 'pull_timeout' | 'pull_failed' | 'stall_timeout' | 'checkpoint_unavailable' | 'writer_pending' | 'writer_yield' | 'connector_item_failures' | 'connector_partial';
   /**
    * v0.42.x (#1794): cumulative file paths durably banked to the checkpoint
    * across THIS run + prior resumed runs. Surfaced on every partial/blocked

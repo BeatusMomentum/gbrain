@@ -81,7 +81,7 @@ import { stampDreamProvenance } from './dream-provenance.ts';
 export { runSubagentsInline, runDrainRenewalTick };
 import { loadAllowedSlugPrefixes } from './filing-rules.ts';
 export { loadAllowedSlugPrefixes };
-import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
+import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript, conversationPagesOptedIn, conversationPagesNotConsumed, withConversationPages } from './transcript-discovery.ts';
 import { loadStorageConfig, isDbOnly } from '../storage-config.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
@@ -443,9 +443,9 @@ async function runPhaseSynthesizeInner(
     config.subagentWaitTimeoutMs = clamped.waitTimeoutMs;
 
     // Allow ad-hoc --input to run even when config is disabled.
-    if (!opts.inputFile && !config.corpusDir) {
-      return skipped('not_configured',
-        'dream.synthesize.session_corpus_dir is unset');
+    if (!opts.inputFile && !config.corpusDir && !(await conversationPagesOptedIn(engine))) {
+      return await conversationPagesNotConsumed(engine, opts.sourceId ?? 'default')
+        ?? skipped('not_configured', 'dream.synthesize.session_corpus_dir is unset');
     }
     if (!opts.inputFile && !config.enabled) {
       if (!opts.once) {
@@ -483,11 +483,11 @@ async function runPhaseSynthesizeInner(
     // them. Best-effort — a probe that's never run is a normal early state.
     const priorContradictionsBlock = await loadPriorContradictionsBlock(engine);
 
-    // Discover.
-    const transcripts = opts.inputFile
+    // Discover: the corpus walk (or --input) plus #4419 imported conversation pages.
+    const transcripts = await withConversationPages(engine, opts, config, opts.inputFile
       ? loadAdHocTranscript(opts.inputFile, config.minChars, config.excludePatterns, opts.bypassDreamGuard)
-      : discoverTranscripts({
-          corpusDir: config.corpusDir!,
+      : !config.corpusDir ? [] : discoverTranscripts({
+          corpusDir: config.corpusDir,
           meetingTranscriptsDir: config.meetingTranscriptsDir ?? undefined,
           minChars: config.minChars,
           excludePatterns: config.excludePatterns,
@@ -507,7 +507,7 @@ async function runPhaseSynthesizeInner(
               ].map(prefix => join(opts.brainDir, prefix)),
           // #5413: corpus files captured from gbrain's own claude-cli calls.
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
-        });
+        }));
 
     if (transcripts.length === 0) {
       return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
@@ -1603,7 +1603,7 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
   const corpusDir = await engine.getConfig('dream.synthesize.session_corpus_dir');
   // v2: enabled defaults to true when corpus dir is configured, false otherwise.
   // Explicit enabled=false still wins for pausing synthesis without removing corpus config.
-  const enabled = enabledRaw === 'false' ? false : (enabledRaw === 'true' || !!corpusDir);
+  const enabled = enabledRaw === 'false' ? false : (enabledRaw === 'true' || !!corpusDir || await conversationPagesOptedIn(engine));
   const meetingTranscriptsDir = await engine.getConfig('dream.synthesize.meeting_transcripts_dir');
   const excludeStr = await engine.getConfig('dream.synthesize.exclude_patterns');
   // v0.28: resolveModel() unifies CLI flag > new key > deprecated key > models.default > env > fallback
