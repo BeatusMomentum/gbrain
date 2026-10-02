@@ -1079,8 +1079,7 @@ traced, a `Fix:` line and this anchor. Fix: fsync the descriptor you wrote
 through before closing it (set its final mode with `fchmodSync(fd)` first), or
 call `flushFile(path)` / `flushDirectory(path, { bestEffort? })` from
 `src/core/fs-durable.ts`. A file that cannot migrate yet goes in the guard's
-`ALLOWLIST` with a reason (today only `src/core/binary-self-update.ts`, owned
-by the self-upgrade wave); an entry whose file no longer needs it fails as
+`ALLOWLIST` with a reason (empty today); an entry whose file no longer needs it fails as
 `durable_flush_stale_allowlist`. Fixtures:
 `test/fixtures/guards/check-durable-flush.ts/`; forms are driven in
 `test/scripts/durable-flush-guard.test.ts`. The helper and the #5595/#5475

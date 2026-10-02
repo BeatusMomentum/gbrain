@@ -27,7 +27,6 @@ const HELPER = 'src/core/fs-durable.ts';
 
 /** Files allowed to keep a read-only-handle flush until they migrate. Each entry names its reason; a stale entry fails. */
 const ALLOWLIST: Record<string, string> = {
-  'src/core/binary-self-update.ts': 'AFTER-FW7, GBRA-35 self-upgrade',
 };
 
 function tsFiles(dir: string): string[] {

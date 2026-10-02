@@ -58,15 +58,10 @@ describe('check-durable-flush.ts', () => {
     expect(r.code).toBe(0);
   });
 
-  test('a stale allowlist entry fails until it is removed', () => {
-    const r = run({ 'src/core/binary-self-update.ts': IMPORTS + "export function f(p: string) { const fd = openSync(p, 'r+'); fsyncSync(fd); closeSync(fd); }\n" });
-    expect(r.code).toBe(1);
-    expect(r.out).toContain('FAIL [durable_flush_stale_allowlist]: src/core/binary-self-update.ts');
-  });
-
-  test('the allowlisted self-upgrade flush stays allowed while it still needs migrating', () => {
+  test('the self-upgrade download is no longer allowlisted: a read-only flush there fails', () => {
     const r = run({ 'src/core/binary-self-update.ts': IMPORTS + "export function f(p: string) { const fd = openSync(p, 'r'); fsyncSync(fd); closeSync(fd); }\n" });
-    expect(r.code).toBe(0);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('FAIL [durable_flush_read_handle]: src/core/binary-self-update.ts');
   });
 
   test('the repository passes', () => {
