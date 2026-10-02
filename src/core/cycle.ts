@@ -2980,8 +2980,6 @@ export async function runCycle(
   // work it never actually did. Treat an aborted signal as a non-success run:
   // skip the freshness stamp and report status 'partial' with reason 'aborted'.
   const aborted = cycleSignal?.aborted === true;
-  // A steal during the last selected phase has no later boundary to throw at;
-  // attribute it the same way (#4578 runs one phase per runCycle call).
   if (aborted && isLockStolenAbort(stolen?.signal, externalSignal)) lockStolenAbort = true;
 
   // #1972 (Decision 7A gating): attribute force-evicts. The minion worker
