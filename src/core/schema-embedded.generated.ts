@@ -58,12 +58,6 @@ CREATE TABLE IF NOT EXISTS sources (
   -- of shelling out to git on a DB-supplied local_path, preserving the
   -- v0.41.27.0 trust boundary. NULL → reader falls back to wall-clock.
   newest_content_at TIMESTAMPTZ,
-  -- #5255/#5176 (O-DX-8): last upstream observation, recorded by sync from the
-  -- checkout's Git state (upstream ref, its last fetch/push time, commits the
-  -- synced commit lacks). doctor sync_freshness reads it with no subprocess.
-  upstream_checked_at TIMESTAMPTZ,
-  upstream_commit     TEXT,
-  upstream_behind     INTEGER,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -2454,4 +2448,12 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL)
+
+-- #5255/#5176 (O-DX-8): last upstream observation per source, recorded by sync
+-- from the checkout's Git state (upstream ref, its last fetch/push time, commits
+-- the synced commit lacks); doctor sync_freshness reads it with no subprocess.
+-- Added last so a fresh install has the column order an upgraded brain gets.
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_checked_at TIMESTAMPTZ;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_commit TEXT;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_behind INTEGER;
 `;

@@ -1890,7 +1890,10 @@
           "12 trust_frontmatter_overrides boolean/bool NOT NULL DEFAULT false",
           "13 newest_content_at timestamp with time zone/timestamptz NULL",
           "14 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "15 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()"
+          "15 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
+          "16 upstream_checked_at timestamp with time zone/timestamptz NULL",
+          "17 upstream_commit text/text NULL",
+          "18 upstream_behind integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

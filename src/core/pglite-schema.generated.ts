@@ -28,9 +28,6 @@ CREATE TABLE IF NOT EXISTS sources (
   contextual_retrieval_mode   TEXT,
   trust_frontmatter_overrides BOOLEAN NOT NULL DEFAULT false,
   newest_content_at TIMESTAMPTZ,
-  upstream_checked_at TIMESTAMPTZ,
-  upstream_commit     TEXT,
-  upstream_behind     INTEGER,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -1735,6 +1732,7 @@ DO \$rls\$ BEGIN
     ALTER TABLE fact_relink_attempts ENABLE ROW LEVEL SECURITY;
   END IF;
 END \$rls\$;
+
 
 `;
 

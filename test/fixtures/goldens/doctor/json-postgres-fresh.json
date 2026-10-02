@@ -387,13 +387,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 189 (latest: 189)",
+          "message": "Version 190 (latest: 190)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "816 column(s) verified against live schema",
+          "message": "819 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
