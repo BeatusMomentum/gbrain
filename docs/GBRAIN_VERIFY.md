@@ -221,6 +221,41 @@ If blank, set the key. Then:
 gbrain embed --stale
 ```
 
+### 5a. Fact and take vectors
+
+Chunk coverage says nothing about facts and takes, which are searched by vector
+too (fact dedup and consolidation, `think`, `takes search --semantic`).
+
+**Command:**
+
+```bash
+gbrain doctor --json
+```
+
+**Expected:** the `fact_take_vectors` check is `ok`. On a keyless brain
+(embeddings disabled) it reports "not applicable" and stays `ok`.
+
+**If it warns** (code `stale_vectors`): its `details` count, per source, facts
+and takes with no vector for their current text under the brain's embedding
+model, and `details.fix` lists the exact commands. Takes are repaired by the
+ordinary stale pass:
+
+```bash
+gbrain embed --stale
+```
+
+Facts are repaired per source, after a preview (paid provider calls need
+explicit authorization):
+
+```bash
+gbrain embed --facts --stale --source <source-id> --dry-run --json
+gbrain embed --facts --stale --source <source-id> --yes --max-cost-usd 1
+```
+
+If the check says the vectors were not verified (code `vectors_not_verified`),
+run `gbrain migrate embeddings --status` to see which model and width the brain
+records.
+
 ---
 
 ## 6. Brain-First Lookup Protocol

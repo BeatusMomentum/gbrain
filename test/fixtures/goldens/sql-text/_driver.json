@@ -3993,7 +3993,7 @@
       "countStaleTakes": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 6,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -4126,7 +4126,7 @@
       "listStaleTakes": {
         "default": [
           {
-            "paramCount": 0,
+            "paramCount": 6,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

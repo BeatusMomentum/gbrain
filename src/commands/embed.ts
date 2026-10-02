@@ -1,6 +1,7 @@
 import { sanitizeRemoteBody } from '../core/remote-body.ts';
 import { prepareEmbeddingProjections, countArchivedEmbeddingWork } from '../core/embedding-readiness.ts';
 import { embedStaleFacts, type EmbedFactsResult } from '../core/embed-facts.ts';
+import { embedTakesForStaleDrain, type EmbedTakesResult } from '../core/embed-takes.ts';
 import { parseFactEmbedArgs } from './embed-facts-delegate.ts';
 import { readProjectionSnapshot, installPageProjection, installPageEmbeddings } from '../core/page-state/projections.ts';
 import { PageRevisionConflictError } from '../core/page-state/types.ts';
@@ -245,6 +246,12 @@ export interface EmbedOpts {
    */
   heldLocks?: DbLockHandle[];
   assertOwned?: (tx?: BrainEngine) => Promise<void>;
+  /**
+   * #5885: a `stale` drain also embeds stale takes (missing, claim-drifted or
+   * other-model vectors). Unset follows `takes.auto_embed` / GBRAIN_EMBED_TAKES
+   * (default on); the embedding-model migration drain passes true.
+   */
+  takes?: boolean;
 }
 
 /**
@@ -343,6 +350,8 @@ export interface EmbedResult {
    * failures>0 consumers surface it unchanged.
    */
   reason?: 'stall_timeout';
+  /** #5885: the takes pass of a `stale` drain, when it ran. Its failures are also counted in `failures`. */
+  takes?: EmbedTakesResult;
 }
 
 /**
@@ -679,6 +688,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     // src/core/embed-stall.ts for the two-clock design and the operator
     // notes). Armed for real drains only; dryRun never embeds so "no
     // successful progress" is its normal state, and 0/negative disables.
+    let takesEmbedded = 0;
     const stallSeconds = opts.dryRun ? 0 : resolveEmbedStallAbortSeconds();
     const watchdog = stallSeconds > 0
       ? createEmbedStallWatchdog({
@@ -687,7 +697,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
           // prelude (thousands of getChunks+upsertChunks before the first
           // embed) is healthy work, not a stall — without this it would
           // abort deterministically at the same point on every resume.
-          readProgress: () => result.embedded + (result.healed_splits ?? 0),
+          readProgress: () => result.embedded + (result.healed_splits ?? 0) + takesEmbedded,
         })
       : undefined;
 
@@ -709,6 +719,10 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
           includeNullSignature: opts.includeNullSignature,
           assertOwned: opts.assertOwned,
         }, drainSignal);
+        if (opts.stale && !isAborted(drainSignal)) await embedTakesForStaleDrain(engine, {
+          dryRun: !!opts.dryRun, signal: drainSignal, sourceId: opts.sourceId, assertOwned: opts.assertOwned, quiet: opts.quiet,
+          takes: opts.takes, onProgress: (_done, _total, embedded) => { takesEmbedded = embedded; },
+        }, result);
       } catch (e) {
         // A heartbeat-triggered abort is a clean, resumable stop (lock_lost is
         // already set + explained on stderr) — not an error to propagate.

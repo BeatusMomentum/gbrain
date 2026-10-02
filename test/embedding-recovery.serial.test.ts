@@ -1084,9 +1084,11 @@ for (const kind of backends) {
         if (result.status === 'failed') expect(result.reason).toContain('retained_vectors_blocked');
         expect(await engine.executeRaw('SELECT embedding::text FROM takes')).toEqual(before);
         expect((await readContentChunksEmbeddingDim(engine)).dims).toBe(dimensions);
-        await runSchemaTransition(engine, dimensions * 2);
+        // #5885: takes.embedding moves with the text columns, so a raw width
+        // transition refuses to drop a retained (archived) take vector.
+        await expect(runSchemaTransition(engine, dimensions * 2)).rejects.toThrow('retained_vectors_blocked');
         expect(await engine.executeRaw('SELECT embedding::text FROM takes')).toEqual(before);
-        expect((await readContentChunksEmbeddingDim(engine)).dims).toBe(dimensions * 2);
+        expect((await readContentChunksEmbeddingDim(engine)).dims).toBe(dimensions);
       } finally {
         await engine.executeRaw("UPDATE sources SET archived=false,archived_at=NULL,archive_expires_at=NULL WHERE id='default'");
         await runSchemaTransition(engine, dimensions);

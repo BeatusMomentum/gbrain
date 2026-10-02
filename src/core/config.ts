@@ -1576,6 +1576,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
   'takes.bootstrap_enabled',
+  // #5885: `embed --stale` (cycle embed phase, migration drain) also embeds
+  // stale takes; `false` turns that off (GBRAIN_EMBED_TAKES=0 overrides).
+  'takes.auto_embed',
   // B-14: USD cap for one takes-bootstrap run's classifier calls (default 5.0;
   // 0 disables). Read by src/core/extract-takes-from-pages.ts.
   'takes.bootstrap_budget_usd',
