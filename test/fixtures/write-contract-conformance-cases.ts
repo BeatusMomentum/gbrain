@@ -20,6 +20,7 @@ import { VERB_NAMES } from '../../src/core/verbs.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { parseRescopeTokenArgs, rescopeLegacyToken } from '../../src/core/grants/legacy-token.ts';
 import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
 import { PROVIDER_ENV_KEYS } from '../helpers/provider-env.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -29,6 +30,8 @@ interface Transport {
   name: 'stdio' | 'http';
   call(tool: string, args: Record<string, unknown>, opts?: { surface?: 'verbs'; abortAfterMs?: number }): Promise<Reply>;
   revoke(): Promise<void>;
+  /** HTTP only: the legacy bearer token's name, for `auth rescope-token`. */
+  tokenName?: string;
 }
 interface Fixture { engine: BrainEngine; transports: () => Promise<Transport[]>; }
 
@@ -68,9 +71,9 @@ async function withFixture(databaseUrl: string | undefined, run: (fixture: Fixtu
             },
             revoke: async () => { await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=now() WHERE id=$1::uuid', [registration.id]); },
           };
-          const id = randomUUID(), token = `fixture-${randomUUID()}`;
+          const id = randomUUID(), token = `fixture-${randomUUID()}`, tokenName = `conformance-${id.slice(0, 8)}`;
           await engine.executeRaw(`INSERT INTO access_tokens(id,name,token_hash,scopes,permissions) VALUES($1::uuid,$2,$3,$4::text[],$5::text::jsonb)`,
-            [id, `conformance-${id.slice(0, 8)}`, createHash('sha256').update(token).digest('hex'), ['read', 'write'],
+            [id, tokenName, createHash('sha256').update(token).digest('hex'), ['read', 'write'],
               JSON.stringify({ source_id: 'default', allowed_operations: OPERATIONS })]);
           const connect = async (server: typeof full) => {
             const client = new Client({ name: 'write-contract-conformance', version: '1' }, { capabilities: {} });
@@ -82,6 +85,7 @@ async function withFixture(databaseUrl: string | undefined, run: (fixture: Fixtu
           const fullClient = await connect(full), verbsClient = await connect(verbs);
           const http: Transport = {
             name: 'http',
+            tokenName,
             call: async (tool, args, opts = {}) => {
               const client = opts.surface ? verbsClient : fullClient;
               const result = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: opts.abortAfterMs ?? 30_000 });
@@ -213,8 +217,44 @@ export function writeContractConformanceCases(databaseUrl?: string) {
       });
     }, 180_000);
 
-    // Owned by other wave-8 lanes; the integrator enables them when those land.
+    // #5891 lands after fix wave 7 (find_orphans is shared with doctor orphan_ratio).
     test.todo('find_orphans source filter stays inside the caller grant (#5891, AFTER-FW7)', () => {});
-    test.todo('auth rescope-token: explicit empty allowed_operations / takes holders deny all, NULL keeps the default (Lane F, O-DX-4/O-ENG-7)', () => {});
+    test('auth rescope-token: explicit empty allowed_operations, sources and takes holders deny all over HTTP; reset restores the default', async () => {
+      await withFixture(databaseUrl, async ({ engine, transports }) => {
+        const http = (await transports()).find(transport => transport.name === 'http')!;
+        const rescope = (...args: string[]) => rescopeLegacyToken(engine, parseRescopeTokenArgs([http.tokenName!, ...args]));
+        const slug = 'notes/http-rescope';
+        expect((await http.call('put_page', { slug, content: page('Rescope probe.'), request_id: randomUUID() })).isError).toBe(false);
+        const stored = await engine.getPage(slug, { sourceId: 'default' });
+        await engine.addTakesBatch([{ page_id: stored!.id, row_num: 1, claim: 'Conformance world take', kind: 'take', holder: 'world', weight: 0.5 }]);
+        await rescope('--operations', [...OPERATIONS, 'takes_list'].join(','));
+        const worldTakes = async () => {
+          const listed = await http.call('takes_list', { page_slug: slug });
+          expect(listed.isError).toBe(false);
+          return (listed.body as unknown as Array<{ claim: string }>).map(take => take.claim);
+        };
+        expect(await worldTakes()).toEqual(['Conformance world take']);
+
+        await rescope('--takes-holders', 'none');
+        expect(await worldTakes()).toEqual([]);
+        await rescope('--reset-default', 'takes-holders');
+        expect(await worldTakes()).toEqual(['Conformance world take']);
+
+        await rescope('--operations', 'none');
+        const noOps = await http.call('get_page', { slug });
+        expect(noOps).toMatchObject({ isError: true, body: { error: 'permission_denied', detail: 'fence=operation_grant' } });
+        await rescope('--reset-default', 'operations');
+        expect((await http.call('get_page', { slug })).isError).toBe(false);
+
+        await rescope('--sources', 'none');
+        const noSource = await http.call('get_page', { slug });
+        expect(noSource).toMatchObject({ isError: true, body: { error: 'permission_denied', detail: 'fence=no_source_grant' } });
+        const write = { slug: 'notes/http-rescope-denied', content: page('Must not land.'), request_id: randomUUID() };
+        expect(await http.call('put_page', write)).toMatchObject({ isError: true, body: { error: 'permission_denied', detail: 'fence=no_source_grant' } });
+        expect(await engine.getPage(write.slug, { sourceId: 'default' })).toBeNull();
+        await rescope('--reset-default', 'sources');
+        expect((await http.call('get_page', { slug })).isError).toBe(false);
+      });
+    }, 180_000);
   });
 }
