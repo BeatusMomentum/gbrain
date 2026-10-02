@@ -403,7 +403,7 @@ export async function doctorReportRemote(
   //   schema_pack_consistency   — % of pages typed against active pack
   //   schema_pack_source_drift  — per-source pack divergence
   checks.push(await checkSchemaPackActive(engine));
-  checks.push(await checkSchemaPackConsistency(engine));
+  checks.push(await checkSchemaPackConsistency(engine, { sourceIds: opts.sourceIds }));
   checks.push(await checkSchemaPackSourceDrift(engine));
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.

@@ -221,28 +221,15 @@ const schema_review_orphans: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const limit = Math.max(1, Math.min(10000, (p.limit as number) ?? 100));
-    const scope = sourceScopeOpts(ctx);
-    let where = `WHERE deleted_at IS NULL AND (type IS NULL OR type = '')`;
-    const params: unknown[] = [];
-    if (scope.sourceIds && scope.sourceIds.length > 0) {
-      where += ` AND source_id = ANY($1::text[])`;
-      params.push(scope.sourceIds);
-    } else if (scope.sourceId) {
-      where += ` AND source_id = $1`;
-      params.push(scope.sourceId);
-    }
+    const { loadActivePackBestEffort } = await import('../schema-pack/best-effort.ts');
+    const { findTypeOrphans } = await import('../schema-pack/review.ts');
+    const { isUndefinedTableError } = await import('../utils.ts');
+    const pack = await loadActivePackBestEffort(ctx);
     try {
-      const rows = await ctx.engine.executeRaw<{ slug: string; source_id: string }>(
-        `SELECT slug, COALESCE(source_id, 'default') AS source_id FROM pages ${where} ORDER BY source_id, slug LIMIT ${limit}`,
-        params,
-      );
-      return {
-        schema_version: 1,
-        orphan_count: rows.length,
-        orphans: rows.map((r) => ({ slug: r.slug, source_id: r.source_id })),
-      };
-    } catch {
-      return { schema_version: 1, orphan_count: 0, orphans: [] };
+      return { schema_version: 1, ...await findTypeOrphans(ctx.engine, pack?.manifest ?? null, sourceScopeOpts(ctx), limit) };
+    } catch (err) {
+      if (isUndefinedTableError(err)) return { schema_version: 1, orphan_count: 0, orphans: [], undeclared_types: [], pack: pack?.manifest.name ?? null, truncated: false };
+      throw err;
     }
   },
 };

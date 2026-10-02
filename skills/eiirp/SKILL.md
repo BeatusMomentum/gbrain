@@ -397,7 +397,7 @@ Confirm:
 - [ ] No DRY violations (no duplicated logic across skills)
 - [ ] No MECE violations (no ambiguous routing between skills)
 - [ ] Active schema pack updated if new content types emerged
-- [ ] `gbrain doctor` reports `schema_pack_consistency: ok`
+- [ ] `gbrain schema review-orphans --json` reports `orphan_count: 0` (no untyped pages and no undeclared types)
 
 ## Phase 7: REPORT — Summary
 
@@ -423,7 +423,7 @@ Confirm:
 - DRY check: [clean]
 - MECE audit: [clean]
 - Active pack: [name] v[version]
-- schema_pack_consistency: [ok / warn — pct untyped]
+- schema review-orphans: [orphan_count 0 / N untyped + M undeclared-type pages]
 ```
 
 ## Output Format
@@ -449,7 +449,7 @@ EIIRP produces a single Phase 7 report block. Plain markdown:
 - DRY check: [clean|N violations]
 - MECE audit: [clean|N overlaps]
 - Active pack: [name] v[version]
-- schema_pack_consistency: [ok|warn — N% untyped]
+- schema review-orphans: [0 orphans|N untyped + M undeclared-type pages]
 ```
 
 Always machine-readable: stable section headers + bullet-per-item. The
@@ -526,5 +526,7 @@ reads it; doctor cross-references the pack version).
   `brain/schema.md`.
 - Phase 5 SKILL GRAPH AUDIT calls `gbrain check-resolvable` instead of
   upstream `scripts/skill-dry-check.mjs`.
-- Phase 6 verification uses `gbrain doctor`'s schema_pack_consistency
-  check (T7) for the persistent surface.
+- Phase 6 verification uses `gbrain schema review-orphans` (untyped pages
+  plus undeclared types, the same classification as `schema lint
+  --with-db`); over MCP, `run_doctor`'s schema_pack_consistency check
+  carries the same verdict.
