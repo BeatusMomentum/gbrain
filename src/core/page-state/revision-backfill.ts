@@ -9,7 +9,8 @@
  * config row `page_state.revision_backfill`, so an interrupted pass resumes and
  * never reassigns a revision it already gave. A batch that fails is retried row
  * by row; a row that still fails (for example a torn TOAST value) is isolated,
- * reported and retried on at most MAX_ATTEMPTS later passes, never forever.
+ * reported and retried on at most MAX_ATTEMPTS later passes, never forever;
+ * once its attempts are spent, later passes stay quiet.
  * When no NULL row remains the column becomes NOT NULL through a CHECK added
  * NOT VALID, validated without blocking writes, then SET NOT NULL and dropped,
  * so the final constraints equal a fresh install.
@@ -81,17 +82,19 @@ export async function resumePageRevisionBackfill(
   }
 
   const failed: FailedRow[] = [];
+  let retried = false;
   for (const row of state.failed) {
     const [still] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE id = $1 AND knowledge_revision IS NULL', [row.id]);
     if (!still) continue;
     if (row.attempts >= MAX_ATTEMPTS) { failed.push(row); continue; }
+    retried = true;
     try { await assignRow(engine, row.id); state.backfilled++; }
     catch (error) { failed.push({ id: row.id, attempts: row.attempts + 1, error: (error instanceof Error ? error.message : String(error)).slice(0, 200) }); }
   }
   state.failed = failed;
   if (failed.length > 0) {
     await save();
-    log(`[migrate] page revision backfill: ${failed.length} row(s) could not be updated (page ids ${failed.slice(0, 10).map(f => f.id).join(', ')}${failed.length > 10 ? ', …' : ''}). `
+    if (announced || retried) log(`[migrate] page revision backfill: ${failed.length} row(s) could not be updated (page ids ${failed.slice(0, 10).map(f => f.id).join(', ')}${failed.length > 10 ? ', …' : ''}). `
       + `Writes that name a revision for them are refused with revision_backfill_pending. Diagnose with: gbrain repair orphan-children (preview, includes the torn-TOAST probe). See docs/guides/repair.md#orphan-children`);
     return { status: 'pending', backfilled: state.backfilled, failed };
   }
