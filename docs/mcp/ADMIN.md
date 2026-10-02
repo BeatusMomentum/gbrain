@@ -220,6 +220,73 @@ requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
 owner approval. TTL changes affect future tokens only.
 
+## Legacy token grants
+
+**Say to your agent:** *"Let the hosted token read the workspace source too."*
+or *"Lock that old token out of every source."* The agent runs
+`gbrain auth rescope-token` on the brain host.
+
+Legacy bearer tokens (`gbrain auth create`, `gbrain bootstrap harness`) keep
+their grants in `access_tokens.permissions`. `gbrain auth rescope-token` edits
+them in place, mirroring `auth rescope-client`. Only the flags you pass
+change; the token secret is unchanged and grants apply on the next request.
+
+```bash
+gbrain auth rescope-token agent-example                     # print the stored grants
+gbrain auth rescope-token agent-example --sources workspace,default
+gbrain auth rescope-token agent-example --takes-holders world,brain
+gbrain auth rescope-token agent-example --operations get_page,search,query
+gbrain auth rescope-token agent-example --sources none        # deny-all
+gbrain auth rescope-token agent-example --reset-default sources,takes-holders
+gbrain auth rescope-token --id TOKEN_ID --sources default --dry-run --json
+```
+
+| Flag | Value | Effect |
+| --- | --- | --- |
+| `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the rest are federated reads. `none` grants no source: reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change. |
+| `--takes-holders` | `a,b` or `none` | Takes-holder allow-list; `none` hides every take. |
+| `--operations` | `op,...` or `none` | Operation snapshot; `none` refuses every operation. |
+| `--reset-default` | `sources,takes-holders,operations` | Restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |
+| `--refresh-operations` | with optional `--add op,...` or `--all-new` | Previews operations added since the snapshot. Without `--add` or `--all-new` nothing is widened. |
+
+Names are not unique; when several active tokens share a name, pass `--id`
+from `gbrain auth list`. `gbrain auth permissions <name> set-takes-holders`
+remains an alias for `--takes-holders`.
+
+A `gbrain bootstrap harness` re-run rotates its token and carries the
+replaced token's grants: takes holders and sources as stored (explicit empty
+lists included; an explicit `--source` on the re-run wins), and the operation
+snapshot narrowed to the run's own snapshot plus only the operations a
+skills-policy change adds. Newer operations are withheld and the run names
+the preview command:
+
+```bash
+gbrain auth rescope-token bootstrap-harness --refresh-operations
+gbrain auth rescope-token bootstrap-harness --refresh-operations --add assemble_evidence
+```
+
+## Read-only stdio serve
+
+**Say to your agent:** *"Connect this agent to my brain read-only."* The agent
+registers `gbrain serve --access read-only` as its stdio MCP command.
+
+```bash
+claude mcp add gbrain -- gbrain serve --access read-only
+gbrain serve --surface starter --access read-only
+```
+
+`--access read-only` intersects the selected `--surface` with operations that
+are read-scoped, non-mutating and need no capability scope. The same set
+drives `tools/list`, the `gbrain://capabilities` resource (`access:
+"read-only"`), skill resources and dispatch, so a guessed `put_page`,
+`delete_page`, `remember`, `capture` or `request_tools` call answers
+`unknown_tool` before any handler runs. It denies agent-requested
+mutations; owner maintenance on the same process (startup migrations, hook
+IPC banking) is a separate control. The default is `--access full`.
+`gbrain serve --http --access read-only` refuses: narrow HTTP access per token
+with `gbrain auth rescope-token <name> --operations <op,...>` or
+`gbrain auth rescope-client <client_id> --allowed-operations <op,...>`.
+
 ## Invalidate tokens, revoke, or delete
 
 | Action | Result | How the client reconnects |
@@ -269,6 +336,7 @@ retain request history, audit records, spending reservations, and settlement.
 | Duplicate client name | Inspect the reported existing client ID; recover its setup instead of creating another client. |
 | Mutation response lost or timed out | Outcome may be unknown. Inspect the client/list before retrying; a transport error does not prove nothing changed. |
 | `grant_conflict` | Inspect the current revision and preview the intended action again. |
+| `permission_denied` with `fence=no_source_grant` | The legacy token's source grant is an explicit empty list. Grant sources with `gbrain auth rescope-token <name> --sources <id,...>` ([legacy token grants](#legacy-token-grants)). |
 | Client/source list failed | Retry the failed request; an error is not an empty registration list or a missing source. |
 | Public OAuth setup has no secret | Expected for authentication method `none`. Connect using native PKCE. |
 | Confidential secret delivery interrupted | Use `mcp admin setup … --credentials-out PRIVATE_FILE` to recover the retained delivery; never expose it in ordinary output. |
