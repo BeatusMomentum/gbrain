@@ -55,7 +55,7 @@ async function withFixture(databaseUrl: string | undefined, run: (fixture: Fixtu
         const verbs = await startHttpTransport({ port: 0, engine, surface: 'verbs', limiters: limiters() });
         servers.push(full, verbs);
         const transports = async (): Promise<Transport[]> => {
-          const registration: LocalRegistration = await registerLocalWriter(engine, 'stdio', { sourceIds: ['default'], operations: null, scopes: ['read', 'write'] });
+          const registration: LocalRegistration = await registerLocalWriter(engine, 'stdio', { sourceIds: ['default'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
           const stdio: Transport = {
             name: 'stdio',
             call: async (tool, args, opts = {}) => {
@@ -214,7 +214,7 @@ export function writeContractConformanceCases(databaseUrl?: string) {
     }, 180_000);
 
     // Owned by other wave-8 lanes; the integrator enables them when those land.
-    test.todo('find_orphans source filter stays inside the caller grant (#5891, AFTER-FW7)');
-    test.todo('auth rescope-token: explicit empty allowed_operations / takes holders deny all, NULL keeps the default (Lane F, O-DX-4/O-ENG-7)');
+    test.todo('find_orphans source filter stays inside the caller grant (#5891, AFTER-FW7)', () => {});
+    test.todo('auth rescope-token: explicit empty allowed_operations / takes holders deny all, NULL keeps the default (Lane F, O-DX-4/O-ENG-7)', () => {});
   });
 }

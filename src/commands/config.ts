@@ -1,3 +1,4 @@
+import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../core/config.ts';
 import {
@@ -238,6 +239,19 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     const { printEffectiveModeLines } = await import('./decide.ts');
     await printEffectiveModeLines(engine, key.split('.')[2]);
   } catch { /* the value already persisted */ }
+}
+
+/** #5232: the CLI write wait is file-plane so the engine-free CLI reads it before choosing a transport. */
+async function setFileWriteWait(cfg: GBrainConfig, value: string, saveConfig: (cfg: GBrainConfig) => void): Promise<void> {
+  const { MAX_WRITE_WAIT_MS, WRITE_WAIT_CONFIG_KEY, WRITE_WAIT_ENV } = await import('../core/persistence/write-wait.ts');
+  const n = /^\d+$/.test(value.trim()) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(n) || n > MAX_WRITE_WAIT_MS) {
+    console.error(`[config] ${WRITE_WAIT_CONFIG_KEY} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS}`);
+    process.exit(1);
+  }
+  cfg.persistence = { ...(cfg.persistence ?? {}), write_wait_ms: n };
+  saveConfig(cfg);
+  console.log(`Set ${WRITE_WAIT_CONFIG_KEY} = ${n} (file plane: ~/.gbrain/config.json; --wait and ${WRITE_WAIT_ENV} override it)`);
 }
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
@@ -734,15 +748,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         saveConfig(cfg);
         console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
       } else if (key === 'persistence.write_wait_ms') {
-        const { MAX_WRITE_WAIT_MS } = await import('../core/persistence/write-wait.ts');
-        const n = /^\d+$/.test(value.trim()) ? Number(value) : NaN;
-        if (!Number.isSafeInteger(n) || n > MAX_WRITE_WAIT_MS) {
-          console.error(`[config] ${key} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS}`);
-          process.exit(1);
-        }
-        cfg.persistence = { ...(cfg.persistence ?? {}), write_wait_ms: n };
-        saveConfig(cfg);
-        console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json; --wait and ${'GBRAIN_WRITE_WAIT_MS'} override it)`);
+        await setFileWriteWait(cfg, value, saveConfig);
       } else if (key === 'backup.check_interval_days') {
         const n = Number.parseInt(value, 10);
         if (!Number.isFinite(n) || n < 1) {

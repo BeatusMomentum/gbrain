@@ -133,9 +133,7 @@ export const operations: Operation[] = [
   ...verbOperations,
   // Page CRUD (get_page, put_page, delete_page, list_pages + the v0.26.5
   // destructive-guard ops restore_page, purge_deleted_pages) — ops/pages.ts
-  ...pagesOperations,
-  // #5616 partial page edit (edit_page) — ops/page-edit.ts
-  ...pageEditOperations,
+  ...pagesOperations, ...pageEditOperations,
   ...persistenceOperations,
   // Search (search, query) — ops/search.ts
   ...searchOperations,

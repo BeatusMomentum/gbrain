@@ -711,8 +711,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // (leaves facts/cache/eval-capture writes racing teardown). The finally's
     // drain bounds teardown; the hard-deadline timer armed at teardown entry
     // bounds a hung one.
-    // #5232: the reporter owns the write verdict (pending exits
-    // PENDING_WRITE_EXIT_CODE, or 0 with --accept-pending); never overwrite it.
+    // #5232: the reporter owns the write verdict; never overwrite it.
     const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
     if (!await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
       console.error(e instanceof Error ? e.message : String(e));
@@ -1536,8 +1535,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
     cliOpts: getCliOptions(),
-    // #5232: CLI writes wait longer than agent writes (persistence/write-wait.ts).
-    writeWaitMs: currentCliWriteWait().waitMs,
+    writeWaitMs: currentCliWriteWait().waitMs, // #5232
     // v0.34 D4: sourceId is REQUIRED at the type level. Fall back to 'default'
     // when resolveSourceId returned undefined (fresh pre-init brain, no sources
     // table). Matches dispatch.ts's auto-fill so the contract holds across
