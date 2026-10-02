@@ -210,7 +210,7 @@
           "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
-          "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>) => Promise<T>",
+          "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; }) => Promise<T>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>"
         ],
         "name": "BrainEngine"
@@ -1011,7 +1011,7 @@
           "getOntology: (entitySlug: string, opts?: OntologyReadOpts) => Promise<OntologyValue[]>",
           "getPage: (slug: string, opts?: PageSnapshotOptions) => Promise<Page | null>",
           "getPageTimestamps: (slugs: string[]) => Promise<Map<string, Date>>",
-          "getPoolDiagnostics: () => { tracked: PoolGaugeSnapshot; poolMax: number | null; } | null",
+          "getPoolDiagnostics: () => { tracked: PoolGaugeSnapshot; poolMax: number | null; poisonedDiscards: number; } | null",
           "getRawData: (slug: string, source?: string, opts?: PageReadScope & { includeDeleted?: boolean; }) => Promise<RawData[]>",
           "getRecentSalience: (opts: SalienceOpts) => Promise<SalienceResult[]>",
           "getSalienceScores: (refs: Array<{ slug: string; source_id: string; }>, opts?: PageReadPolicy) => Promise<Map<string, number>>",
@@ -1059,6 +1059,7 @@
           "markPagesExtractedBatch: (refs: Array<{ slug: string; source_id: string; extractedAt?: string; }>, defaultExtractedAt: string) => Promise<number>",
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
+          "onCheckout: (listener: () => void) => () => void",
           "private _beforeDisconnect",
           "private _bulkRetryOptsCache",
           "private _chunkWritesInTransaction",
@@ -1081,6 +1082,8 @@
           "private engineSql",
           "private engineSqlOn",
           "private getBulkRetryOpts",
+          "private onPoisoned",
+          "private poisonedDiscards",
           "private resolveFactsEmbeddingCast",
           "private rlsScopeBindingEnabled",
           "private runUnsafe",
@@ -1145,7 +1148,7 @@
           "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
-          "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>) => Promise<T>",
+          "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; }) => Promise<T>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>"
         ],
         "name": "PostgresEngine",
@@ -3177,7 +3180,7 @@
           "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
-          "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>) => Promise<T>",
+          "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; }) => Promise<T>",
           "writeContradictionsRun: (row: { run_id: string; judge_model: string; prompt_version: string; queries_evaluated: number; queries_with_contradiction: number; total_contradictions_flagged: number; wilson_ci_lower: number; wilson_ci_upper: number; judge_errors_total: number; cost_usd_total: number; duration_ms: number; source_tier_breakdown: Record<string, unknown>; report_json: Record<string, unknown>; }) => Promise<boolean>"
         ],
         "name": "BrainEngine"
