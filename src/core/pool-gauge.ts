@@ -33,6 +33,24 @@ export interface PoolGaugeSnapshot {
 
 export class CheckoutGauge {
   private counts: PoolGaugeSnapshot = { raw: 0, direct: 0, reserved: 0, tx: 0 };
+  private checkoutListeners = new Set<() => void>();
+
+  /**
+   * #5801: `listener` runs after a connection is actually obtained (reserve
+   * resolution or transaction-callback entry), never when a call merely starts
+   * waiting. Callers attribute the call to their own work (for example through
+   * AsyncLocalStorage); the gauge itself knows nothing about callers.
+   */
+  onCheckout(listener: () => void): () => void {
+    this.checkoutListeners.add(listener);
+    return () => { this.checkoutListeners.delete(listener); };
+  }
+
+  checkedOut(): void {
+    for (const listener of this.checkoutListeners) {
+      try { listener(); } catch { /* best-effort */ }
+    }
+  }
 
   acquire(kind: GaugeKind): void {
     this.counts[kind] += 1;

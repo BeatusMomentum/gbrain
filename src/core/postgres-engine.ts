@@ -602,6 +602,7 @@ export class PostgresEngine implements BrainEngine {
     if (!this._pageTransaction) this.checkoutGauge.acquire('tx');
     try {
       return await (conn.begin(async (handle) => {
+        if (!this._pageTransaction) this.checkoutGauge.checkedOut();
         const tx = composablePostgresTransaction(handle);
         // Create a scoped engine with tx as its connection, no shared state mutation
         const txEngine = Object.create(this) as PostgresEngine;
@@ -642,6 +643,7 @@ export class PostgresEngine implements BrainEngine {
       releasePermit();
       throw e;
     }
+    this.checkoutGauge.checkedOut();
     try {
       const conn: ReservedConnection = {
         async executeRaw<R = Record<string, unknown>>(
@@ -681,6 +683,9 @@ export class PostgresEngine implements BrainEngine {
    * it optionally, same pattern as `engine.reconnect`). Fail-open: returns
    * null instead of throwing.
    */
+  /** #5801: observe connection acquisition (see CheckoutGauge.onCheckout). Duck-typed like getPoolDiagnostics. */
+  onCheckout(listener: () => void): () => void { return this.checkoutGauge.onCheckout(listener); }
+
   getPoolDiagnostics(): { tracked: PoolGaugeSnapshot; poolMax: number | null; poisonedDiscards: number } | null {
     try {
       const max = (this.sql as unknown as { options?: { max?: number } }).options?.max;
@@ -3030,7 +3035,7 @@ export class PostgresEngine implements BrainEngine {
       signal?.addEventListener('abort', onAbort, { once: true });
       try {
         reserved = signal && typeof conn.reserve === 'function' ? await reserveWithCancellation(opts => conn.reserve(opts), signal) : undefined;
-        if (reserved) conn = reserved;
+        if (reserved) { conn = reserved; this.checkoutGauge.checkedOut(); }
         owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
         if (signal && !hasPostgresCancellationCapability(owner)) throw postgresCancellationUnavailable();

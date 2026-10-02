@@ -582,8 +582,13 @@ checkpoint did not advance. The message names both errors (redacted, at most
 the SQLSTATE (for example `53300` when a pooler's client limit is reached),
 a write-error code, `storage_error`, or `deadline_exceeded` when the phase
 overran its five-second budget. `message` is the redacted error text, one line,
-at most 200 characters. Unfinished work stays tracked and is retried; nothing
-is lost. Run `gbrain sources writer status --json` to see what is waiting. The
+at most 200 characters. Connection-wait evidence follows on Postgres:
+`first_conn_ms` is the time from phase start until the phase obtained a
+connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
+one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
+`loop_lag_ms` is the longest event-loop delay during the phase (a busy or
+starved process). The same fields appear in the consumer's status snapshot
+under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting. The
 line is rate-limited (one per second, one per phase and code every 30 seconds).
 An idle consumer keeps one ordinary-pool connection for its work probe and
 never holds a direct or session-pooler connection, so a

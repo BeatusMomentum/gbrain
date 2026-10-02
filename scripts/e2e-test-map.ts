@@ -338,6 +338,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/fixture-reset-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
     "test/e2e/postgres-poisoned-connection.test.ts",
+    "test/e2e/postgres-checkout-observer.test.ts",
     "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts",
@@ -524,7 +525,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts", "test/e2e/token-usage-skip-locked.test.ts"],
   // #5730: non-idle pooled connections are discarded by the vendored driver.
   "vendor/postgres/**": ["test/e2e/postgres-poisoned-connection.test.ts", "test/e2e/persistence-chaos.test.ts"],
-  "src/core/pool-gauge.ts": ["test/e2e/postgres-poisoned-connection.test.ts"],
+  "src/core/pool-gauge.ts": ["test/e2e/postgres-poisoned-connection.test.ts", "test/e2e/postgres-checkout-observer.test.ts"],
   "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
   "src/core/grants/lifecycle.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http-clients.ts": ["test/e2e/serve-http-consent.test.ts"],
