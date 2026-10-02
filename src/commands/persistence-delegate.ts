@@ -19,7 +19,8 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   // PENDING_WRITE_EXIT_CODE (0 with --accept-pending) and names how to poll.
   const pending = pendingReceiptOf(error);
   const acceptPending = acceptPendingRequested(getCliOptions().acceptPending);
-  if (json) await out(JSON.stringify(pending ? { ...detail, poll_command: pollCommand(pending.request_id) } : detail, null, 2) + '\n');
+  if (json) await out(JSON.stringify(pending ? { ...detail, request_id: pending.request_id, state: pending.state,
+    poll_command: pollCommand(pending.request_id) } : detail, null, 2) + '\n');
   console.error(pending ? `Pending [write_pending]: ${detail.message} It may still commit.`
     : error instanceof OperationError || error instanceof RemoteMcpError
       ? `Error [${'write_error' in detail && detail.write_error || detail.error}]: ${detail.message}` : error.message);

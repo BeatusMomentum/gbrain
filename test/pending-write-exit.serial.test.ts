@@ -111,6 +111,7 @@ describe('resident owner: pending-write exit codes', () => {
           if (outcome === 'pending') {
             const body = JSON.parse(result.stdout);
             expect(body.write_request).toMatchObject({ request_id: ID, state: 'running' });
+            expect(body).toMatchObject({ request_id: ID, state: 'running' });
             expect(body.poll_command).toBe(`gbrain call get_write_request '{"request_id":"${ID}"}'`);
           }
         });
