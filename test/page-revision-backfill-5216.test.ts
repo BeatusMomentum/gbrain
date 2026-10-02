@@ -14,6 +14,7 @@ import { REVISION_BACKFILL_STATE_KEY, resumePageRevisionBackfill } from '../src/
 import { assertPageRevision, REVISION_BACKFILL_PENDING } from '../src/core/page-state/types.ts';
 
 let engine: PGLiteEngine;
+let freshFlags: Array<{ notnull: boolean; hasdef: boolean; def: string | null }>;
 const SLUGS = ['notes/rev-a', 'notes/rev-b', 'notes/rev-c'];
 const quiet = { log: () => {} };
 
@@ -37,6 +38,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  freshFlags = await columnFlags(engine);
 }, 60_000);
 afterAll(async () => { await engine.disconnect(); });
 
@@ -92,13 +94,8 @@ describe('page revision rollout (#5216)', () => {
     expect(final['notes/rev-c']).toBe(written!);
     expect(final['notes/rev-b']).toMatch(/^[0-9a-f-]{36}$/);
 
-    const fresh = new PGLiteEngine();
-    await fresh.connect({});
-    await fresh.initSchema();
-    try {
-      expect(await columnFlags(engine)).toEqual(await columnFlags(fresh));
-      expect((await columnFlags(engine))[0]!.notnull).toBe(true);
-    } finally { await fresh.disconnect(); }
+    expect(await columnFlags(engine)).toEqual(freshFlags);
+    expect(freshFlags[0]!.notnull).toBe(true);
     expect(await engine.executeRaw("SELECT conname FROM pg_constraint WHERE conname = 'pages_knowledge_revision_backfilled'")).toEqual([]);
     expect(await engine.getConfig(REVISION_BACKFILL_STATE_KEY)).toBeNull();
     expect((await resumePageRevisionBackfill(engine, quiet)).status).toBe('not_needed');
