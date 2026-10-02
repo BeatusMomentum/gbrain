@@ -475,7 +475,7 @@ export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
-  opts?: { sourceId?: string; localFederatedSourceIds?: string[] },
+  opts?: { sourceId?: string; localFederatedSourceIds?: string[]; writeWaitMs?: number },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
@@ -487,6 +487,7 @@ export async function handleToolCall(
     remote: false,
     logger: { info: console.log, warn: console.warn, error: console.error },
     ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    ...(opts?.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts?.localFederatedSourceIds
       ? { localFederatedSourceIds: opts.localFederatedSourceIds }
       : {}),

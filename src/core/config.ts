@@ -69,6 +69,8 @@ export interface GBrainConfig {
   integrations?: { memorable?: { enabled?: boolean } };
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
+  /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
+  persistence?: { write_wait_ms?: number | string };
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
@@ -1627,6 +1629,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
+  'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
 ];
 
 /**

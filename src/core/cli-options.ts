@@ -38,6 +38,15 @@ export interface CliOptions {
    * via src/core/brain-resolver.ts.
    */
   brain: string | null;
+  /**
+   * #5232: `--wait <seconds>` — how long a write waits for its commit before
+   * the CLI reports it pending (persistence/write-wait.ts). `null` = resolve
+   * GBRAIN_WRITE_WAIT_MS / persistence.write_wait_ms / the 30 s default. Unset when
+   * the flag is absent.
+   */
+  writeWaitMs?: number | null;
+  /** #5232: `--accept-pending` (true) / `--no-accept-pending` (false); unset = GBRAIN_ACCEPT_PENDING. */
+  acceptPending?: boolean | null;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
@@ -48,6 +57,15 @@ export const DEFAULT_CLI_OPTIONS: CliOptions = {
   explain: false,
   brain: null,
 };
+
+/** `--wait` takes seconds (`--wait 45`, `--wait 2.5`), 0 to 600. A malformed value throws. */
+function parseWaitSeconds(val: string | undefined): number {
+  const seconds = val !== undefined && /^\d+(?:\.\d+)?$/.test(val) ? Number(val) : NaN;
+  if (!Number.isFinite(seconds) || seconds > 600) {
+    throw new Error(`--wait requires a number of seconds from 0 to 600 (got ${val === undefined ? 'nothing' : JSON.stringify(val)}).`);
+  }
+  return Math.round(seconds * 1000);
+}
 
 /**
  * Brain-id shape. Same regex as brain-registry's BRAIN_ID_RE (kept in sync;
@@ -187,6 +205,21 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
     }
     if (a.startsWith('--brain=')) {
       cliOpts.brain = parseBrainValue(a.slice('--brain='.length));
+      continue;
+    }
+    // #5232 write wait + pending opt-in. Global like --timeout so every write
+    // lane (generated ops, call, capture, remember, takes) reads one value.
+    if (a === '--wait') {
+      cliOpts.writeWaitMs = parseWaitSeconds(argv[i + 1]);
+      i++;
+      continue;
+    }
+    if (a.startsWith('--wait=')) {
+      cliOpts.writeWaitMs = parseWaitSeconds(a.slice('--wait='.length));
+      continue;
+    }
+    if (a === '--accept-pending' || a === '--no-accept-pending') {
+      cliOpts.acceptPending = a === '--accept-pending';
       continue;
     }
     slots.push({ plain: a });

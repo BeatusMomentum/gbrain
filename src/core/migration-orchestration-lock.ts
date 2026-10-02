@@ -28,8 +28,7 @@ import { getPgliteMigrationLockPath } from './pglite-lock.ts';
 import { tryAcquireNativeLock } from './persistence/native-lock.ts';
 
 export const MIGRATION_ORCHESTRATION_LOCK_ID = 'gbrain-apply-migrations';
-/** Exit status of a runner refused because another runner holds the lock (EX_TEMPFAIL). */
-export const MIGRATIONS_RUNNING_EXIT_CODE = 75;
+export { MIGRATIONS_RUNNING_EXIT_CODE } from './exit-codes.ts';
 // Long enough to outlast a synchronous orchestrator phase (subprocess timeouts
 // reach 30 minutes) that starves the refresh timer; ownership is rechecked
 // before every orchestrator.

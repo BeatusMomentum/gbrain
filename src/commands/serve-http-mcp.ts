@@ -19,7 +19,7 @@ import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, type ToolResult } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, type ToolResult } from '../mcp/dispatch.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
@@ -511,13 +511,15 @@ async function recordMcpToolResult(
       errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
     } catch { /* ignore */ }
     const errStatus = requestLogStatusForResult(toolResult);
+    // #5249: the opaque request id lets admin stats count pending writes that later fail.
+    const pending = errStatus === 'accepted_pending' ? acceptedPendingReceipt(toolResult) : null;
     try {
       await executeRawJsonb(
         engine,
         `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
         [authInfo.clientId, agentName, name, latency, errStatus, errMsg],
-        [logParamsObj],
+        [pending ? { ...(logParamsObj && typeof logParamsObj === 'object' ? logParamsObj : {}), write_request_id: pending.request_id } : logParamsObj],
       );
     } catch { /* best effort */ }
     broadcastEvent({

@@ -133,6 +133,8 @@ export interface ParamDef {
   default?: unknown;
   enum?: string[];
   items?: ParamDef;
+  /** Object members (O-DX-3); a member with `required: true` lands in the schema's `required`. */
+  properties?: Record<string, ParamDef>;
 }
 
 export interface Logger {
@@ -371,6 +373,13 @@ export interface OperationContext {
    * tokens from comments.)
    */
   deferEmbeds?: boolean;
+  /**
+   * #5232: how long a coordinated write waits for its commit before returning
+   * `write_pending` with its receipt. Unset keeps the agent default (5 s);
+   * CLI entry points and the resident owner's CLI lane set it
+   * (persistence/write-wait.ts).
+   */
+  writeWaitMs?: number;
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers

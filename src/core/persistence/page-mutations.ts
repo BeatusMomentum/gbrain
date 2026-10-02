@@ -99,7 +99,7 @@ export async function submitPageMutation(ctx: OperationContext,
     await submissionAuthority(ctx, prior.operation, prior.source_id, prior.source_incarnation, prior.slug);
     await authorizeStoredRequest(ctx.engine, prior);
     assertReplayIntent(prior, intentDigest({ operation: input.operation, sourceId, slug: prior.slug, callerIntent }));
-    return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, input.waitMs));
+    return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, input.waitMs ?? ctx.writeWaitMs));
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
@@ -148,6 +148,13 @@ export async function submitPageMutation(ctx: OperationContext,
   const authority = await submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug);
   await assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug });
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+  // #5616: typed edit refusals before admission; publication repeats them on the locked snapshot.
+  if (input.operation === 'edit_page') {
+    const { applyPageEdits, assertEditRevision, parsePageEdits } = await import('./page-edit.ts');
+    if (!snapshot || snapshot.page.deleted_at) throw new OperationError('page_not_found', `Page not found: ${slug}`, 'edit_page changes an existing page; create it with put_page.');
+    assertEditRevision(snapshot.revision, p.expected_revision);
+    applyPageEdits(snapshot.page, snapshot.tags, ctx.remote !== false, parsePageEdits(p.edits));
+  }
   let binding = await getWorktreeBinding(ctx.engine, sourceId);
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(await ctx.engine.getConfig('sync.write_through') ?? 'true');
@@ -197,7 +204,9 @@ export async function submitPageMutation(ctx: OperationContext,
   }
   const row = await admitWrite(ctx.engine, { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,
+    ...(input.operation === 'edit_page' ? { terminalReservation: Math.max(16_384, Buffer.byteLength(JSON.stringify(authority)) + 8192)
+      + (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE } : {}),
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
-  const response = writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs));
+  const response = writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs ?? ctx.writeWaitMs));
   return typeWarning ? { ...response, type_warning: typeWarning } : response;
 }

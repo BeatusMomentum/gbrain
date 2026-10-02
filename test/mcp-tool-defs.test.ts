@@ -10,7 +10,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { operations } from '../src/core/operations.ts';
-import { buildToolDefs, paramDefToSchema } from '../src/mcp/tool-defs.ts';
+import { buildToolDefs, paramDefToSchema, toolAnnotations } from '../src/mcp/tool-defs.ts';
 import type { ParamDef } from '../src/core/operations.ts';
 
 // Reference shape — mirrors the canonical `paramDefToSchema` helper from
@@ -33,7 +33,10 @@ type ParamDefLike = {
   enum?: string[];
   default?: unknown;
   items?: ParamDefLike;
+  required?: boolean;
+  properties?: Record<string, ParamDefLike>;
 };
+// #5616 (O-DX-3): object members map to closed `properties` + `required`.
 function referenceParamDefToSchema(p: ParamDefLike): Record<string, unknown> {
   return {
     type: p.type === 'array' ? 'array' : p.type,
@@ -41,6 +44,11 @@ function referenceParamDefToSchema(p: ParamDefLike): Record<string, unknown> {
     ...(p.enum ? { enum: p.enum } : {}),
     ...(p.default !== undefined ? { default: p.default } : {}),
     ...(p.items ? { items: referenceParamDefToSchema(p.items) } : {}),
+    ...(p.properties ? {
+      properties: Object.fromEntries(Object.entries(p.properties).map(([k, v]) => [k, referenceParamDefToSchema(v)])),
+      required: Object.entries(p.properties).filter(([, v]) => v.required).map(([k]) => k),
+      additionalProperties: false,
+    } : {}),
   };
 }
 function legacyInlineMap(ops: typeof operations) {
@@ -56,11 +64,17 @@ function legacyInlineMap(ops: typeof operations) {
         .filter(([, v]) => v.required)
         .map(([k]) => k),
     },
-    // MEMORY_VERBS v1: ToolAnnotations passthrough, emitted ONLY when the op
-    // defines them. The byte-stability contract is per-op: ops WITHOUT
-    // annotations keep the exact pre-v1 shape (pinned explicitly below).
-    ...(op.annotations ? { annotations: op.annotations } : {}),
+    // MEMORY_VERBS v1: curated ToolAnnotations pass through; #5037 derives
+    // read/write hints from explicit `mutating` tags; an untagged op without
+    // annotations keeps the exact pre-v1 shape (pinned explicitly below).
+    ...(referenceAnnotations(op) ? { annotations: referenceAnnotations(op) } : {}),
   }));
+}
+function referenceAnnotations(op: (typeof operations)[number]) {
+  if (op.annotations) return op.annotations;
+  if (op.mutating === true) return { readOnlyHint: false };
+  if (op.mutating === false && op.scope === 'read') return { readOnlyHint: true };
+  return undefined;
 }
 
 describe('buildToolDefs', () => {
@@ -76,14 +90,30 @@ describe('buildToolDefs', () => {
     expect(JSON.stringify(buildToolDefs(operations, { strictParams: false }))).toBe(base);
   });
 
-  test('ops without annotations keep the pre-annotations shape exactly (no annotations key)', () => {
+  test('ops without annotations or a mutating tag keep the pre-annotations shape exactly (no annotations key)', () => {
     const extracted = buildToolDefs(operations);
     for (const def of extracted) {
       const op = operations.find(o => o.name === def.name)!;
-      if (!op.annotations) {
+      if (!op.annotations && op.mutating === undefined) {
         expect('annotations' in def).toBe(false);
         expect(Object.keys(def)).toEqual(['name', 'description', 'inputSchema']);
       }
+    }
+  });
+
+  test('#5037: annotations derive conservatively from scope and explicit mutating tags', () => {
+    const base = { name: 'x', description: 'x', params: {}, handler: async () => null, outputRedaction: 'no_stored_text' } as const;
+    expect(toolAnnotations({ ...base, scope: 'read', mutating: false })).toEqual({ readOnlyHint: true });
+    expect(toolAnnotations({ ...base, scope: 'write', mutating: false })).toBeUndefined();
+    expect(toolAnnotations({ ...base, scope: 'read' })).toBeUndefined();
+    expect(toolAnnotations({ ...base, scope: 'write', mutating: true })).toEqual({ readOnlyHint: false });
+    expect(toolAnnotations({ ...base, mutating: true, annotations: { title: 'curated', idempotentHint: true } })).toEqual({ title: 'curated', idempotentHint: true });
+    const defs = new Map(buildToolDefs(operations).map(def => [def.name, def]));
+    expect(defs.get('put_page')?.annotations).toEqual({ readOnlyHint: false });
+    expect(defs.get('edit_page')?.annotations).toEqual({ readOnlyHint: false });
+    expect(defs.get('recall')?.annotations?.readOnlyHint).toBe(true);
+    for (const op of operations) {
+      if (op.mutating === true && !op.annotations) expect(defs.get(op.name)?.annotations?.readOnlyHint).toBe(false);
     }
   });
 

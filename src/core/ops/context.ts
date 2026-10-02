@@ -308,6 +308,8 @@ export function normalizeSlugPrefix(prefix: string): string {
 export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
   'put_page', 'delete_page', 'restore_page', 'add_tag', 'remove_tag',
   'add_link', 'remove_link', 'add_timeline_entry', 'revert_version',
+  // #5616: edit_page enforces the slug fence in its handler and submission.
+  'edit_page',
   'put_raw_data', 'think',
   // submit_agent enforces bound_slug_prefixes itself (it is the op the column
   // was introduced for — see its bound_* binding check), so denying it here
