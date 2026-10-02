@@ -233,8 +233,8 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: true,
     codes: ['53300'],
     patterns: [/EMAXCONNSESSION/i, /too many clients already/i, /max.*clients?.*in session mode/i, /remaining connection slots are reserved/i],
-    remediation: 'Connection slots are exhausted: the pooler client limit is below the sum of every gbrain process\'s pool. Keep each long-running process (serve, autopilot, jobs work) at export GBRAIN_POOL_SIZE=6 or more and run fewer of them (share one gbrain serve --http), or raise the pooler limit; one-shot CLI commands may use GBRAIN_POOL_SIZE=2. See docs/ENGINES.md#pool-sizing.',
-    fix: { kind: 'set_env', name: 'GBRAIN_POOL_SIZE', value: '6', why: 'the floor for a long-running process; when processes x 6 exceeds the pooler limit, run fewer processes instead of going lower' },
+    remediation: `Connection slots are exhausted: the pooler client limit is below the sum of every gbrain process's pool. Keep each long-running process (serve, autopilot, jobs work) at export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} or more and run fewer of them (share one gbrain serve --http), or raise the pooler limit; one-shot CLI commands may use GBRAIN_POOL_SIZE=2. See docs/ENGINES.md#pool-sizing.`,
+    fix: { kind: 'set_env', name: 'GBRAIN_POOL_SIZE', value: String(RESIDENT_POOL_FLOOR), why: `the floor for a long-running process; when processes x ${RESIDENT_POOL_FLOOR} exceeds the pooler limit, run fewer processes instead of going lower` },
   },
   {
     reason: 'server_starting',
