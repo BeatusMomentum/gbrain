@@ -53,7 +53,7 @@ import {
   readIpcSecretForConfig,
   requestTurnContext,
   requestContextPack,
-  resolveSocketPathForConfig,
+  hookResolveSocketForConfig,
   CONTEXT_PACK_CLIENT_TIMEOUT_MS,
   type TurnContextResponse,
   type ContextPackResponse,
@@ -530,7 +530,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
         // Engine-uniform (#4245): same config-keyed socket/secret resolution
         // as the user-prompt and compact arms (PGLite data dir; Postgres
         // hash12(database_url) run-dir). Null → silent skip, as before.
-        const packSocket = resolveSocketPathForConfig(cfg);
+        const packSocket = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
         if (packSocket) {
           const secret = readIpcSecretForConfig(cfg);
           if (secret) {
@@ -1156,7 +1156,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // Postgres off hash12(database_url) under ~/.gbrain/run. Null = no
     // keying material at all (no config, thin-client remote) — ENGINE-FREE
     // means no direct-engine fallback here; pull-mode covers it.
-    const socketPath = resolveSocketPathForConfig(cfg);
+    const socketPath = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
     if (!socketPath) {
       return { outcome: 'degraded', reason: 'no_pglite_path' };
     }
@@ -1358,7 +1358,7 @@ async function hookCompact(io: HookIo): Promise<number> {
     // leftover database_path must not probe the PGLite socket (the resolver
     // checks engine first); a Postgres brain probes its hash12(database_url)
     // run-dir socket instead. Null = no keying material → degrade.
-    const compactSocket = resolveSocketPathForConfig(cfg);
+    const compactSocket = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
     if (!compactSocket) { outcome = 'degraded'; reason = 'no_pglite_path'; return; }
     const secret = readIpcSecretForConfig(cfg);
     if (!secret) { outcome = 'degraded'; reason = 'no_serve'; return; }
@@ -1493,7 +1493,7 @@ async function hookStop(io: HookIo): Promise<number> {
       // exactly like the compact call (OV2-9/OV-A6); every failure below is
       // degraded-not-blocking: the banked file is the durable artifact and
       // the sweep extracts it when serve is away.
-      const socket = resolveSocketPathForConfig(cfg);
+      const socket = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
       if (!socket) return 'no_pglite_path';
       const secret = readIpcSecretForConfig(cfg);
       if (!secret) return 'no_serve';

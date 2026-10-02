@@ -7,7 +7,7 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
 import { validateParams, parseStrictParamsMode } from './validate-params.ts';
-import { filterOpsForSurface, allowedOpNames, clampSurface, type McpSurface } from './surface.ts';
+import { filterOpsForSurface, allowedOpNames, clampSurface, isReadOnlyOperation, type McpAccess, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import type { Operation } from '../core/operations.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
@@ -196,7 +196,7 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean; onBootPhase?: (phase: string) => void } = {}) {
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
@@ -215,8 +215,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // (Resolved before Server construction: the initialize instructions need
   // the allowed-op set to decide whether extract_facts may be advertised.)
   const surface: McpSurface = clampSurface(opts.surface ?? 'full');
-  const surfacedOps = filterOpsForSurface(operations, surface);
-  const allowedOps = surface === 'full' ? undefined : allowedOpNames(operations, surface);
+  const readOnly = opts.access === 'read-only';
+  const surfacedOps = filterOpsForSurface(operations, surface).filter(op => !readOnly || isReadOnlyOperation(op));
+  const allowedOps = readOnly ? new Set(surfacedOps.map(op => op.name)) : surface === 'full' ? undefined : allowedOpNames(operations, surface);
 
   // Ambient writeback (opt-in, default off): resolved ONCE at boot — a
   // config flip needs a serve restart on this lane, the same posture as
@@ -259,7 +260,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
         if (verified.remote) scopes = verified.grant.scopes;
       } catch {}
     }
-    return { transport: 'stdio', scopes, surface, source_id: scope.sourceId,
+    return { transport: 'stdio', scopes, surface, access: readOnly ? 'read-only' : 'full', source_id: scope.sourceId,
       available_operations: available,
       administration: mcpAdministrationGuidance(),
       shared_skills: { protocol_version: 2, catalog: available.includes('list_skills') && available.includes('get_skill'),

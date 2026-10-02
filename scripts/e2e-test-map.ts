@@ -91,6 +91,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/mcp/skill-resources.ts": ["test/e2e/shared-skills-transports.test.ts"],
   "src/core/scope.ts": ["test/e2e/client-grants.test.ts", "test/e2e/shared-skills-transports.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
+  // #5231/#5893 (O-ENG-7): legacy-token rescope and the explicit no-source grant on Postgres.
+  "src/core/grants/legacy-token.ts": ["test/e2e/auth-rescope-token.test.ts"],
+  "src/core/legacy-token-scope.ts": ["test/e2e/auth-rescope-token.test.ts", "test/e2e/auth-permissions.test.ts"],
   "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/withdrawal-bounded-safety-postgres.test.ts", "test/e2e/withdrawal-crash-postgres.test.ts", "test/e2e/memory-safety-wave-postgres.test.ts", "test/e2e/fact-withdrawal-scope-postgres.test.ts"],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the

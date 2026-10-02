@@ -216,6 +216,8 @@ describe('parseHarnessArgs', () => {
     expect(parseHarnessArgs(['--source', 'Not Valid']).error).toMatch(/invalid --source/);
     expect(parseHarnessArgs(['--source', '__all__']).error).toMatch(/invalid --source/);
     expect(parseHarnessArgs(['--source', 'wiki']).source).toBe('wiki');
+    expect(parseHarnessArgs(['--refresh-skills']).refreshSkills).toBe(true);
+    expect(parseHarnessArgs(['--refresh-skills', '--status']).error).toMatch(/--refresh-skills alone/);
   });
   test('--project is repeatable and resolved', () => {
     const f = parseHarnessArgs(['--project', '/a', '--project', '/b']);
@@ -318,6 +320,19 @@ describe('full apply', () => {
     expect(code).toBe(0);
     const hooks = readJson(f.userSettings).hooks as Record<string, unknown>;
     expect(Object.keys(hooks).sort()).toEqual(['PreCompact', 'SessionStart', 'UserPromptSubmit']);
+  });
+
+  test('#5893 re-run mints each host from the token it replaces, carrying its grants', async () => {
+    const f = makeFake();
+    expect(await applyHarness(flags(), f.deps)).toBe(0);
+    const first = readHarnessReceiptState(f.home);
+    if (first.state !== 'ok') throw new Error('expected a receipt');
+    expect(f.mintCalls.slice(0, 3).every(call => (call as { carry?: unknown }).carry === undefined)).toBe(true);
+    expect(await applyHarness(flags(['--source', 'wiki']), f.deps)).toBe(0);
+    const carried = f.mintCalls.slice(3).map(call => (call as { name: string; carry?: { fromId: string; explicitSource: boolean; policyAdded: string[] } }));
+    expect(carried.map(call => call.carry?.fromId)).toEqual(
+      carried.map(call => first.receipt.harness_tokens![call.name.replace('bootstrap-harness-', '') as HarnessTarget['host']]!.id));
+    expect(carried.every(call => call.carry?.explicitSource === true && call.carry.policyAdded.length === 0)).toBe(true);
   });
 
   test('re-run rotates mint-first [C7]: one entry per event, previous token revoked by id AFTER confirm', async () => {
