@@ -216,6 +216,8 @@ describe('parseHarnessArgs', () => {
     expect(parseHarnessArgs(['--source', 'Not Valid']).error).toMatch(/invalid --source/);
     expect(parseHarnessArgs(['--source', '__all__']).error).toMatch(/invalid --source/);
     expect(parseHarnessArgs(['--source', 'wiki']).source).toBe('wiki');
+    expect(parseHarnessArgs(['--refresh-skills']).refreshSkills).toBe(true);
+    expect(parseHarnessArgs(['--refresh-skills', '--status']).error).toMatch(/--refresh-skills alone/);
   });
   test('--project is repeatable and resolved', () => {
     const f = parseHarnessArgs(['--project', '/a', '--project', '/b']);
