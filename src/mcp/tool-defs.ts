@@ -11,9 +11,9 @@ export interface McpToolDef {
     additionalProperties?: false;
   };
   /**
-   * MCP ToolAnnotations (SDK 1.29+), emitted ONLY when the op defines them —
-   * existing tools keep byte-identical definitions (the byte-equality
-   * regression test depends on absent keys staying absent).
+   * MCP ToolAnnotations (SDK 1.29+): the op's own curated annotations, else
+   * the conservative derivation in toolAnnotations(). Absent when neither
+   * applies, so an op of unknown effect stays unannotated.
    */
   annotations?: {
     title?: string;
@@ -78,6 +78,22 @@ function strictPassthroughProperties(op: Operation): Record<string, unknown> {
 }
 
 /**
+ * #5037: annotation-driven hosts need to tell reads from writes. An op's
+ * curated `annotations` win as written. Otherwise derive only what existing
+ * metadata states: `readOnlyHint: true` for a read-scope op explicitly
+ * tagged `mutating: false`, `readOnlyHint: false` for an op tagged
+ * `mutating: true` (its destructiveHint keeps the MCP default, true: no
+ * metadata separates additive from destructive writes). An untagged op
+ * stays unannotated.
+ */
+export function toolAnnotations(op: Operation): McpToolDef['annotations'] | undefined {
+  if (op.annotations) return op.annotations;
+  if (op.mutating === true) return { readOnlyHint: false };
+  if (op.mutating === false && op.scope === 'read') return { readOnlyHint: true };
+  return undefined;
+}
+
+/**
  * Build MCP tool definitions from operations.
  *
  * Default emission (no opts / strictParams false) is BYTE-IDENTICAL to the
@@ -89,22 +105,25 @@ function strictPassthroughProperties(op: Operation): Record<string, unknown> {
  */
 export function buildToolDefs(ops: Operation[], opts?: { strictParams?: boolean }): McpToolDef[] {
   const strict = opts?.strictParams === true;
-  return ops.map(op => ({
-    name: op.name,
-    description: op.description,
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        ...Object.fromEntries(
-          Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
-        ),
-        ...(strict ? strictPassthroughProperties(op) : {}),
+  return ops.map(op => {
+    const annotations = toolAnnotations(op);
+    return {
+      name: op.name,
+      description: op.description,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          ...Object.fromEntries(
+            Object.entries(op.params).map(([k, v]) => [k, paramDefToSchema(v)]),
+          ),
+          ...(strict ? strictPassthroughProperties(op) : {}),
+        },
+        required: Object.entries(op.params)
+          .filter(([, v]) => v.required)
+          .map(([k]) => k),
+        ...(strict ? { additionalProperties: false as const } : {}),
       },
-      required: Object.entries(op.params)
-        .filter(([, v]) => v.required)
-        .map(([k]) => k),
-      ...(strict ? { additionalProperties: false as const } : {}),
-    },
-    ...(op.annotations ? { annotations: op.annotations } : {}),
-  }));
+      ...(annotations ? { annotations } : {}),
+    };
+  });
 }
