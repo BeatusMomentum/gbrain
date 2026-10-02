@@ -2391,9 +2391,12 @@
           "10 contextual_retrieval_mode text/text NULL",
           "11 trust_frontmatter_overrides boolean/bool NOT NULL DEFAULT false",
           "12 newest_content_at timestamp with time zone/timestamptz NULL",
-          "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "14 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
-          "15 chunker_version text/text NULL"
+          "13 upstream_checked_at timestamp with time zone/timestamptz NULL",
+          "14 upstream_commit text/text NULL",
+          "15 upstream_behind integer/int4 NULL",
+          "16 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "17 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
+          "18 chunker_version text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

@@ -419,3 +419,19 @@ for (const phase of ALL_PHASES) {
     }, 120_000);
   }
 }
+
+// #5255: autopilot asks every cycle to pull. On a managed brain the sync phase
+// must still import local HEAD (no refusal) and report the skipped refresh.
+for (const backend of backends) {
+  test(`sync with pull:true on a managed ${backend} brain: writes, upstream_refresh skipped_managed`, async () => {
+    await runPhase(engines[backends.indexOf(backend)], 'sync', { ...MATRIX.sync, cycle: { pull: true } }, async ctx => {
+      expect(ctx.result.status).not.toBe('fail');
+      for (const refusal of REFUSALS) {
+        expect(JSON.stringify(ctx.result)).not.toContain(refusal);
+        expect(ctx.logs).not.toContain(refusal);
+      }
+      expect(ctx.result.details?.upstream_refresh).toBe('skipped_managed');
+      await MATRIX.sync.assert!(ctx);
+    });
+  }, 120_000);
+}
