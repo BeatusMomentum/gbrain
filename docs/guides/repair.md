@@ -314,6 +314,17 @@ Do not delete binding rows by hand: the repair rechecks, in the same
 statement, that the binding is still orphaned and that no pending write
 request uses it.
 
+### Timeline history scan coverage
+
+Doctor's `timeline_history` check classifies at most 2,000 pages or 10
+seconds of work per run. On a larger brain each run continues where the last
+one stopped (the cursor is kept in the config row
+`doctor.timeline_history.scan:<sources>`), so a few consecutive `gbrain doctor`
+runs finish a full pass and report exact counts. While the next pass is in
+progress, a clean finished pass keeps the check `ok` until a newer timeline row
+is written. A run that has neither says `scan incomplete` and is a lower bound;
+`gbrain repair timeline` (preview) counts the whole brain in one go.
+
 ### Stale atoms
 
 `gbrain repair stale-atoms` (explicit-only, #5770) retires atoms that drifted
