@@ -37,6 +37,9 @@ export interface OrphanPage {
   slug: string;
   title: string;
   domain: string;
+  /** #5891: the page's source and type, so a federated caller can tell rows apart. */
+  source_id?: string;
+  type?: string | null;
 }
 
 export interface OrphanResult {
@@ -188,6 +191,8 @@ export async function findOrphans(
     slug: row.slug,
     title: row.title,
     domain: deriveDomain(row.domain, row.slug),
+    ...(row.source_id !== undefined ? { source_id: row.source_id } : {}),
+    ...(row.type !== undefined ? { type: row.type } : {}),
   }));
 
   const excluded = allOrphans.length - policyKept.length;

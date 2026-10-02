@@ -35,7 +35,7 @@ interface Transport {
 }
 interface Fixture { engine: BrainEngine; transports: () => Promise<Transport[]>; }
 
-const OPERATIONS = ['get_page', 'put_page', 'edit_page', 'get_write_request', 'remember', 'recall'];
+const OPERATIONS = ['get_page', 'put_page', 'edit_page', 'get_write_request', 'remember', 'recall', 'find_orphans'];
 const page = (body: string) => `---\ntitle: Conformance example\ntype: note\n---\n\n${body}\n`;
 const reply = (result: ToolResult): Reply => ({ isError: result.isError === true, body: JSON.parse(result.content[0]!.text), status: requestLogStatusForResult(result) });
 
@@ -219,8 +219,25 @@ export function writeContractConformanceCases(databaseUrl?: string) {
       });
     }, 180_000);
 
-    // #5891 lands after fix wave 7 (find_orphans is shared with doctor orphan_ratio).
-    test.todo('find_orphans source filter stays inside the caller grant (#5891, AFTER-FW7)', () => {});
+    test('find_orphans source filter stays inside the caller grant over stdio and HTTP (#5891)', async () => {
+      await withFixture(databaseUrl, async ({ engine, transports }) => {
+        await engine.executeRaw("INSERT INTO sources(id,name) VALUES('other-example','other-example') ON CONFLICT DO NOTHING");
+        await engine.putPage('people/other-orphan', { type: 'person', title: 'Other orphan', compiled_truth: 'Alone in another source.' }, { sourceId: 'other-example' });
+        for (const transport of await transports()) {
+          const slug = `people/${transport.name}-orphan`;
+          expect((await transport.call('put_page', { slug, content: `---\ntitle: Orphan\ntype: person\n---\n\nAlone.\n`, request_id: randomUUID() })).isError).toBe(false);
+          const own = await transport.call('find_orphans', { source_id: 'default', limit: 1000 });
+          expect({ transport: transport.name, isError: own.isError }).toEqual({ transport: transport.name, isError: false });
+          const rows = own.body.orphans as Array<{ slug: string; source_id: string }>;
+          expect(rows.map(row => row.slug)).toContain(slug);
+          expect(rows.every(row => row.source_id === 'default')).toBe(true);
+          const other = await transport.call('find_orphans', { source_id: 'other-example' });
+          expect({ transport: transport.name, other }).toMatchObject({ other: { isError: true, body: { error: 'not_found' } } });
+          const unfiltered = await transport.call('find_orphans', { limit: 1000 });
+          expect((unfiltered.body.orphans as Array<{ source_id: string }>).some(row => row.source_id === 'other-example')).toBe(false);
+        }
+      });
+    }, 180_000);
     test('auth rescope-token: explicit empty allowed_operations, sources and takes holders deny all over HTTP; reset restores the default', async () => {
       await withFixture(databaseUrl, async ({ engine, transports }) => {
         const http = (await transports()).find(transport => transport.name === 'http')!;
