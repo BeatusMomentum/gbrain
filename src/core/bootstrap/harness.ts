@@ -67,7 +67,7 @@ import {
   redactToken,
   validateToken,
 } from '../mcp-registration.ts';
-import { mintLegacyToken, revokeLegacyTokenById, type MintedLegacyToken } from '../token-mint.ts';
+import { carryLegacyGrant, mintLegacyToken, readActiveTokenPermissions, revokeLegacyTokenById, type MintedLegacyToken } from '../token-mint.ts';
 import { generateToken } from '../utils.ts';
 import { readCredentials, writeCredentials, type HarnessCredentials } from '../harness/credentials.ts';
 import { installSharedSkillsConnection, type SharedSkillsConnectionOptions } from '../harness/shared-skills.ts';
@@ -306,6 +306,8 @@ export interface HarnessDeps {
     scopes: string[];
     sourceGrant?: string[];
     allowedOperations?: string[];
+    /** #5893: rotate from this token id, carrying its grants (carryLegacyGrant). */
+    carry?: { fromId: string; explicitSource: boolean; policyAdded: string[] };
   }) => Promise<MintedLegacyToken>;
   installSharedSkills?: (credentials: HarnessCredentials, options: SharedSkillsConnectionOptions) => Promise<{
     status: string; reason?: string; retained_files?: string[]; next_action?: string; remote_membership_pending?: boolean;
@@ -356,7 +358,7 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
       deps.codexAgentsOverride ??
       (deps.codexConfig ? join(dirname(deps.codexConfig), 'AGENTS.override.md') : codexAgentsOverridePath()),
     loadFileConfig: deps.loadFileConfig ?? loadConfigFileOnly,
-    mint: deps.mint ?? defaultMint,
+    mint: deps.mint ?? mintHarnessToken,
     installSharedSkills: deps.installSharedSkills ?? installSharedSkillsConnection,
     nativeSkillsDir: deps.nativeSkillsDir ?? ((host) => {
       const config = host === 'claude-code' ? deps.userSettingsPath : host === 'codex' ? deps.codexConfig : deps.opencodeConfig;
@@ -422,7 +424,7 @@ export function harnessDetectDeps(o?: HarnessDetectOverrides): Partial<HarnessDe
 }
 
 /** Production mint: open the configured engine just long enough to insert. */
-async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?: string[]; allowedOperations?: string[] }): Promise<MintedLegacyToken> {
+export async function mintHarnessToken(opts: Parameters<NonNullable<HarnessDeps['mint']>>[0]): Promise<MintedLegacyToken> {
   const cfg = loadConfig();
   if (!cfg) {
     throw new Error('no brain configured — run `gbrain init` first (the harness wires an EXISTING brain).');
@@ -441,6 +443,13 @@ async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?:
       } catch {
         sourceGrant = undefined; // historical default floor
       }
+    }
+    const prior = opts.carry && await readActiveTokenPermissions(engine, opts.carry.fromId);
+    if (prior !== undefined && opts.carry && opts.allowedOperations) {
+      const carried = carryLegacyGrant(prior, { ...opts.carry, allowedOperations: opts.allowedOperations,
+        ...(sourceGrant && sourceGrant.length > 0 ? { sourceGrant } : {}) });
+      const minted = await mintLegacyToken(engine, { name: opts.name, scopes: opts.scopes, ...carried });
+      return { ...minted, withheldOperations: carried.withheldOperations };
     }
     return await mintLegacyToken(engine, {
       name: opts.name,
@@ -1209,13 +1218,17 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     }
   } else {
     const allowedOperations = await harnessOperationSnapshot(skillsPolicy === 'follow');
+    const priorSnapshot = prior ? await harnessOperationSnapshot(prior.skills_policy === 'follow') : allowedOperations;
+    const policyAdded = allowedOperations.filter(op => !priorSnapshot.includes(op));
     for (const host of hosts) {
       let minted: MintedLegacyToken;
+      const fromId = prior?.harness_tokens?.[host]?.minted ? prior.harness_tokens[host]!.id : prior?.token.minted ? prior.token.id : undefined;
       try {
         minted = await d.mint({
           name: hosts.length === 1 ? flags.tokenName : `${flags.tokenName}-${host}`,
           scopes: skillsPolicy === 'follow' ? ['read', 'write', 'skills_member_self'] : ['read', 'write'],
           allowedOperations,
+          ...(fromId ? { carry: { fromId, explicitSource: !!flags.source, policyAdded } } : {}),
           // [X2] --source is the write floor — a scalar grant, the stdio
           // env-tier mirror. An implicit non-default source carries its
           // federated read set (#4897 — the same set search/think read, not a
@@ -1229,6 +1242,9 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         throw e;
       }
       tokens.set(host, minted.token);
+      if (minted.withheldOperations?.length) {
+        d.log(`token ${minted.name}: carried the previous grants; ${minted.withheldOperations.length} newer operation(s) withheld — preview with \`gbrain auth rescope-token ${minted.name} --refresh-operations\`.`);
+      }
       receipt.harness_tokens![host] = { id: minted.id, name: minted.name, minted: true };
       if (host === hosts[0]) {
         receipt.token.id = minted.id;
