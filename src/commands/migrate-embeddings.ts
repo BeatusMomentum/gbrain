@@ -18,6 +18,7 @@ import {
   readMigrationStatus,
   verifySearchRoundTrip,
   MIGRATION_STATE_KEY,
+  DEFERRED_ANN_TABLES,
   type EmbeddingMigrationPlan,
   type MigrationVerify,
   type MigrationState,
@@ -868,7 +869,7 @@ async function buildMigrationAnnIndexes(engine: BrainEngine, targetDims: number,
   const expected = hnswIndexExpected('vector', targetDims) && await annIndexValidity(engine, canonical.name) !== true ? [canonical] : [];
   await buildDeferredAnnIndexes(engine, {
     targetDims,
-    readPending: async () => mergeDeferredAnnIndexes(parseDeferredAnnIndexes((await readMigrationState(engine)).state?.deferred_ann_indexes), expected),
+    readPending: async () => mergeDeferredAnnIndexes(parseDeferredAnnIndexes((await readMigrationState(engine)).state?.deferred_ann_indexes, DEFERRED_ANN_TABLES), expected),
     writePending: pending => engine.transaction(async tx => {
       await assertOwned(tx);
       const raw = await tx.getConfig(MIGRATION_STATE_KEY);

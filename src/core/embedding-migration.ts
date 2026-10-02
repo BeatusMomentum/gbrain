@@ -145,17 +145,13 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
     for (const idx of dependentIndexes) {
       if (idx.name === 'idx_chunks_embedding') continue;
       if (/USING hnsw/i.test(idx.def)) {
-        if (hnswIndexExpected('vector', targetDim)) ann.push(...parseDeferredAnnIndexes([idx]));
+        if (hnswIndexExpected('vector', targetDim)) ann.push(...parseDeferredAnnIndexes([idx], DEFERRED_ANN_TABLES));
         continue;
       }
       await tx.executeRaw(
         idx.def.replace(/^CREATE (UNIQUE )?INDEX /, 'CREATE $1INDEX IF NOT EXISTS '),
       );
     }
-    const marker = await tx.getConfig(MIGRATION_STATE_KEY);
-    const state = marker ? (() => { try { return JSON.parse(marker) as MigrationState; } catch { return null; } })() : null;
-    const merged = mergeDeferredAnnIndexes(parseDeferredAnnIndexes(state?.deferred_ann_indexes), ann);
-    if (state) await tx.setConfig(MIGRATION_STATE_KEY, JSON.stringify({ ...state, deferred_ann_indexes: merged }));
 
     // Image/multimodal embedding column — rebuild index but preserve
     // existing dimension. Only create it if it doesn't already exist
@@ -193,9 +189,10 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
     // content_chunks.embedding. The image/multimodal columns above are the
     // deliberate exception (separate models, independent dims).
     for (const t of TEXT_EMBEDDING_DIM_PINNED_TABLES) {
-      await transitionDimPinnedColumn(tx, t.table, t.index, t.indexSql, targetDim);
+      const deferredIndex = await transitionDimPinnedColumn(tx, t.table, t.index, t.indexSql, targetDim);
+      if (deferredIndex) ann.push(deferredIndex);
     }
-    return merged;
+    return recordDeferredAnnIndexes(tx, ann);
   });
 
   // Post-tx data hygiene: the column rebuild NULLed every vector but left
@@ -290,7 +287,7 @@ async function transitionDimPinnedColumn(
   indexName: string,
   indexSql: (opclass: string) => string,
   targetDim: number,
-): Promise<void> {
+): Promise<DeferredAnnIndex | null> {
   // Same sink-side guard as runSchemaTransition (this runs standalone on the
   // independent-repair path, not only under the guarded full transition).
   if (!Number.isInteger(targetDim) || targetDim <= 0 || targetDim > 100_000) {
@@ -302,7 +299,7 @@ async function transitionDimPinnedColumn(
     [table],
   );
   const udt = probe[0]?.udt_name;
-  if (!udt) return; // table or column absent — nothing to transition
+  if (!udt) return null; // table or column absent — nothing to transition
   // Preserve the column type; anything unexpected falls back to `vector`.
   const columnType: 'vector' | 'halfvec' = udt.toLowerCase() === 'halfvec' ? 'halfvec' : 'vector';
   const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
@@ -311,11 +308,21 @@ async function transitionDimPinnedColumn(
   await tx.executeRaw(`ALTER TABLE ${table} DROP COLUMN IF EXISTS embedding`);
   await tx.executeRaw(`ALTER TABLE ${table} ADD COLUMN embedding ${columnType}(${targetDim})`);
   // HNSW has a per-type dimension ceiling; above it pgvector refuses the
-  // index and exact scans remain the (correct, slower) path. Mirrors the
-  // same guard in migrate.ts's original DDL.
-  if (hnswIndexExpected(columnType, targetDim)) {
-    await tx.executeRaw(indexSql(opclass));
-  }
+  // index and exact scans remain the (correct, slower) path. #5088: the index
+  // is returned for the deferred build after the re-embed, not created here.
+  return hnswIndexExpected(columnType, targetDim) ? { name: indexName, def: indexSql(opclass).replace(/\s+/g, ' ').trim() } : null;
+}
+
+/** #5088: every text-embedding table whose HNSW index the transition defers. */
+export const DEFERRED_ANN_TABLES: readonly string[] = ['content_chunks', ...TEXT_EMBEDDING_DIM_PINNED_TABLES.map(t => t.table)];
+
+/** Merge deferred ANN indexes into the in-flight marker (same transaction as the drop) and return the full worklist. */
+async function recordDeferredAnnIndexes(tx: BrainEngine, ann: DeferredAnnIndex[]): Promise<DeferredAnnIndex[]> {
+  const marker = await tx.getConfig(MIGRATION_STATE_KEY);
+  const state = marker ? (() => { try { return JSON.parse(marker) as MigrationState; } catch { return null; } })() : null;
+  const merged = mergeDeferredAnnIndexes(parseDeferredAnnIndexes(state?.deferred_ann_indexes, DEFERRED_ANN_TABLES), ann);
+  if (state) await tx.setConfig(MIGRATION_STATE_KEY, JSON.stringify({ ...state, deferred_ann_indexes: merged }));
+  return merged;
 }
 
 /**
@@ -1090,7 +1097,7 @@ export async function verifyMigrationComplete(
   }
 
   const marker = await readMigrationState(engine);
-  const annPending = parseDeferredAnnIndexes(marker.state?.deferred_ann_indexes).map(i => i.name);
+  const annPending = parseDeferredAnnIndexes(marker.state?.deferred_ann_indexes, DEFERRED_ANN_TABLES).map(i => i.name);
   if (annPending.length) blockers.push(`vector index(es) ${annPending.join(', ')} not built yet (built after the re-embed; search runs unindexed until done)`);
   if (await annIndexValidity(engine, 'idx_chunks_embedding') === false) blockers.push('vector index idx_chunks_embedding is INVALID (an interrupted build); a run rebuilds it');
   let markerState: MigrationVerify['details']['marker'] = 'none';
@@ -1193,7 +1200,7 @@ export async function applyEmbeddingMigration(
       if (prior.state.retargeted_at) state.retargeted_at = prior.state.retargeted_at;
       if (prior.state.superseded) state.superseded = prior.state.superseded;
     }
-    if (prior.state?.deferred_ann_indexes) state.deferred_ann_indexes = parseDeferredAnnIndexes(prior.state.deferred_ann_indexes);
+    if (prior.state?.deferred_ann_indexes) state.deferred_ann_indexes = parseDeferredAnnIndexes(prior.state.deferred_ann_indexes, DEFERRED_ANN_TABLES);
     if (prior.state && !sameTarget) {
       // Retarget: record the abandoned target's identity.
       state.retargeted_at = now;
@@ -1227,12 +1234,15 @@ export async function applyEmbeddingMigration(
           await opts.assertOwned?.(tx);
           await assertRetainedEmbeddingRebuildability(tx, plan.to_dims, plan.to_model, plan);
           const stalePinned = (await readDimPinnedWidths(tx)).filter(p => schemaRebuildNeeded(p.dims, plan.to_dims));
+          const ann: DeferredAnnIndex[] = [];
           for (const t of TEXT_EMBEDDING_DIM_PINNED_TABLES) {
             if (stalePinned.some((p) => p.table === t.table)) {
-              await transitionDimPinnedColumn(tx, t.table, t.index, t.indexSql, plan.to_dims);
+              const deferredIndex = await transitionDimPinnedColumn(tx, t.table, t.index, t.indexSql, plan.to_dims);
+              if (deferredIndex) ann.push(deferredIndex);
               pinnedRepaired.push(t.table);
             }
           }
+          state.deferred_ann_indexes = await recordDeferredAnnIndexes(tx, ann);
         });
       }
     }

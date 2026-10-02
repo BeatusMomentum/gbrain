@@ -10,10 +10,12 @@
  * the drain and before the marker clears, one at a time, removing each from
  * the marker once it is valid, so a killed run resumes where it stopped.
  *
- * Postgres builds with CREATE INDEX CONCURRENTLY on a reserved connection
- * (writes continue) and drops an INVALID remnant of an interrupted build
- * first; PGLite builds plainly. The cap policy (no `vector` HNSW above 2,000
- * dimensions) is applied again at build time.
+ * The worklist covers every text-embedding column the transition rebuilds
+ * (`content_chunks` plus the dim-pinned tables). Postgres builds with CREATE
+ * INDEX CONCURRENTLY on a reserved connection (writes continue) and drops an
+ * INVALID remnant of an interrupted build first; PGLite builds plainly. The
+ * per-type cap policy (vector 2,000, halfvec 4,000 dimensions) is applied
+ * again at build time.
  */
 import type { BrainEngine } from './engine.ts';
 import { chunkEmbeddingIndexSql, hnswIndexExpected } from './vector-index.ts';
@@ -22,17 +24,24 @@ export interface DeferredAnnIndex { name: string; def: string }
 
 export const ANN_BUILD_MESSAGE = 'building vector index after re-embed (search runs unindexed until done)';
 
-const SAFE_ANN_DEF = /^CREATE INDEX (?:IF NOT EXISTS )?([a-z_][a-z0-9_]{0,62}) ON (?:public\.)?content_chunks USING hnsw \(embedding (?:vector|halfvec)_(?:cosine|l2|ip)_ops\)(?: WITH \([a-z_]+ ?= ?'?[0-9]+'?(?:, ?[a-z_]+ ?= ?'?[0-9]+'?)*\))?(?: WHERE [A-Za-z0-9_ ().,:<>=!'-]+)?$/;
+function safeAnnDef(tables: readonly string[]): RegExp {
+  const names = tables.filter(t => /^[a-z_][a-z0-9_]*$/.test(t)).join('|');
+  return new RegExp(`^CREATE INDEX (?:IF NOT EXISTS )?([a-z_][a-z0-9_]{0,62}) ON (?:public\\.)?(?:${names}) USING hnsw \\(embedding (?:vector|halfvec)_(?:cosine|l2|ip)_ops\\)`
+    + `(?: WITH \\([a-z_]+ ?= ?'?[0-9]+'?(?:, ?[a-z_]+ ?= ?'?[0-9]+'?)*\\))?(?: WHERE [A-Za-z0-9_ ().,:<>=!'-]+)?$`);
+}
 
 /**
- * Only HNSW definitions over `content_chunks.embedding` are accepted: the
- * marker lives in the config table, so a planted row must never become DDL.
+ * Only HNSW definitions over the `embedding` column of the given tables are
+ * accepted: the marker lives in the config table, so a planted row must never
+ * become DDL. Whitespace is normalized.
  */
-export function parseDeferredAnnIndexes(raw: unknown): DeferredAnnIndex[] {
+export function parseDeferredAnnIndexes(raw: unknown, tables: readonly string[] = ['content_chunks']): DeferredAnnIndex[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter((entry): entry is DeferredAnnIndex => {
-    if (!entry || typeof entry.name !== 'string' || typeof entry.def !== 'string' || entry.def.includes(';')) return false;
-    return SAFE_ANN_DEF.exec(entry.def)?.[1] === entry.name;
+  const pattern = safeAnnDef(tables);
+  return raw.flatMap((entry): DeferredAnnIndex[] => {
+    if (!entry || typeof entry.name !== 'string' || typeof entry.def !== 'string' || entry.def.includes(';')) return [];
+    const def = entry.def.replace(/\s+/g, ' ').trim();
+    return pattern.exec(def)?.[1] === entry.name ? [{ name: entry.name, def }] : [];
   });
 }
 
@@ -75,11 +84,6 @@ export async function buildDeferredAnnIndexes(
   const log = io.log ?? ((line: string) => process.stderr.write(line + '\n'));
   const result: AnnBuildResult = { built: [], already_valid: [], skipped_over_cap: [] };
   let pending = await io.readPending();
-  if (!hnswIndexExpected('vector', io.targetDims)) {
-    result.skipped_over_cap = pending.map(p => p.name);
-    if (pending.length) await io.writePending([]);
-    return result;
-  }
   const total = pending.length;
   let index = 0;
   while (pending.length > 0) {
@@ -87,7 +91,9 @@ export async function buildDeferredAnnIndexes(
     index++;
     await io.assertOwned?.();
     const validity = await annIndexValidity(engine, next.name);
-    if (validity === true) {
+    if (!hnswIndexExpected(/halfvec_/.test(next.def) ? 'halfvec' : 'vector', io.targetDims)) {
+      result.skipped_over_cap.push(next.name);
+    } else if (validity === true) {
       result.already_valid.push(next.name);
     } else {
       log(`[migrate] ${ANN_BUILD_MESSAGE}: ${next.name} (${index}/${total})`);

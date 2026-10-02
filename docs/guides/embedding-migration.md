@@ -118,8 +118,8 @@ even if a custom base URL still serves its old model.
    in one transaction. It rebuilds **all three dim-pinned text-embedding-space
    columns** — `content_chunks.embedding`, `query_cache.embedding`, and
    `facts.embedding` — at the new width, preserving each column's type
-   (`vector` vs `halfvec`). The `query_cache` and `facts` HNSW indexes are
-   recreated here; the chunk HNSW indexes are not (see step 7). Missing any of the
+   (`vector` vs `halfvec`). Their HNSW indexes are not recreated here (see
+   step 7). Missing any of the
    three leaves it silently broken: a narrow `query_cache.embedding` makes
    every cache write and read fail *by design* (the cache swallows errors so
    it can never break search) for a permanent 0% hit rate, and a narrow
@@ -140,14 +140,14 @@ even if a custom base URL still serves its old model.
    work. Unknown legacy fact provenance is never inferred from new config.
 7. **Build the vector index.** The transition in step 5 restores the btree
    and partial indexes on `content_chunks.embedding` right away (the re-embed
-   needs them) and records every HNSW index it dropped, including custom ones,
-   as `deferred_ann_indexes` in the migration marker. After the re-embed drains,
+   needs them) and records every HNSW index it dropped on the rebuilt text
+   columns, including custom ones, as `deferred_ann_indexes` in the migration marker. After the re-embed drains,
    the run prints `building vector index after re-embed (search runs unindexed
    until done)` with progress and builds them one at a time: Postgres uses
    `CREATE INDEX CONCURRENTLY` (writes continue), PGLite a plain build. Loading
    vectors before building the graph is several times faster than inserting
-   each vector into a live HNSW index. A `vector` target above 2,000 dimensions
-   gets no HNSW index (pgvector's cap; exact scans stay correct). The marker
+   each vector into a live HNSW index. A `vector` column above 2,000 dimensions
+   (`halfvec` above 4,000) gets no HNSW index (pgvector's cap; exact scans stay correct). The marker
    clears only after every recorded index exists and is valid.
 
 ## Recovery

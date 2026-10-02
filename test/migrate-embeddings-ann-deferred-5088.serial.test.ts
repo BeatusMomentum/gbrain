@@ -49,6 +49,9 @@ async function chunkIndexes(): Promise<Array<{ name: string; def: string }>> {
   return engine.executeRaw(`SELECT indexname AS name, indexdef AS def FROM pg_indexes WHERE tablename = 'content_chunks' ORDER BY indexname`);
 }
 const annNames = async () => (await chunkIndexes()).filter(i => /USING hnsw \(embedding /.test(i.def)).map(i => i.name);
+const PINNED_ANN = ['idx_facts_embedding_hnsw', 'idx_query_cache_embedding_hnsw'];
+const pinnedAnnNames = async () => (await engine.executeRaw<{ name: string }>(
+  "SELECT indexname AS name FROM pg_indexes WHERE indexname = ANY($1::text[]) ORDER BY indexname", [PINNED_ANN])).map(r => r.name);
 const marker = async () => JSON.parse((await engine.getConfig(MIGRATION_STATE_KEY)) ?? 'null');
 
 /** Records the ANN indexes present for each embed call, in order, so drain calls can be told from later smoke-check queries. */
@@ -120,6 +123,7 @@ describe('migrate embeddings builds ANN indexes after the re-embed (#5088)', () 
     await engine.executeRaw('CREATE INDEX idx_chunks_embedding_custom_l2 ON content_chunks USING hnsw (embedding vector_l2_ops)');
     await engine.executeRaw('CREATE INDEX idx_chunks_embedding_missing_example ON content_chunks (id) WHERE embedding IS NULL');
     expect(await annNames()).toEqual(['idx_chunks_embedding', 'idx_chunks_embedding_custom_l2']);
+    expect(await pinnedAnnNames()).toEqual(PINNED_ANN);
     currentDims = 1536;
     failTexts = ['page-4', 'page-5'];
     embeddedTexts = [];
@@ -131,8 +135,9 @@ describe('migrate embeddings builds ANN indexes after the re-embed (#5088)', () 
     expect(annSeenDuringDrain(['page-1', 'page-2', 'page-3', 'page-6'])).toEqual([]);
     expect(await annNames()).toEqual([]);
     expect((await chunkIndexes()).map(i => i.name)).toContain('idx_chunks_embedding_missing_example');
+    expect(await pinnedAnnNames()).toEqual([]);
     expect((await marker()).deferred_ann_indexes.map((i: { name: string }) => i.name).sort())
-      .toEqual(['idx_chunks_embedding', 'idx_chunks_embedding_custom_l2']);
+      .toEqual(['idx_chunks_embedding', 'idx_chunks_embedding_custom_l2', ...PINNED_ANN]);
   }, 120_000);
 
   test('resume: re-embeds only the unfinished rows, then builds every recorded ANN index and clears the marker', async () => {
@@ -149,6 +154,7 @@ describe('migrate embeddings builds ANN indexes after the re-embed (#5088)', () 
     expect(embeddedTexts.join(' ')).toContain('page-5');
     expect(annSeenDuringDrain(['page-4', 'page-5'])).toEqual([]);
     expect(await annNames()).toEqual(['idx_chunks_embedding', 'idx_chunks_embedding_custom_l2']);
+    expect(await pinnedAnnNames()).toEqual(PINNED_ANN);
     const custom = (await chunkIndexes()).find(i => i.name === 'idx_chunks_embedding_custom_l2')!;
     expect(custom.def).toContain('vector_l2_ops');
     expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeFalsy();
@@ -204,6 +210,10 @@ describe('deferred ANN worklist parsing (#5088)', () => {
     const ok = { name: 'idx_chunks_embedding', def: 'CREATE INDEX idx_chunks_embedding ON public.content_chunks USING hnsw (embedding vector_cosine_ops)' };
     const partial = { name: 'idx_x', def: "CREATE INDEX idx_x ON public.content_chunks USING hnsw (embedding vector_l2_ops) WITH (m='16') WHERE (embedding IS NOT NULL)" };
     expect(parseDeferredAnnIndexes([ok, partial])).toEqual([ok, partial]);
+    const facts = { name: 'idx_facts_embedding_hnsw', def: 'CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw\n  ON facts USING hnsw (embedding halfvec_cosine_ops)\n  WHERE embedding IS NOT NULL AND expired_at IS NULL' };
+    expect(parseDeferredAnnIndexes([facts])).toEqual([]);
+    expect(parseDeferredAnnIndexes([facts], ['content_chunks', 'facts'])[0]!.def)
+      .toBe('CREATE INDEX IF NOT EXISTS idx_facts_embedding_hnsw ON facts USING hnsw (embedding halfvec_cosine_ops) WHERE embedding IS NOT NULL AND expired_at IS NULL');
     expect(parseDeferredAnnIndexes([
       { name: 'idx_chunks_embedding', def: 'CREATE INDEX idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops); DROP TABLE pages' },
       { name: 'other', def: ok.def },
