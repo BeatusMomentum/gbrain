@@ -16,8 +16,8 @@ import type { Migration } from './types.ts';
 // nothing: its page_id FK already cascades when a source's pages go.
 const ALIAS_TABLES = ['page_aliases', 'slug_aliases'] as const;
 
-export const v190: Migration = {
-  version: 190,
+export const v191: Migration = {
+  version: 191,
   name: 'alias_source_cascade',
   idempotent: true,
   sql: `

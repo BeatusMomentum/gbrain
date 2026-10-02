@@ -9,8 +9,8 @@ import { MANAGED_WRITER_GUARD_SQL } from '../persistence/writer-guard-schema.ts'
 // instead of silently searchable. Existing vectors keep NULL provenance and
 // count as stale until re-embedded. The writer guard treats both columns as
 // physical projection on takes too (re-installed here).
-export const v191: Migration = {
-  version: 191,
+export const v192: Migration = {
+  version: 192,
   name: 'take_embedding_identity',
   idempotent: true,
   sql: `ALTER TABLE takes ADD COLUMN IF NOT EXISTS embedding_model TEXT;
