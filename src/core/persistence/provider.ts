@@ -10,6 +10,7 @@ import { startPersistenceConsumer, assertPersistenceAccepting } from './service.
 import { isWriteErrorCode, isWriteReceipt } from './types.ts';
 import type { PersistenceIpcProvider } from './ipc.ts';
 import { runPersistenceAdministration } from './administration.ts';
+import { boundedWriteWaitMs } from './write-wait.ts';
 export { residentPersistenceConfig } from './local-client.ts';
 import { projectionBacklog } from '../page-state/projections.ts';
 
@@ -48,8 +49,10 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       allowedSources: unrestricted ? undefined : verified.grant.sourceIds };
     const params = !unrestricted && request.operation === 'get_page' && request.params.source_id === undefined
       ? { ...request.params, source_id: sourceId } : request.params;
+    const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
       config, remote: verified.remote, transport: verified.remote ? 'stdio' : undefined, sourceId, auth,
+      ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
     });
     const body = JSON.parse(result.content[0].text) as Record<string, unknown>;

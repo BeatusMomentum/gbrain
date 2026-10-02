@@ -30,6 +30,7 @@ import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus 
 import { maybeRefreshBackupStatusInProcess } from '../core/backup/coverage.ts';
 import { operationScopesAllowed } from '../core/scope.ts';
 import { invalidateHotMemoryForEngine } from '../core/facts/meta-hook.ts';
+import { admittedPendingReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
@@ -235,6 +236,8 @@ export interface DispatchOpts {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
+  writeWaitMs?: number;
 }
 
 /**
@@ -388,13 +391,22 @@ export function isListLevelDenialEnvelope(parsed: unknown): boolean {
 }
 
 /** The mcp_request_log status classes a dispatched tool result maps onto. */
-export type RequestLogStatus = 'success' | 'success_with_warnings' | 'denied_after_list' | 'error';
+export type RequestLogStatus = 'success' | 'success_with_warnings' | 'accepted_pending' | 'denied_after_list' | 'error';
+
+/** #5249: the receipt of a write the dispatcher returned as accepted but not yet committed. */
+export function acceptedPendingReceipt(result: ToolResult): WriteReceipt | null {
+  if (!result.isError) return null;
+  try { return admittedPendingReceipt(JSON.parse(result.content[0]?.text ?? '{}')); }
+  catch { return null; }
+}
 
 /**
  * The ONE `mcp_request_log.status` decision for a dispatched tool result
  * (serve-http's tools/call persistence + SSE broadcast both consume this):
  *   - errors whose envelope is a list-level denial (isListLevelDenialEnvelope
  *     above) → 'denied_after_list' (amendment 33 / D10 trend-to-zero metric);
+ *   - `write_pending` carrying a non-terminal receipt → 'accepted_pending'
+ *     (#5249: admitted work still in flight, not a failure);
  *     other errors (including unparseable content) → 'error';
  *   - successes whose `_meta.warnings` is a non-empty array →
  *     'success_with_warnings' (WP3 amendment 13 warn-mode observability;
@@ -407,6 +419,7 @@ export function requestLogStatusForResult(result: ToolResult): RequestLogStatus 
     try {
       const parsed: unknown = JSON.parse(result.content[0]?.text ?? '{}');
       if (isListLevelDenialEnvelope(parsed)) return 'denied_after_list';
+      if (admittedPendingReceipt(parsed)) return 'accepted_pending';
     } catch { /* unparseable error content stays plain 'error' */ }
     return 'error';
   }
@@ -494,6 +507,7 @@ export function buildOperationContext(
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
+    ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     auth: opts.auth,
   };
 }

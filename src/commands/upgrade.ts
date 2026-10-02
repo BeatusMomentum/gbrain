@@ -284,7 +284,7 @@ function installedDespiteFailure(oldVersion: string): boolean {
   }
 }
 
-async function describeMigrationFailure(error: unknown, newVersion: string): Promise<string> {
+export async function describeMigrationFailure(error: unknown, newVersion: string): Promise<string> {
   if ((error as { status?: number }).status === MIGRATIONS_RUNNING_EXIT_CODE) {
     const { loadConfig } = await import('../core/config.ts');
     const config = loadConfig();

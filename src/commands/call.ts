@@ -5,6 +5,7 @@ import { bigintToStringReplacer } from '../core/utils.ts';
 import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { loadConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
+import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 
@@ -87,7 +88,7 @@ export async function runCall(
   const sourceId = resolved.source_id;
   const localFederated = await localFederatedSourceIds(connected, resolved.source_id, resolved.tier);
   const result = await handleToolCall(connected, tool, params, {
-    sourceId,
+    sourceId, writeWaitMs: currentCliWriteWait().waitMs,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
   });
   // `gbrain call` bypasses cli.ts's op-output normalizer entirely, so this

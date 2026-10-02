@@ -46,6 +46,8 @@ export interface PersistenceIpcRequest {
   registration: PersistenceIpcRegistration;
   /** Client resolves flag/env/dotfile tiers; owner resolves DB tiers using this cwd. */
   routing: { source: string | null; cwd: string };
+  /** #5232: the caller's commit wait; sent only to owners advertising `write_wait`. */
+  write_wait_ms?: number;
 }
 
 export interface PersistenceIpcCapabilities {
@@ -55,6 +57,8 @@ export interface PersistenceIpcCapabilities {
   max_frame_bytes: number;
   /** Optional for protocol compatibility with owners predating local administration. */
   administration?: readonly PersistenceAdminOperation[];
+  /** #5232: the owner honors `write_wait_ms` on operation requests. */
+  write_wait?: true;
 }
 
 export interface PersistenceIpcAdminRequest {
@@ -117,8 +121,11 @@ export function isPersistenceIpcRegistration(value: unknown): value is Persisten
     && (value.lane === 'cli' || value.lane === 'stdio');
 }
 
+const OPERATION_REQUEST_KEYS = ['version', 'kind', 'brain_id', 'operation', 'params', 'registration', 'routing'];
 function operationRequest(value: unknown): value is PersistenceIpcRequest {
-  if (!record(value) || !exactKeys(value, ['version', 'kind', 'brain_id', 'operation', 'params', 'registration', 'routing'])) return false;
+  if (!record(value) || !(exactKeys(value, OPERATION_REQUEST_KEYS) || exactKeys(value, [...OPERATION_REQUEST_KEYS, 'write_wait_ms']))) return false;
+  if (value.write_wait_ms !== undefined && !(typeof value.write_wait_ms === 'number'
+    && Number.isSafeInteger(value.write_wait_ms) && value.write_wait_ms >= 0)) return false;
   if (value.version !== 1 || value.kind !== 'operation' || !isWriteRequestId(value.brain_id)
     || !isPersistenceIpcOperation(value.operation) || !record(value.params)
     || !isPersistenceIpcRegistration(value.registration) || !record(value.routing)
@@ -207,6 +214,7 @@ export async function startPersistenceIpcServer(
               version: 1, brain_id: provider.brainId, operations: PERSISTENCE_IPC_OPERATIONS,
               max_frame_bytes: PERSISTENCE_IPC_MAX_BYTES,
               ...(provider.administer ? { administration: PERSISTENCE_ADMIN_OPERATIONS } : {}),
+              write_wait: true,
             } satisfies PersistenceIpcCapabilities }));
             return;
           }

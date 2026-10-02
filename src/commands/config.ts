@@ -53,6 +53,8 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   // transports build their initialize response from loadConfig()); the
   // `mcp.` prefix made a DB-plane write accepted and silently ignored.
   'mcp.instructions',
+  // #5232: the CLI resolves its write wait before choosing a transport, engine-free.
+  'persistence.write_wait_ms',
 ]);
 
 /** Ambient-writeback keys are DUAL-PLANE (OV2-5): the DB plane is
@@ -385,7 +387,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly();
-      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'backup' | 'mcp', string];
+      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'backup' | 'mcp' | 'persistence', string];
       const branch = cfg?.[top] as Record<string, unknown> | undefined;
       if (cfg && branch && leaf in branch) {
         delete branch[leaf];
@@ -731,6 +733,16 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         cfg.backup = { ...(cfg.backup ?? {}), check_enabled: on };
         saveConfig(cfg);
         console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+      } else if (key === 'persistence.write_wait_ms') {
+        const { MAX_WRITE_WAIT_MS } = await import('../core/persistence/write-wait.ts');
+        const n = /^\d+$/.test(value.trim()) ? Number(value) : NaN;
+        if (!Number.isSafeInteger(n) || n > MAX_WRITE_WAIT_MS) {
+          console.error(`[config] ${key} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS}`);
+          process.exit(1);
+        }
+        cfg.persistence = { ...(cfg.persistence ?? {}), write_wait_ms: n };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json; --wait and ${'GBRAIN_WRITE_WAIT_MS'} override it)`);
       } else if (key === 'backup.check_interval_days') {
         const n = Number.parseInt(value, 10);
         if (!Number.isFinite(n) || n < 1) {

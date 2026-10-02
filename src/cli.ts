@@ -34,6 +34,7 @@ import { operations, OperationError } from './core/operations.ts';
 import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
+import { currentCliWriteWait } from './core/persistence/write-wait.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
@@ -710,11 +711,13 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // (leaves facts/cache/eval-capture writes racing teardown). The finally's
     // drain bounds teardown; the hard-deadline timer armed at teardown entry
     // bounds a hung one.
+    // #5232: the reporter owns the write verdict (pending exits
+    // PENDING_WRITE_EXIT_CODE, or 0 with --accept-pending); never overwrite it.
     const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
     if (!await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
       console.error(e instanceof Error ? e.message : String(e));
+      setCliExitVerdict(1);
     }
-    setCliExitVerdict(1);
   } finally {
     // 1s per-sink drain budget: read paths with no pending work pay the ~0ms
     // fast path; capture/import that DO enqueue pay up to 1s (+ facts shutdown
@@ -776,6 +779,7 @@ async function runThinClientRouted(
     const raw = await callRemoteTool(cfg, op.name, params, {
       timeoutMs,
       signal: sigintController.signal,
+      ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}),
     });
     // T15/FOV-1: lift the server's retrieval meta off the envelope before
     // unpacking (old servers lack _meta — capture is simply skipped).
@@ -795,7 +799,7 @@ async function runThinClientRouted(
       const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
       if (await reportPersistenceCliError(e, params.json === true)) {
         process.off('SIGINT', onSigint);
-        process.exit(sigintController.signal.aborted ? 130 : 1);
+        process.exit(sigintController.signal.aborted ? 130 : currentExitCode());
       }
       const url = cfg.remote_mcp!.mcp_url;
       switch (e.reason) {
@@ -1532,6 +1536,8 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
     cliOpts: getCliOptions(),
+    // #5232: CLI writes wait longer than agent writes (persistence/write-wait.ts).
+    writeWaitMs: currentCliWriteWait().waitMs,
     // v0.34 D4: sourceId is REQUIRED at the type level. Fall back to 'default'
     // when resolveSourceId returned undefined (fresh pre-init brain, no sources
     // table). Matches dispatch.ts's auto-fill so the contract holds across

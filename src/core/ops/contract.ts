@@ -372,6 +372,13 @@ export interface OperationContext {
    */
   deferEmbeds?: boolean;
   /**
+   * #5232: how long a coordinated write waits for its commit before returning
+   * `write_pending` with its receipt. Unset keeps the agent default (5 s);
+   * CLI entry points and the resident owner's CLI lane set it
+   * (persistence/write-wait.ts).
+   */
+  writeWaitMs?: number;
+  /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
    * may leave it undefined — consumers default to quiet/no-progress for
