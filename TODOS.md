@@ -1,5 +1,42 @@
 # TODOS
 
+## Fix wave 8 follow-ups (filed 2026-10-02, follow-up from v0.60.34.0)
+
+- [ ] **P1 — Verified engine graduation (PGLite to Postgres) that keeps persistence history.**
+  **What:** `gbrain migrate --to` refuses any brain with rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees`, which in practice is every brain that saved memory through the write coordinator. **Fix:** a migration that carries request ids, withdrawals, attribution, grants and ownership, verified by a round-trip test. The refusal stays until then (docs/ENGINES.md says so). **Effort:** L. **Priority:** P1 (Foundations 2).
+- [ ] **P2 — Agent-contract conformance suite for every MCP op.**
+  **What:** wave 8's conformance gate (`test/fixtures/write-contract-conformance-cases.ts`) covers only the contracts this wave changed. **Fix:** every op × PGLite/Postgres/PgBouncer × stdio/HTTP, asserting the error-code taxonomy. **Effort:** L. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — Restore the `auto_chronicle` trigger (#5876).**
+  **What:** `auto_chronicle=true` still has no effect; doctor and the advisor say so. #5329's backfill idempotency landed in v0.60.32.0, so re-enabling the trigger no longer means duplicate event pages from repeat runs. **Fix:** call `runChronicleBackstop` from the import path behind the flag, with a cost note. **Effort:** M. **Priority:** P2 (Foundations 1).
+- [ ] **P2 — Cycle-side fence for `row_num IS NULL` facts (#5299).**
+  **What:** facts without a fence row number are invisible to the fence reconciler. **Fix:** the cycle fences them after GBRA-35's facts writeback (now on master). **Effort:** M. **Priority:** P2 (Foundations 1).
+- [ ] **P2 — One-shot repair for supersession chains broken on managed brains (#5886).**
+  **What:** v0.60.34.0 writes the supersession pointer on the old take row; chains written before it keep `superseded_by` NULL on managed brains. **Fix:** a `gbrain repair` kind that rebuilds the pointers from the fence. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Doctor check for pages still waiting on their revision backfill (#5216).**
+  **What:** the backfill is resumable and reports progress on upgrade, but a brain whose backfill keeps stopping on a failing row has no standing doctor signal. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Scale harness gaps (`bun run test:scale`).**
+  **What:** the report-only harness lacks injected query vectors, populated facts and takes, a source-scoped grant query, a cold-process first query, concurrent receipt-bearing writers, the Postgres engine and the 10k/20k/50k CI tiers. At 10k pages the per-page import cost of the last 10% is about 8x the first 10% (gate 1.5). **Effort:** L. **Priority:** P2 (Foundations 1, F4).
+- [ ] **P2 — Same-width embedding migrations into a live HNSW index.**
+  **What:** #5088 defers the ANN build only when the schema transition rebuilds the column; a same-width model swap still re-embeds into the live index. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Managed retype for undeclared page types (#5880).**
+  **What:** `put_page` now warns on a type the active pack does not declare; there is no managed bulk retype. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Quote-presence check for doctor's "not verified" findings (#5432).**
+  **What:** deferred from the #5432 patch: checks that read text could also verify the quoted evidence exists. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Prefilter for Dream conversation-page discovery (#4419).**
+  **What:** discovery scans every live `type: conversation` page each cycle and hashes bodies. **Fix:** a date/updated prefilter in SQL. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — A second unmanaged `patterns` run rewriting the pattern page hits `revision_conflict`.**
+  **What:** found while fixing #5884; pre-existing. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `gbrain init` fails when a component of `GBRAIN_HOME` is a symlink.**
+  **What:** found while testing Windows init; reproduces on POSIX. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `backup-fsync.serial` Linux-guard case fails on native Windows.**
+  **What:** pre-existing; the case asserts a POSIX-only flush. **Effort:** XS. **Priority:** P3.
+- [ ] **P3 — Doctor `foreign_owner_marker` check (#5808).**
+  **What:** after community PR #5796 lands. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Cross-source duplicate slot collapse in search (#4612).**
+  **What:** deferred; adjacent to hybrid search work. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Missing-parameter errors print the parameter's description and an example.**
+  **What:** `Missing required parameter: provenance` names the parameter but not what to pass. **Effort:** S. **Priority:** P3.
+
 ## Memory, search and connector fix wave follow-ups (filed 2026-10-02, GBRA-35 wave 2; released in v0.60.32.0, see CHANGELOG)
 
 - [ ] **P2 — Honest `waiting` completeness while loop analysis is pending.**
@@ -133,11 +170,11 @@
   **What:** a reporter saw `readAdjacencyBoosts` take about 72 s with nested-loop plans; a full `ANALYZE` on pages, links, sources, timeline_entries and content_chunks dropped it to 21 ms. PGLite has no autovacuum and runs queries on the main thread, so a slow plan looks like a wedge. Cause likely, unverified for `get_links`. **Fix:** run `ANALYZE` on the hot tables after migrations, bulk import or sync and periodically from the owner, plus a doctor check for stale `last_analyze`. **Effort:** S-M. **Priority:** P2.
 - [ ] **P3 — #5190: pin `search_path` for the two fact functions.**
   **What:** `gbrain_fact_fingerprint` and `gbrain_preserve_fact_withdrawal` (`src/core/facts/withdrawal-schema.ts`) have no pinned `search_path` (Supabase linter warning). `gbrain_fact_fingerprint` backs an index expression and must stay inlinable, so qualify its calls (`pg_catalog.`) instead of `SET search_path`; pin only the trigger function. **Effort:** S. **Priority:** P3.
-- [ ] **P2 — #5205: resident `serve` pool-size guidance.**
+- [x] **P2 — #5205: resident `serve` pool-size guidance.** **Completed: v0.60.34.0** — remediation recommends the resident floor of 6 and the boot-deadline line names the stuck phase and pool pressure.
   **What:** a `serve` boot never completed at `GBRAIN_POOL_SIZE=2`, which our remediation text still recommends (`src/core/pg-access-classify.ts`, `src/commands/db-repair.ts`). The deadlock mechanism is unverified. **Fix:** measure the connection need of a resident `serve` first, then change the guidance (the reporter measured 6 as the minimum at which the projection worker drains) and fail fast with a pool-size message. **Effort:** S once measured. **Priority:** P2.
 - [ ] **P3 — #5250: signal when `GBRAIN_SOURCE` narrows an unqualified stdio read.**
   **What:** a stdio connection bound with `GBRAIN_SOURCE` (or `__all__`) can return nothing for an unqualified read with no hint why, so agents conclude the brain is empty. **Fix:** a response note naming the binding when it narrowed the read. **Effort:** S. **Priority:** P3.
-- [ ] **P3 — #5216: orphan-repair command for PGLite.**
+- [x] **P3 — #5216: orphan-repair command for PGLite.** **Completed: v0.60.34.0** — `gbrain repair orphan-children` (preview, then `--apply`) with the torn-TOAST probe; migration 150 adds the revision column nullable and backfills in batches.
   **What:** migration 150's volatile default rewrites `pages` and hits a torn TOAST chunk on a corrupt PGLite brain; doctor's `child_table_orphans` prints raw `DELETE` SQL that PGLite users cannot run. **Fix:** `gbrain repair orphans` running doctor's own cleanup, plus a re-import-from-canonical-file repair for a torn body. Changing migration 150 itself is high risk for a corruption edge case and stays out. **Effort:** M. **Priority:** P3.
 - [ ] **P3 — #5279: abandon an unactivated writer claim.**
   **What:** a claim that was never activated leaves ownership markers that fence legacy sync, and there is no undo before activation. **Fix:** `gbrain sources writer claim <source> --abandon`, refused once the brain is enabled, that removes only markers stamped with this brain and claim. **Effort:** M. **Priority:** P3.
