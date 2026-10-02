@@ -20,6 +20,7 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
+import { redactRetrievalOutput } from '../search/output-redaction.ts';
 
 export const EDIT_PAGE_MAX_EDITS = 50;
 export const EDIT_PAGE_DIFF_MAX_BYTES = 8 * 1024;
@@ -169,14 +170,27 @@ export function applyPageEdits(page: Page, tags: string[], remote: boolean, edit
   return { content: join(segments, 'canonical'), before, after: join(segments, 'view') };
 }
 
-/** The caller-view unified diff, capped at 8 KB on a line boundary. */
+const encodedBytes = (text: string) => Buffer.byteLength(JSON.stringify(text));
+
+/**
+ * The caller-view unified diff, secret-redacted like retrieval output (it is
+ * retained in the receipt), cut on a line boundary so its JSON encoding fits
+ * 8 KB: the receipt reserves exactly that much (EDIT_PAGE_RECEIPT_RESERVE).
+ */
 export function editDiff(slug: string, before: string, after: string): { diff: string; diff_truncated?: true } {
-  const full = unifiedDiff(before, after, { oldPath: `a/${slug}.md`, newPath: `b/${slug}.md` });
-  if (Buffer.byteLength(full) <= EDIT_PAGE_DIFF_MAX_BYTES) return { diff: full };
-  let cut = full.slice(0, EDIT_PAGE_DIFF_MAX_BYTES);
-  while (Buffer.byteLength(cut) > EDIT_PAGE_DIFF_MAX_BYTES) cut = cut.slice(0, -1);
-  return { diff: cut.slice(0, cut.lastIndexOf('\n') + 1), diff_truncated: true };
+  const [{ diff: full }] = redactRetrievalOutput([{ diff: unifiedDiff(before, after, { oldPath: `a/${slug}.md`, newPath: `b/${slug}.md` }) }], {}).results;
+  if (encodedBytes(full) <= EDIT_PAGE_DIFF_MAX_BYTES) return { diff: full };
+  const lines = full.split('\n');
+  let kept = '';
+  for (const line of lines) {
+    if (encodedBytes(`${kept}${line}\n`) > EDIT_PAGE_DIFF_MAX_BYTES) break;
+    kept += `${line}\n`;
+  }
+  return { diff: kept, diff_truncated: true };
 }
+
+/** Extra terminal-receipt bytes an edit_page admission reserves for its diff. */
+export const EDIT_PAGE_RECEIPT_RESERVE = EDIT_PAGE_DIFF_MAX_BYTES + 512;
 
 /** Submission preflight and publication share one check of the stated revision. */
 export function assertEditRevision(current: string | null, expected: unknown): void {

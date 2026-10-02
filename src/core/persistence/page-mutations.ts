@@ -202,6 +202,8 @@ export async function submitPageMutation(ctx: OperationContext,
   }
   const row = await admitWrite(ctx.engine, { principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, callerIntent, intent, authority,
+    ...(input.operation === 'edit_page' ? { terminalReservation: Math.max(16_384, Buffer.byteLength(JSON.stringify(authority)) + 8192)
+      + (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE } : {}),
     worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null });
   return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, input.waitMs ?? ctx.writeWaitMs));
 }

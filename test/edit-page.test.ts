@@ -141,6 +141,17 @@ describe('edit_page matching', () => {
     expect(mid.revision).not.toBe(before.revision);
   });
 
+  test('a large edit still commits; its retained diff is capped at 8 KB encoded and marked truncated', async () => {
+    const lines = Array.from({ length: 400 }, (_, i) => `Line ${i} "quoted" text with a tab\tand more words to widen it.`);
+    await seed('notes/big', `${lines.join('\n')}\n`);
+    const result = await edit('notes/big', [{ old_text: lines.join('\n'), new_text: lines.map(line => `${line} Edited.`).join('\n') }]);
+    expect({ isError: result.isError, text: result.text.slice(0, 300) }).toMatchObject({ isError: false });
+    expect(result.body.diff_truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(result.body.diff))).toBeLessThanOrEqual(8 * 1024);
+    const poll = await call('get_write_request', { request_id: result.params.request_id });
+    expect(poll.body.outcome.diff).toBe(result.body.diff);
+  });
+
   test('a stale revision is a revision_conflict that carries the current revision', async () => {
     await seed('notes/d', 'Body.\n');
     const stale = (await read('notes/d')).revision;
