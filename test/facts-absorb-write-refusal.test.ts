@@ -4,7 +4,8 @@
  * activation, so the legacy filesystem guard refuses) records the real code in
  * ingest_log (`write_refused: writer_coordinator_required …`, not "provider
  * request failed") and dead-letters on the first attempt instead of
- * re-running inference before the same refusal.
+ * re-running inference before the same refusal. The claimed root is checked
+ * before extraction, so the refusal costs no model call.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -62,7 +63,8 @@ test('a claimed-worktree refusal is logged with its code and dead-letters withou
     const handler = makeFactsAbsorbHandler(engine);
     const error = await handler({ id: 4242, name: 'facts-absorb', data: { slug: 'notes/weekly-review', sourceId: 'claimed-example', source: 'sync:import' } } as never)
       .catch((e: Error) => e) as Error;
-    expect(chatCalls).toBeGreaterThan(0);
+    // The bound-root precheck refuses before any inference is paid for.
+    expect(chatCalls).toBe(0);
     expect(error).toBeInstanceOf(UnrecoverableError);
     expect(error.message).toContain('facts_absorb_write_refused (writer_coordinator_required)');
     expect(error.message).toContain('gbrain jobs retry 4242');

@@ -51,6 +51,27 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     const input = await readFactsBackstopJobPage(engine, job.data);
     if ('skipped' in input) return { skipped: input.skipped, slug, sourceId };
     const page = input.page;
+    const refuse = async (err: unknown): Promise<never> => {
+      const { writeFactsAbsorbFailure, writeRefusalCode, DETERMINISTIC_WRITE_REFUSALS } = await import('../../facts/absorb-log.ts');
+      await writeFactsAbsorbFailure(engine, slug, err, sourceId);
+      // #5362: a deterministic write refusal goes straight to dead; retrying re-runs inference before the same refusal.
+      const refusal = writeRefusalCode(err);
+      if (refusal && DETERMINISTIC_WRITE_REFUSALS.includes(refusal)) {
+        throw new UnrecoverableError(`facts_absorb_write_refused (${refusal}): ${(err as Error).message} Not retried. ` +
+          `Fix the cause (gbrain sources writer status ${sourceId}), then gbrain jobs retry ${job.id}. See ${ERROR_CATALOGUE.facts_absorb_write_refused.docs}`);
+      }
+      throw err;
+    };
+    // #5362: before activation the legacy fence writer refuses every file in a claimed
+    // worktree, so check the source root before any inference is paid for.
+    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+    if (!brain?.enabled) {
+      const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+      if (source?.local_path) {
+        const { assertLegacyFilesystemWriter } = await import('../../persistence/filesystem-guard.ts');
+        await assertLegacyFilesystemWriter(engine, source.local_path).catch(refuse);
+      }
+    }
     const { runFactsBackstop, coerceNotabilityFilter } = await import('../../facts/backstop.ts');
     const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import', 'hook:writeback'] as const;
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
@@ -74,17 +95,7 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
         visibility: job.data.visibility === 'world' ? 'world' : 'private',
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
-    ).catch(async (err: unknown) => {
-      const { writeFactsAbsorbFailure, writeRefusalCode, DETERMINISTIC_WRITE_REFUSALS } = await import('../../facts/absorb-log.ts');
-      await writeFactsAbsorbFailure(engine, slug, err, sourceId);
-      // #5362: a deterministic write refusal goes straight to dead; retrying re-runs inference before the same refusal.
-      const refusal = writeRefusalCode(err);
-      if (refusal && DETERMINISTIC_WRITE_REFUSALS.includes(refusal)) {
-        throw new UnrecoverableError(`facts_absorb_write_refused (${refusal}): ${(err as Error).message} Not retried. ` +
-          `Fix the cause (gbrain sources writer status ${sourceId}), then gbrain jobs retry ${job.id}. See ${ERROR_CATALOGUE.facts_absorb_write_refused.docs}`);
-      }
-      throw err;
-    });
+    ).catch(refuse);
     // Execution-time chat_unavailable in a KEYED worker is config drift —
     // throw (typed) so minion retry/backoff parks it as a VISIBLE, re-runnable
     // failure instead of consuming the job and silently losing the facts. A
