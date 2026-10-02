@@ -461,6 +461,21 @@ describe('put_page write-through — config edge cases', () => {
     expect(result.write_through?.warning).toContain('no durable markdown file');
   });
 
+  test('remote edit_page with no repo configured warns that the edit is DB-only too (#5616)', async () => {
+    await engine.executeRaw("DELETE FROM config WHERE key = 'sync.repo_path'");
+    const ctx = makeCtx({ remote: true });
+    await putPage.handler(ctx, { slug: 'inbox/no-repo-edit', content: '---\ntitle: Edit\n---\n\nalpha line' });
+    const { operations } = await import('../../src/core/operations.ts');
+    const getPage = operations.find(op => op.name === 'get_page')!;
+    const editPage = operations.find(op => op.name === 'edit_page')!;
+    const read = await getPage.handler(ctx, { slug: 'inbox/no-repo-edit', include_content: true }) as { revision: string };
+    const result = (await editPage.handler(ctx, {
+      slug: 'inbox/no-repo-edit', expected_revision: read.revision, edits: [{ old_text: 'alpha line', new_text: 'beta line' }],
+    })) as { write_through?: { skipped?: string; warning?: string } };
+    expect(result.write_through?.skipped).toBe('no_repo_configured');
+    expect(result.write_through?.warning).toContain('edit_page wrote only to the database');
+  });
+
   test.each([false, true])('missing directory returns a private typed error before admission (remote=%s)', async (remote) => {
     await engine.setConfig('sync.repo_path', path.join(tmpRoot, 'does-not-exist'));
     const ctx = makeCtx({ remote });

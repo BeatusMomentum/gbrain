@@ -438,7 +438,8 @@ export class PersistenceConsumer {
     this.preparing.set(row.id, observation);
     const stop = () => abort.abort({ code: 'consumer_stopping' });
     this.abort.signal.addEventListener('abort', stop, { once: true });
-    const bounded = row.operation === 'remember' || row.operation === 'put_page' && !row.intent?.kind;
+    // edit_page (#5616) builds its content during preparation like put_page, so it shares the deadline.
+    const bounded = row.operation === 'remember' || (row.operation === 'put_page' || row.operation === 'edit_page') && !row.intent?.kind;
     const budget = this.opts.preparationMs ?? 30_000;
     const deadline = performance.now() + budget;
     const timeout = bounded ? setTimeout(() => {

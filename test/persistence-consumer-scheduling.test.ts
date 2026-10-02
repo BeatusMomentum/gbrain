@@ -232,6 +232,29 @@ for (const cooperates of [true, false]) test(`preparation deadline retains track
   }
 }), 5000);
 
+test('an edit_page preparation shares the preparation deadline (#5616)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'edit-page-deadline', 'edited body', 0, { operation: 'edit_page' }));
+  const release = Promise.withResolvers<void>();
+  let aborted = false;
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, current, _c, signal?: AbortSignal) => {
+    signal?.addEventListener('abort', () => { aborted = true; release.resolve(); }, { once: true });
+    await release.promise;
+    signal?.throwIfAborted();
+    return prepared(current, sources);
+  }, { hostId: config.hostId, pollMs: 60_000, preparationMs: 50 });
+  try {
+    consumer.start();
+    await waitFor(() => aborted);
+    await waitFor(() => consumer.status().active_preparations === 0);
+    expect((await getWriteRequestById(engine, row.id))?.state).toBe('queued');
+  } finally {
+    release.resolve();
+    await consumer.stop();
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+  }
+}), 5000);
+
 test('publication entering before the preparation deadline keeps its protected terminal outcome', async () => withEnv(env, async () => {
   const sources = await fixtures(engine, config);
   const row = await admitWrite(engine, admission(config, sources[0], 'publication-wins', 'protected body'));
