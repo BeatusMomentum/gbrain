@@ -775,6 +775,18 @@ function isLiveServeFailure(msg: string, d: Pick<Required<HarnessDeps>, 'pgliteL
   return /already open through `gbrain serve`|LiveServeLockError/i.test(msg) || d.pgliteLiveServe();
 }
 
+/** #5893: the token a host's rotation carries grants from, with the operations a skills-policy change adds. */
+async function rotationCarry(prior: HarnessReceipt | null | undefined, host: HarnessTarget['host'], explicitSource: boolean, allowedOperations: string[]) {
+  const fromId = prior?.harness_tokens?.[host]?.minted ? prior.harness_tokens[host]!.id : prior?.token.minted ? prior.token.id : undefined;
+  if (!prior || !fromId) return undefined;
+  const priorSnapshot = await harnessOperationSnapshot(prior.skills_policy === 'follow');
+  return { fromId, explicitSource, policyAdded: allowedOperations.filter(op => !priorSnapshot.includes(op)) };
+}
+
+function withheldOperationsNote(name: string, count: number): string {
+  return `token ${name}: carried the previous grants; ${count} newer operation(s) withheld — preview with \`gbrain auth rescope-token ${name} --refresh-operations\`.`;
+}
+
 async function harnessOperationSnapshot(follow: boolean): Promise<string[]> {
   const { operations } = await import('../operations.ts');
   return operations.filter(op => !op.localOnly && (op.scope === 'read' || op.scope === 'write') &&
@@ -1223,17 +1235,15 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     }
   } else {
     const allowedOperations = await harnessOperationSnapshot(skillsPolicy === 'follow');
-    const priorSnapshot = prior ? await harnessOperationSnapshot(prior.skills_policy === 'follow') : allowedOperations;
-    const policyAdded = allowedOperations.filter(op => !priorSnapshot.includes(op));
     for (const host of hosts) {
       let minted: MintedLegacyToken;
-      const fromId = prior?.harness_tokens?.[host]?.minted ? prior.harness_tokens[host]!.id : prior?.token.minted ? prior.token.id : undefined;
+      const carry = await rotationCarry(prior, host, !!flags.source, allowedOperations);
       try {
         minted = await d.mint({
           name: hosts.length === 1 ? flags.tokenName : `${flags.tokenName}-${host}`,
           scopes: skillsPolicy === 'follow' ? ['read', 'write', 'skills_member_self'] : ['read', 'write'],
           allowedOperations,
-          ...(fromId ? { carry: { fromId, explicitSource: !!flags.source, policyAdded } } : {}),
+          ...(carry ? { carry } : {}),
           // [X2] --source is the write floor — a scalar grant, the stdio
           // env-tier mirror. An implicit non-default source carries its
           // federated read set (#4897 — the same set search/think read, not a
@@ -1247,9 +1257,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         throw e;
       }
       tokens.set(host, minted.token);
-      if (minted.withheldOperations?.length) {
-        d.log(`token ${minted.name}: carried the previous grants; ${minted.withheldOperations.length} newer operation(s) withheld — preview with \`gbrain auth rescope-token ${minted.name} --refresh-operations\`.`);
-      }
+      if (minted.withheldOperations?.length) d.log(withheldOperationsNote(minted.name, minted.withheldOperations.length));
       receipt.harness_tokens![host] = { id: minted.id, name: minted.name, minted: true };
       if (host === hosts[0]) {
         receipt.token.id = minted.id;
