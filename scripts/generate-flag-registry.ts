@@ -57,6 +57,18 @@ const EXTRA_FLAGS: Record<string, string[]> = {
 };
 
 /**
+ * Command modules a command hands its argv to through a nested handler import,
+ * scanned at module depth so their safety-flag reads count as consumption
+ * evidence. Their own imports are not walked. Keep commented.
+ */
+const DELEGATED_MODULES: Record<string, string[]> = {
+  // `auth local-writer list|register|revoke` passes its argv to
+  // runPersistenceAdminCli (#5595), and `auth rescope-client|rescope-token` to
+  // parseRescopeGrantArgs; both parse --dry-run themselves.
+  auth: ['src/commands/persistence-admin.ts', 'src/core/grants/cli.ts'],
+};
+
+/**
  * Modules the import scan must SKIP. thin-client-routing.ts is a pure router —
  * its flag literals belong to the commands it routes (takes/search/jobs/cache/
  * quarantine), and each of those declares its own flags in its own case block;
@@ -428,6 +440,14 @@ export function buildFlagRegistry(root: string = ROOT): Record<string, string[]>
       }
     }
 
+    for (const rel of DELEGATED_MODULES[command] ?? []) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator over this repository's own source tree; every joined segment is a constant module path from DELEGATED_MODULES
+      const path = join(root, rel);
+      if (!existsSync(path)) continue;
+      const code = stripComments(readSrc(path));
+      depthZeroText += code;
+      for (const f of flagsInText(code)) { flags.add(f); depthZero.add(f); }
+    }
     for (const f of EXTRA_FLAGS[command] ?? []) { flags.add(f); depthZero.add(f); }
     for (const f of SAFETY_FLAGS) {
       if (flags.has(f) && !consumes(depthZeroText, f)) flags.delete(f);

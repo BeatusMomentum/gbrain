@@ -1,17 +1,13 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { flushDirectory, flushFile } from '../fs-durable.ts';
 import { OperationError } from '../ops/contract.ts';
 import { durableSsrfFlags, GIT_ENV, GIT_SSRF_SUBCOMMAND_FLAGS, parseRemoteUrl } from '../git-remote.ts';
 import { persistenceHome } from './identity.ts';
 
-export function flushTopologyDirectory(path:string):void{
-  let fd:number|undefined;
-  try{fd=openSync(path,'r');fsyncSync(fd);}
-  catch(error){if(!(process.platform==='win32'&&['EISDIR','EPERM','EINVAL','ENOTSUP'].includes((error as NodeJS.ErrnoException).code??'')))throw error;}
-  finally{if(fd!==undefined)closeSync(fd);}
-}
+export { flushDirectory as flushTopologyDirectory } from '../fs-durable.ts';
 export function topologyDirectoryIdentity(path:string):{device:string;inode:string;birthNs:string}{
   const info=lstatSync(path,{bigint:true});
   if(!info.isDirectory()||info.isSymbolicLink())throw new OperationError('recovery_required','The staging directory was substituted.');
@@ -37,9 +33,9 @@ export function flushTopologyTree(root:string):void{
     if(info.isSymbolicLink())throw new OperationError('writer_manifest_unsafe','Canonical checkout recovery refuses symbolic links.');
     if(info.isDirectory()){
       for(const entry of readdirSync(path))visit(join(path,entry));
-      flushTopologyDirectory(path);
+      flushDirectory(path);
     }else if(info.isFile()){
-      const fd=openSync(path,'r');try{fsyncSync(fd);}finally{closeSync(fd);}
+      flushFile(path);
     }
   };
   visit(root);

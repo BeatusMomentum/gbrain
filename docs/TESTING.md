@@ -1003,7 +1003,7 @@ per-file rules. They do not cache passing results. Candidate scanner failures
 fail the guard, and matching files retain the same allowlists and diagnostics.
 
 `scripts/guards-manifest.tsv` is THE single registry of `scripts/check-*`
-guards (currently 67), each classified `scanner` (greps/parses repo sources —
+guards (currently 68), each classified `scanner` (greps/parses repo sources —
 must eventually carry fixtures), `buildfresh`, or `repostate` (build/freshness
 guards are exempt-with-reason, not fixture-tested).
 `scripts/guard-self-test.sh` (`bun run check:guard-self-test`, wired into
@@ -1042,6 +1042,30 @@ load. Take the executor as a parameter and import types from
 and the `Migration` type in `schema-migrations/types.ts`. Fixtures:
 `test/fixtures/guards/check-layering.ts/`; forms are driven in
 `test/scripts/layering.test.ts`.
+
+#### Durable-flush guard
+
+`scripts/check-durable-flush.ts` (`bun run check:durable-flush`, in
+`bun run verify`) fails on an `fsyncSync(fd)` anywhere in `src/` outside
+`src/core/fs-durable.ts` whose `fd` is assigned from a read-only `openSync`
+(flags omitted, a flag string without `w`/`a`/`+`, or `O_RDONLY` without
+`O_WRONLY`/`O_RDWR`), file or directory, and on one whose flags it cannot
+read. Windows refuses fsync on a read-only handle and has no directory flush
+(EPERM), which wedged the managed write queue (#5595) and every skill-bundle
+publication (#5475). Flushes of descriptors opened for writing pass. Each
+failure prints `FAIL [durable_flush_read_handle]: <file>:<line>`, the open it
+traced, a `Fix:` line and this anchor. Fix: fsync the descriptor you wrote
+through before closing it (set its final mode with `fchmodSync(fd)` first), or
+call `flushFile(path)` / `flushDirectory(path, { bestEffort? })` from
+`src/core/fs-durable.ts`. A file that cannot migrate yet goes in the guard's
+`ALLOWLIST` with a reason (today only `src/core/binary-self-update.ts`, owned
+by the self-upgrade wave); an entry whose file no longer needs it fails as
+`durable_flush_stale_allowlist`. Fixtures:
+`test/fixtures/guards/check-durable-flush.ts/`; forms are driven in
+`test/scripts/durable-flush-guard.test.ts`. The helper and the #5595/#5475
+regressions run natively on the `windows-latest` row of the test.yml
+`security-regressions` job; `test/helpers/win32-flush-semantics.ts` makes them
+discriminate on POSIX hosts too.
 
 #### Engine-sql ratchet
 

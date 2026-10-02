@@ -131,6 +131,9 @@ CHECKS=(
   # EO10 (refactor wave 1): engine-sql/ and schema-migrations/ never import
   # back up into the engine façades or migrate.ts (ESM TDZ cycles).
   "check:layering"
+  # #5595/#5475: no fsync of a read-only descriptor outside src/core/fs-durable.ts
+  # (Windows refuses it with EPERM).
+  "check:durable-flush"
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"
