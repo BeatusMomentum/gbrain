@@ -19,6 +19,7 @@ import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteR
 import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
+import { AGENT_WRITE_WAIT_MS, configuredWriteWaitMs } from './write-wait.ts';
 import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
@@ -435,7 +436,8 @@ export class ManagedConnectorSync {
     let [row] = await retained();
     if (!row) return;
     startPersistenceConsumer(this.engine, loadConfig() ?? { engine: this.engine.kind });
-    const deadline = performance.now() + 5000;
+    // The retained publication may need a slow commit; honor the operator's configured write wait.
+    const deadline = performance.now() + configuredWriteWaitMs(AGENT_WRITE_WAIT_MS);
     while (performance.now() < deadline) {
       const remaining = deadline - performance.now();
       if (remaining <= 0) break;

@@ -48,6 +48,15 @@ export function resolveCliWriteWaitMs(opts: {
     ?? CLI_WRITE_WAIT_MS;
 }
 
+/** An explicitly configured wait (`--wait`, GBRAIN_WRITE_WAIT_MS, persistence.write_wait_ms), else `fallbackMs`. */
+export function configuredWriteWaitMs(fallbackMs: number): number {
+  const flagMs = getCliOptions().writeWaitMs;
+  if (flagMs !== undefined && flagMs !== null) return flagMs;
+  return parseMs(process.env[WRITE_WAIT_ENV], WRITE_WAIT_ENV)
+    ?? parseMs(loadConfig()?.persistence?.write_wait_ms, WRITE_WAIT_CONFIG_KEY)
+    ?? fallbackMs;
+}
+
 /** The wait and pending opt-in this CLI invocation resolved. */
 export function currentCliWriteWait(): { waitMs: number; acceptPending: boolean } {
   const cli = getCliOptions();

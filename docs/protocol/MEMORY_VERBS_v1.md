@@ -451,7 +451,9 @@ alone. `--accept-pending` maps pending to exit 0 for hooks and cron;
 `GBRAIN_ACCEPT_PENDING=1` is its environment equivalent and
 `--no-accept-pending` overrides it (flag beats environment).
 
-The CLI waits up to 30 s for the commit (agents keep 5 s). Precedence:
+The CLI waits up to 30 s for the commit (agents keep 5 s; a connector sync
+waiting for a retained publication to recover keeps 5 s unless one of the
+settings below is set). Precedence:
 `--wait <seconds>` (0 to 600) > `GBRAIN_WRITE_WAIT_MS` > the file-plane
 `persistence.write_wait_ms` (`gbrain config set persistence.write_wait_ms
 45000`) > 30 s. The wait reaches a resident owner with each request, and over
