@@ -361,7 +361,7 @@ export async function runPhasePatterns(
     throwIfAborted(opts.signal, '[dream] patterns output');
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
-    await stampPatternOutputs(engine, maintenance, writtenRefs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, opts.signal);
+    await stampPatternOutputs(engine, maintenance, writtenRefs.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, config.sourceSlugPrefix, opts.signal);
     const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, writtenRefs)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
@@ -615,13 +615,16 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
  * #5733: pages under the patterns output prefix are dream output and carry the
  * dream_generated identity stamp every dream_generated consumer reads, through
  * the managed maintenance write on a managed brain, before the reverse-write.
+ * #5884: a pattern is derived from reflection pages, not raw material, so it is
+ * stamped raw-trace exempt (doctor raw_provenance) on every run that writes it.
  */
 async function stampPatternOutputs(engine: BrainEngine, maintenance: MaintenanceAuthority | null,
-  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, signal?: AbortSignal): Promise<void> {
-  if (!maintenance) return stampDreamProvenance(engine, refs, cycleDate, signal);
+  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, sourceSlugPrefix: string, signal?: AbortSignal): Promise<void> {
+  const reason = `derived from reflections under ${sourceSlugPrefix}/; raw traces live on the cited reflection pages`;
+  if (!maintenance) return stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: reason })), cycleDate, signal);
   for (const ref of refs) {
     throwIfAborted(signal, '[dream] patterns provenance');
-    await stampMaintenancePage(engine, maintenance, ref.slug, cycleDate);
+    await stampMaintenancePage(engine, maintenance, ref.slug, cycleDate, undefined, reason);
   }
 }
 
