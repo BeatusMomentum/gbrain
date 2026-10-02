@@ -119,6 +119,7 @@ should also check `results[].complete`.
 | `orphan-bindings` | `orphan_persistence_bindings` | Deletes persistence source bindings whose source was removed, or that belong to an earlier incarnation of a source re-added under the same id. Releases before this one left the binding behind on `gbrain sources remove` and `gbrain sources purge`, so the re-added source read as claimed and every `gbrain sync --source <id>` failed with `writer_coordinator_required`. Bookkeeping only: no journal admission, no page or file changes, and it runs brain-wide (`--source` does not narrow it). See [orphan bindings](#orphan-bindings). | A binding that a queued, running or recovering write request of the same source incarnation still references. |
 | `embedding-effects` | `stale_embedding_effects` | Settles stale queued and failed embedding effects of committed writes, which block receipt compaction and activation: `reconciled` when current vectors pass the effect verifier, `superseded` when the page was deleted or a newer revision owns its own effect, `retry_queued` for the owner (paid; a used-up retry allowance gets one new bounded cycle per explicit apply). See [stale queued embedding effects](#stale-queued-embedding-effects). | `blocked` effects, counted by reason (`owner_unavailable`, `embedding_disabled`, `embedding_unconfigured`, `projection_pending`, `no_replacement_obligation`). |
 | `safe-chunks` | `safe_index_pending` (also `contextual_retrieval_coverage`, `details.unsealed_pages`) | Rebuilds the chunks of markdown and code pages indexed before the safe-chunk fence, which remote and MCP search withhold. It rebuilds projections only: no page write, no new page version and no request ID. Vectors whose embedding input did not change are kept; the rest are embedded unless you pass `--no-embed` or no embedding model is configured. | `code_without_source_path`: code pages with no recorded file to re-chunk. `unsupported_page_kind`: other page kinds, such as images. Their importer re-seals them. |
+| `orphan-children` | `child_table_orphans` (also a `storage_corrupt` error) | Explicit-only. Deletes rows of page child tables (chunks, versions, tags, takes, raw data, timeline, links) whose page row no longer exists, and clears dangling `links.origin_page_id` and `files.page_id` references, each in one statement that rechecks the orphan condition. See [orphan children](#orphan-children). | `torn_pages`: page rows whose stored body cannot be read (torn TOAST). The preview names them; the repair never changes them. |
 | `contextual-mode` | `contextual_retrieval_coverage` (pages with no recorded mode) | Stamps the contextual retrieval mode on markdown pages imported without one (for example by a large `--no-embed` sync or a connector source before this release), exactly as a fresh import of the page would: the page, source and brain settings decide, and the per-chunk synopsis tier lands at the free title tier. It rebuilds projections only: no page write, no new page version and no request ID. A page whose stored vectors already match the stamped convention keeps them and queues no re-embedding; a page whose embedding input changes has only those vectors cleared and is re-embedded once, unless you pass `--no-embed`. | `unsealed_projection`: pages whose chunks lag their text; `gbrain embed --stale` or `safe-chunks` seals them first, and the next run stamps them. `embed_skip`: pages marked to skip embedding keep their stored vectors and are not stamped. |
 gbrain repair google-file-modes --apply             # explicit-only: runs only when named
 gbrain repair --all --apply                    # every automatic kind in order
@@ -313,6 +314,29 @@ gbrain doctor                            # orphan_persistence_bindings is ok
 Do not delete binding rows by hand: the repair rechecks, in the same
 statement, that the binding is still orphaned and that no pending write
 request uses it.
+
+### Orphan children
+
+**Say to your agent:** *"gbrain fails with `unexpected chunk number` or
+`tuple concurrently deleted`, or doctor warns `child_table_orphans`. Fix it."*
+
+These errors (SQLSTATE XX000) mean stored data is damaged, usually after a
+crash or a full disk. Child rows can outlive their page row, and a page body
+can be torn, so every command that reads it fails. Preview first; it changes
+nothing:
+
+```bash
+gbrain repair orphan-children            # orphan child rows per table, plus torn_pages
+gbrain repair orphan-children --apply    # deletes the orphan rows, clears dangling references
+gbrain doctor                            # child_table_orphans is ok
+```
+
+The preview also reads every page body and lists the rows it cannot read
+(`torn_pages`, with page id, source and slug). The repair never changes those
+rows. Recover them from a backup, or create a fresh brain and sync it again
+from its source files. Until then, a write that names the revision of a page
+the upgrade could not backfill is refused with `revision_backfill_pending`;
+`gbrain apply-migrations --yes` resumes that backfill and prints its progress.
 
 ### Timeline history scan coverage
 

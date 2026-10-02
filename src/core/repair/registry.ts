@@ -34,6 +34,7 @@ import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
+import { orphanChildrenRepair } from './orphan-children.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -114,6 +115,12 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + '(a committed write of the page completed in the same transaction, by an older consumer); --include-ambiguous widens the hashed set to facts '
       + 'without that evidence. Preview-bound: --apply --expect <hash> restores exactly the previewed set; a fact that changed since reports '
       + 'changed_since_preview and stays expired. Superseded, withdrawn and duplicated facts are never restored. Database-only; no page is rewritten.',
+  },
+  'orphan-children': {
+    handler: orphanChildrenRepair, embeds: 'none', checks: ['child_table_orphans'], explicit_only: true,
+    summary: 'Delete rows of page child tables (chunks, versions, tags, takes, raw data, timeline, links) whose page no longer exists, and clear dangling '
+      + 'links.origin_page_id and files.page_id references (#5216, #4738). The preview also probes every page body and reports torn TOAST rows '
+      + '(SQLSTATE XX000) as torn_pages without changing them. Bookkeeping only; no journal admission. Brain-wide; runs only when named.',
   },
 };
 

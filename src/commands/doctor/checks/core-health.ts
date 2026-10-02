@@ -13,6 +13,7 @@ import { checkLinkSourceCheck } from '../../../core/link-source-check-repair.ts'
 import { loadConfig } from '../../../core/config.ts';
 import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
+import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
 
 /**
  * Doctor check: takes.weight grid integrity (v0.32 — EXP-2).
@@ -467,8 +468,8 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
  *
  * All ten FK-to-pages tables declare `ON DELETE CASCADE` in the live schema
  * (verified via `pg_constraint` snapshot in the issue body), so finding any
- * orphan row is by definition unexpected. The check ships paste-ready
- * cleanup SQL when orphans surface.
+ * orphan row is by definition unexpected. The check names
+ * `gbrain repair orphan-children` (the target list lives there).
  *
  * Excluded: `files.page_id` and `links.origin_page_id` — both declared as
  * `ON DELETE SET NULL`, so a NULL value is a valid state (file/link survives
@@ -479,48 +480,25 @@ export async function takesWeightGridCheck(engine: BrainEngine): Promise<Check> 
  * directly without driving the full `runDoctor` pipeline.
  */
 export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check> {
-  // (table, fk_column, allow_null). When allow_null=true, NULL is a valid
-  // state (FK was declared ON DELETE SET NULL); the orphan predicate filters
-  // out NULL values. When false, NULL is impossible by NOT NULL constraint;
-  // any value not in pages.id is an orphan.
-  const targets: Array<{ table: string; col: string; allowNull: boolean }> = [
-    { table: 'content_chunks',   col: 'page_id',          allowNull: false },
-    { table: 'page_versions',    col: 'page_id',          allowNull: false },
-    { table: 'tags',             col: 'page_id',          allowNull: false },
-    { table: 'takes',            col: 'page_id',          allowNull: false },
-    { table: 'raw_data',         col: 'page_id',          allowNull: false },
-    { table: 'timeline_entries', col: 'page_id',          allowNull: false },
-    { table: 'links',            col: 'from_page_id',     allowNull: false },
-    { table: 'links',            col: 'to_page_id',       allowNull: false },
-    { table: 'links',            col: 'origin_page_id',   allowNull: true  },
-    { table: 'files',            col: 'page_id',          allowNull: true  },
-  ];
   let totalOrphans = 0;
   const breakdown: string[] = [];
-  const cleanupSql: string[] = [];
   const errors: string[] = [];
-  for (const { table, col, allowNull } of targets) {
+  for (const target of PAGE_CHILD_FK_TARGETS) {
     try {
-      // NOT IN subquery is portable across postgres + PGLite. The `pages.id`
-      // subquery covers every existing parent row.
-      const nullFilter = allowNull ? `${col} IS NOT NULL AND ` : '';
       const rows = await engine.executeRaw<{ n: string | number }>(
-        `SELECT COUNT(*)::int AS n FROM ${table} WHERE ${nullFilter}${col} NOT IN (SELECT id FROM pages)`,
+        `SELECT COUNT(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`,
       );
       const n = Number(rows[0]?.n ?? 0);
       if (n > 0) {
         totalOrphans += n;
-        breakdown.push(`${table}.${col}=${n}`);
-        cleanupSql.push(
-          `DELETE FROM ${table} WHERE ${nullFilter}${col} NOT IN (SELECT id FROM pages);`,
-        );
+        breakdown.push(`${target.table}.${target.col}=${n}`);
       }
     } catch (e) {
       // Table or column may not exist on older schemas — skip and continue.
       // Aggregate the errors so doctor surfaces "could not check N tables"
       // when a real failure shape appears (network, lock, syntax).
       const msg = e instanceof Error ? e.message : String(e);
-      errors.push(`${table}.${col}: ${msg.slice(0, 80)}`);
+      errors.push(`${target.table}.${target.col}: ${msg.slice(0, 80)}`);
     }
   }
   if (totalOrphans === 0 && errors.length === 0) {
@@ -537,12 +515,17 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
       message: `Could not check ${errors.length}/10 FK-child tables (older schema or transient error): ${errors.slice(0, 3).join('; ')}`,
     };
   }
+  const docs = 'docs/guides/repair.md#orphan-children';
   return {
     name: 'child_table_orphans',
     status: 'warn',
     message:
       `${totalOrphans} orphan row(s) in FK-child tables (${breakdown.join(', ')}). ` +
-      `Cleanup: ${cleanupSql.join(' ')}`,
+      `Preview: gbrain repair orphan-children — apply: gbrain repair orphan-children --apply. See ${docs}.`,
+    details: {
+      code: 'child_table_orphans', cause: `child rows reference ${totalOrphans} missing page row(s), usually after storage damage`,
+      fix: { kind: 'run_command', argv: ['gbrain', 'repair', 'orphan-children'] }, docs, repair: 'orphan-children', orphans: breakdown,
+    },
   };
 }
 

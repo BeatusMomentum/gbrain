@@ -313,6 +313,7 @@ function tierOf(reason: PgAccessReason): 'auto' | 'rewrite' | 'manual' {
     case 'db_missing':
     case 'no_url':
     case 'env_shadowed':
+    case 'storage_corrupt':
     case 'unknown':
       return 'manual';
     default: {
@@ -776,6 +777,7 @@ async function applyLadder(
     case 'db_missing':
     case 'no_url':
     case 'env_shadowed':
+    case 'storage_corrupt':
     case 'unknown':
       return manualStop();
 

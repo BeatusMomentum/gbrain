@@ -525,6 +525,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `db_missing` | 3D000 — the named database does not exist |
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
+| `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 
 The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has
