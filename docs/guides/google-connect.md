@@ -183,12 +183,11 @@ calendar pages."*
   inbound, 72 h for your own question) is re-checked when the window ends,
   even if no new mail arrives, and opens its loop then. See
   [open loops](open-loops.md#quiet-threads-and-grace-holds).
-- **Atoms (opt-in).** Atom extraction skips Gmail threads and Calendar events
-  until you opt in with `gbrain config set cycle.extract_atoms.connector_pages
-  true`. After that, the text of each extracted email thread or calendar event
-  is sent to the configured `extract_atoms` model under the daily auto-drain
-  cap. `gbrain config set cycle.extract_atoms.connector_pages false` stops new
-  extraction. Caps, the off switch and exactly what leaves the machine:
+- **Atoms (on by default).** Atom extraction covers Gmail threads and Calendar
+  events like other pages: the text of each extracted email thread or calendar
+  event is sent to the configured `extract_atoms` model under the daily
+  auto-drain cap. `gbrain config set cycle.extract_atoms.connector_pages false`
+  opts out and stops new extraction. Caps, the off switch and exactly what leaves the machine:
   [spend controls](../operations/spend-controls.md#atom-extraction-auto-drain-cap-and-connector-pages).
 
 `gbrain doctor`'s `orphan_ratio` reports orphaned email and meeting renders of
@@ -349,9 +348,9 @@ upstream failures rather than triggering a full re-list.
   capped per sweep) to your configured chat provider. Kill switch:
   `gbrain config set loops.extraction_enabled false`. The deterministic
   unanswered-thread detector is free and always on.
-- Atom extraction from email and calendar pages is off until you run
-  `gbrain config set cycle.extract_atoms.connector_pages true`; then page
-  text goes to the `extract_atoms` model under the auto-drain cap
+- Atom extraction from email and calendar pages is on by default: page text
+  goes to the `extract_atoms` model under the auto-drain cap. Opt out with
+  `gbrain config set cycle.extract_atoms.connector_pages false`
   ([spend controls](../operations/spend-controls.md#atom-extraction-auto-drain-cap-and-connector-pages)).
 
 ## File permissions

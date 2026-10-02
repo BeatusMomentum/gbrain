@@ -64,7 +64,7 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker (one tracker per drain attempt, across all its batches) | — | **not** consulted (phase budget enforces regardless) |
 | Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
-| Connector email/meeting atoms | `cycle.extract_atoms.connector_pages` | `false` (opt-in) | Gmail/Calendar `email`/`meeting` pages are skipped by atom extraction | leave unset / `false` | **not** consulted |
+| Connector email/meeting atoms | `cycle.extract_atoms.connector_pages` | on (unset) | Gmail/Calendar `email`/`meeting` pages are extracted like other pages, under the auto-drain cap | `false` | **not** consulted |
 | Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
 | Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
 | Dream `BudgetMeter` phases (auto_think, drift, propose/grade takes, calibration) | `dream.auto_think.budget`, `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
@@ -135,23 +135,24 @@ writer would refuse, and logs why. Checkout-backed and connector sources take
 turns for the daily slots. With a model the tracker cannot price, the dollar
 limit is not enforced (see above); only the attempt count bounds the drain.
 
-Connector pages are opt-in. Gmail threads (`email`) and Calendar events
-(`meeting`) from a Google or GitHub connector source are skipped by atom
-discovery, the backlog count, the routine cycle, `gbrain dream --drain` and
-the auto-drain until you turn them on:
+Connector pages are extracted by default. Gmail threads (`email`) and
+Calendar events (`meeting`) from a Google or GitHub connector source go
+through atom discovery, the backlog count, the routine cycle,
+`gbrain dream --drain` and the auto-drain like any other page, under the caps
+above. To keep them out:
 
 ```bash
-gbrain config set cycle.extract_atoms.connector_pages true    # opt in
-gbrain config set cycle.extract_atoms.connector_pages false   # opt out again
+gbrain config set cycle.extract_atoms.connector_pages false   # opt out
+gbrain config unset cycle.extract_atoms.connector_pages       # back to the default (on)
 gbrain config set autopilot.auto_drain.enabled false          # stop all automatic atom drains
 ```
 
-What leaves the machine when you opt in: the page text of each extracted email
+What leaves the machine while it is on: the page text of each extracted email
 thread or calendar event (message bodies, subjects, participants as rendered on
 the page, up to `cycle.extract_atoms.max_input_chars`) is sent to the
 configured `extract_atoms` chat model (`models.dream.extract_atoms`, a
 utility-tier model by default), under the caps above. Atoms already extracted
-stay; turning the setting off only stops new extraction.
+stay; opting out only stops new extraction.
 
 ## Notes & limits
 

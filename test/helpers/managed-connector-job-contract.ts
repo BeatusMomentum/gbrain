@@ -69,8 +69,8 @@ export const contractCases = [
   'cycle_extract_facts',
   'extract_conversation_facts',
   'facts_absorb',
-  'atom_drain_default_off',
-  'atom_drain_opted_in',
+  'atom_drain_opted_out',
+  'atom_drain_default_on',
   'atom_dispatch',
   'embed_backfill',
   'synthesize_publish',
@@ -96,7 +96,7 @@ export const EXPECTED_FAILURES: Partial<Record<ContractCase, { issue: string; si
  * behind one setting, default off. Lane L6 owns the key's final name; keep
  * this constant in step with it.
  */
-export const CONNECTOR_ATOMS_OPT_IN = { key: 'cycle.extract_atoms.connector_pages', on: 'true' } as const;
+export const CONNECTOR_ATOMS_SETTING = { key: 'cycle.extract_atoms.connector_pages', off: 'false' } as const;
 
 /**
  * Handlers from registerBuiltinHandlers that this contract does not drive on
@@ -108,7 +108,7 @@ export const HANDLER_COVERAGE: Record<string, { covered: ContractCase } | { exem
   'extract_facts': { covered: 'cycle_extract_facts' },
   'extract-conversation-facts': { covered: 'extract_conversation_facts' },
   'facts-absorb': { covered: 'facts_absorb' },
-  'extract-atoms-drain': { covered: 'atom_drain_opted_in' },
+  'extract-atoms-drain': { covered: 'atom_drain_default_on' },
   'loops_extract': { covered: 'loops_extract_run' },
   'embed-backfill': { covered: 'embed_backfill' },
   'synthesize': { covered: 'synthesize_publish' },
@@ -594,22 +594,27 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     expect(written.length).toBeGreaterThan(0);
   },
 
-  async atom_drain_default_off(state) {
-    await gmailSweep(state);
-    // Off, connector email/meeting pages are outside discovery and the backlog (#5856 opt-in).
-    expect(await countExtractAtomsBacklog(state.brain.engine, state.sourceId)).toBe(0);
-    const [job] = await runJobs(state.brain.engine, [{ name: 'extract-atoms-drain', data: { sourceId: state.sourceId, window: 60 } }]);
-    if (job.status !== 'completed') throw new Error(`extract-atoms-drain ended ${job.status} after ${job.attempts_started} attempt(s): ${job.error_text ?? ''}`);
-    expect(job.attempts_started).toBe(1);
-    const atoms = await state.brain.engine.executeRaw("SELECT 1 FROM pages WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL", [state.sourceId]);
-    expect(atoms).toHaveLength(0);
-  },
-
-  async atom_drain_opted_in(state) {
+  async atom_drain_opted_out(state) {
     await gmailSweep(state);
     const { engine } = state.brain;
-    await engine.setConfig(CONNECTOR_ATOMS_OPT_IN.key, CONNECTOR_ATOMS_OPT_IN.on);
+    // Opted out, connector email/meeting pages are outside discovery and the backlog (#5856).
+    await engine.setConfig(CONNECTOR_ATOMS_SETTING.key, CONNECTOR_ATOMS_SETTING.off);
     try {
+      expect(await countExtractAtomsBacklog(engine, state.sourceId)).toBe(0);
+      const [job] = await runJobs(engine, [{ name: 'extract-atoms-drain', data: { sourceId: state.sourceId, window: 60 } }]);
+      if (job.status !== 'completed') throw new Error(`extract-atoms-drain ended ${job.status} after ${job.attempts_started} attempt(s): ${job.error_text ?? ''}`);
+      expect(job.attempts_started).toBe(1);
+      const atoms = await engine.executeRaw("SELECT 1 FROM pages WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL", [state.sourceId]);
+      expect(atoms).toHaveLength(0);
+    } finally { await engine.executeRaw('DELETE FROM config WHERE key=$1', [CONNECTOR_ATOMS_SETTING.key]); }
+  },
+
+  async atom_drain_default_on(state) {
+    await gmailSweep(state);
+    const { engine } = state.brain;
+    // No setting: connector email/meeting pages are extracted by default (#5856).
+    await engine.executeRaw('DELETE FROM config WHERE key=$1', [CONNECTOR_ATOMS_SETTING.key]);
+    {
       expect(await countExtractAtomsBacklog(engine, state.sourceId)).toBeGreaterThan(0);
       const [job] = await runJobs(engine, [{ name: 'extract-atoms-drain', data: { sourceId: state.sourceId, window: 60 } }]);
       if (job.status !== 'completed') throw new Error(`extract-atoms-drain ended ${job.status} after ${job.attempts_started} attempt(s): ${job.error_text ?? ''}`);
@@ -619,7 +624,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
       const atomChanges = (await changesSince(state)).filter(c => c.tbl === 'pages' && atoms.some(a => a.slug === c.row_key));
       expect(atomChanges.length).toBeGreaterThan(0);
       expect(atomChanges.every(c => c.request_kind !== null)).toBe(true);
-    } finally { await engine.setConfig(CONNECTOR_ATOMS_OPT_IN.key, 'false'); }
+    }
   },
 
   async atom_dispatch(state) {
@@ -635,6 +640,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
       return engine.executeRaw<{ id: number }>("SELECT id FROM minion_jobs WHERE name='extract-atoms-drain' AND data->>'sourceId'=$1 AND id > $2", [state.sourceId, state.detector.jobsFrom]);
     };
     await engine.setConfig('autopilot.auto_drain.threshold', '1');
+    await engine.setConfig(CONNECTOR_ATOMS_SETTING.key, CONNECTOR_ATOMS_SETTING.off);
     try {
       expect(await countExtractAtomsBacklog(engine, state.sourceId)).toBe(0);
       const off = await tick();
@@ -642,9 +648,9 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
       if (engine.kind === 'pglite') { expect(off).toHaveLength(0); return; }
       if (off.length) {
         await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id = ANY($1::int[]) AND status IN ('waiting','delayed')", [off.map(j => j.id)]);
-        throw new Error('auto-drain submitted extract-atoms-drain for the connector source with connector atoms off');
+        throw new Error('auto-drain submitted extract-atoms-drain for the connector source with connector atoms opted out');
       }
-      await engine.setConfig(CONNECTOR_ATOMS_OPT_IN.key, CONNECTOR_ATOMS_OPT_IN.on);
+      await engine.executeRaw('DELETE FROM config WHERE key=$1', [CONNECTOR_ATOMS_SETTING.key]);
       expect(await countExtractAtomsBacklog(engine, state.sourceId)).toBeGreaterThan(1);
       const on = await tick();
       expect(on).toHaveLength(1);
@@ -653,7 +659,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
       expect(job.attempts_started).toBe(1);
     } finally {
       await engine.setConfig('autopilot.auto_drain.threshold', '25');
-      await engine.setConfig(CONNECTOR_ATOMS_OPT_IN.key, 'false');
+      await engine.executeRaw('DELETE FROM config WHERE key=$1', [CONNECTOR_ATOMS_SETTING.key]);
     }
   },
 
@@ -761,7 +767,7 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
   },
 };
 
-const ATOM_CASES: ReadonlySet<ContractCase> = new Set(['atom_drain_default_off', 'atom_drain_opted_in', 'atom_dispatch']);
+const ATOM_CASES: ReadonlySet<ContractCase> = new Set(['atom_drain_opted_out', 'atom_drain_default_on', 'atom_dispatch']);
 const FACTS_CASES: ReadonlySet<ContractCase> = new Set(['cycle_extract_facts', 'extract_conversation_facts', 'facts_absorb']);
 
 async function runCase(brain: ContractBrain, id: ContractCase): Promise<void> {
