@@ -5,7 +5,6 @@
 # added here in a reviewer-visible diff. Removing lines (by mapping the
 # file) is always safe. Enforced by test/scripts/e2e-wiring.test.ts.
 test/e2e/anomalies-pglite.test.ts
-test/e2e/auth-permissions.test.ts
 test/e2e/auth-takes-holders-pglite.test.ts
 test/e2e/autopilot-cooldown-parity.test.ts
 test/e2e/autopilot-fanout-postgres.test.ts

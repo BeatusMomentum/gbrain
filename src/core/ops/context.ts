@@ -15,7 +15,7 @@ import { resolve, relative, sep } from 'path';
 import { OperationError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import { CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
-import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
+import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
@@ -375,6 +375,20 @@ export function opAllowedForBoundClient(
 }
 
 /**
+ * The explicit no-source grant (`permissions.source_id: []`, written by
+ * `gbrain auth rescope-token <name> --sources none`) refuses every operation:
+ * it never falls back to the `default` floor for reads or writes.
+ */
+export function noSourceGrantError(operation?: string): OperationError {
+  const err = new OperationError('permission_denied',
+    `${operation ? `${operation}: ` : ''}this token is granted no sources (its source grant is an explicit empty list).`,
+    'On the brain host, grant sources with: gbrain auth rescope-token <name> --sources <id,...>',
+    'docs/mcp/ADMIN.md#legacy-token-grants');
+  err.detail = 'fence=no_source_grant';
+  return err;
+}
+
+/**
  * Fail-closed gate for slug-bound clients, applied at dispatch (the single
  * choke point both MCP transports share) so it cannot be forgotten per op.
  * Read ops are untouched — read scope is enforced by source federation.
@@ -385,6 +399,7 @@ export function enforceBoundClientOpAllowList(
   auth: AuthInfo | undefined,
   op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
 ): void {
+  if (auth?.sourceId === NO_SOURCES) throw noSourceGrantError(op.name);
   if (opAllowedForBoundClient(auth, op)) return;
   if (auth?.grantProjectionDegraded || (Array.isArray(auth?.allowedOperations) && !auth.allowedOperations.includes(op.name))) {
     const err = new OperationError('permission_denied', `${op.name} is outside this client's approved operation snapshot.`,
@@ -461,6 +476,7 @@ export function validateFilename(name: string): void {
  * same precedence ladder — drift between sites is the bug class.
  */
 export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sourceIds?: string[] } {
+  if (ctx.sourceId === NO_SOURCES || ctx.auth?.sourceId === NO_SOURCES) throw noSourceGrantError();
   const allowed = ctx.auth?.allowedSources;
   // Treat an empty `allowedSources: []` as "no federated read scope" — the
   // op-handler defers to scalar `ctx.sourceId` below. An attacker-controlled
