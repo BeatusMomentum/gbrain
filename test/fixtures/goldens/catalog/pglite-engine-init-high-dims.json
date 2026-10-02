@@ -2389,7 +2389,10 @@
           "12 newest_content_at timestamp with time zone/timestamptz NULL",
           "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "14 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
-          "15 chunker_version text/text NULL"
+          "15 chunker_version text/text NULL",
+          "16 upstream_checked_at timestamp with time zone/timestamptz NULL",
+          "17 upstream_commit text/text NULL",
+          "18 upstream_behind integer/int4 NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

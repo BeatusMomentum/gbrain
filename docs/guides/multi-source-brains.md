@@ -246,6 +246,19 @@ write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
 
+A managed brain never pulls inside a cycle, so a mirror is advanced outside
+gbrain and then synced without pulling:
+
+```bash
+git -C <checkout> pull --ff-only
+gbrain sync --source <id> --no-pull
+```
+
+The autopilot cycle syncs the checkout as it is and reports
+`upstream_refresh: "skipped_managed"`; `gbrain doctor` (`sync_freshness`) says
+"upstream unknown" when the checkout was not fetched in the last 24 hours. See
+[`managed_pull_skipped`](write-refusals.md#managed_pull_skipped).
+
 ## The git requirement for --path sources
 
 Every `--path` source must be a git repository (or live inside one — a

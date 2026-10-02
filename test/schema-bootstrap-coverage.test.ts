@@ -894,6 +894,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'minion_jobs.quiet_hours',
   'minion_jobs.stagger_key',
   'sources.chunker_version',
+  // #5255/#5176: the upstream observation columns follow the same chain (PGLite
+  // gets them from migration sources_upstream_observation; no index uses them).
+  'sources.upstream_checked_at',
+  'sources.upstream_commit',
+  'sources.upstream_behind',
   'access_tokens.permissions',
   'takes.resolved_quality',
   'pages.emotional_weight_recomputed_at',

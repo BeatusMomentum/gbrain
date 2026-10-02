@@ -1733,6 +1733,7 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 
+
 `;
 
 export function getPGLiteSchema(

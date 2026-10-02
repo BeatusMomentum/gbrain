@@ -2448,4 +2448,12 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL)
+
+-- #5255/#5176 (O-DX-8): last upstream observation per source, recorded by sync
+-- from the checkout's Git state (upstream ref, its last fetch/push time, commits
+-- the synced commit lacks); doctor sync_freshness reads it with no subprocess.
+-- Added last so a fresh install has the column order an upgraded brain gets.
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_checked_at TIMESTAMPTZ;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_commit TEXT;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_behind INTEGER;
 `;
