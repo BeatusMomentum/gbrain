@@ -932,12 +932,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // once per token per 60s, and NEVER blocks or fails verification (a
       // slow/broken UPDATE used to hang or 401 every legacy-token request).
       // Mirrors src/mcp/http-transport.ts validateToken; the SQL-level WHERE
-      // keeps the debounce race-tolerant under concurrent requests.
+      // keeps the debounce race-tolerant under concurrent requests; SKIP LOCKED
+      // keeps a row lock held elsewhere from parking a pool slot (#5730).
       this.sql`
-        UPDATE access_tokens
-        SET last_used_at = now()
-        WHERE token_hash = ${tokenHash}
-          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')
+        UPDATE access_tokens SET last_used_at = now()
+        WHERE id IN (SELECT id FROM access_tokens WHERE token_hash = ${tokenHash}
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)
       `.catch(() => { /* fire-and-forget */ });
       const name = legacyRows[0].name as string;
       const permissions = coerceLegacyPermissions(legacyRows[0].permissions);
