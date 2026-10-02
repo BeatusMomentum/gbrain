@@ -196,10 +196,12 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean; onBootPhase?: (phase: string) => void } = {}) {
   const config = loadConfig();
+  const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
   // backs (see source-preflight.ts). Throws before any transport is attached.
+  bootPhase('source_preflight');
   await assertStdioSourceBindable(engine);
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
   // to pre-surface behavior), 'starter' (WP4 daily-driver set), or 'verbs'
@@ -225,6 +227,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // private brain. Read failure here yields the OFF bundle — no section,
   // never a wrong posture — and the engine is already connected by the time
   // serve reaches this call.
+  bootPhase('writeback_config');
   const writeback = await resolveWritebackConfig(engine, config);
   const server = new Server(
     { name: 'gbrain', version: VERSION },
@@ -357,6 +360,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   }));
 
   const transport = new StdioServerTransport();
+  bootPhase('mcp_connect');
   await server.connect(transport);
 
   // Engine-dependent boot: the resolve-IPC listener, session-cursor GC, and
@@ -371,11 +375,12 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // (+ delegated sync/sweep) IPC listener. Wiring shared with `serve --http`
     // via bindResolveIpcForServe (#4474) — best-effort; failure to bind never
     // blocks the MCP server.
-    ipcBinding = await bindResolveIpcForServe(
-      engine,
-      (await resolveMcpStdioSourceScope(engine)).sourceId,
-      await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind }),
-    );
+    bootPhase('source_scope');
+    const { sourceId: ipcSourceId } = await resolveMcpStdioSourceScope(engine);
+    bootPhase('persistence_consumer');
+    const persistence = await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
+    bootPhase('resolve_ipc_bind');
+    ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence);
 
     // v0.45.7 ambient recall: age out stale session cursors once per serve boot
     // (7-day TTL, indexed DELETE). Best-effort — GC failure never blocks serve.
@@ -388,6 +393,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // connect, unref'd (can never hold the process open), all errors
     // swallowed inside armStartupSweep. Kill switch: GBRAIN_SWEEP=0 (checked
     // inside the helper). Lazy import keeps sweep code off the boot path.
+    bootPhase('startup_sweep');
     try {
       const { armStartupSweep } = await import('../core/sweep.ts');
       const { sourceId } = await resolveMcpStdioSourceScope(engine);

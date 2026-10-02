@@ -516,7 +516,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS |
 | `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
 | `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
-| `pool_exhausted` | 53300 / session-slot exhaustion — `export GBRAIN_POOL_SIZE=2` guidance |
+| `pool_exhausted` | 53300 / session-slot exhaustion — [pool sizing](#pool-sizing) guidance: `export GBRAIN_POOL_SIZE=6` per long-running process, fewer processes |
 | `conn_refused` | ECONNREFUSED — docker-start arm for gbrain's own container; pooler rewrite for Supabase direct URLs |
 | `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent + Supabase suggests a paused project |
 | `network_unreachable` | ENETUNREACH/ETIMEDOUT — often an IPv6-only direct host; session-pooler rewrite |
@@ -549,6 +549,42 @@ restores die-on-startup. Scope: Postgres startup failures only — PGLite startu
 keep die-on-startup (that lane's repair is `gbrain pglite-repair`), and
 mid-session outages ride the engine's own reconnect plus the per-call
 classified envelopes.
+
+### Pool sizing
+
+<a id="pool-sizing"></a>Each gbrain process opens its own ordinary pool of
+`GBRAIN_POOL_SIZE` connections (default 10; environment variable only, no
+config key). A long-running process (`gbrain serve`, `gbrain autopilot`,
+`gbrain jobs work`) needs at least **6**: two for write publication, one for the
+idle work probe, one each for the projection and effects workers, and one for
+reads and tool calls. Below that, boot or projection draining stalls under
+traffic. One-shot CLI commands can use `GBRAIN_POOL_SIZE=2`.
+
+Size the pooler for every process at once:
+
+```
+long-running processes x GBRAIN_POOL_SIZE
+  + processes with GBRAIN_DIRECT_DATABASE_URL x GBRAIN_DIRECT_POOL_SIZE (default 3)
+  + one-shot commands running at the same time x their pool
+  <= the pooler's client limit (Supabase Supavisor: the project's pool_size)
+```
+
+When the sum does not fit, run fewer long-running processes (for example one
+shared `gbrain serve --http` instead of one stdio `serve` per agent session),
+or raise the pooler's limit. Do not lower a long-running process below 6.
+`pool_exhausted` errors (SQLSTATE `53300`) and the
+[serve boot timeout](#serve-boot-timeout) print this guidance.
+
+<a id="serve-boot-timeout"></a>**`serve_boot_timeout`** (stderr, exit 1).
+`gbrain serve` did not finish booting within `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
+(default 60; 0 disables), so it released the database and exited. The line
+names the boot phase that never finished (`source_preflight`,
+`writeback_config`, `mcp_connect`, `source_scope`, `persistence_consumer`,
+`resolve_ipc_bind`, `startup_sweep`) and the pool pressure
+(`pool=<tracked checkouts>/<pool max>`). When the pool is below 6 or saturated,
+the fix is `export GBRAIN_POOL_SIZE=6` plus pooler sizing as above; otherwise
+check the configured provider endpoints for the named phase, or raise the
+timeout.
 
 ### Pool and transaction diagnostics
 
