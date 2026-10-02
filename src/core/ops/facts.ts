@@ -231,7 +231,7 @@ const recall: Operation = {
 
     // Federated grants (cathedral-6): the fact arms honor the SAME scope
     // ladder as every other read-side op — federated array > scalar >
-    // default — via sourceScopeOpts, never a hand-rolled filter. The engine
+    // default — via federatedSearchScope, never a hand-rolled filter. The engine
     // fact APIs are scalar-source, so a federated grant fans out per granted
     // source and merges newest-first; a single-source caller takes exactly
     // the pre-v1 single-query path. A trusted-local `__all__` ({}) has no
@@ -240,7 +240,9 @@ const recall: Operation = {
     let scope: ReturnType<typeof sourceScopeOpts>;
     try {
       sourceIdParam = parseSourceIdParam(p.source_id, 'recall');
-      scope = sourceIdParam === undefined ? sourceScopeOpts(ctx) : federatedSearchScope(ctx, sourceIdParam);
+      // The facts arms widen an unqualified no-grant caller across the transport-computed
+      // federated set, exactly like the page-search arm below and every sibling read op.
+      scope = federatedSearchScope(ctx, sourceIdParam);
       await assertExplicitSourceLive(ctx, sourceIdParam);
     } catch (error) {
       if (!(error instanceof OperationError) || p.source_id === undefined || p.source_id === null) throw error;
