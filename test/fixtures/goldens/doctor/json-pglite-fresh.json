@@ -1026,6 +1026,15 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "enabled": false
+          },
+          "message": "auto_chronicle is off.",
+          "name": "auto_chronicle",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
           "name": "search_mode",

@@ -554,6 +554,10 @@
         "name": "unlinked_facts"
       },
       {
+        "category": "brain",
+        "name": "auto_chronicle"
+      },
+      {
         "category": "ops",
         "name": "chat_fallback_chain_inert"
       },

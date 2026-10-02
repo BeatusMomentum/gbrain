@@ -2,8 +2,10 @@
 // Brain-state (not workspace-dependent), so it runs over MCP too. Two signals:
 //   - unresolved ontology conflicts (genuine disagreement, not supersession)
 //   - recent meetings not yet swept into the timeline (coverage gap)
+//   - auto_chronicle=true, which has no effect in this version (#5876)
 // Advisory display only (no dispatch_id) — the user runs the shown command.
 import type { AdvisorCollector, AdvisorContext, AdvisorFinding } from './types.ts';
+import { isAutoChronicleEnabled } from '../chronicle/config.ts';
 
 export const collectChronicle: AdvisorCollector = {
   id: 'chronicle',
@@ -45,7 +47,7 @@ export const collectChronicle: AdvisorCollector = {
           id: 'chronicle_coverage_gap',
           severity: 'info',
           title: `${gap} recent meeting(s) aren't in the timeline yet`,
-          detail: 'Sweep them into events with `gbrain chronicle-backfill`, or enable auto_chronicle.',
+          detail: 'Sweep them into events with `gbrain chronicle-backfill`.',
           fix: { command_argv: ['gbrain', 'chronicle-backfill'] },
           collector: 'chronicle',
           ask_user: true,
@@ -53,6 +55,24 @@ export const collectChronicle: AdvisorCollector = {
       }
     } catch {
       // timeline_entries.event_page_id may be absent pre-migration; ignore.
+    }
+
+    // 3. #5876: the setting is accepted but nothing reads it.
+    try {
+      if (await isAutoChronicleEnabled(ctx.engine)) {
+        findings.push({
+          id: 'auto_chronicle_no_effect',
+          severity: 'warn',
+          title: 'auto_chronicle=true currently has no effect',
+          detail: 'No write or cycle step enqueues chronicle extraction in this version, so new meetings are not swept into events. ' +
+            'Run `gbrain chronicle-backfill` to sweep them; `gbrain config unset auto_chronicle` clears the setting.',
+          fix: { command_argv: ['gbrain', 'chronicle-backfill', '--dry-run'] },
+          collector: 'chronicle',
+          ask_user: true,
+        });
+      }
+    } catch {
+      // Config read failures leave the other findings intact.
     }
 
     return findings;
