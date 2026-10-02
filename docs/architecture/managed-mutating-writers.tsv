@@ -17,6 +17,7 @@ op	add_link	coordinator	coordinatedManualLinkWrite: durable authority, withCoord
 op	remove_link	coordinator	coordinatedManualLinkWrite, same boundary as add_link.
 op	add_timeline_entry	coordinator	submitPageMutation admits a journaled page mutation.
 op	revert_version	coordinator	submitPageMutation admits a journaled page mutation.
+op	edit_page	coordinator	submitPageMutation admits a journaled page mutation; edits apply to the locked snapshot.
 op	put_skill	coordinator	Shared-skill publication through the persistence journal.
 op	delete_skill	coordinator	Shared-skill publication through the persistence journal.
 op	set_skill_policy	no_canonical_write	Shared-skill policy row, epoch-guarded; no page content.

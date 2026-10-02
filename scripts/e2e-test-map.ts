@@ -244,6 +244,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
   "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
   "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  // O-CEO-13 wave-8 write contract gate: receipts, replay, edit_page, publication reauthorization.
+  "src/core/persistence/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
+  "src/core/persistence/write-wait.ts": ["test/e2e/write-contract-conformance.test.ts"],
+  "src/core/ops/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
   "src/core/persistence/**": [
     "test/e2e/fix-wave-3-integration.test.ts",
     "test/e2e/persistence-http-liveness.test.ts",
@@ -444,7 +448,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/persistence/memory-mutations.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
   "src/core/persistence/coordinator.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
   "src/core/facts/meta-hook.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/facts-context-injection-postgres.test.ts", "test/e2e/serve-http-meta.test.ts"],
-  "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts"],
+  "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/write-contract-conformance.test.ts"],
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
