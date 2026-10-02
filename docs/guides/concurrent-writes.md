@@ -201,6 +201,14 @@ and do not disable guards or change ownership as part of rollback.
 | `failed` | The request ended without commitment. |
 | `cancelled` | Cancelled before publication began. |
 
+On Windows, publication flushes each staged file through the handle it was
+written with and skips the directory flush Windows does not provide. Older
+releases flushed through a read-only handle, which Windows refuses (`EPERM`), so
+a restoration could stay `recovering` and hold every later write on that source
+behind it. After upgrading, the owner retries it on its own; confirm with
+`gbrain doctor --json` (`canonical_content_writes` reports `ok` once recovery
+has drained).
+
 Receipts include `request_id`, `state`, and `retry_after_ms`, with optional
 revision, outcome, persistence status, and timestamps. Terminal receipts have
 `retry_after_ms: null`. Private queued content, credential hashes, and recovery
