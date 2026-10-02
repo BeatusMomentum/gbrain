@@ -7,6 +7,7 @@
 import { loadConfig, type GBrainConfig } from '../config.ts';
 import { getCliOptions } from '../cli-options.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../exit-codes.ts';
+import { OperationError } from '../ops/contract.ts';
 import { admittedPendingReceipt, type WriteReceipt } from './types.ts';
 
 /** Agent and server callers keep the historical bounded wait. */
@@ -20,17 +21,19 @@ export const WRITE_WAIT_ENV = 'GBRAIN_WRITE_WAIT_MS';
 export const WRITE_WAIT_CONFIG_KEY = 'persistence.write_wait_ms';
 export const ACCEPT_PENDING_ENV = 'GBRAIN_ACCEPT_PENDING';
 
-export class WriteWaitConfigError extends Error {
-  readonly code = 'invalid_write_wait';
-  constructor(readonly where: string, value: unknown) {
-    super(`${where} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS} (got ${JSON.stringify(value)}).`);
-  }
+export const WRITE_EXIT_DOCS = 'docs/protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes';
+
+function invalidWriteWait(where: string, value: unknown): OperationError {
+  return new OperationError('invalid_write_wait',
+    `${where} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS} (got ${JSON.stringify(value)}).`,
+    where === WRITE_WAIT_ENV ? `unset ${WRITE_WAIT_ENV}, or set it to e.g. 30000` : `gbrain config set ${WRITE_WAIT_CONFIG_KEY} 30000`,
+    'docs/guides/write-refusals.md#invalid_write_wait');
 }
 
 function parseMs(value: unknown, where: string): number | null {
   if (value === undefined || value === null || value === '') return null;
   const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : NaN;
-  if (!Number.isSafeInteger(n) || n < 0 || n > MAX_WRITE_WAIT_MS) throw new WriteWaitConfigError(where, value);
+  if (!Number.isSafeInteger(n) || n < 0 || n > MAX_WRITE_WAIT_MS) throw invalidWriteWait(where, value);
   return n;
 }
 

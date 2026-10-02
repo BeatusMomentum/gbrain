@@ -8,7 +8,7 @@ import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
 import { RemoteMcpError } from '../core/mcp-client.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
-import { acceptPendingRequested, pendingReceiptOf, pollCommand, writeErrorExitCode } from '../core/persistence/write-wait.ts';
+import { acceptPendingRequested, pendingReceiptOf, pollCommand, WRITE_EXIT_DOCS, writeErrorExitCode } from '../core/persistence/write-wait.ts';
 
 export async function reportPersistenceCliError(error: unknown, json = false,
   out: (payload: string) => Promise<void> = writeStdoutFinal): Promise<boolean> {
@@ -29,7 +29,7 @@ export async function reportPersistenceCliError(error: unknown, json = false,
   if (requestId) console.error(`Request: ${requestId}${receipt ? ` (${receipt.state})` : ''}`);
   if (pending) {
     console.error(`Poll: ${pollCommand(pending.request_id)}`);
-    if (!acceptPending) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, not yet committed. Wait longer with --wait <seconds>, or pass --accept-pending to exit 0.`);
+    if (!acceptPending) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, not yet committed. Wait longer with --wait <seconds>, or pass --accept-pending to exit 0 (${WRITE_EXIT_DOCS}).`);
   }
   setCliExitVerdict(writeErrorExitCode(error, acceptPending));
   return true;

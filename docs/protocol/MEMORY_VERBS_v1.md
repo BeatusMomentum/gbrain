@@ -430,6 +430,89 @@ For `forget`, a committed source- and visibility-scoped withdrawal is the
 durable memory outcome. Its filesystem mirror may remain pending; stale
 source imports must still respect the withdrawal.
 
+<a id="cli-exit-status-for-writes"></a>
+#### CLI exit status for writes (additive)
+
+On the CLI, exit 0 means the write committed. A write that was admitted but
+has not committed when the wait ends exits **10** and prints its receipt (in
+full with `--json`, plus `poll_command`). It may still commit: poll it, or
+repeat the same command with the same `--request-id`. Exit 10 is distinct
+from 75, which `gbrain upgrade` reads as "another migration runner holds the
+lock".
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Committed (or pending with `--accept-pending`). |
+| 10 | Accepted, still pending; the receipt names the request. |
+| 1 | Not committed: a terminal failure (`conflict`, `failed`, `cancelled`), a refusal before admission (for example "the persistence owner is closing", even with `--accept-pending`), or a lost response whose submission state is unknown (`submission_status: "unknown"`, no receipt). |
+
+The verdict keys on an admitted, non-terminal receipt, never on an error code
+alone. `--accept-pending` maps pending to exit 0 for hooks and cron;
+`GBRAIN_ACCEPT_PENDING=1` is its environment equivalent and
+`--no-accept-pending` overrides it (flag beats environment).
+
+The CLI waits up to 30 s for the commit (agents keep 5 s). Precedence:
+`--wait <seconds>` (0 to 600) > `GBRAIN_WRITE_WAIT_MS` > the file-plane
+`persistence.write_wait_ms` (`gbrain config set persistence.write_wait_ms
+45000`) > 30 s. The wait reaches a resident owner with each request, and over
+a thin client or an older owner the CLI replays the same request ID until the
+wait is spent. Each exchange's transport deadline is the wait plus 15 s of
+admission headroom, so a slow commit exits 10 with a receipt, not with an
+unknown submission. `--timeout` bounds one exchange: with a shorter
+`--timeout` the owner is asked to stop waiting early enough to return the
+receipt, but a remote server's own 5 s wait cannot be shortened, so keep
+`--timeout` above it.
+
+```bash
+gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 < page.md
+echo $?   # 10: accepted, not yet committed
+gbrain call get_write_request '{"request_id":"7f3c0e9a-0000-4000-8000-000000000001"}'
+gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 --wait 60 < page.md   # 0 once committed
+```
+
+<a id="partial-page-edits-edit_page"></a>
+#### Partial page edits: edit_page (additive)
+
+`edit_page {slug, expected_revision, edits: [{old_text, new_text}], request_id?}`
+changes part of an existing page without resending it; agents should prefer it
+over `put_page` for small changes. Read `get_page` with `include_content:true`
+and pass its `revision`. Each edit replaces `old_text` (non-empty) with
+`new_text`; 1 to 50 edits apply in order, each against the text the previous
+edit produced, and all publish together or none do. Each `old_text` must match
+exactly once in the content `get_page` returned to you. Protected takes and
+facts sections never match and are preserved in place (use the `takes_*`
+operations or `remember`/`forget`); remote callers match against their
+sanitized view, so private facts and non-world takes are never matched,
+echoed or diffed. The write goes through the same receipts, revision check,
+fences, write-through and grants as `put_page`, with revision-bound editing
+semantics: removing a materialized timeline bullet removes its timeline row.
+
+Success returns the committed receipt with the new `revision` and `diff`, a
+unified diff of your view capped at 8 KB (`diff_truncated: true` when cut).
+Refusals name the edit and never include protected text:
+
+| Error | `detail` | Fix |
+| --- | --- | --- |
+| `edit_no_match` | `edit_index=<i> match_count=0` | Copy `old_text` exactly from the current content, remembering earlier edits in the call. |
+| `edit_ambiguous_match` | `edit_index=<i> match_count=<n>` | Quote more surrounding text. |
+| `edit_protected_span` | `edit_index=<i>` | The text touches a takes or facts section; use the scoped operations. |
+| `edit_invalid` | `edit_index=<i>` when one edit is malformed | Pass 1 to 50 `{old_text, new_text}` objects with non-empty `old_text`. |
+| `revision_conflict` | `current_revision=<uuid>` | Read the page again, rebuild the edits, resend. |
+
+```json
+→ get_page {"slug": "projects/example", "include_content": true}
+← {"revision": "5d1c…", "content": "---\ntitle: Example\n---\n\n- Status: draft\n…"}
+→ edit_page {"slug": "projects/example", "expected_revision": "5d1c…",
+             "edits": [{"old_text": "- Status: draft", "new_text": "- Status: shipped"}],
+             "request_id": "0b6e…"}
+← {"state": "committed", "request_id": "0b6e…", "revision": "9a42…",
+   "diff": "--- a/projects/example.md\n+++ b/projects/example.md\n@@ -4,1 +4,1 @@\n-- Status: draft\n+- Status: shipped\n"}
+→ edit_page {"slug": "projects/example", "expected_revision": "5d1c…", "edits": [...], "request_id": "a71f…"}
+← {"error": "revision_conflict", "detail": "current_revision=9a42…", "suggestion": "Read get_page with include_content:true again, …"}
+```
+
+From the CLI: `gbrain call edit_page '{"slug":"projects/example","expected_revision":"…","edits":[{"old_text":"…","new_text":"…"}]}'`.
+
 ### context_pack(entities, budget_tokens?, since?, session_id?, include_private?) — read, zero LLM
 
 One deterministic, budget-packed bundle for a set of standing

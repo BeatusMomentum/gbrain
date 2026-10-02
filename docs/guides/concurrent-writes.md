@@ -236,7 +236,13 @@ was saved. If receipt helpers aren't available, repeat the same verb and origina
 arguments with that UUID. When `next_action` is `inspect_owner`, ask the operator
 to inspect first instead of repeatedly submitting mutations.
 
-`write_pending` means accepted work remains outstanding. `owner_unavailable`
+`write_pending` means accepted work remains outstanding; the CLI exits 10 for it
+(0 with `--accept-pending`) and waits 30 s by default (`--wait <seconds>`,
+`GBRAIN_WRITE_WAIT_MS`, `persistence.write_wait_ms`); see
+[CLI exit status for writes](../protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes).
+The admin health indicators count it as `accepted_pending`, outside the error
+rate, with `pending_writes`, `oldest_pending_write_age_seconds` and
+`pending_writes_later_failed`. `owner_unavailable`
 and `writer_lock_unavailable` do not authorize a competing owner or a fresh
 request ID. `queue_capacity` refuses additional admission without evicting
 existing requests. `revision_required`, `revision_conflict`,

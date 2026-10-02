@@ -156,12 +156,26 @@ describe('resident owner: pending-write exit codes', () => {
     });
   }, 60_000);
 
-  test('a malformed --wait refuses before any write is sent', async () => {
+  test('a malformed --wait or GBRAIN_WRITE_WAIT_MS refuses before any write is sent, naming the fix', async () => {
     await withOwner('committed', async (dir, calls) => {
       const result = await spawnCli(dir, ['call', 'put_page', '{}', '--wait', 'soon']);
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('--wait requires a number of seconds');
+      const env = await spawnCli(dir, ['call', 'put_page', JSON.stringify({ slug: 'notes/a', content: 'A' })], { GBRAIN_WRITE_WAIT_MS: 'soon' });
+      expect(env.code).toBe(1);
+      expect(JSON.parse(env.stdout)).toMatchObject({ error: 'invalid_write_wait', docs: 'docs/guides/write-refusals.md#invalid_write_wait' });
+      expect(env.stderr).toContain('Fix: unset GBRAIN_WRITE_WAIT_MS');
       expect(calls).toHaveLength(0);
+    });
+  }, 30_000);
+
+  test('plain output names the request, the poll command and the exit status', async () => {
+    await withOwner('pending', async (dir) => {
+      const result = await spawnCli(dir, ['call', 'put_page', JSON.stringify({ slug: 'notes/a', content: 'A', request_id: ID }), '--wait', '0']);
+      expect(result.code).toBe(PENDING_WRITE_EXIT_CODE);
+      expect(result.stderr).toContain(`Request: ${ID} (running)`);
+      expect(result.stderr).toContain(`Poll: gbrain call get_write_request '{"request_id":"${ID}"}'`);
+      expect(result.stderr).toContain('#cli-exit-status-for-writes');
     });
   }, 30_000);
 });

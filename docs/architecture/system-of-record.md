@@ -119,8 +119,10 @@ history, the terminal receipt and postpublication effects commit together in
 the database. An ordinary rejected file write rolls that transaction back.
 
 A committed receipt identifies durable canonical state. Lock contention or
-owner downtime leaves accepted work queued; after the five-second synchronous
-wait, `write_pending` includes the UUID and one-second retry guidance. An
+owner downtime leaves accepted work queued; after the synchronous wait (5 s for
+agents, 30 s for the CLI, `--wait <seconds>` to change it), `write_pending`
+includes the UUID and one-second retry guidance, and the CLI exits 10
+([exit status](../protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes)). An
 uncertain publication stays `recovering` and blocks its worktree until resolved.
 Recovery restores prior bytes only when the file still matches the recorded
 attempt. Unexpected bytes require explicit repair. Direct filesystem readers
