@@ -28,7 +28,7 @@ import { parseTakesFence, TAKES_FENCE_BEGIN, type ParsedTake } from '../takes-fe
 import { walkMarkdownFiles } from '../../commands/extract.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
-import { maintenanceAttribution } from '../persistence/attribution.ts';
+import { maintenanceAttribution, maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 export interface ExtractTakesOpts {
@@ -131,7 +131,7 @@ async function flushBatch(
   if (dryRun) {
     result.takesUpserted += buffer.length;
   } else {
-    const inserted = await engine.addTakesBatch(buffer);
+    const inserted = await maintenanceTransaction(engine, tx => tx.addTakesBatch(buffer));
     result.takesUpserted += inserted;
   }
   buffer.length = 0;

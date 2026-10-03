@@ -29,6 +29,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { bumpAtomGeneration, managedAtomCompletedSql } from '../persistence/atom-maintenance.ts';
@@ -174,7 +175,7 @@ async function retireStaleAtom(ctx: OperationContext, atom: StaleAtom): Promise<
     }
     return { applied: true, outcome: 'retired' };
   }
-  const retired = await engine.transaction(async tx => {
+  const retired = await maintenanceTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId: atom.source_id, slug: atom.slug }, { sourceId: atom.source_id, slug: atom.origin_slug }]);
     if (!sameAtom((await staleAtoms(tx, [atom.source_id], atom.id))[0], atom)) return false;
     await tx.createVersion(atom.slug, { sourceId: atom.source_id });

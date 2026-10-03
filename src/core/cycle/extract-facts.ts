@@ -56,6 +56,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import type { BrainEngine } from '../engine.ts';
 import { managedDerivedFactsPreflight, withDerivedFactsWrite } from '../persistence/derived-facts.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 import {
   resolveSupersededByRow,
   supersessionChainOf,
@@ -444,7 +445,7 @@ export async function runExtractFacts(
   // inside the coordinator's source capability under the page key.
   const managed = await managedDerivedFactsPreflight(engine, sourceId);
   const transact = <T>(slugs: string[], fn: (tx: BrainEngine) => Promise<T>): Promise<T> =>
-    managed ? withDerivedFactsWrite(engine, sourceId, slugs, fn) : engine.transaction(fn);
+    managed ? withDerivedFactsWrite(engine, sourceId, slugs, fn) : maintenanceTransaction(engine, fn);
   const result: ExtractFactsResult = {
     pagesScanned: 0,
     pagesWithFacts: 0,

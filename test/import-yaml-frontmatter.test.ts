@@ -31,7 +31,8 @@ function mockEngine(): BrainEngine {
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return (...args: any[]) => {
         calls.push({ method: String(prop), args });
-        return Promise.resolve(null);
+        // Like a real engine, executeRaw always resolves to a row array.
+        return Promise.resolve(prop === 'executeRaw' ? [] : null);
       };
     },
   });

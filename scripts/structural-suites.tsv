@@ -347,5 +347,6 @@ test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recip
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync,source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	7	source-surface-helper
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
+test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync
 # unknown (detectors present, no attributable suite):
 # unknown	test/e2e/postgres-driver-install.test.ts

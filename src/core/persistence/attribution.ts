@@ -1,5 +1,7 @@
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
+import { withWriteAttribution } from './context.ts';
 
 /**
  * The actor the database stamps on rows written inside withCoordinatedWrite
@@ -8,7 +10,7 @@ import type { Principal, SqlEngine, WriteRequest } from './model.ts';
  */
 export interface WriteAttribution { requestId: string | null; principal: Principal; }
 
-export { withWriteAttribution } from './context.ts';
+export { withWriteAttribution };
 
 /** A journaled request publishes as itself. */
 export function requestAttribution(row: Pick<WriteRequest, 'id' | 'principal_kind' | 'principal_id'>): WriteAttribution {
@@ -45,3 +47,13 @@ export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAt
   }
 }
 const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();
+
+/**
+ * One unmanaged legacy transaction (direct import, extract_facts, extract-takes,
+ * stale-atom retirement) whose rows carry the maintenance principal. A managed
+ * brain's guard still refuses these writes: this sets no coordinator capability.
+ */
+export async function maintenanceTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
+  const attribution = await maintenanceAttribution(engine);
+  return engine.transaction(tx => withWriteAttribution(tx, attribution, () => fn(tx)));
+}
