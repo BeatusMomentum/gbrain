@@ -766,7 +766,8 @@ function writeJsonFallbackIfMissing(exitCode: number): void {
   if (!jsonGuardMode || jsonDocumentWritten) return;
   if (exitCode === 0) {
     // Exit 0 with no document is a bug in the command (D5 fails it); log it, never invent a result.
-    recordJsonDocumentMissing();
+    // An NDJSON stream may legitimately be empty (e.g. `eval export` with no rows).
+    if (jsonGuardMode === 'document') recordJsonDocumentMissing();
     return;
   }
   jsonDocumentWritten = true;
@@ -837,6 +838,22 @@ export function writeJsonDocument(text: string, unguarded: (text: string) => voi
   return Promise.resolve();
 }
 
+/** The guard mode this process runs under (null: no `--json` guard). */
+export function jsonGuardActive(): 'document' | 'ndjson' | null {
+  return jsonGuardMode;
+}
+
+/**
+ * D2: one record of an NDJSON command. Under the guard it is one compact
+ * line on fd 1 (writeNdjsonLine); unguarded it goes through the caller's
+ * legacy writer, so in-process callers and tests see no change.
+ */
+export function writeJsonLine(line: unknown, unguarded: (line: unknown) => void): Promise<void> {
+  if (jsonGuardMode) return writeNdjsonLine(line);
+  unguarded(line);
+  return Promise.resolve();
+}
+
 /** One NDJSON line on fd 1 (the only stdout path for `json: 'ndjson'` commands under the guard). */
 export async function writeNdjsonLine(line: unknown): Promise<void> {
   const status = (line as { status?: unknown } | null)?.status;
@@ -854,6 +871,15 @@ export function spawnCliChild(cmd: string, args: readonly string[], opts: SpawnO
   const child = spawn(cmd, [...args], { ...opts, stdio: ['inherit', 'pipe', 'inherit'] });
   child.stdout?.on('data', (chunk: Buffer) => { try { process.stderr.write(chunk); } catch { /* best effort */ } });
   return child;
+}
+
+/**
+ * stdio for a synchronous child CLI (execSync / execFileSync): inherited,
+ * except that under the `--json` guard the child's stdout is this process's
+ * stderr (fd 2), so it can never corrupt the JSON document.
+ */
+export function cliChildStdio(): 'inherit' | ['inherit', 2, 'inherit'] {
+  return jsonGuardMode ? ['inherit', 2, 'inherit'] : 'inherit';
 }
 
 export interface FinishCliTeardownOpts {

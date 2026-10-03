@@ -89,6 +89,12 @@ interface CliCommandBase {
   skipStartupHooks?: true;
   /** Agent contract v1 (D2): the command's `--json` output contract; turns the stdout guard on. */
   json?: 'document' | 'ndjson';
+  /**
+   * D2: per-subcommand `--json` contracts for a record whose subcommands
+   * differ in shape (keyed by the first positional after the command); a
+   * subcommand not listed keeps its current stdout.
+   */
+  jsonSubcommands?: Readonly<Record<string, 'document' | 'ndjson'>>;
   /** The whole invocation, startup included, is read-only (eligible as a `fix.verify`). */
   read_only?: true;
   /** A4: consent-gated command; connects probe-only until consent is granted. */
