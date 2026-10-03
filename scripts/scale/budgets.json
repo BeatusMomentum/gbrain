@@ -1,0 +1,21 @@
+{
+  "calibration": {
+    "note": "Report-only budgets at 3x the first calibration run's p50 (O-CEO-9). Written by `bun run test:scale -- --calibrate`. PGLite is calibrated on its first run after F4b (planner-stats ANALYZE): before it, PGLite p50s measure un-analyzed plans (get_health ~12 s at 10k).",
+    "postgres:10000": "Ubicloud standard-8 (the scale-tier runner size), bun 1.4.2, pgvector/pgvector:pg16, seed 1, branch capy/f1-lane-f4c-scale-tier, 2026-10-03"
+  },
+  "budgets": {
+    "postgres:10000": {
+      "get_health": 597,
+      "list_pages": 22,
+      "search (keyword, local)": 77,
+      "search (MCP path, remote)": 151,
+      "search (MCP path, source-scoped grant)": 157,
+      "query (hybrid, injected vector)": 252,
+      "traverse_graph depth 3": 14,
+      "get_backlinks": 5,
+      "find_orphans": 86,
+      "cold-process first query (MCP path)": 1326,
+      "concurrent put_page x2 (receipts)": 1395
+    }
+  }
+}
