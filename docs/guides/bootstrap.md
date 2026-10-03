@@ -313,6 +313,47 @@ brain. Simultaneous editing from two machines is ordinary git conflict
 territory — `sources push` pulls divergence-safely (commit first, rebase pull,
 loud on conflicts).
 
+## Several agents, one brain (seats)
+
+When more than one agent feeds the same brain (two Claude Code homes, Claude
+Code and Codex side by side, or two people sharing a household brain), every
+captured session records which agent seat it came from, and pages the dream
+cycle synthesizes from it carry `seat: <label>` in their frontmatter next to
+`raw_source`. This is on by default and needs no setup.
+
+**Say to your agent:** *"Credit the sessions from this agent to the seat alice-desk"* —
+the agent runs `gbrain bootstrap hooks --harness claude-code --seat alice-desk`
+(or `gbrain bootstrap harness --seat alice-desk` for harness mode).
+
+**Say to your agent:** *"Which agent did this reflection come from?"* — the
+agent reads the page's `seat` frontmatter.
+
+- **Default seat.** Without a label, the seat is `home-<8 hex>`: a hash of the
+  agent's home directory (the Claude Code config directory, `CODEX_HOME`, or
+  the OpenClaw agent directory). The path itself never leaves the machine,
+  because page frontmatter may be committed to git.
+- **Named seat.** `--seat <label>` writes `GBRAIN_SEAT=<label>` into this
+  install's hook commands. A label is 1-64 characters of `a-z`, `0-9`, `.`,
+  `_` or `-`, starting with a letter or digit; uppercase is lowercased. A
+  re-install or `--repair` without `--seat` keeps the label; `--no-seat` goes
+  back to the default seat.
+- **Opt-out.** `--seat off` (or `GBRAIN_SEAT=off` in the agent's environment)
+  records no seat, so pages synthesized from those sessions carry none. Codex hooks and the committed cloud carrier do
+  not carry a label: set `GBRAIN_SEAT` in that environment instead (bootstrap
+  prints the exact line).
+- **Where it is recorded.** Each session gets one `<session-id>.seat.json`
+  next to its corpus file in `~/.gbrain/transcripts/corpus/`, written before
+  the corpus file and removed with the session's last corpus file. The first
+  seat recorded for a session is kept, even if the session is resumed from
+  another agent home.
+- **Hook health.** An invalid `GBRAIN_SEAT` falls back to the default seat
+  and records heartbeat reason `seat_label_invalid`; a resumed session from
+  another home records `seat_conflict`; an unwritable corpus dir records
+  `seat_write_failed`. Each heartbeat line carries a fixed `hint` with the fix.
+- **No re-synthesis.** Adding or changing a seat never re-runs synthesis of a
+  transcript that was already synthesized. A pattern page is credited to a
+  seat only when every reflection it was derived from shares that seat.
+
 ## Uninstall
 
 `gbrain bootstrap uninstall` removes exactly what this machine's install receipt
