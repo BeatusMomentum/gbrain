@@ -224,7 +224,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // retriage --help` printed the one-line dream stub instead of the retriage contract (outside-voice
   // CX9).
   // thin client: v0.31.1 (CDX-2 op coverage matrix): more local-only commands
-  { name: 'dream', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/dream.ts') },
+  { name: 'dream', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/dream.ts') },
   // System One decide: local CLI only (calibrate, receipts and proposals are trusted-local); help and a
   // key-only probe answer without a brain, so the module opens its own engine.
   { name: 'decide', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/decide.ts') },

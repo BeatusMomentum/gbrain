@@ -95,6 +95,7 @@ export const CODES = {
   consent_timeout: { class: 'consent', summary: "Google connect credential error: consent timeout.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   cost_cap_exceeded: { class: 'server', summary: "The run reached its cost cap before finishing." },
   cost_preview_requires_yes: { class: 'consent', summary: "Cost preview requires yes." },
+  cycle_failed: { class: 'server', summary: "The maintenance (dream) cycle failed, or a phase threw and was contained so later phases could run." },
   d_sel_too_small: { class: 'caller', summary: "The selection split has too few tasks for meaningful validation." },
   database_error: { class: 'server', summary: "The brain database could not be reached or refused the operation." },
   demo_graph_failed: { class: 'server', summary: "The fictional graph did not verify." },

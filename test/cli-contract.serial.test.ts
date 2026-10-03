@@ -90,6 +90,7 @@ const JSON_ROWS: Record<string, JsonRow> = {
   sync: { ok: ['sync', '--source', 'notes', '--no-pull', '--json'], fail: ['sync', '--source', 'notes', '--json'], failOnBrain: true },
   embed: { ok: ['embed', '--stale', '--json'], fail: ['embed', '--all', '--json'], failOnBrain: true },
   'db-repair': { ok: ['db-repair', '--json'], fail: ['db-repair', '--json'], failOnBrain: true, okE2E: 'test/e2e/cli-json-commands-postgres.test.ts' },
+  dream: { ok: ['dream', '--json', '--phase', 'lint'], fail: ['dream', '--json', '--phase', 'garbage'] },
   'post-upgrade': { ok: ['post-upgrade', '--json', '--no-autopilot-install'], fail: ['post-upgrade', '--bogus', '--json'], okOnEmpty: true },
   'apply-migrations': { ok: ['apply-migrations', '--dry-run', '--json'], fail: ['apply-migrations', '--json', '--migration', '9.9.9'], failOnBrain: true },
 };

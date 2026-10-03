@@ -62,6 +62,16 @@ export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOp
   return r.exitCode;
 }
 
+/**
+ * D2: a refusal that keeps its pre-v1 human stderr line verbatim (`human`,
+ * default the message) and, under `--json`, writes the envelope as the
+ * document. Returns the contract exit code.
+ */
+export function writeCliRefusal(e: OperationError, command: string, opts: { json: boolean; human?: string; legacy?: Record<string, unknown> }): number {
+  console.error(opts.human ?? e.message);
+  return writeCliError(e, command, { json: opts.json, stderr: false, ...(opts.legacy ? { legacy: opts.legacy } : {}) });
+}
+
 function withoutUndefined(o: object): Record<string, unknown> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }

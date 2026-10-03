@@ -54,7 +54,9 @@ import {
 import { discoverTranscripts } from '../core/cycle/transcript-discovery.ts';
 import { passesTriageGate, rescueConfigOf } from '../core/cycle/triage-rescue.ts';
 import { estimateTriageDecideUsd, resolveTriageDecide } from '../core/cycle/triage-decide.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
+import { opError, type OperationError } from '../core/ops/contract.ts';
+import { usageError, writeCliRefusal } from '../cli/cli-error.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { canonicalLookup } from '../core/model-pricing.ts';
 import { SPEND_CONFIRM_USD, UNPRICED_CONFIRM_FILES } from './dream-retriage-constants.ts';
@@ -282,14 +284,18 @@ async function retriageConsent(engine: BrainEngine | null, args: string[], json:
   }, { json, env: engineConsentEnv(engine) });
 }
 
+/** D2: the human line (unchanged), the envelope under --json, and the verdict. */
+function refuse(args: readonly string[], e: OperationError): void {
+  setCliExitVerdict(writeCliRefusal(e, 'dream', { json: jsonRequested(args) }));
+}
+
 export async function runDreamRetriage(engine: BrainEngine | null, args: string[]): Promise<void> {
   let parsed: RetriageArgs;
   try {
     parsed = parseRetriageArgs(args);
   } catch (e) {
     if (e instanceof UsageError) {
-      console.error(`dream retriage: ${e.message} (see: gbrain dream retriage --help)`);
-      setCliExitVerdict(2);
+      refuse(args, usageError(`dream retriage: ${e.message} (see: gbrain dream retriage --help)`, 'Run `gbrain dream retriage --help` for the accepted flags.'));
       return;
     }
     throw e;
@@ -300,15 +306,15 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     return;
   }
   if (engine === null) {
-    console.error('gbrain dream retriage requires a connected brain; run `gbrain init` first');
-    setCliExitVerdict(1);
+    refuse(args, opError('database_error', 'gbrain dream retriage requires a connected brain; run `gbrain init` first',
+      'Fix the brain connection (`gbrain doctor --json` names the cause), or run `gbrain init` first.'));
     return;
   }
 
   const config = await loadSynthConfig(engine);
   if (!config.corpusDir) {
-    console.error('dream retriage: dream.synthesize.session_corpus_dir is unset — nothing to retriage');
-    setCliExitVerdict(1);
+    refuse(args, opError('config_error', 'dream retriage: dream.synthesize.session_corpus_dir is unset — nothing to retriage',
+      'Ask the user where their session transcripts live, then: gbrain config set dream.synthesize.session_corpus_dir <dir>'));
     return;
   }
   const threshold = parsed.threshold ?? config.triage.threshold;
@@ -382,10 +388,9 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // CX3: --max-usd is estimate-based; an unpriced model would silently
     // disable the budget the operator explicitly asked for — refuse instead.
     if (parsed.maxUsd !== null && perFileUsd === null) {
-      console.error(
+      refuse(args, usageError(
         `dream retriage: --max-usd requires a priced model; "${triageModel}" has no CANONICAL_PRICING entry`,
-      );
-      setCliExitVerdict(2);
+        'Drop --max-usd, or register the model\'s price with `gbrain pricing set` (look up its per-token rate first).'));
       return;
     }
     // The frontier audit spends too (security review): fold its worst case
@@ -399,11 +404,10 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // audit spend cannot be estimated.
     const auditUnpriced = parsed.auditRejects !== null && auditPerFileUsd === null;
     if (parsed.maxUsd !== null && auditUnpriced) {
-      console.error(
+      refuse(args, usageError(
         `dream retriage: --max-usd with --audit-rejects requires a priced synthesis model; ` +
         `"${config.model}" has no CANONICAL_PRICING entry`,
-      );
-      setCliExitVerdict(2);
+        'Drop --max-usd, or register the model\'s price with `gbrain pricing set` (look up its per-token rate first).'));
       return;
     }
     const auditEstimateUsd = parsed.auditRejects !== null && auditPerFileUsd !== null
@@ -505,11 +509,10 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // often than it means every file was deleted. Refuse to cancel-unmatched
     // in that state — a transient outage must not erase the retry frontier.
     if (parsed.cancelUnmatched && transcripts.length === 0 && rows.length > 0) {
-      console.error(
+      refuse(args, usageError(
         `dream retriage: discovery found 0 transcripts but ${rows.length} queued job(s) exist; ` +
         'refusing --cancel-unmatched (corpus may be unreachable). Fix discovery or drop the flag.',
-      );
-      setCliExitVerdict(2);
+        'Check that dream.synthesize.session_corpus_dir is reachable, or run without --cancel-unmatched.'));
       return;
     }
     reconcile = {
@@ -782,7 +785,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
   };
 
   if (parsed.json) {
-    console.log(JSON.stringify(summary, null, 2));
+    await writeJsonDocument(JSON.stringify(summary, null, 2));
   } else {
     const would = parsed.dryRun ? ' (dry-run: no cancels performed)' : '';
     console.log(`[retriage] ${summary.discovered} discovered | ${summary.pass} pass @ threshold ${threshold} | ` +

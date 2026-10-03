@@ -76,7 +76,7 @@ import type { Action } from '../core/agent-output.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
-import { writeCliError } from '../cli/cli-error.ts';
+import { writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
 
 class UnknownFlagError extends Error {}
 
@@ -318,8 +318,7 @@ function emit(json: boolean, report: JsonReport, humanLines: string[]): void {
 
 /** A refusal before any probe: the human line on stderr (unchanged), the envelope under --json. Returns `exitCode`. */
 function refuse(json: boolean, exitCode: number, human: string, code: RegistryCode, suggestion: string, fix?: Action): number {
-  console.error(human);
-  if (json) writeCliError(opError(code, human, suggestion, fix ? { fix } : {}), 'db-repair', { json: true, stderr: false });
+  writeCliRefusal(opError(code, human, suggestion, fix ? { fix } : {}), 'db-repair', { json });
   return exitCode;
 }
 
