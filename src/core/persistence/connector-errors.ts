@@ -72,8 +72,8 @@ export const DATABASE_REFUSAL_HINT = 'This is not a content conflict: a gbrain p
 
 /** #5974: another database trigger (named in write_error_detail.raiser) refused the write. */
 export const DATABASE_TRIGGER_HINT = 'A database trigger refused this write and nothing was committed; write_error_detail.raiser names it. '
-  + 'On the brain host run gbrain sources writer status --probe --json and compare recent_failures[].error_detail.attempt.consumer_version with gbrain --version '
-  + 'on every gbrain process sharing this database; upgrade or restart the older one, run gbrain apply-migrations --yes, then retry with a new request ID. '
+  + 'On the brain host run gbrain sources writer status --probe --json and compare recent_failures[].error_detail.attempt.consumer_version '
+  + 'with the version of every gbrain process sharing this database; upgrade or restart the older one, run gbrain apply-migrations --yes, then retry with a new request ID. '
   + 'If versions match, report error_detail on the gbrain issue tracker. Do not edit SQL or disable triggers.';
 
 export function receiptDeliveredHint(receipt: { error_code?: string | null; error_message?: string | null; source_id?: string; slug?: string | null; intent?: Record<string, unknown> | null;

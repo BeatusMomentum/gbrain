@@ -94,8 +94,8 @@ export async function managedTimelineDbRefusalExitsNonZero(databaseUrl?: string)
     try {
       const run = await runCaptured(engine, ['timeline', '--source', 'db']);
       expect(run.exitCode).toBe(1);
-      // The coordinator reports a database refusal inside its publication as storage_error.
-      expect(run.stderr).toContain('refused: storage_error; nothing written; existing timeline rows are untouched');
+      // #5974: the coordinator names a guard refusal inside its publication instead of an opaque storage_error.
+      expect(run.stderr).toContain('refused: writer_coordinator_required; nothing written; existing timeline rows are untouched');
       expect(run.stderr).not.toContain('rows lost');
       expect(run.stderr).toContain('1 page(s) not written, 0 written');
       expect(run.stderr).toContain('gbrain extract --stale');
