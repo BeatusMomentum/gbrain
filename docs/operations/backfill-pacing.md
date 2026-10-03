@@ -15,7 +15,24 @@ hatches — no config-dashboard surface by design):
 | `GBRAIN_SYNC_MAX_CHECKPOINT_FAILURES` | 3 | Consecutive failed flushes (each already retried ~12s) before the run aborts with `reason: 'checkpoint_unavailable'` instead of importing work it can never bank. |
 | `GBRAIN_SYNC_YIELD_EVERY` | 64 | Yield the event loop (`setTimeout(0)`, NOT `setImmediate` — Bun starves the timers phase under a tight setImmediate loop) every N files so the lock-refresh `setInterval` heartbeat fires mid-import. |
 | `GBRAIN_LOCK_STEAL_GRACE_SECONDS` | derived (~600 at 30min TTL) | A holder that refreshed within this window is NOT stolen even if its TTL lapsed (starved-but-alive). Dead holders stop refreshing, age past the grace, and become stealable; TTL stays the backstop. |
-| `GBRAIN_SYNC_STALL_ABORT_SECONDS` | 900 | Progress-aware stall watchdog (#1950): if the import drain makes no forward progress (keyed on file-import progress, NOT the lock heartbeat) for N seconds, abort the run and release the per-source lock so the next `gbrain sync` resumes from the checkpoint. Reports `reason: 'stall_timeout'`. Observed BETWEEN files; a hang inside one file's import isn't interrupted until it returns (the wall-clock hard deadline is that backstop). 0 disables. |
+| `GBRAIN_SYNC_STALL_ABORT_SECONDS` | 900 | Progress-aware stall watchdog (#1950): if the import drain makes no forward progress (keyed on file-import progress, NOT the lock heartbeat) for N seconds, abort the run and release the per-source lock so the next `gbrain sync` resumes from the checkpoint. Reports `reason: 'stall_timeout'`. Observed BETWEEN files; a hang inside one file's import isn't interrupted until it returns (the hard deadline is that backstop). 0 disables. Also the progress window of the default hard deadline (see [Large brains](#large-brain-deadlines)); when this is 0 the window stays 900. |
+
+<a id="large-brain-deadlines"></a>
+## Large brains: deadlines and budgets
+
+A brain with tens of thousands of pages legitimately runs past the bounds that
+keep small brains safe. Each bound below stops only work that has stopped
+making progress, or stops loudly with the exact command to finish.
+
+**Say to your agent:** *"Import my whole notes repo, even if it takes hours."*
+**Say to your agent:** *"Finish embedding everything that's still missing."*
+
+| Bound | What happens on a large brain | What the agent sees and runs |
+|---|---|---|
+| `gbrain sync` hard deadline (non-TTY default 3600 s, `GBRAIN_SYNC_MAX_RUNTIME_SECONDS`) | Past the deadline the sync keeps running while it keeps importing; it stops only after `GBRAIN_SYNC_STALL_ABORT_SECONDS` (default 900 s) without progress. A loop-starved process sends no progress and is still killed. | On a stop, stdout carries `code=sync_deadline_stop` (one JSON object under `--json`) with the cause and the resume command, for example `gbrain sync --source notes --no-pull`. Pages imported before the stop are kept. `--hard-deadline <N>` is a strict wall-clock cap with no extension; `--no-hard-deadline` removes the bound. |
+| `gbrain embed --stale` time budget (`GBRAIN_EMBED_TIME_BUDGET_MS`, default 30 min) | The run stops at the budget. If stale chunks remain, the stop is reported, not silent. | stdout: `[embed] stopped (reason: time_budget)` with the remaining count and `gbrain embed --stale --catch-up [--source <id>]`, which runs until the backlog is empty; exit status 3. It makes paid embedding calls, so confirm with the user unless embedding spend is already approved. `gbrain doctor` reports the backlog on the `embeddings` check (`details.code: embedding_backlog`). |
+| `gbrain serve` boot deadline (`GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`, default 60 s) | The window restarts at every boot phase and progress note, so a slow but advancing boot finishes. | Only a boot with no progress for a full window exits 1 with [`serve_boot_timeout`](../ENGINES.md#serve-boot-timeout). |
+| `gbrain sources add` manifest | Stored manifests hold a digest and a file count, so checkouts of any size register. | No action. |
 
 ## Pace Mode (DB-contention-aware backfill pacing)
 
