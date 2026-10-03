@@ -879,10 +879,15 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     printHuman(report);
   }
 
-  // Exit non-zero when the cycle failed overall (helps cron spot real problems).
-  // 'partial' is not a failure — it means some phase warned but the cycle ran —
-  // except when a phase threw and was contained so later phases could run.
-  if (report.status === 'failed' || report.phases.some(p => p.details?.contained === true)) {
+  // Exit non-zero when the cycle failed overall or any phase failed (agent-first
+  // operator wave E4): a 'partial' cycle whose phase reports 'fail' — thrown and
+  // contained, or caught inside the runner — is never success. Warn-only
+  // 'partial' cycles still exit 0.
+  const failedPhases = report.phases.filter(p => p.status === 'fail').map(p => p.phase);
+  if (report.status === 'failed' || failedPhases.length > 0) {
+    if (!opts.json && failedPhases.length > 0) {
+      console.error(`Dream failed: ${failedPhases.length} phase(s) failed (${failedPhases.join(', ')}); see the phase errors above. After fixing the cause, re-run one with: gbrain dream --phase ${failedPhases[0]}`);
+    }
     process.exit(1);
   }
 

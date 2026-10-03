@@ -1618,6 +1618,8 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
       },
     };
   } catch (e) {
+    const { EmbeddingCredentialError } = await import('./embed-preflight.ts');
+    if (e instanceof EmbeddingCredentialError) return { phase: 'embed', status: 'warn', duration_ms: 0, summary: `embeddings not run: ${e.message.split('\n')[0]}`, details: { reason: 'embedding_unconfigured' } };
     return {
       phase: 'embed',
       status: 'fail',
