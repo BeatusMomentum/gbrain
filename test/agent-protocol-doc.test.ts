@@ -36,7 +36,11 @@ describe('AGENT_OPERATOR_v1.md generated regions', () => {
   });
 
   test('transcripts cover run, ask_user and tell_user_to_run', () => {
-    expect(TRANSCRIPTS.map(t => t.expectNext).sort()).toEqual(['ask_user', 'run', 'tell_user_to_run']);
+    expect([...new Set(TRANSCRIPTS.map(t => t.expectNext))].sort()).toEqual(['ask_user', 'run', 'tell_user_to_run']);
+  });
+
+  test('Lane H journey transcripts come from recorded journey goldens', () => {
+    expect(TRANSCRIPTS.filter(t => t.golden.startsWith('journey/')).length).toBeGreaterThanOrEqual(3);
   });
 
   test('generated transcripts never carry an unresolved placeholder', () => {

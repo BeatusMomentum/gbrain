@@ -1533,6 +1533,14 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### serve_port_in_use
+
+<a id="serve_port_in_use"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain serve --http could not listen: another process already holds that host and port. | A capability this request needs is not configured or not reachable on this brain. | Stop the process on that port, or start the server with another --port and point the harnesses at it. | agent | `gbrain doctor --json` | 1 | no |
+
 ### serve_status_only
 
 <a id="serve_status_only"></a>

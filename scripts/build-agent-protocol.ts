@@ -5,7 +5,7 @@
  *   bun run build:agent-protocol          rewrite the regions
  *   bun run build:agent-protocol --check  exit 1 when a committed region is stale
  *
- * 1. docs/protocol/AGENT_OPERATOR_v1.md "Three transcripts": rendered from the
+ * 1. docs/protocol/AGENT_OPERATOR_v1.md "Transcripts": rendered from the
  *    frozen wire goldens in test/fixtures/agent-contract/v1/. Goldens never
  *    store `next`; it is recomputed here with deriveNext (the same decision
  *    table gbrain renders with) and checked against each transcript's
@@ -14,7 +14,9 @@
  *    the protocol page's quick-contract region.
  *
  * Adding a transcript (Lane H journey goldens): append a TRANSCRIPTS entry
- * naming its golden file, transport, expected `next` and narration.
+ * naming its golden file, transport, expected `next` and narration. Journey
+ * goldens (`journey/*.json`) are recorded by test/agent-journey.serial.test.ts
+ * from real runs; their placeholders render as fixed example values.
  * Drift test: test/agent-protocol-doc.test.ts.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -44,6 +46,8 @@ interface Transcript {
   call: string;
   /** Prose for what the agent does, given the rendered value. */
   after: (doc: Json) => string;
+  /** The value checked against expectNext when it is not a fix's `next` (an `ask` notice means ask_user). */
+  nextOf?: (doc: Json) => string;
 }
 
 function contextFor(transport: Transport): RenderContext {
@@ -73,12 +77,22 @@ function hydrate(value: unknown, ctx: RenderContext, noticeNexts: string[] = [])
     return out;
   }
   if (typeof value !== 'string') return value;
-  const text = value.split('{{DOCS_BASE}}').join(DOCS_BASE);
+  const text = value.split('{{DOCS_BASE}}').join(DOCS_BASE).replace(/\{\{([A-Z_]+)\}\}/g, (m, name: string) => JOURNEY_VALUES[name] ?? m);
   if (text.startsWith('{')) {
     try { return JSON.stringify(hydrate(JSON.parse(text), ctx), null, 2); } catch { /* prose */ }
   }
   return text.includes('next: {{next}}') ? text.replace('next: {{next}}', `next: ${noticeNexts.shift() ?? 'report'}`) : text;
 }
+
+/**
+ * Journey goldens (test/fixtures/agent-contract/v1/journey/, Lane H) are real
+ * runs with machine values replaced by placeholders; transcripts show fixed
+ * example values instead.
+ */
+const JOURNEY_VALUES: Record<string, string> = {
+  HOME: '/home/alice-example', PID: '48213', UUID: '7f3c2a10-5b6e-4d1a-9c8b-2e4f6a8d0c11', TIME: '2026-10-03T16:20:00.000Z',
+  PLAN_HASH: 'ph_5f1c0e9a2b7d4c3e8a6b0d1f', DURATION_S: '0.4', ROOT_IDENTITY: '(device and inode of the content root)', DOCTOR_RUN_ID: '7f3c2a10-5b6e-4d1a-9c8b-2e4f6a8d0c11',
+};
 
 function loadGolden(name: string, transport: Transport): Json {
   const raw = JSON.parse(readFileSync(join(GOLDENS, name), 'utf8')) as Json;
@@ -91,7 +105,7 @@ function loadGolden(name: string, transport: Transport): Json {
 /** The envelope inside an MCP error result, or the document itself. */
 function body(doc: Json): Json {
   const content = doc.content as { text: string }[] | undefined;
-  return content ? JSON.parse(content[0].text) as Json : doc;
+  return Array.isArray(content) ? JSON.parse(content[0].text) as Json : doc;
 }
 
 function step(fix: Json | undefined): string {
@@ -150,12 +164,57 @@ export const TRANSCRIPTS: readonly Transcript[] = [
         + `because the fix is the user's to run (\`${fix.command}\`) in their terminal, so the agent offers it rather than running it.`;
     },
   },
+  {
+    title: 'First run on a keyless brain: one decision bundle, `ask_user` (journey)',
+    golden: 'journey/init-first-run.json',
+    transport: 'cli',
+    expectNext: 'ask_user',
+    setting: 'An agent installs gbrain for a user with no provider keys, from a non-interactive shell (H1a journey, recorded from the real CLI).',
+    call: 'gbrain init --pglite --no-embedding --json',
+    nextOf: (doc) => (((doc.notices as Json[]).find(n => n.code === 'first_run_decisions')?.kind) === 'ask' ? 'ask_user' : ''),
+    after: (doc) => {
+      const bundle = (doc.notices as Json[]).find(n => n.code === 'first_run_decisions') as Json;
+      const ids = (bundle.decisions as Json[]).map(d => `\`${d.id}\` (default \`${d.default}\`)`).join(', ');
+      return `stdout is one document; the brain is ready and nothing blocks using it. The \`first_run_decisions\` notice is \`kind: ask\`, `
+        + `so the agent relays its \`user_message\` ("${bundle.user_message}") once and stops. The decisions are ${ids}; `
+        + 'each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.';
+    },
+  },
+  {
+    title: 'A caller mistake over stdio MCP, recorded: `run` (journey)',
+    golden: 'journey/caller-mistake.json',
+    transport: 'stdio',
+    expectNext: 'run',
+    setting: 'A harness on `gbrain serve --surface verbs` passes a string where `recall` expects a number (H1a journey, recorded from a real stdio session).',
+    call: 'recall {"query":"quokka-journey-marker","limit":"abc"}',
+    after: (doc) => {
+      const env = body(doc);
+      const fix = env.fix as Json;
+      return `One content block, \`code: ${env.code}\`, \`class: ${env.class}\`. Nothing ran, so \`fix.next: ${fix.next}\`: the agent calls `
+        + `\`${step(fix)}\` exactly as given (its other arguments kept, the bad one corrected) and gets the recall it wanted.`;
+    },
+  },
+  {
+    title: 'A second session on a locked brain: status-only serve, `tell_user_to_run` (journey)',
+    golden: 'journey/status-only-lock-held.json',
+    transport: 'stdio',
+    expectNext: 'tell_user_to_run',
+    setting: 'A second agent session starts `gbrain serve` while another session\'s serve owns the PGLite brain. The handshake still completes, with one tool, `gbrain_status` (H1a journey, recorded).',
+    call: 'gbrain_status {}',
+    after: (doc) => {
+      const env = body(doc);
+      const options = ((env.decisions as Json[])[0].options as Json[]).map(o => `\`${o.id}\``).join(' or ');
+      return `\`reason: ${env.reason}\` names the owner (\`lock_owner.pid\`). \`fix.next\` is \`${(env.fix as Json).next}\` because only the user can close `
+        + `the other session: the agent relays \`user_message\` and offers ${options}. Calling \`gbrain_status\` again after the owner exits `
+        + 'opens the brain in place and the full tool list arrives through `tools/list_changed`.';
+    },
+  },
 ];
 
 function renderTranscript(t: Transcript, i: number): string {
   const doc = loadGolden(t.golden, t.transport);
   const env = body(doc);
-  const fixNext = String(((env.fix as Json | undefined)?.next)
+  const fixNext = t.nextOf ? t.nextOf(doc) : String(((env.fix as Json | undefined)?.next)
     ?? ((((doc._meta as Json | undefined)?.gbrain_notices as Json[] | undefined)?.[0]?.fix as Json | undefined)?.next) ?? '');
   if (fixNext !== t.expectNext) {
     throw new Error(`transcript "${t.golden}": next is ${fixNext}, expected ${t.expectNext}. Update the narration with the contract change.`);
@@ -170,9 +229,11 @@ function renderTranscript(t: Transcript, i: number): string {
   ];
   if (t.transport === 'cli') {
     parts.push('stdout (`--json`):', '', fence('json', JSON.stringify(doc, null, 2)), '');
-    const human = renderConsentRefusal(doc as unknown as ConfirmationPayload, { json: false });
-    parts.push('Without `--json`, the same refusal prints as an `[AGENT]` block:', '', fence('text', human.stdout ?? ''), '');
-  } else if (doc.isError) {
+    if (doc.code === 'confirmation_required') {
+      const human = renderConsentRefusal(doc as unknown as ConfirmationPayload, { json: false });
+      parts.push('Without `--json`, the same refusal prints as an `[AGENT]` block:', '', fence('text', human.stdout ?? ''), '');
+    }
+  } else if (doc.isError || !Array.isArray(doc.content)) {
     parts.push('gbrain returns (`isError: true`, the envelope shown parsed):', '', fence('json', JSON.stringify(env, null, 2)), '');
   } else {
     const content = doc.content as { text: string }[];

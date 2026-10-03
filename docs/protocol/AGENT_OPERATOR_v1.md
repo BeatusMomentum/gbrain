@@ -25,13 +25,16 @@ offline: `gbrain errors <code>`), [exit codes](../guides/exit-codes.md),
 4. Treat `[gbrain notice …]` blocks and `[AGENT]` blocks the same way. A degraded result is not proof of "no notes".
 <!-- END quick-contract -->
 
-## Three transcripts
+## Transcripts
 
 These are generated from the frozen wire goldens in
 `test/fixtures/agent-contract/v1/` by `bun run build:agent-protocol`; the
 goldens never store `next`, so the generator recomputes it with the same
 decision table gbrain uses at render time. Docs URLs on the wire are pinned to
-the installed version; the transcripts show `master`.
+the installed version; the transcripts show `master`. Transcripts marked
+"journey" are recorded from real CLI and stdio MCP runs by the deterministic
+agent journey (`test/agent-journey.serial.test.ts`); machine values (home
+directory, pids, ids, times) show as fixed examples.
 
 <!-- BEGIN GENERATED agent-protocol:transcripts (bun run build:agent-protocol) -->
 ### 1. A caller mistake over MCP: `run`
@@ -215,6 +218,282 @@ user_message: I found no notes on that topic. Your brain searches keywords only 
 ```
 
 `content[0]` is still the bare array `[]`; the second block is the notice. The agent does not tell the user "you have no notes on that". It relays `user_message` ("I found no notes on that topic. Your brain searches keywords only right now."). `fix.next` is `tell_user_to_run` because the fix is the user's to run (`gbrain doctor --json`) in their terminal, so the agent offers it rather than running it.
+
+### 4. First run on a keyless brain: one decision bundle, `ask_user` (journey)
+
+An agent installs gbrain for a user with no provider keys, from a non-interactive shell (H1a journey, recorded from the real CLI).
+
+```bash
+gbrain init --pglite --no-embedding --json
+```
+
+stdout (`--json`):
+
+```json
+{
+  "status": "success",
+  "engine": "pglite",
+  "path": "/home/alice-example/.gbrain/brain.pglite",
+  "pages": 0,
+  "embedding_check": {
+    "ok": true,
+    "skipped": "no_embedding"
+  },
+  "content": {
+    "version": 1,
+    "brain_id": "7f3c2a10-5b6e-4d1a-9c8b-2e4f6a8d0c11",
+    "source_id": "default",
+    "source_incarnation": "7f3c2a10-5b6e-4d1a-9c8b-2e4f6a8d0c11",
+    "root": "/home/alice-example/.gbrain/content/7f3c2a10-5b6e-4d1a-9c8b-2e4f6a8d0c11/default",
+    "repository_kind": "content_directory",
+    "backup": "not_verified",
+    "status": "ready",
+    "stage": "complete",
+    "pending_actions": [
+      "Optional: initialize Git explicitly; configure an off-host backup separately."
+    ],
+    "owned_root": true,
+    "fresh_root_activation": true,
+    "root_identity": "(device and inode of the content root)"
+  },
+  "notices": [
+    {
+      "code": "first_run_decisions",
+      "kind": "ask",
+      "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
+      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; harness_wiring: skip), or tell me what to change.",
+      "decisions": [
+        {
+          "id": "search_mode",
+          "question": "Which search mode should this brain use? Per-query search payload cost at 10K queries/month (Haiku 4.5 / Sonnet 4.6 / Opus 4.7): conservative $40 / $120 / $200, balanced $100 / $300 / $500, tokenmax $200 / $600 / $1,000 per month.",
+          "options": [
+            {
+              "id": "conservative",
+              "label": "conservative (applied)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "search.mode",
+                "conservative"
+              ]
+            },
+            {
+              "id": "balanced",
+              "label": "balanced",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "search.mode",
+                "balanced"
+              ]
+            },
+            {
+              "id": "tokenmax",
+              "label": "tokenmax",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "search.mode",
+                "tokenmax"
+              ]
+            }
+          ],
+          "default": "conservative",
+          "default_reason": "No expansion-capable API key (Anthropic/OpenAI/Google) — start with a tight result budget; semantic result caching is temporarily disabled."
+        },
+        {
+          "id": "harness_wiring",
+          "question": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+          "options": [
+            {
+              "id": "wire",
+              "label": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+            },
+            {
+              "id": "skip",
+              "label": "Do not register gbrain with an agent harness now."
+            }
+          ],
+          "default": "skip",
+          "default_reason": "No agent harness was detected."
+        }
+      ],
+      "contract_version": 1
+    }
+  ],
+  "contract_version": 1
+}
+```
+
+stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; harness_wiring: skip), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `harness_wiring` (default `skip`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
+
+### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
+
+A harness on `gbrain serve --surface verbs` passes a string where `recall` expects a number (H1a journey, recorded from a real stdio session).
+
+```text
+recall {"query":"quokka-journey-marker","limit":"abc"}
+```
+
+gbrain returns (`isError: true`, the envelope shown parsed):
+
+```json
+{
+  "error": "invalid_params",
+  "code": "invalid_params",
+  "message": "Parameter \"limit\" must be a number",
+  "suggestion": "Pass `limit` as a number (Per-arm cap: max fact rows AND max search results. Default 50, cap 100). Example: recall {\"limit\": 10}. Next: recall {\"query\":\"quokka-journey-marker\",\"limit\":10}",
+  "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params",
+  "protocol_version": 1,
+  "fix": {
+    "mcp": {
+      "tool": "recall",
+      "arguments": {
+        "query": "quokka-journey-marker",
+        "limit": 10
+      }
+    },
+    "consent": [],
+    "actor": "agent",
+    "next": "run",
+    "why": "The call failed validation before it ran, so nothing changed. This is the same call with your other arguments kept and `limit` set to 10.",
+    "requires_exclusive": false
+  },
+  "docs_cmd": [
+    "gbrain",
+    "errors",
+    "invalid_params"
+  ],
+  "class": "caller",
+  "retryable": false,
+  "contract_version": 1
+}
+```
+
+One content block, `code: invalid_params`, `class: caller`. Nothing ran, so `fix.next: run`: the agent calls `recall {"query":"quokka-journey-marker","limit":10}` exactly as given (its other arguments kept, the bad one corrected) and gets the recall it wanted.
+
+### 6. A second session on a locked brain: status-only serve, `tell_user_to_run` (journey)
+
+A second agent session starts `gbrain serve` while another session's serve owns the PGLite brain. The handshake still completes, with one tool, `gbrain_status` (H1a journey, recorded).
+
+```text
+gbrain_status {}
+```
+
+gbrain returns these content blocks:
+
+`content[0]`:
+
+```json
+{
+  "status": "unavailable",
+  "reason": "lock_held",
+  "why": "This brain (/home/alice-example/.gbrain/brain.pglite) is open in another `gbrain serve` (PID 48213), usually started by another agent session, so this server cannot open it.",
+  "brain_path": "/home/alice-example/.gbrain/brain.pglite",
+  "config_path": "/home/alice-example/.gbrain/config.json",
+  "lock_owner": {
+    "pid": "48213",
+    "transport": "stdio",
+    "serve": true
+  },
+  "fix": {
+    "mcp": {
+      "tool": "gbrain_status",
+      "arguments": {}
+    },
+    "consent": [],
+    "actor": "user",
+    "next": "tell_user_to_run",
+    "why": "Close the session that owns the brain (another `gbrain serve` (PID 48213), usually started by another agent session); then call gbrain_status again and this server opens the brain in place (re-checked at most every 5 s). If your client does not refresh its tool list after recovery, restart this MCP server.",
+    "user_message": "Your gbrain brain is already open in another gbrain serve (PID 48213), usually started by another agent session, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?",
+    "requires_exclusive": false
+  },
+  "user_message": "Your gbrain brain is already open in another gbrain serve (PID 48213), usually started by another agent session, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?",
+  "decisions": [
+    {
+      "id": "lock_recovery",
+      "question": "Two agent sessions want the same brain. Close the other session, or share one HTTP server?",
+      "options": [
+        {
+          "id": "close_owner",
+          "label": "Close another gbrain serve (PID 48213), usually started by another agent session; this server recovers on the next gbrain_status call."
+        },
+        {
+          "id": "share_http",
+          "label": "Run one shared `gbrain serve --http` and connect every harness to it (writes harness config, mints tokens); the full plan is share_http_plan.",
+          "argv": [
+            "kill",
+            "48213"
+          ]
+        }
+      ],
+      "default": "close_owner",
+      "default_reason": "Nothing is installed or reconfigured; the brain comes back as soon as the other session ends."
+    }
+  ],
+  "share_http_plan": {
+    "argv": [
+      "kill",
+      "48213"
+    ],
+    "command": "kill 48213",
+    "consent": [],
+    "actor": "user",
+    "why": "Stop another `gbrain serve` (PID 48213), usually started by another agent session first (or quit that session); the shared server needs the brain's single-writer lock.",
+    "requires_exclusive": false,
+    "then": {
+      "argv": [
+        "gbrain",
+        "serve",
+        "--http"
+      ],
+      "command": "gbrain serve --http",
+      "consent": [
+        "persistent_install"
+      ],
+      "actor": "user",
+      "why": "Run ONE shared HTTP server for every agent session on this machine (keep it running, e.g. under autopilot or a terminal).",
+      "requires_exclusive": true,
+      "then": {
+        "argv": [
+          "gbrain",
+          "bootstrap",
+          "harness",
+          "--harness",
+          "all",
+          "--yes"
+        ],
+        "command": "gbrain bootstrap harness --harness all --yes",
+        "consent": [
+          "persistent_install",
+          "credentials"
+        ],
+        "actor": "user",
+        "why": "Mints one bearer token per detected harness through the running HTTP server and rewrites each harness MCP entry to it (each stdio entry keeps working until its harness is rewired).",
+        "user_message": "I can connect your agent apps to the shared gbrain server so every session uses memory at once. That stores an access token in each app's config and pre-approves gbrain's tools. OK?",
+        "verify": {
+          "argv": [
+            "gbrain",
+            "doctor",
+            "--only",
+            "harness_wiring",
+            "--json"
+          ]
+        },
+        "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/remote-mcp.md",
+        "requires_exclusive": false
+      }
+    }
+  },
+  "checked_at": "2026-10-03T16:20:00.000Z",
+  "contract_version": 1
+}
+```
+
+`reason: lock_held` names the owner (`lock_owner.pid`). `fix.next` is `tell_user_to_run` because only the user can close the other session: the agent relays `user_message` and offers `close_owner` or `share_http`. Calling `gbrain_status` again after the owner exits opens the brain in place and the full tool list arrives through `tools/list_changed`.
 <!-- END GENERATED agent-protocol:transcripts -->
 
 ## The error envelope

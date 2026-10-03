@@ -11,7 +11,9 @@
  *       stale stdio server then names the HTTP owner and the rewiring fix, and
  *       both HTTP sessions recall;
  *   no brain → `gbrain init` (the fix) → recovery in place → recall.
- * `--fail-fast` keeps the pre-F4 exit for supervisors.
+ * `--fail-fast` keeps the pre-F4 exit for supervisors. H2 mid-transition row:
+ * `serve --http` on a taken port fails fast (serve_port_in_use) instead of
+ * holding the brain while serving nothing, and both stdio harnesses recover.
  *
  * Serial: real subprocesses over one temp GBRAIN_HOME (PGLite lock).
  */
@@ -235,4 +237,68 @@ describe('status-only serve: lock contention → one shared serve --http (b)', (
       }
     }
   }, 240_000);
+});
+
+describe('status-only serve: the shared-HTTP transition fails midway (H2)', () => {
+  let home: string;
+  let env: Record<string, string>;
+  let blocker: ReturnType<typeof import('node:http').createServer> | null = null;
+  const opened: Array<{ client: Client; transport: StdioClientTransport }> = [];
+  const PORT = 44000 + Math.floor(Math.random() * 2000);
+
+  beforeAll(() => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-status-midway-'));
+    env = envFor(home);
+    expect(cli(['init', '--pglite', '--no-embedding', '--non-interactive'], env).status).toBe(0);
+    const notes = join(home, 'notes');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'm.md'), `---\ntitle: ${MARKER}\n---\n\n# ${MARKER}\n\nMid-transition recall proof ${MARKER}.\n`);
+    expect(cli(['import', notes, '--no-embed'], env).status).toBe(0);
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const c of opened) { try { await c.client.close(); } catch { /* best-effort */ } }
+    blocker?.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('serve --http cannot listen: it fails fast without keeping the brain, and both stdio registrations keep working', async () => {
+    const owner = await connect(env);
+    opened.push(owner);
+    const stale = await connect(env);
+    opened.push(stale);
+    expect(body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} })).reason).toBe('lock_held');
+
+    // Step 1 of the plan: the owner closes.
+    await owner.client.close();
+    opened.shift();
+    // Step 2 fails: the port is taken, so the shared server cannot start.
+    const http = await import('node:http');
+    blocker = http.createServer((_q, r) => { r.end('not gbrain'); });
+    await new Promise<void>(r => blocker!.listen(PORT, '127.0.0.1', () => r()));
+    const started = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(PORT)],
+      { cwd: process.cwd(), env, input: '', encoding: 'utf8', timeout: 60_000 });
+    expect(started.signal, 'serve --http on a taken port must exit, not hang holding the brain').toBeNull();
+    expect(started.status).not.toBe(0);
+    expect(started.stderr).toContain('serve_port_in_use');
+    expect(started.stderr).toContain(`--port ${PORT + 1}`);
+
+    // The stale stdio server recovers in place and recalls; the re-launched first harness handshakes
+    // (status-only, naming the new owner) — no harness config was rewritten by the failed step.
+    expect(await waitFor(async () => body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} })).status === 'recovered', 60_000)).toBe(true);
+    const found = await stale.client.callTool({ name: 'search', arguments: { query: MARKER } });
+    expect(found.isError).toBeFalsy();
+    expect(JSON.stringify(body(found))).toContain(MARKER);
+    const relaunched = await connect(env);
+    opened.push(relaunched);
+    const status = body(await relaunched.client.callTool({ name: 'gbrain_status', arguments: {} }));
+    expect(status.reason).toBe('lock_held');
+    expect(status.lock_owner.transport).toBe('stdio');
+    // Recovery (a) still ends in a recall for the re-launched harness once the other session closes.
+    await stale.client.close();
+    opened.splice(opened.indexOf(stale), 1);
+    expect(await waitFor(async () => body(await relaunched.client.callTool({ name: 'gbrain_status', arguments: {} })).status === 'recovered', 60_000)).toBe(true);
+    const again = await relaunched.client.callTool({ name: 'search', arguments: { query: MARKER } });
+    expect(JSON.stringify(body(again))).toContain(MARKER);
+  }, 300_000);
 });
