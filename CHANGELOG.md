@@ -10,6 +10,142 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.34.0] - 2026-10-03
+
+**Fix wave 8: Postgres stops poisoning its connection pool after one failed statement, managed brains keep ingesting remote sources, Windows can publish skills and run the write queue, scripts can tell a pending write from a failed one, agents can edit one line of a page without resending it, and legacy tokens can be granted (or denied) exactly the sources they should see.**
+
+This wave fixes the bugs that hurt the most people first. On Postgres, one statement that failed inside a transaction could hand its half-finished connection back to the pool, and every later query on that connection failed until you restarted. On a managed brain, any cycle asked to `git pull` (autopilot always asks) failed its sync, so remote-tracking sources quietly stopped ingesting. On Windows, the managed write queue wedged and every skill-bundle publication failed, including the pack `gbrain init` installs. All three are fixed, and each has a test that fails on the previous release. Searching did not get slower: agent (MCP) search on a 10,000-page brain, as shipped with no manual tuning, answers in about 105 ms, where the previous release took 105 to 130 ms on the same machine.
+
+Writes got an honest exit code. A CLI write that was accepted but had not committed when the wait ended used to exit 1, the same as a failure, even though it landed a moment later. It now exits 10 with a receipt you can poll, the CLI waits 30 seconds instead of 5, and `--accept-pending` maps pending to 0 for hooks and cron. Agents get `edit_page`: ordered exact-text replacements against a revision, so a one-line fix no longer means sending the whole page back.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| MCP search p50, 10k pages, as shipped (PGLite, same fixture, same machine) | 105-130 ms (v0.60.32.0, five runs) | 105 ms |
+| Postgres query after one statement failed inside a pooled transaction | every later query on that connection fails (25P02) until restart | the connection is discarded; the next query succeeds |
+| Managed cycle asked to pull (autopilot) | sync fails, remote sources stop ingesting | syncs the checkout as it is and warns with the refresh steps |
+| Windows: managed write queue, skill-bundle publication, `gbrain init` pack | EPERM, wedged or failed | work |
+| `migrate embeddings` to a new model on 4k vectors (PGLite, 1024d) | vector index built first, 67.9 s | index built after the re-embed, 16 s |
+| Upgrading a pre-v150 brain with a damaged row | whole `pages` table rewritten, upgrade blocked | column added in place, backfilled in batches, damaged row reported |
+| CLI write still pending when the wait ends | exit 1 after 5 s | exit 10 with a receipt after 30 s (`--wait`, `--accept-pending`) |
+| Changing one line of a large page from an agent | resend the whole page | `edit_page` with the exact text to replace |
+| `find_orphans` on a 23k-page multi-source brain | 2.3 MB, every row, no source per row | 100 rows a page, `source_id` filter, source and type per row |
+| Legacy token whose stored source list is empty | silently reads `default` | refused for every operation (`auth rescope-token --sources` regrants) |
+| A bare "started" or "joined" next to a markdown link | link typed `founded` or `works_at` | the tuned matchers decide |
+| The sixth and later searches in one PGLite process (2,000-page brain) | about 7 s each (a generic query plan) | about 40 ms |
+| A cost cap you set, with a model gbrain has no price for | cap dropped or the model billed at $0 | refused, with the steps to register its price (`gbrain pricing set`) |
+
+Version 0.60.28.0 said skill bundles publish on Windows. They did not: the bundle publisher still flushed a read-only handle, which Windows refuses. This release is the one where Windows `gbrain init` and skill-bundle publication work, and a Windows CI step now runs those regressions on every change.
+
+The release also folds in community PR #5587 (idea-ingest stops creating stub author pages), contributed by @screamingaikitty-ship-it, and GBRA-35's change that turns connector atom extraction back on by default. Thank you.
+
+## To take advantage of v0.60.34.0
+
+`gbrain upgrade` installs the binary and runs three schema migrations (v190 upstream-observation columns on `sources`, v191 alias rows that cascade with their source, v192 take-vector identity). Restart every `gbrain serve`, autopilot and worker afterwards.
+
+1. **Check scripts that run gbrain writes.** A pending write now exits 10. Treat 10 as "accepted, still committing", or pass `--accept-pending` (or set `GBRAIN_ACCEPT_PENDING=1`). Poll a receipt with `gbrain call get_write_request '{"request_id":"<id>"}'`. Change the wait with `--wait <seconds>`, `GBRAIN_WRITE_WAIT_MS` or `gbrain config set persistence.write_wait_ms <ms>`.
+2. **Regrant legacy tokens that should read sources.** A token whose stored source list is explicitly empty is now refused instead of reading `default`:
+   ```bash
+   gbrain auth rescope-token <name> --sources default        # or a,b
+   gbrain auth rescope-token <name> --refresh-operations     # preview operations newer than the token
+   ```
+3. **Expect one paid re-embed of takes.** Takes now embed with pages, and existing take vectors re-embed once so they record their model. `gbrain embed --stale --dry-run` shows the work; `gbrain config set takes.auto_embed false` turns it off.
+4. **A pre-v150 brain backfills page revisions.** `gbrain apply-migrations --yes` prints progress and resumes if interrupted. If a row keeps failing, `gbrain repair orphan-children` previews the cleanup and the damaged-row probe.
+5. **Re-derive markdown link types** if you rely on `founded` and `works_at` edges: `gbrain extract links --source db`.
+6. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain remember "upgrade check" --provenance upgrade; echo "exit=$?"   # 0 = committed
+   ```
+7. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Behavior changes
+
+- **Pending CLI writes exit 10, not 1,** and print their receipt; the CLI waits 30 s (agents keep 5 s). Scripts that treated 1 as failure: check for 10, or pass `--accept-pending` / `GBRAIN_ACCEPT_PENDING=1` (`--no-accept-pending` beats the variable). Wait: `--wait <s>` > `GBRAIN_WRITE_WAIT_MS` > `persistence.write_wait_ms` > 30 s. A refusal before admission ("the owner is closing") still exits 1 (#5232).
+- **Accepted-but-pending writes are no longer errors in the admin request log** (`accepted_pending` class, out of the error rate) (#5249).
+- **A managed cycle asked to pull runs as no-pull** and reports `details.upstream_refresh` with a warning naming the safe refresh sequence; an explicit `gbrain sync` without `--no-pull` on a managed brain still refuses (#5255).
+- **Doctor `sync_freshness` reports upstream freshness separately.** A remote-tracking source whose upstream was not checked in 24 hours is "upstream unknown", and one whose upstream moved is "behind"; neither reads fresh (#5255, #5176).
+- **Doctor checks that could not verify anything now warn "not verified"** instead of ok, so a green install can turn yellow until the cause is fixed (#5432).
+- **`auto_chronicle=true` is reported as having no effect** by doctor (`auto_chronicle`) and the advisor; nothing reads the setting yet (#5876).
+- **Pre-v150 brains backfill page revisions on upgrade,** resumable and safe to interrupt; until a row is backfilled, a write naming a revision for it is refused with `revision_backfill_pending` (#5216, #4738).
+- **Takes are embedded with pages** by `gbrain embed --stale` and the cycle's embed phase when an embedding provider is configured, and existing take vectors re-embed once. Turn off: `gbrain config set takes.auto_embed false` or `GBRAIN_EMBED_TAKES=0`. Doctor `fact_take_vectors` counts missing and old-model vectors (#5885, #5188).
+- **Dream reads imported `type: conversation` pages** when a corpus directory is set, which means model calls on those pages. Turn off: `gbrain config set dream.synthesize.conversation_pages false` (#4419).
+- **Atom extraction of connector `email` and `meeting` pages is on by default again** on every brain, still bounded by the per-attempt auto-drain budget. Turn off: `gbrain config set cycle.extract_atoms.connector_pages false`; `gbrain config set autopilot.auto_drain.enabled false` stops all automatic atom drains (GBRA-35, #5856 follow-up).
+- **Atom pages no longer feed the facts backstop,** and facts with no entity no longer count as pending consolidation (`recall --pending`), because consolidation never reads them. Doctor `facts_health` names how many active facts earlier atom extraction left (#5831).
+- **A legacy token with an explicit empty source list is refused** for every operation instead of reading `default`, and harness rotation carries the replaced token's grants without adding operations newer than the token (#5231, #5893).
+- **`find_orphans` returns 100 rows a page by default** (`limit` up to 1000, `offset`, `next_offset`, `count_only`), takes a `source_id` inside the caller's grant, and names each row's `source_id` and `type`; `total_orphans` still counts every orphan (#5891).
+- **Markdown link typing no longer uses the bundled packs' bare-word verb regexes.** They are now `ner_only`, so "started" or "joined" near a link no longer makes it `founded` or `works_at`; NER keeps using them (#5882).
+- **`put_page` warns on a page type the active pack does not declare** (`type_warning`); the write still lands (#5880). Brain score's timeline component grades only entity and temporal pack types (#5828).
+- **A connector sync that ends partial exits 1 and prints its real cause** instead of exit 0 and `reason=timeout` (#5012).
+- **facts-absorb write refusals go straight to `dead`** with their real code instead of five retries logged as provider failures, and before activation a job whose source root is a claimed worktree is refused before any model call (#5362).
+- **Postgres discards any pooled or released connection left inside a transaction** (no opt-out; `getPoolDiagnostics().poisonedDiscards` counts them), token-usage updates skip a locked row, and backfills stop on a failed `SET LOCAL` or `ROLLBACK` (#5730).
+- **`gbrain serve --http` writes one stderr line per tool call before dispatch** (`[gbrain-serve] dispatch op=<name> args_sha256=<16 hex>`, never the arguments) (#4817).
+- **Pool guidance names 6 as the floor for resident processes** (`GBRAIN_POOL_SIZE`), and the serve boot-deadline line names the stuck phase and pool pressure (#5205).
+- **Migration v191 deletes alias rows whose source no longer exists** before adding the cascade (#5094).
+- **`migrate embeddings` builds vector indexes after the re-embed;** search runs unindexed until the build finishes, and the migration stays in flight until every recorded index is valid (#5088).
+- **Global maintenance resumes at the phase where the last job stopped** and skips phases its deadline would cut off; set the deadline with `autopilot.global_maintenance_timeout_ms` or `GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS` (#4578).
+- **Search no longer stalls after the fifth query in a PGLite process.** Postgres may switch a statement it has run five times to a generic plan, and without planner statistics the search adjacency read's generic plan walked pages against links: on a 2,000-page brain every search after the fifth took about 7 s. That read now always plans for its actual page ids (about 40 ms).
+- **`tools/list` marks the core reads read-only** (`readOnlyHint: true` for `get_page`, `fetch`, `list_pages`, `search`, `query`, `assemble_evidence`, `search_modes` and every read op explicitly tagged non-mutating); ops without a tag stay unannotated (#5037).
+- **Doctor `google_oauth` no longer calls a refresh token healthy** it never probed; `gbrain google status` tests each one (#5012).
+- **A cost cap you set, including `cycle.extract_atoms.budget_usd`, now refuses a model gbrain has no price for** instead of silently dropping the cap or billing it at $0. The refusal tells your agent to look up the provider's per-token price and register it with the new `gbrain pricing set <model> --input <usd/1M> --output <usd/1M>` (or `--rate` for embeddings), then retry, and `gbrain doctor` shows the command until you do. `gbrain pricing list` and `gbrain pricing unset` manage registered prices without overwriting each other. Registration is local-CLI only, so agents connected over MCP ask the operator. Default caps still warn and run.
+
+### Itemized changes
+
+#### Postgres engine (#5730, #5842, #5233, #5801, #4732, #5205, #4817)
+
+- The vendored driver gains `onpoisoned(statusByte)`, called when it terminates a pooled or released connection whose ReadyForQuery status was not idle; `postgres-engine.ts` counts the discards and logs one redacted line each (#5730).
+- `apply-migrations --export-db-only` excludes its own orchestration lease (by holder token) from the quiescence check (#5842).
+- The persistence consumer's idle probe reserves from the ordinary pool instead of the direct/session route and logs a redacted, length-capped error (#5233).
+- Consumer phase observations carry `first_conn_ms` (or `checkout: not_observed` with `conn_wait_ms`) and `loop_lag_ms` (#5801).
+- `get_health` reports `embedding_column` on both engines (#4732).
+
+#### Managed ingestion (#5255, #5176, #5566, #5206, #5362, #5219, #5279)
+
+- Managed checkpoints stamp `sources.chunker_version` after a full walk, so `sync_freshness` stops failing falsely (#5566).
+- Activation with a vanished source directory is a named `source_changed` blocker with its remedies, `--dry-run` included (#5206).
+- Archiving or removing a zero-page, sole-member source whose checkout vanished retires it with a receipt (#5219).
+- The managed-worktree refusal names its root, source and evidence (marker file, managed-root registry or source binding) in the message and `detail` (#5279).
+
+#### Windows (#5595, #5475)
+
+- `src/core/fs-durable.ts` (`flushFile`, `flushDirectory`) replaces every copied flush idiom; `scripts/check-durable-flush.ts` fails on an fsync of a read-only descriptor anywhere else (its allowlist is now empty: the self-upgrade download flushes the descriptor it wrote through). `auth local-writer register --dry-run` is accepted.
+
+#### Takes, data and doctor (#5886, #5883, #5527, #5822, #5884, #5158, #5094, #5879, #5881, #5626)
+
+- A superseded take keeps the pointer on the old fence row (`"<source>; superseded by #N"`), so managed projection sets `superseded_by` (#5886).
+- Same-date timeline entries sort by id (#5883); the mixed-model warning ignores restamp-only chunks (#5527); gbrain's own facts and takes fences no longer count as markup (#5822); dream pattern pages carry a raw-trace exemption (#5884); frontmatter key order alone is not a content change, without changing the stored `content_hash` (#5158).
+- Orphan, consistency and coverage surfaces treat undeclared page types as untyped, gbrain's own outputs use declared types, and `gbrain lint` checks types against the active pack (#5879, #5881, #5626).
+
+#### Agent write contract (#5232, #5249, #5616, #5037, #5891)
+
+- `PENDING_WRITE_EXIT_CODE = 10` in `src/core/exit-codes.ts`; the wait reaches resident owners and thin clients, and each transport deadline is the wait plus 15 s of admission headroom.
+- `edit_page`: required `expected_revision`, 1-50 ordered `{ old_text, new_text }` edits that each match exactly once, protected facts and takes fences preserved, a unified diff (8 KB cap) built from the caller's authorized view. It shares `put_page`'s preparation deadline and its DB-only `write_through.warning`.
+- A connector sync waiting for a retained publication to recover honors the configured write wait (default 5 s).
+- A conformance suite runs the changed contracts on PGLite and Postgres over stdio and HTTP MCP: accepted to committed and to failed, replay after a lost response (verbs surface too), `edit_page` revision conflicts, a grant revoked between acceptance and publication, `auth rescope-token` deny-all, and the `find_orphans` source filter.
+
+#### Grants and multi-serve (#5231, #5893, #5878, #5042, #4768)
+
+- `gbrain auth rescope-token <name>` edits a legacy token's `--sources`, `--takes-holders` and `--operations` (`none` = explicit empty list), `--reset-default`, and `--refresh-operations` with `--add` or `--all-new`.
+- `recall`'s fact arms widen across the transport-computed federated set like its page-search arm.
+- Shared skills refresh a superseded enrollment epoch (`gbrain bootstrap --refresh-skills`) and doctor compares the receipt epoch with the server (#5878).
+- The Postgres resolve socket is keyed by database URL and source, so several stdio serves answer their own hooks (#5042).
+- `gbrain serve --access read-only` lists and dispatches only read operations over stdio (#4768).
+
+#### Scale and recovery (#5088, #4578, #5216, #4738, #5181, #5154, #5297, #5821)
+
+- `gbrain repair orphan-children` (preview, then `--apply`) cleans page child tables and probes for torn TOAST rows; an XX000 error names it.
+- Reindex sizes its worker pool from the pending total (#5181); `list_pages` selects listing columns only (#5154); the managed-root registry chmods only when the mode differs (#5297); doctor `timeline_history` keeps its scan cursor between runs (#5821).
+
+#### Skills
+
+- idea-ingest links an existing author page, creates one only when the author passes the notability gate with at least two durable facts beyond the ingested item, and otherwise credits the author inline; ingest gains the matching no-stub rule (#5587). Contributed by @screamingaikitty-ship-it.
+
+### For contributors
+
+- `bun run test:scale -- --pages N` runs the report-only scale harness on PGLite (import rate, planner statistics, known-answer p50 timings for the key ops).
+- Fix-wave records live in `docs/fix-wave-notes/`; this wave's per-issue table is `docs/fix-wave-notes/capy-fix-wave-8.md`.
+- Bundled schema packs mark sketch inference regexes `ner_only: true`; `inferLinkTypeFromPack` runs them only with `{ ner: true }`.
+- `docs/ENGINES.md` now says `migrate --to` refuses managed brains and brains with write history, and names forward repair.
+
 ## [0.60.32.0] - 2026-10-02
 
 **Fix wave 7: automatic capture stops double-storing what you `remember`, the maintenance sweep reads whole transcripts, Gmail commitments and timelines work again on managed brains, `gbrain upgrade` refuses a Bun it can't run, the contradiction judge stops excusing undated conflicts, "who is waiting on me" ages and ranks requests honestly, and 62 community pull requests land.**
