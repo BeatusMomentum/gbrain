@@ -187,6 +187,30 @@ export interface RunImportResult {
   resealed?: { pages: number; pending_chunks: number; embedding_usd: number | null };
 }
 
+/**
+ * D2 + A1: under `--json` a keyless brain's import refusal is the one document.
+ * The step the agent can take now is the same import with --no-embed (pages
+ * stay keyword-searchable; vectors come later), routed explicitly to the brain
+ * and source this run resolved; turning embeddings on asks the user.
+ */
+async function keylessImportRefusal(engine: BrainEngine, args: string[], e: unknown) {
+  const { brainRoutingArgs } = await import('../core/brain-resolver.ts');
+  const { resolveSourceWithTier } = await import('../core/source-resolver.ts');
+  const named = args.some(a => a === '--source' || a === '--source-id' || a.startsWith('--source=') || a.startsWith('--source-id='));
+  const target = named ? undefined : await resolveSourceWithTier(engine, null).then(r => r.source_id, () => undefined);
+  return opError('embedding_disabled', String(e instanceof Error ? e.message.split('\n')[0] : e),
+    'Embeddings are off by choice on this brain, so import needs --no-embed; turning embeddings on needs the user\'s consent (gbrain doctor --only embeddings --json shows the command).', {
+      reason: 'disabled_by_choice',
+      why: 'This brain was set up keyword-only. Importing with --no-embed keeps every page keyword-searchable; `gbrain embed --stale` adds vectors once embeddings are enabled.',
+      fix: {
+        argv: ['gbrain', 'import', ...args.filter(a => a !== '--json' && a !== '--no-embed'), '--no-embed', '--json',
+          ...(target ? ['--source', target] : []), ...brainRoutingArgs()],
+        consent: [], actor: 'agent', requires_exclusive: true,
+        why: 'Imports the same files without computing vectors, which needs no provider key.',
+      },
+    });
+}
+
 export async function runImport(
   engine: BrainEngine,
   args: string[],
@@ -261,29 +285,8 @@ export async function runImport(
     try {
       assertEmbeddingEnabled(loadConfig());
     } catch (e) {
-      // D2: under --json the refusal is the one document. The step the agent
-      // can take now is this import with --no-embed (pages stay keyword-
-      // searchable; vectors come later); enabling embeddings asks the user.
-      if (jsonOutput) {
-        // A1 explicit routing: the fix names the brain and source this run resolved.
-        const { brainRoutingArgs } = await import('../core/brain-resolver.ts');
-        const { resolveSourceWithTier } = await import('../core/source-resolver.ts');
-        const named = args.some(a => a === '--source' || a === '--source-id' || a.startsWith('--source=') || a.startsWith('--source-id='));
-        const target = named ? undefined : await resolveSourceWithTier(engine, null).then(r => r.source_id, () => undefined);
-        throw opError('embedding_disabled', String(e instanceof Error ? e.message.split('\n')[0] : e),
-          'Embeddings are off by choice on this brain, so import needs --no-embed; turning embeddings on needs the user\'s consent (gbrain doctor --only embeddings --json shows the command).', {
-            reason: 'disabled_by_choice',
-            why: 'This brain was set up keyword-only. Importing with --no-embed keeps every page keyword-searchable; `gbrain embed --stale` adds vectors once embeddings are enabled.',
-            fix: {
-              argv: ['gbrain', 'import', ...args.filter(a => a !== '--json' && a !== '--no-embed'), '--no-embed', '--json',
-                ...(target ? ['--source', target] : []), ...brainRoutingArgs()],
-              consent: [], actor: 'agent', requires_exclusive: true,
-              why: 'Imports the same files without computing vectors, which needs no provider key.',
-            },
-          });
-      }
-      console.error(`\n${e instanceof Error ? e.message : e}`);
-      console.error('Tip: run `gbrain import <dir> --no-embed` to import without embedding now.');
+      if (jsonOutput) throw await keylessImportRefusal(engine, args, e);
+      console.error(`\n${e instanceof Error ? e.message : e}\nTip: run \`gbrain import <dir> --no-embed\` to import without embedding now.`);
       throw new ImportAbortError('embedding disabled (deferred-setup sentinel)');
     }
 

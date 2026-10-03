@@ -12,9 +12,9 @@
  * `harness_wiring` (the A7 readiness fix). Extend `buildInitFirstRunNotices`
  * rather than adding a second notice.
  */
-import type { Decision, Notice } from '../core/agent-output.ts';
+import { shellQuote, type Decision, type Notice } from '../core/agent-output.ts';
 import type { GBrainConfig } from '../core/config.ts';
-import { configReadiness } from '../core/readiness.ts';
+import { configReadiness, embeddingEnablement } from '../core/readiness.ts';
 import type { SearchMode } from '../core/search/mode.ts';
 
 export interface InitFirstRunInputs {
@@ -71,4 +71,15 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
     user_message: `gbrain is installed. Reply 'defaults' to keep the recommended settings (${defaults}), or tell me what to change.`,
     decisions,
   }];
+}
+
+/**
+ * The deferred-setup line init prints for `--no-embedding`: the same enable
+ * command readiness gives doctor, embed and MCP (A7 `embeddingEnablement`:
+ * resolved datastore, a provider that fits, pages and facts kept).
+ */
+export function deferredEmbeddingHint(cfg: GBrainConfig): string {
+  const enable = embeddingEnablement(cfg);
+  const step = enable.argv ? shellQuote(enable.argv) : 'gbrain doctor --only embeddings --json';
+  return `  --no-embedding: deferred setup — enable later with \`${step}\` (\`config set embedding_model\` is refused by design)`;
 }

@@ -1611,9 +1611,6 @@ export function formatResult(
     }
     case 'get_page': {
       const r = result as any;
-      // `--json` leads (same as get_versions) so an ambiguous_slug envelope
-      // stays machine-readable too.
-      if (params.json === true) return JSON.stringify(r, null, 2) + '\n';
       if (r.error === 'ambiguous_slug') {
         return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
       }
@@ -1737,14 +1734,6 @@ export function formatResult(
     }
     case 'get_versions': {
       const versions = result as any[];
-      // `--json` is legal on every op lane (findUnknownOpFlag exempts it,
-      // parseOpArgs populates params.json), and every other data-returning
-      // verb consumes it. This one silently dropped it and printed the human
-      // table instead. Same `params.json === true` shape as search/query
-      // rather than the process.argv probe: it honors the `--json=false`
-      // spelling parseOpArgs already supports and keeps the formatter free
-      // of process globals.
-      if (params.json === true) return JSON.stringify(versions, null, 2) + '\n';
       if (versions.length === 0) return 'No versions.\n';
       return versions.map(v => {
         // Only elide when something was actually dropped — an unconditional

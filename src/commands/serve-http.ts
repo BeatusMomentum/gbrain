@@ -15,6 +15,7 @@
  * is re-exported below.
  */
 
+import { listenOrRefuse } from './serve-http-listen.ts';
 import express from 'express';
 import type { Socket } from 'net';
 import type { Request, RequestHandler, CookieOptions } from 'express';
@@ -847,27 +848,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  const httpServer = app.listen(port, bind);
-  // H2 mid-transition: a taken port must fail the start, never print the banner and keep
-  // the brain lock while serving nothing (Bun runs the listen callback with listening=false
-  // and emits 'error' to no listener). Wait for one outcome before announcing the server.
-  const listenError = await new Promise<Error | null>(resolve => {
-    if (httpServer.listening) return resolve(null);
-    httpServer.once('listening', () => resolve(null));
-    httpServer.once('error', (e: Error) => resolve(e));
-  });
-  if (listenError) {
-    try { httpServer.close(); } catch { /* never listened */ }
-    const { opError } = await import('../core/ops/contract.ts');
-    throw opError('serve_port_in_use', `gbrain serve --http could not listen on ${bind}:${port}: ${listenError.message}`,
-      'Nothing was started and the brain is free again. Stop the process holding the port, or pass another --port (and point the harnesses at that URL).', {
-        why: 'Another process (often an earlier gbrain serve --http) already listens on that address.',
-        fix: { argv: ['gbrain', 'serve', '--http', '--bind', bind, '--port', String(port + 1)], consent: ['persistent_install'], actor: 'user', requires_exclusive: true,
-          why: 'Starts the shared server on the next port; every harness must then use that URL.' },
-      });
-  }
-  {
-    console.error(`
+  const httpServer = await listenOrRefuse(app, port, bind);
+  console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
 ╠══════════════════════════════════════════════════════╣
@@ -890,7 +872,6 @@ ${bootstrapFromEnv
     ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
     : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
 `);
-  }
 
   // #4474: bind the resolve-IPC unix socket under --http too. This is the
   // exact posture `gbrain bootstrap harness` targets — without the listener
