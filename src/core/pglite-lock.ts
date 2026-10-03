@@ -34,6 +34,8 @@ export interface LockHandle {
   /** A dead legacy holder was encountered during protocol migration. */
   reaped?: boolean;
   nativeLock?: NativeLockHandle;
+  /** Epoch ms when this process took the lock (diagnostic). */
+  acquiredAt?: number;
 }
 
 interface LockMetadata {
@@ -172,19 +174,42 @@ export interface LockHolderInfo {
 }
 /** Read-only compatibility seam for engine-free IPC delegation and status. */
 export function inspectLockHolder(dataDir: string | undefined): LockHolderInfo {
-  const lockDir = getLockDir(dataDir);
-  if (!lockDir || !existsSync(lockDir)) return { held: false };
-  const metadata = readMetadata(lockDir);
-  if (!metadata) return { held: true };
-  const pid = typeof metadata.pid === 'number' ? metadata.pid : undefined;
-  if (pid !== undefined && !isProcessAlive(pid)) return { held: false, pid };
-  return { held: true, pid, serve: isServeCommand(metadata),
-    subcommand: typeof metadata.subcommand === 'string' ? metadata.subcommand : undefined };
+  return inspectHolderMetadata(dataDir).holder;
 }
-export interface LockPeekResult { held: boolean; isServe?: boolean; pid?: number; }
+function inspectHolderMetadata(dataDir: string | undefined): { holder: LockHolderInfo; metadata: LockMetadata | null } {
+  const lockDir = getLockDir(dataDir);
+  if (!lockDir || !existsSync(lockDir)) return { holder: { held: false }, metadata: null };
+  const metadata = readMetadata(lockDir);
+  if (!metadata) return { holder: { held: true }, metadata };
+  const pid = typeof metadata.pid === 'number' ? metadata.pid : undefined;
+  if (pid !== undefined && !isProcessAlive(pid)) return { holder: { held: false, pid }, metadata };
+  return { holder: { held: true, pid, serve: isServeCommand(metadata),
+    subcommand: typeof metadata.subcommand === 'string' ? metadata.subcommand : undefined }, metadata };
+}
+export interface LockPeekResult {
+  held: boolean; isServe?: boolean; pid?: number;
+  /** The holder is `gbrain serve --http` (read from its recorded argv). */
+  http?: boolean;
+  /** Epoch ms the holder recorded at acquisition. */
+  acquiredAt?: number;
+}
 export function peekLock(dataDir: string | undefined): LockPeekResult {
-  const holder = inspectLockHolder(dataDir);
-  return { held: holder.held, isServe: holder.serve, pid: holder.pid };
+  const { holder, metadata } = inspectHolderMetadata(dataDir);
+  if (!holder.held || !holder.serve || !metadata) return { held: holder.held, isServe: holder.serve, pid: holder.pid };
+  const args = Array.isArray(metadata.argv) ? metadata.argv : (metadata.command ?? '').split(/\s+/);
+  return { held: true, isServe: true, pid: holder.pid, http: args.includes('--http'),
+    ...(typeof metadata.acquired_at === 'number' ? { acquiredAt: metadata.acquired_at } : {}) };
+}
+/**
+ * The lock this process itself holds on `dataDir`, from in-memory state only
+ * (no file access while this process holds no lock at all).
+ */
+export function heldLockFor(dataDir: string | undefined): LockHandle | null {
+  if (!dataDir || retainedOwners.size === 0) return null;
+  let lockDir: string;
+  try { lockDir = getLockDir(canonicalPath(dataDir)); } catch { return null; }
+  for (const owner of retainedOwners) if (owner.acquired && owner.lockDir === lockDir) return owner;
+  return null;
 }
 /** Compatibility with repair quarantine markers from older releases. */
 export function msSinceLastReap(dataDir: string | undefined): number | null {
@@ -267,7 +292,7 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
           command: process.argv.slice(1).join(' '), argv: process.argv.slice(1), subcommand: parseGlobalFlags(process.argv.slice(2)).rest[0],
           owner_token: ownerToken, protocol, pid_ns: readPidNs(), boot_id: readBootId() });
         const result = { lockDir, acquired: true, lockPath, ownerToken, reaped, nativeLock,
-          heartbeat: startHeartbeat(lockPath, ownerToken) };
+          heartbeat: startHeartbeat(lockPath, ownerToken), acquiredAt: now };
         retainedOwners.add(result);
         accepted = true;
         return result;
