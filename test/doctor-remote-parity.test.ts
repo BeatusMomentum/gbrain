@@ -53,7 +53,7 @@ describe('run_doctor and CLI doctor agree', () => {
     const report = computeDoctorReport([{ name: 'embeddings', status: 'warn', message: 'x',
       fix: { argv: ['gbrain', 'init', '--force', '--path', `${home}/.gbrain/brain.pglite`], consent: [], actor: 'agent', why: `brain at ${home}/.gbrain`, requires_exclusive: true } }],
       { render: { transport: 'http', isCallable: () => false, preapproved: () => false } });
-    const fix = report.checks[0].fix as Record<string, unknown>;
+    const fix = report.checks[0].fix as unknown as Record<string, unknown>;
     expect(fix).toMatchObject({ actor: 'host_admin', next: 'tell_user_to_run' });
     expect(JSON.stringify(fix)).not.toContain(home);
   });

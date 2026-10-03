@@ -48,7 +48,7 @@ describe('doctor report status set (E2)', () => {
 
   test('fixes render for the transport: next, shell-quoted command, absolute docs; top_issues gain action', () => {
     const report = computeDoctorReport([{ name: 'sync_failures', status: 'warn', message: 'x', fix }]);
-    const rendered = report.checks[0].fix as Record<string, unknown>;
+    const rendered = report.checks[0].fix as unknown as Record<string, unknown>;
     expect(rendered).toMatchObject({ next: 'run', command: 'gbrain doctor --json', actor: 'agent' });
     expect(String(rendered.docs)).toMatch(/^https:\/\//);
     expect(report.top_issues?.[0]).toMatchObject({ name: 'sync_failures', fix: 'x', action: { next: 'run', command: 'gbrain doctor --json' } });
@@ -62,7 +62,7 @@ describe('doctor report status set (E2)', () => {
   });
 
   test('every non-ok check ends with a fix or a fix_unavailable_reason', () => {
-    const out = finalizeCheckFixes([
+    const out = finalizeCheckFixes<Check>([
       { name: 'a', status: 'warn', message: 'legacy prose' },
       { name: 'b', status: 'fail', message: 'x', fix_unavailable_reason: 'operator_judgement' },
       { name: 'c', status: 'ok', message: 'fine' },
