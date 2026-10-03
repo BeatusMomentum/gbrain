@@ -19,6 +19,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import { homedir, userInfo } from 'node:os';
 import { promptLineStderr } from '../core/cli-util.ts';
+import { isInteractive } from '../core/interaction.ts';
 import { isConsentRefusal, renderConsentRefusal, requireConsent } from '../core/consent.ts';
 import type { Effect } from '../core/agent-output.ts';
 import { gbrainPath, isThinClient, loadConfig, type GBrainConfig } from '../core/config.ts';
@@ -223,7 +224,7 @@ function resolveDeps(deps: McpExposeDeps): Resolved {
     fetch: deps.fetch ?? ((url, init) => fetch(url, init as RequestInit)),
     tcpProbe: deps.tcpProbe ?? defaultTcpProbe,
     lookup: deps.lookup ?? defaultLookup,
-    isTTY: deps.isTTY ?? (process.stdin.isTTY === true && process.stderr.isTTY === true),
+    isTTY: deps.isTTY ?? isInteractive({ stdoutIsTTY: process.stderr.isTTY === true }),
     prompt: deps.prompt ?? ((q: string) => promptLineStderr(q)),
     out: deps.stdout ?? ((line: string) => { process.stdout.write(`${line}\n`); }),
     err: deps.stderr ?? ((line: string) => { process.stderr.write(`${line}\n`); }),
@@ -459,7 +460,7 @@ function publishConsent(opts: ExposeOptions): ConsentExtra {
     yes: opts.yes, nextAction: rerunCommand(opts),
     confirmationMessage: 'These are system-state changes (Tailscale, serve config, a user service). Pass --yes to confirm.',
     argv: ['gbrain', 'mcp', 'expose', ...publishFlags(opts)],
-    effects: ['persistent_install', 'egress'],
+    effects: opts.noTailscale ? ['persistent_install'] : ['persistent_install', 'egress'],
     what: 'mcp expose',
     why: `Publishes this brain's MCP server ${where}${opts.noService ? '' : ' and installs a user service that keeps it running'}, so authorized agents on other machines can reach it.`,
     risk: 'Changes system state (Tailscale serve config, a user service, files under the serve directory); `gbrain mcp expose --remove` undoes it.',
