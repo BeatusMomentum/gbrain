@@ -449,7 +449,7 @@ retain request history, audit records, spending reservations, and settlement.
 | Duplicate client name | Inspect the reported existing client ID; recover its setup instead of creating another client. | brain host | none | the client list |
 | Mutation response lost or timed out | Outcome may be unknown. Inspect the client/list before retrying; a transport error does not prove nothing changed. | brain host | none | the client list |
 | `grant_conflict` | Inspect the current revision and preview the intended action again. | brain host | none | the preview of the intended action |
-| `permission_denied` with `fence=no_source_grant` | The legacy token's source grant is an explicit empty list. Grant sources with `gbrain auth rescope --token <name> --sources <id,...>` ([legacy token grants](#legacy-token-grants)). | brain host | none | the token's grant in the client list |
+| `permission_denied` with `fence=no_source_grant` | The legacy token's source grant is an explicit empty list. Grant sources with `gbrain auth rescope --token <name> --sources <id,...>` ([legacy token grants](#legacy-token-grants)); the refusal's `fix` names the token by `--id`. | brain host | none | the token's grant in the client list |
 | Client/source list failed | Retry the failed request; an error is not an empty registration list or a missing source. | agent | none | the same list request |
 | Public OAuth setup has no secret | Expected for authentication method `none`. Connect using native PKCE. | user | none | a native PKCE connection |
 | Confidential secret delivery interrupted | Use `mcp admin setup … --credentials-out PRIVATE_FILE` to recover the retained delivery; never expose it in ordinary output. | brain host | `credentials` | the private credentials file exists |

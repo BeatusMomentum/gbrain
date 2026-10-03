@@ -494,10 +494,13 @@ export function opAllowedForBoundClient(
  * it never falls back to the `default` floor for reads or writes.
  */
 export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal'>): OperationError {
+  const fix = sourceGrantFix(auth);
   const err = opError('permission_denied',
     `${operation ? `${operation}: ` : ''}this token is granted no sources (its source grant is an explicit empty list).`,
-    "Ask the brain host's operator to grant this token at least one source (command in fix), then reconnect.",
-    { docs: 'docs/mcp/ADMIN.md#legacy-token-grants', fix: sourceGrantFix(auth) });
+    fix.inputs
+      ? "Ask the brain host's operator to grant this token at least one source (command in fix), then reconnect."
+      : "Ask the brain host's operator to find this token in the token list (command in fix) and grant it at least one source, then reconnect.",
+    { docs: 'docs/mcp/ADMIN.md#legacy-token-grants', fix });
   err.detail = 'fence=no_source_grant';
   return err;
 }
