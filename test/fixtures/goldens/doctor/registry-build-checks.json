@@ -250,6 +250,10 @@
         "name": "parked_effects"
       },
       {
+        "category": "ops",
+        "name": "worktree_refresh_stuck"
+      },
+      {
         "category": "meta",
         "name": "links_link_source_check"
       },
