@@ -14,7 +14,7 @@
         "brain": 100,
         "meta": 100,
         "ops": 95,
-        "skill": 90
+        "skill": 95
       },
       "checks": [
         {
@@ -33,10 +33,22 @@
             "path": "pglite — serve IPC socket not present",
             "policy_skill_installed": false
           },
-          "fix_unavailable_reason": "unstructured",
+          "fix": {
+            "actor": "user",
+            "consent": [
+              "persistent_install"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "next": "report",
+            "requires_exclusive": false,
+            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+            "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+          },
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
-          "status": "warn"
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "skill",
@@ -265,7 +277,7 @@
         }
       ],
       "db_url_source": "config-file-path",
-      "health_score": 85,
+      "health_score": 90,
       "schema_version": 2,
       "status": "warnings",
       "top_issues": [
@@ -274,12 +286,6 @@
           "name": "connection",
           "status": "warn",
           "tier": "root"
-        },
-        {
-          "fix": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
-          "name": "retrieval_reflex_health",
-          "status": "warn",
-          "tier": "symptom"
         },
         {
           "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",

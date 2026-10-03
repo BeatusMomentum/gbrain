@@ -10,7 +10,8 @@
  * report's transport (CLI `gbrain doctor --json`, MCP `run_doctor`).
  */
 import { cliRenderContext, renderAction, type Action, type RenderContext, type RenderedAction } from '../../core/agent-output.ts';
-import type { ReadinessEntry, ReadinessState } from '../../core/readiness.ts';
+import { embeddingEnablement, type ReadinessEntry, type ReadinessState } from '../../core/readiness.ts';
+import { loadConfig } from '../../core/config.ts';
 import { classifyPgAccessError } from '../../core/pg-access-classify.ts';
 import type { Check } from '../doctor.ts';
 
@@ -60,6 +61,20 @@ export function infoCheck(name: string, message: string, state: ReadinessState, 
     name, status: 'ok' as const, message, severity: 'info' as const, readiness_state: state,
     ...(fix ? { fix } : {}), ...(details ? { details } : {}),
   };
+}
+
+/**
+ * The one embedding-enable command (A7 `embeddingEnablement`: resolved
+ * datastore, a keyed provider, pages and facts kept) for doctor checks on a
+ * keyless brain. Undefined when there is no readable config.
+ */
+export function keylessEnablementFix(): Action | undefined {
+  try {
+    const cfg = loadConfig();
+    return cfg ? embeddingEnablement(cfg) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** A readiness entry rendered as a doctor info check (keeps its why and enable fix). */

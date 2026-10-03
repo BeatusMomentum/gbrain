@@ -8,12 +8,12 @@
     ],
     "exit_code": 0,
     "report": {
-      "brain_checks_score": 80,
+      "brain_checks_score": 90,
       "category_scores": {
-        "brain": 80,
+        "brain": 90,
         "meta": 100,
-        "ops": 95,
-        "skill": 90
+        "ops": 100,
+        "skill": 95
       },
       "checks": [
         {
@@ -32,10 +32,22 @@
             "path": "pglite — serve IPC socket not present",
             "policy_skill_installed": false
           },
-          "fix_unavailable_reason": "unstructured",
+          "fix": {
+            "actor": "user",
+            "consent": [
+              "persistent_install"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "next": "report",
+            "requires_exclusive": false,
+            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+            "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+          },
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
-          "status": "warn"
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "skill",
@@ -1047,10 +1059,43 @@
               "unpushed": 0
             }
           },
-          "fix_unavailable_reason": "unstructured",
-          "message": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "export",
+              "--source",
+              "default",
+              "--dir",
+              "<BACKUP_DIR>/default"
+            ],
+            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default'",
+            "consent": [],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
+            "inputs": [
+              {
+                "how": "Ask the user where backups should live (a directory outside the brain, ideally synced or on another disk).",
+                "name": "BACKUP_DIR"
+              }
+            ],
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "backup_coverage",
+                "--json"
+              ]
+            },
+            "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
+          },
+          "message": "Not urgent yet: the brain holds 0 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",
           "name": "backup_coverage",
-          "status": "warn"
+          "readiness_state": "degraded",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "ops",
@@ -1066,10 +1111,11 @@
         },
         {
           "category": "brain",
-          "fix_unavailable_reason": "unstructured",
-          "message": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
+          "message": "No full cycle yet for 'default': it holds no pages or only pages from the last 24h, so there is nothing to consolidate yet.",
           "name": "cycle_freshness",
-          "status": "warn"
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "brain",
@@ -1367,10 +1413,38 @@
         },
         {
           "category": "brain",
-          "fix_unavailable_reason": "unstructured",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "config",
+              "set",
+              "takes.bootstrap_enabled",
+              "true"
+            ],
+            "command": "gbrain config set takes.bootstrap_enabled true",
+            "consent": [
+              "paid"
+            ],
+            "next": "ask_user",
+            "requires_exclusive": false,
+            "user_message": "gbrain can extract typed claims (\"takes\") from your pages so it can track calibration over time. It uses a paid chat model (roughly $5 once). Turn it on?",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "takes_count",
+                "--json"
+              ]
+            },
+            "why": "Takes (typed claims) are opt-in. Enabling the bootstrap lets maintenance extract them from existing pages with a chat model (about $5 on a typical brain), which feeds calibration."
+          },
           "message": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
           "name": "takes_count",
-          "status": "warn"
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
+          "status": "ok"
         },
         {
           "category": "meta",
@@ -1393,22 +1467,10 @@
       ],
       "db_url_source": null,
       "engine": "pglite",
-      "health_score": 65,
+      "health_score": 85,
       "schema_version": 2,
       "status": "warnings",
       "top_issues": [
-        {
-          "fix": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
-          "name": "backup_coverage",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
-          "fix": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
-          "name": "cycle_freshness",
-          "status": "warn",
-          "tier": "symptom"
-        },
         {
           "fix": "embedding: declared dims=3072 but actual is vector(1024). Fix one side: update config OR ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(3072);",
           "name": "embedding_column_registry",
@@ -1422,20 +1484,8 @@
           "tier": "symptom"
         },
         {
-          "fix": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
-          "name": "retrieval_reflex_health",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
           "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
-          "status": "warn",
-          "tier": "symptom"
-        },
-        {
-          "fix": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
-          "name": "takes_count",
           "status": "warn",
           "tier": "symptom"
         }

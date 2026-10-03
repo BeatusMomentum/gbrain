@@ -15,6 +15,8 @@ import { providerKeyShadows, providerKeySource } from '../../../core/ai/provider
 import { credentialEnvName, keyShadowWarning } from '../../../core/ai/key-warnings.ts';
 import { getRecipe } from '../../../core/ai/recipes/index.ts';
 import type { Check } from '../../doctor.ts';
+import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
+import { infoCheck, keylessEnablementFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
@@ -25,6 +27,10 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
   // 8b. Embedding provider eval — live smoke test of the configured provider.
   //     Verifies: correct model, API key works, dimensions match config, DB column matches.
   progress.heartbeat('embedding_provider');
+  if (await embeddingsDisabled(engine)) {
+    checks.push(infoCheck('embedding_provider', 'Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).', 'disabled_by_choice', keylessEnablementFix()));
+    return checks;
+  }
   try {
     const {
       getEmbeddingModel,

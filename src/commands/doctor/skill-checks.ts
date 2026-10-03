@@ -29,6 +29,7 @@ import {
   appendAuditEventsForTransitions,
 } from '../../core/audit-skill-brain-first.ts';
 import type { Check } from '../doctor.ts';
+import { infoCheck } from './check-fix.ts';
 
 /** Quick skill conformance check — frontmatter + required sections */
 export function skillConformanceCheck(skillsDir: string): Check {
@@ -291,9 +292,15 @@ export async function skillPreconditionsCheck(
   if (unmet.length === 0) {
     return { name, status: 'ok', message: `${installed.length} skill(s) with preconditions, all met` };
   }
+  if (await ctx.countPages() === 0) {
+    return infoCheck(name,
+      `${unmet.length} skill precondition(s) wait for content: the brain has no pages yet, so skills that need a corpus stay idle until the first import or sync.`,
+      'not_applicable', undefined, { unmet: unmet.slice(0, 8) });
+  }
   return {
     name,
     status: 'warn',
+    fix_unavailable_reason: 'operator_judgement',
     message:
       `${unmet.length} unmet skill precondition(s):\n  ` +
       unmet.slice(0, 8).join('\n  ') +

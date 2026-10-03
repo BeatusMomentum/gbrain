@@ -20,6 +20,8 @@ import { checkPostgresCancellationDriver } from './postgres-cancellation.ts';
 import { checkProjectionReadiness } from './projection-readiness.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
+import { infoCheck, keylessEnablementFix } from '../check-fix.ts';
 
 async function runPgvector(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -331,8 +333,8 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
   try {
     // A keyless brain has no embedding backlog to drain: recommending a paid
     // catch-up there would send the agent into a refusal.
-    if (loadConfig()?.embedding_disabled === true || await engine.getConfig('embedding_disabled') === 'true') {
-      checks.push({ name: 'embeddings', status: 'ok', message: 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).' });
+    if (await embeddingsDisabled(engine)) {
+      checks.push(infoCheck('embeddings', 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).', 'disabled_by_choice', keylessEnablementFix()));
       return checks;
     }
     const health = await engine.getHealth();
