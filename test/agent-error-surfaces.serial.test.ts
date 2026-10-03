@@ -438,6 +438,9 @@ describe('withRelationGuard (REAL: the job table is gone)', () => {
     expect(call.exitCode).toBe(1);
     expectSurvives(call.json, want, 'gbrain call');
     expect(call.json.message).toContain('a required table is missing');
+    // The suggestion is rendered from the fix: it quotes the fix command and names no other one.
+    expect(call.json.suggestion).toContain(call.json.fix.command);
+    expect(call.json.suggestion).not.toContain('apply-migrations');
     expect(call.json.docs_cmd).toEqual(['gbrain', 'errors', 'unavailable']);
     expect(call.stderr).toContain('Error [unavailable]');
 

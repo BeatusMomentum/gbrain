@@ -189,10 +189,14 @@ export async function withRelationGuard<T>(fn: () => Promise<T>, what: string): 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/relation .* does not exist|no such table/i.test(msg)) {
-      throw new OperationError(
+      // The cause is not knowable here (pending migrations, or a dropped table), so the fix is the
+      // registry's diagnostic read (doctor on the brain host); the prose names no other command and the
+      // envelope appends the rendered fix, so suggestion and fix always agree.
+      throw opError(
         'unavailable',
         `${what} is unavailable on this brain: a required table is missing.`,
-        'Run gbrain apply-migrations on the brain host, then retry.',
+        'The brain is missing a table this gbrain expects (usually pending schema migrations). Doctor on the brain host reports what is missing and the command that repairs it.',
+        { reason: 'schema_missing' },
       );
     }
     throw err;

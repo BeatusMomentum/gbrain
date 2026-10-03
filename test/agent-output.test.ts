@@ -6,11 +6,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
   __setDocsRefForTests, argvFromCommand, deriveNext, docsUrl, inertText, noticeBlock, orderNotices, paramRef,
-  redactForTransport, renderAction, renderCliError, renderNotice, shellQuote,
+  redactForTransport, renderAction, renderCliError, renderNotice, shellQuote, toAgentError,
   type Action, type Effect, type Notice, type RenderContext,
 } from '../src/core/agent-output.ts';
 import { agentBlock, renderCliNotices } from '../src/core/agent-markers.ts';
-import { opError } from '../src/core/ops/contract.ts';
+import { opError, withRelationGuard } from '../src/core/ops/contract.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -173,5 +173,27 @@ describe('renderCliError', () => {
     expect(doc).toMatchObject({ error: 'internal_error', code: 'internal_error', class: 'server', contract_version: 1 });
     expect(doc.suggestion).toContain('Server-side failure in sync');
     expect(r.exitCode).toBe(1);
+  });
+});
+
+describe('withRelationGuard: suggestion and fix agree', () => {
+  const cli = ctx({ transport: 'cli', isCallable: () => false });
+  const stdio = ctx();
+  const missingTable = () => withRelationGuard(async () => { throw new Error('relation "minion_jobs" does not exist'); }, 'get_job_stats').catch((e: unknown) => e);
+
+  test('CLI: the diagnostic doctor fix, and the suggestion quotes it and names no other command', async () => {
+    const env = toAgentError(await missingTable(), { transport: 'cli', op: 'get_job_stats', render: cli });
+    expect(env.code).toBe('unavailable');
+    expect(env.reason).toBe('schema_missing');
+    expect(env.fix?.argv?.slice(0, 3)).toEqual(['gbrain', 'doctor', '--json']);
+    expect(env.suggestion).toContain(`Next: ${env.fix!.command}`);
+    expect(env.suggestion).not.toContain('apply-migrations');
+  });
+
+  test('MCP: the suggestion quotes the rendered tool call', async () => {
+    const env = toAgentError(await missingTable(), { transport: 'stdio', op: 'get_job_stats', render: stdio });
+    expect(env.fix?.mcp?.tool).toBe('run_doctor');
+    expect(env.suggestion).toContain('Next: run_doctor {}');
+    expect(env.suggestion).not.toContain('apply-migrations');
   });
 });
