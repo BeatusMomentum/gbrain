@@ -518,8 +518,9 @@ gbrain sources writer activate --brain host --confirm-quiesced \
   --admin-intent writer_activate --expected-state <fresh admin_state> --json
 ```
 
-After activation, managed sync requires `--no-pull` (Git pull/rebase needs an
-explicit drained maintenance window) and refuses `--skip-failed` and
+After activation, managed sync requires `--no-pull` (new upstream commits come in
+through `gbrain sources refresh <source>`, the drained worktree-wide fast-forward;
+see [worktree refresh refusals](../guides/write-refusals.md#worktree-refresh-refusals)) and refuses `--skip-failed` and
 `--include-gitignored`; after fixing a failed item run
 `gbrain sync --no-pull --retry-failed` with the same source and options. Resume
 autopilot with `gbrain autopilot resume` and re-enable the hooks you stopped.
