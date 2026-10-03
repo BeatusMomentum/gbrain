@@ -526,7 +526,7 @@ export class ManagedConnectorSync {
   state<T>(empty: T): T {
     if (this.resetRequested) throw opError('storage_error', 'A requested checkpoint reset runs after the connector account check, before the checkpoint is read.',
       `The ${this.connector} connector read its checkpoint before the account check that applies the reset, so nothing was reset or synced for ${this.sourceId}. `
-        + 'This is a gbrain bug, not a caller mistake: report it to the user with gbrain doctor --json output.',
+        + 'This is a defect in gbrain, not a caller mistake: report it to the user along with the output of gbrain doctor --json.',
       { fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', why: 'Doctor output identifies the installed version and brain state for the bug report.', requires_exclusive: false } });
     return structuredClone((this.checkpoint[0] as { state?: T } | undefined)?.state ?? empty);
   }
