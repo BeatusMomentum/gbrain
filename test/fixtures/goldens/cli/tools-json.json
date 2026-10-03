@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 229621,
-    "stdoutSha256": "c8e5f93cf4806fe7e4c6df1544c77779543b3d51023504dcc140383bb690eb1e",
+    "stdoutBytes": 229624,
+    "stdoutSha256": "4e21afffab1c6333b71a3065e4df4aa0b56edb43fd78302d7a3897ad89a2733f",
     "toolNames": [
       "remember",
       "entity",
@@ -4760,7 +4760,7 @@
         "scope": "read"
       },
       {
-        "description": "Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI AND --trusted-extraction.",
+        "description": "Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI with trusted_extraction set.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
