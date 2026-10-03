@@ -214,7 +214,7 @@ function readStdinFd(maxBytes: number, withRaw: boolean): StdinRead | null {
     const st = fstatSync(0);
     if (st.isFIFO() || st.isSocket() || process.stdin.isTTY) return null;
     if (st.isFile() && st.size > maxBytes) return tooLarge(maxBytes, 0);
-    const raw = readFileSync(0);
+    const raw = readFileSync(0, { encoding: null });
     if (raw.length > maxBytes) return tooLarge(maxBytes, raw.length);
     return raw.length ? { kind: 'data', text: raw.toString('utf-8'), ...(withRaw ? { raw } : {}) } : { kind: 'empty' };
   } catch (e) {
