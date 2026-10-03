@@ -22,6 +22,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { invalidateBackupStatus } from '../core/backup/status-file.ts';
 import { existsSync } from 'fs';
 import { join } from 'path';
+import { FAILED_EXIT_CODE } from '../core/exit-codes.ts';
 
 interface SourceRow { id: string; local_path: string | null; config: unknown; }
 
@@ -116,7 +117,7 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
   // Non-zero exit if any source needs attention, so cron/automation notices.
   // Route through setCliExitVerdict — a raw process.exitCode write is zeroed by
   // the owned-verdict flush-exit (#2084 / PGLite-Emscripten pollution defense).
-  if (reports.some(r => r.needs_attention.length > 0)) setCliExitVerdict(3);
+  if (reports.some(r => r.needs_attention.length > 0)) setCliExitVerdict(FAILED_EXIT_CODE);
 }
 
 function renderReport(r: DurabilityReport): void {
@@ -167,7 +168,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
     case 'skipped_dirty': console.log(`skipped — working tree dirty (${branch})`); break;
     case 'conflict_aborted':
       console.error(`[gbrain] ${outcome.detail}`);
-      process.exit(3);
+      process.exit(FAILED_EXIT_CODE);
   }
 }
 

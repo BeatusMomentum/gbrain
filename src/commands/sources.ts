@@ -70,6 +70,7 @@ import {
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
+import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -772,7 +773,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 
   if (id === 'default') {
     console.error('Error: cannot remove the "default" source (it backs the pre-v0.17 brain).');
-    process.exit(3);
+    process.exit(USAGE_EXIT_CODE);
   }
 
   const src = await fetchSource(engine, id);
@@ -938,7 +939,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
 
   if (id === 'default') {
     console.error('Error: cannot archive the "default" source.');
-    process.exit(3);
+    process.exit(USAGE_EXIT_CODE);
   }
 
   // Show impact preview
