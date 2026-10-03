@@ -100,7 +100,7 @@ export async function runRemediationPlan(engine: BrainEngine, args: string[]): P
   const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed: args.includes('--no-embed') } });
   if (args.includes('--json')) {
     console.log(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
-      combined_command: combinedRemediateCommand(plan, targetScore) }, null, 2));
+      combined_command: combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore) }, null, 2));
     return;
   }
   for (const line of renderRemediationPlanLines(plan, targetScore)) console.log(line);
@@ -164,7 +164,7 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
     for (const notice of plan.explicit_repairs) lines.push(`  ${notice.kind}: ${notice.preview_command}`);
   }
   if (plan.plan.length > 0 || repairs.length > 0) {
-    lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, targetScore)}`);
+    lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore)}`);
     if (repairs.length) lines.push('Ask the user before applying any repair step.');
   }
   if (plan.blocked.length > 0) {

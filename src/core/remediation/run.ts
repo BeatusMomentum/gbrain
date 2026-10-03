@@ -113,7 +113,13 @@ export async function runRemediation(
     : [];
   // Embeddings a budget stop left behind after re-sealing; the re-sealed pages no longer show up in a repair plan.
   let pendingEmbedSources = includeRepairs && manifest ? [...(cp?.pending_embed_sources ?? [])] : [];
-  if (initialPlan.target_unreachable && !(includeRepairs && (repairSteps.length || pendingEmbedSources.length))) {
+  // E3: an unreachable score target skips the PAID job steps only; free job
+  // steps (no provider spend) still run, so the brain improves as far as it can.
+  const initialHealth = await engine.getHealth();
+  const plannedRecs = computeRecommendations(initialHealth, ctx, extraRemediations)
+    .filter((r) => r.status === 'remediable' && (!manifest || manifest.job_ids.includes(r.id)));
+  const freeRecs = plannedRecs.filter((r) => (r.est_usd_cost ?? 0) === 0);
+  if (initialPlan.target_unreachable && freeRecs.length === 0 && !(includeRepairs && (repairSteps.length || pendingEmbedSources.length))) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
     return synthetic(initialPlan.brain_score_current, {
       target_unreachable: { target: targetScore, ceiling: initialPlan.max_reachable_score },
@@ -121,12 +127,11 @@ export async function runRemediation(
     });
   }
   const jobStepsSkipped = initialPlan.target_unreachable
-    ? { reason: 'target_unreachable' as const, target: targetScore, ceiling: initialPlan.max_reachable_score } : undefined;
+    ? { reason: 'target_unreachable' as const, target: targetScore, ceiling: initialPlan.max_reachable_score,
+      skipped: plannedRecs.filter((r) => !freeRecs.includes(r)).map((r) => r.id) } : undefined;
   if (jobStepsSkipped) hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
 
-  const initialHealth = await engine.getHealth();
-  let recs: RemediationStep[] = jobStepsSkipped ? [] : computeRecommendations(initialHealth, ctx, extraRemediations)
-    .filter((r) => r.status === 'remediable' && (!manifest || manifest.job_ids.includes(r.id)));
+  let recs: RemediationStep[] = jobStepsSkipped ? freeRecs : plannedRecs;
   const skippedRepairs = includeRepairs ? [] : repairSteps;
   if (!includeRepairs) repairSteps = [];
   if (recs.length === 0 && repairSteps.length === 0 && pendingEmbedSources.length === 0) {
@@ -404,7 +409,8 @@ export async function runRemediation(
       // would resubmit completed extras every iteration, forever.
       const pendingExtras = extraRemediations.filter((r) => !attemptedIds.has(r.id));
       recs = computeRecommendations(freshHealth, ctx, pendingExtras)
-        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id) && (!manifest || manifest.job_ids.includes(r.id)));
+        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id) && (!manifest || manifest.job_ids.includes(r.id))
+          && (!jobStepsSkipped || (r.est_usd_cost ?? 0) === 0));
     }
   };
 

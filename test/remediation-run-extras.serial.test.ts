@@ -108,4 +108,23 @@ describe('runRemediation extraRemediations threading', () => {
       'extract-timeline-from-meetings',
     ]);
   });
+
+  test('E3: an unreachable score target still runs the free job steps and skips only the paid ones', async () => {
+    const { runRemediation } = await import('../src/core/remediation/run.ts');
+    submittedJobs.length = 0;
+    const paid = makeRemediationStep({
+      id: 'onboard.paid_step', job: 'extract-takes-from-pages', params: {}, severity: 'medium', est_seconds: 5,
+      est_usd_cost: 2, rationale: 'synthetic paid extra', status: 'remediable',
+    });
+    let unreachable = false;
+    const result = await runRemediation(
+      engine,
+      { targetScore: 101, extraRemediations: [extra('onboard.free_step', 'extract-ner'), paid], maxJobs: 5, maxUsd: 10 },
+      { onTargetUnreachable: () => { unreachable = true; } },
+    );
+    expect(unreachable).toBe(true);
+    expect(result.submitted.map((s) => s.id)).toEqual(['onboard.free_step']);
+    expect(result.job_steps_skipped).toMatchObject({ reason: 'target_unreachable', target: 101, skipped: ['onboard.paid_step'] });
+    expect(submittedJobs.map((j) => j.name)).toEqual(['extract-ner']);
+  });
 });
