@@ -101,6 +101,13 @@ interface CliCommandBase {
   startup?: 'observational';
   /** Honours a bare `--` as end of options (positionals after it are never flags). */
   end_of_options?: true;
+  /**
+   * A1: the command's target source resolves through the ambient chain
+   * (`--source` → GBRAIN_SOURCE → .gbrain-source → …), so a fix naming it
+   * carries `--source <id>` (src/core/fix-routing.ts). Requires consumption
+   * evidence in the generated registry (test/fix-routing.test.ts).
+   */
+  routes_source?: true;
   /** D3: lazy curated help module. */
   help?: () => Promise<{ help: CliHelpSpec }>;
 }
@@ -217,20 +224,20 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // codes). Without this the generic stub hides it.
   // thin client: cathedral-5: compiled views read the LOCAL brain (thin clients have no engine to
   // compile from; remote-brain support is a filed follow-up).
-  { name: 'compile-context', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/compile-context.ts') },
+  { name: 'compile-context', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/compile-context.ts') },
   { name: 'smoke-test', phase: 'pre-connect', thinClient: 'none', load: () => import('./commands/smoke-test.ts') },
   // selfHelp: #4152: dream ships its own printHelp AND the `dream retriage --help` subverb help
   // (dispatched engine-free before parseArgs). The generic stub would hide both — `gbrain dream
   // retriage --help` printed the one-line dream stub instead of the retriage contract (outside-voice
   // CX9).
   // thin client: v0.31.1 (CDX-2 op coverage matrix): more local-only commands
-  { name: 'dream', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/dream.ts') },
+  { name: 'dream', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/dream.ts') },
   // System One decide: local CLI only (calibrate, receipts and proposals are trusted-local); help and a
   // key-only probe answer without a brain, so the module opens its own engine.
   { name: 'decide', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/decide.ts') },
   // #5836 facts relink: trusted local CLI only (publishes onto the host's entity pages through the write
   // coordinator); help answers without a brain, so the module opens its own engine.
-  { name: 'facts', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/facts.ts') },
+  { name: 'facts', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/facts.ts') },
   // #5401: projections drain refuses a resident-held PGLite brain before any engine opens, so the
   // module opens its own engine. Trusted local CLI only (not an operation).
   { name: 'projections', phase: 'pre-connect-own-engine', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/projections.ts') },
@@ -239,21 +246,21 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: v0.39.3.0 WARN-5: capture's detailed HELP constant (src/commands/capture.ts:90+) was
   // unreachable because the dispatcher's generic short-circuit (printCliOnlyHelp at :204-208) fired
   // before runCapture saw --help. brainstorm + lsd were already in the set; capture was the holdout.
-  { name: 'capture', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, dispatchedBy: 'deferred-persistence', load: () => import('../commands/persistence-delegate.ts') },
+  { name: 'capture', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, dispatchedBy: 'deferred-persistence', routes_source: true, load: () => import('../commands/persistence-delegate.ts') },
   { name: 'forget', phase: 'pre-connect-own-engine', thinClient: 'none', dispatchedBy: 'deferred-persistence', load: () => import('../commands/persistence-delegate.ts') },
   { name: 'call', phase: 'pre-connect-own-engine', thinClient: 'refuse', dispatchedBy: 'deferred-persistence', load: () => import('../commands/persistence-delegate.ts') },
 
   // Post-connect: dispatched by dispatchConnectedCommand after connectEngine(), in master switch order.
   { name: 'mcp', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/mcp.ts') },
-  { name: 'import', phase: 'post-connect', thinClient: 'none', json: 'document', help: () => import('./help/import.ts'), load: () => import('./commands/import.ts') },
-  { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/export.ts') },
-  { name: 'files', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/files.ts') },
-  { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/embed.ts') },
+  { name: 'import', phase: 'post-connect', thinClient: 'none', json: 'document', help: () => import('./help/import.ts'), routes_source: true, load: () => import('./commands/import.ts') },
+  { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/export.ts') },
+  { name: 'files', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/files.ts') },
+  { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/embed.ts') },
   { name: 'serve', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/serve.ts'), load: () => import('./commands/serve.ts') },
   // thin client: Agent-bootstrap [CX2-5]: the maintenance sweep runs against the LOCAL engine (the
   // serve-resident sweep's trusted CLI entry). On a thin client it would fabricate a scratch PGLite
   // and sweep nothing anyone reads. `bootstrap` and `hook` are deliberately NOT here (ENG-2).
-  { name: 'sweep', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/sweep.ts') },
+  { name: 'sweep', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/sweep.ts') },
   // thin client: scratch-DB audit: `config` get/set operate on the host brain's config plane (DB
   // rows / host file-plane). On a thin client they fabricated an ephemeral local PGLite (full
   // migration replay per call) and read/wrote config nobody would ever see. NOTE: `jobs` is
@@ -284,20 +291,20 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was unreachable via help
   // because the dispatcher's generic CLI-only short-circuit fired before runSync could print its own
   // usage block. Adding `sync` here routes `gbrain sync --help` into runSync.
-  { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/sync.ts') },
+  { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, load: () => import('./commands/sync.ts') },
   // selfHelp: #3834: extract ships detailed help for its mode-specific flags. Keep the generic
   // CLI-only stub from hiding that contract.
-  { name: 'extract', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/extract.ts') },
+  { name: 'extract', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/extract.ts') },
   // selfHelp: v0.41.11.0 — extract-conversation-facts ships its own detailed HELP describing segment
   // splitting + checkpointing + budget caps + the unified types config story. Route around the
   // generic short-circuit.
   { name: 'extract-conversation-facts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/extract-conversation-facts.ts') },
   // selfHelp: v0.41.39 (#1700) — enrich ships its own detailed HELP (ordering, budget best-effort
   // caveat, provenance, --reenrich-after). Route around the stub.
-  { name: 'enrich', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/enrich.ts') },
+  { name: 'enrich', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/enrich.ts') },
   { name: 'features', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/features.ts') },
   { name: 'autopilot', phase: 'post-connect', thinClient: 'none', help: () => import('./help/autopilot.ts'), load: () => import('./commands/autopilot.ts') },
-  { name: 'graph-query', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/graph-query.ts') },
+  { name: 'graph-query', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/graph-query.ts') },
   { name: 'reconcile-links', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/reconcile-links.ts') },
   // selfHelp: gbrain repair prints REPAIR_HELP (kinds + dry-run/apply contract).
   // thin client: Wave 2 repair core: repairs publish coordinated writes on the brain host.
@@ -311,7 +318,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'status', phase: 'post-connect', thinClient: 'none', help: () => import('./help/status.ts'), load: () => import('./commands/status.ts') },
   { name: 'advisor', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/advisor.ts') },
   { name: 'conversation-parser', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/conversation-parser.ts') },
-  { name: 'edges-backfill', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/edges-backfill.ts') },
+  { name: 'edges-backfill', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/edges-backfill.ts') },
   // CLI_ONLY: #2035 class (wired the #3502 way): `case 'whoknows'` had a live handler (runWhoknows:
   // ranked table, per-factor explain, thin-client routing) that was shadowed by find_experts'
   // non-hidden cliHints. The op hint is now hidden (ops/insights.ts); this entry makes the richer
@@ -323,10 +330,10 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: v0.41.20.0 skillopt's detailed HELP constant lives in src/core/skillopt/help.ts;
   // --help routes there via the dispatcher.
   { name: 'skillopt', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/skillopt.ts') },
-  { name: 'calibration', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/calibration.ts') },
+  { name: 'calibration', phase: 'post-connect', thinClient: 'none', routes_source: true, load: () => import('./commands/calibration.ts') },
   // selfHelp: cathedral-4: transcripts ships its own HELP (the ingest import lane + the v0.29 recent
   // reader). Without this the generic stub hides both.
-  { name: 'transcripts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/transcripts.ts') },
+  { name: 'transcripts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/transcripts.ts') },
   { name: 'models', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/models.ts') },
   // selfHelp: `gbrain takes --help` printed the generic one-line stub, so the nine subcommands
   // (add/update/supersede/resolve/scorecard/calibration/revisit/ extract/search) were undiscoverable
@@ -340,8 +347,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'takes', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/takes.ts') },
   { name: 'onboard', phase: 'post-connect', thinClient: 'none', help: () => import('./help/onboard.ts'), load: () => import('./commands/onboard.ts') },
   { name: 'founder', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/founder.ts') },
-  { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/think.ts') },
-  { name: 'recall', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/recall.ts') },
+  { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/think.ts') },
+  { name: 'recall', phase: 'post-connect', thinClient: 'none', routes_source: true, load: () => import('./commands/recall.ts') },
   // CLI_ONLY: v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep): full handler
   // at `case 'notability-eval'` but never dispatchable.
   { name: 'notability-eval', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/notability-eval.ts') },
@@ -353,8 +360,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // pointer circular and those subcommands undiscoverable from the CLI in either direction.
   { name: 'sources', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/sources.ts') },
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
-  { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/waiting.ts') },
-  { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/loops.ts') },
+  { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
+  { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
@@ -371,16 +378,16 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: v0.43 (#2095): watch ships WATCH_HELP (flags + the stdin-turn protocol).
   // thin client: v0.43 (#2095): watch streams against a LOCAL engine; thin clients get the
   // volunteer_context MCP op instead.
-  { name: 'watch', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/watch.ts') },
+  { name: 'watch', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/watch.ts') },
   { name: 'storage', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/storage.ts') },
-  { name: 'code-def', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/code-def.ts') },
-  { name: 'code-refs', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/code-refs.ts') },
-  { name: 'reindex-code', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/reindex-code.ts') },
+  { name: 'code-def', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/code-def.ts') },
+  { name: 'code-refs', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/code-refs.ts') },
+  { name: 'reindex-code', phase: 'post-connect', thinClient: 'none', routes_source: true, load: () => import('./commands/reindex-code.ts') },
   { name: 'reindex-search-vector', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/reindex-search-vector.ts') },
   { name: 'reindex-frontmatter', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/reindex-frontmatter.ts') },
   { name: 'backfill', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/backfill.ts') },
-  { name: 'code-callers', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/code-callers.ts') },
-  { name: 'code-callees', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/code-callees.ts') },
+  { name: 'code-callers', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/code-callers.ts') },
+  { name: 'code-callees', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/code-callees.ts') },
   { name: 'repos', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/repos.ts') },
 ];
 

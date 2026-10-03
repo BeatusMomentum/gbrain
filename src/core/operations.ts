@@ -13,6 +13,7 @@ export { MEMORY_VERBS_VERSION };
 
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
+import { registerOpRoutes } from './fix-routing.ts';
 
 // Re-exports: the full previously-exported foundation surface of this module.
 // The formerly file-private helpers (enforceSubagentSlugFence, slugUnderSubagentFence,
@@ -332,3 +333,8 @@ for (const op of operations) {
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),
 ) as Record<string, Operation>;
+
+// A1 render-time routing pin: which CLI names are shared ops, and whether
+// their `--source` is an op param (provenance) rather than the target source.
+registerOpRoutes(operations.filter(op => op.cliHints?.name && !op.cliHints.hidden)
+  .flatMap(op => [op.cliHints!.name!, ...(op.cliHints!.aliases ?? [])].map(name => [name, 'source' in op.params] as const)));

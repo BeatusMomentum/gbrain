@@ -298,7 +298,7 @@ export function confirmationPayload(req: ConsentRequest, ctx: RenderContext): Co
     est_usd: req.est_usd ?? null,
     user_message: req.user_message,
     fix: rendered,
-    preview: req.preview_argv ? { argv: req.preview_argv, command: shellQuote(req.preview_argv) } : null,
+    preview: rendered.preview_argv ? { argv: rendered.preview_argv, command: shellQuote(rendered.preview_argv) } : null,
     ...(req.plan_hash ? { plan_hash: req.plan_hash } : {}),
     ...(paid && !destructive ? { preapprove_argv: preapprovalCommand(PREAPPROVE_PAID_MAX_USD_PER_RUN, '<usd>') } : {}),
     docs_cmd: ['gbrain', 'errors', 'confirmation_required'],

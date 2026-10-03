@@ -10,9 +10,13 @@
     "argv": [
       "gbrain",
       "code-def",
-      "--help"
+      "--help",
+      "--brain",
+      "host",
+      "--source",
+      "default"
     ],
-    "command": "gbrain code-def --help",
+    "command": "gbrain code-def --help --brain host --source default",
     "consent": [],
     "actor": "agent",
     "why": "Shows the required symbol argument.",

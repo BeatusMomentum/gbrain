@@ -12,6 +12,7 @@ import { operations, OperationError, enforceBoundClientOpAllowList, opError } fr
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
@@ -57,6 +58,14 @@ function configuredDbUrlForClassify(): string | null {
     }
   }
   return cachedClassifyUrl;
+}
+/** The brain this process serves: `serve --brain` / GBRAIN_BRAIN_ID / .gbrain-mount / host. */
+function servedBrainId(): string | undefined {
+  try {
+    return resolveBrainId(getCliOptions().brain);
+  } catch {
+    return undefined;
+  }
 }
 let cachedClassifyBrainId: string | null | undefined;
 function brainIdForClassify(): string | undefined {
@@ -502,7 +511,11 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
   const transport = opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http';
   const surface = opts.surface ?? 'full';
   const byName = new Map(operations.map(op => [op.name, op]));
+  // A1: CLI fixes name the served brain and the request's source (ids only; the HTTP pass strips paths).
+  const brain = servedBrainId();
+  const routing = { ...(brain ? { brain } : {}), ...(opts.sourceId ? { source: opts.sourceId } : {}) };
   return {
+    routing,
     transport,
     surface,
     isCallable: (opName: string) => {

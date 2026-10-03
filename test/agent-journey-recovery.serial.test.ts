@@ -246,6 +246,29 @@ describe('H1b: recovery from another directory with conflicting ambient brain/so
     const verify = expectJsonContract(await gb(host, ['doctor', '--only', 'timeline_history', '--json']), 'verify on host');
     expect((verify.checks as Check[]).find(c => c.name === 'timeline_history')?.status).toBe('ok');
   }, 600_000);
+
+  test('a generic fix (no site-specific routing) is pinned at render time and acts on host/default from elsewhere', async () => {
+    const notes = writeNotes(join(root, 'gone'), 1, 'route-gone');
+    expect((await gb(host, ['import', notes, '--no-embed', '--json'])).exitCode).toBe(0);
+    await withBrain(host, engine => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+      "UPDATE pages SET deleted_at = now() WHERE source_id = 'default' AND slug = 'route-gone-1'"), TEST_WRITE_ATTRIBUTION)));
+    // The op handler's fix is `gbrain get <slug> --include-deleted`; the brain and source come only from the render-time pin.
+    const missing = await gb(host, ['get', 'route-gone-1', '--json']);
+    expect(missing.exitCode).toBe(1);
+    const doc = expectJsonContract(missing, 'get on a soft-deleted page');
+    expect(doc.code).toBe('page_not_found');
+    const fix = doc.fix as Fix;
+    expect(fix.argv).toEqual(['gbrain', 'get', 'route-gone-1', '--include-deleted', '--brain', 'host', '--source', 'default']);
+    expect(fix.command).toBe(shellQuote(fix.argv!));
+    expect(doc.suggestion).toContain(fix.command!);
+    const ran = await gb(host, fix.argv!.slice(1), { cwd: work, env: ambient() });
+    expect(ran.exitCode, ran.stderr.slice(-1500)).toBe(0);
+    expect(ran.stdout).toContain(`The ${MARKER} 1.`);
+    // Control: the same command without the pin follows the ambient settings to the wrong brain/source.
+    const unpinned = await gb(host, ['get', 'route-gone-1', '--include-deleted'], { cwd: work, env: ambient() });
+    expect(unpinned.exitCode).not.toBe(0);
+    expect(unpinned.stdout).not.toContain(MARKER);
+  }, 300_000);
 });
 
 describe('H1b: exclusive fixes while a live stdio serve holds the lock', () => {

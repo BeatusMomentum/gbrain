@@ -49,6 +49,7 @@ import {
 } from '../core/config.ts';
 import { HOST_BRAIN_ID, loadMounts } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { connectWithRetry } from '../core/db.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { deriveSessionPoolerUrl } from '../core/connection-manager.ts';
@@ -379,7 +380,7 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
     return refuse(opts.json, 2, '--undo-last-rewrite requires --yes.', 'invalid_params', 'Example: gbrain db-repair --yes --undo-last-rewrite');
   }
 
-  const brainId = resolveBrainId(null);
+  const brainId = resolveBrainId(getCliOptions().brain);
 
   // A mount outage must never repair — or rewrite — the HOST config.
   if (brainId !== HOST_BRAIN_ID) {
@@ -387,8 +388,8 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
     return refuse(opts.json, 1,
       `db-repair targets the host brain, but this context resolves to mount '${brainId}'` +
       (mount ? ` (engine ${mount.engine}, ${mount.database_url ? 'url: ' + redactPgUrl(mount.database_url) : 'path: ' + (mount.database_path ?? '?')})` : '') +
-      `.\nMount-targeted repair is not supported yet — fix that brain on its host, or unset GBRAIN_BRAIN_ID/.gbrain-mount to repair the host brain.`,
-      'config_error', 'Run db-repair on the mounted brain\'s host, or unset GBRAIN_BRAIN_ID / remove .gbrain-mount to repair the host brain.');
+      `.\nMount-targeted repair is not supported yet — fix that brain on its host, or pass --brain host to repair the host brain.`,
+      'config_error', 'Run db-repair on the mounted brain\'s host, or pass --brain host (or unset GBRAIN_BRAIN_ID / remove .gbrain-mount) to repair the host brain.');
   }
 
   const cfg = loadConfig();

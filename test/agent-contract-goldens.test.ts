@@ -17,20 +17,24 @@ import {
   toolErrorResult, toolResultWithNotices, withAgentSiblings, type Notice, type RenderContext,
 } from '../src/core/agent-output.ts';
 import { opError, OperationError } from '../src/core/ops/contract.ts';
+import '../src/core/operations.ts'; // registers shared-op CLI names for the A1 routing pin, as every gbrain process does
 import { confirmationPayload } from '../src/core/consent.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const DIR = join(import.meta.dir, 'fixtures', 'agent-contract', 'v1');
 const UPDATE = process.env.GBRAIN_TEST_UPDATE_GOLDENS === '1';
 
+// A1: every surface renders with the brain/source the call acted on; CLI argv carry them explicitly.
+const routing = { brain: 'host', source: 'default' };
 const stdio: RenderContext = {
   transport: 'stdio',
   surface: 'full',
   isCallable: (op) => op !== 'get_health',
   preapproved: () => false,
+  routing,
 };
 const http: RenderContext = { ...stdio, transport: 'http', principal: 'client-example' };
-const cli: RenderContext = { transport: 'cli', isCallable: () => false, preapproved: () => false };
+const cli: RenderContext = { transport: 'cli', isCallable: () => false, preapproved: () => false, routing };
 
 let base = '';
 beforeAll(() => { __setDocsRefForTests('master'); base = docsUrl('').replace(/\/$/, ''); });

@@ -190,14 +190,15 @@ describe('F6 hidden-tool hint (owner stdio only)', () => {
     expect(env.code).toBe('unknown_tool');
     expect(env.suggestion).toContain('get_health exists, but this server runs the starter tool surface');
     expect(env.suggestion).toContain('GBRAIN_SURFACE=full');
-    expect(env.fix.command).toBe('gbrain doctor --json');
+    // A1: the CLI fix names the served brain explicitly.
+    expect(env.fix.command).toBe('gbrain doctor --json --brain host');
     expect(env.fix.next).toBe('tell_user_to_run');
     // HTTP keeps the opaque envelope (no existence oracle).
     const http = await dispatchToolCall(engine as any, 'get_health', {}, { remote: true, transport: 'http', sourceId: 'default', allowedOps, surface: 'starter' });
     const opaque = JSON.parse(http.content[0].text);
     expect(opaque.code).toBe('unknown_tool');
     expect(opaque.suggestion).not.toContain('exists');
-    expect(opaque.fix?.command).not.toBe('gbrain doctor --json');
+    expect(opaque.fix?.command).not.toBe('gbrain doctor --json --brain host');
   });
 });
 

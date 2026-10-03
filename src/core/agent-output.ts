@@ -21,6 +21,7 @@ import { classifyPgAccessError, formatDbAccessMarker } from './pg-access-classif
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { redactUrlsInText } from './url-redact.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
+import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
 
 export const CONTRACT_VERSION = 1 as const;
 
@@ -99,6 +100,8 @@ export interface RenderContext {
   isCallable(opName: string): boolean;
   preapproved(effects: Effect[], estUsd?: number | null): boolean;
   principal?: string;
+  /** A1: the brain/source the failing call acted on; renderAction pins them into gbrain argv (src/core/fix-routing.ts). */
+  routing?: FixRouting;
 }
 
 export interface AgentErrorContext {
@@ -122,7 +125,8 @@ export interface NoticeSink { emitNotice(n: Notice): void }
 
 /** The trusted local CLI: no MCP tool is callable from a shell, nothing is preapproved unless A4 says so. */
 export function cliRenderContext(overrides: Partial<RenderContext> = {}): RenderContext {
-  return { transport: 'cli', isCallable: () => false, preapproved: () => false, ...overrides };
+  const routing = cliRouting();
+  return { transport: 'cli', isCallable: () => false, preapproved: () => false, ...(routing ? { routing } : {}), ...overrides };
 }
 
 // ── text safety ────────────────────────────────────────────────────────────
@@ -222,7 +226,7 @@ function renderVerify(v: Action['verify'], ctx: RenderContext): RenderedAction['
   if (!v) return undefined;
   const mcp = v.mcp && ctx.isCallable(v.mcp.tool) ? v.mcp : undefined;
   if (!v.argv && !mcp) return undefined;
-  return { ...(v.argv ? { argv: v.argv } : {}), ...(mcp ? { mcp } : {}) };
+  return { ...(v.argv ? { argv: pinRouting(v.argv, ctx.routing) } : {}), ...(mcp ? { mcp } : {}) };
 }
 
 /** Render an Action for the caller's surface. Key order is part of the v1 goldens. */
@@ -232,8 +236,9 @@ export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
   const actor: Actor = cliOnlyOnMcp ? (ctx.transport === 'http' ? 'host_admin' : 'user') : a.actor;
   const effective: Action = { ...a, mcp, actor };
   const verify = renderVerify(a.verify, ctx);
+  const argv = a.argv ? pinRouting(a.argv, ctx.routing) : undefined;
   const out: RenderedAction = {
-    ...(a.argv ? { argv: a.argv, command: shellQuote(a.argv) } : {}),
+    ...(argv ? { argv, command: shellQuote(argv) } : {}),
     ...(mcp ? { mcp } : {}),
     consent: a.consent,
     actor,
@@ -245,7 +250,7 @@ export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
     requires_exclusive: a.requires_exclusive,
     ...(a.inputs?.length ? { inputs: a.inputs } : {}),
     ...(a.plan_hash ? { plan_hash: a.plan_hash } : {}),
-    ...(a.preview_argv ? { preview_argv: a.preview_argv } : {}),
+    ...(a.preview_argv ? { preview_argv: pinRouting(a.preview_argv, ctx.routing) } : {}),
     ...(a.then ? { then: renderAction(a.then, ctx) } : {}),
   };
   return out;
