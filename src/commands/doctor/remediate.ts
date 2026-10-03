@@ -31,6 +31,7 @@ import { repairPreviewCommand, repairSpec, type ExplicitRepairNotice } from '../
 import { runWaveChecks, waveRepairKind, type WaveFinding } from './wave-checks.ts';
 import { derivedCapExhaustedError, type CapSource } from '../../core/consent.ts';
 import { previewRemediationPlan, remediateConsent, remediateFlags, remediationPlanHash, type RemediateFlags } from './remediate-consent.ts';
+import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-output.ts';
 
 export const REMEDIATE_HELP = `Usage: gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
        gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]
@@ -103,21 +104,53 @@ export function combinedRemediateCommand(plan: Pick<RemediationPlanShape, 'est_t
 }
 
 /**
+ * ENG-6: the plan is observational. The doctor CLI connects probe-only (no
+ * migrations, no maintenance), so a brain whose schema is behind is reported,
+ * not upgraded: a `migrations_pending` safety notice naming the command that
+ * applies them (`doctor --remediate` also applies them, after consent).
+ * Mounts never auto-migrate from the CLI, so only the host brain reports it.
+ */
+export async function pendingMigrationsNotice(engine: BrainEngine): Promise<Notice | null> {
+  const { hasPendingMigrations, LATEST_VERSION } = await import('../../core/migrate.ts');
+  const { resolveBrainId } = await import('../../core/brain-resolver.ts');
+  const { getCliOptions } = await import('../../core/cli-options.ts');
+  try { if (resolveBrainId(getCliOptions().brain) !== 'host') return null; } catch { return null; }
+  if (!(await hasPendingMigrations(engine))) return null;
+  const current = await engine.getConfig('version').catch(() => null);
+  return {
+    code: 'migrations_pending', kind: 'safety',
+    why: `Schema migrations are pending (brain at v${current ?? 'unknown'}, this gbrain expects v${LATEST_VERSION}). `
+      + 'The plan was computed without applying them; `doctor --remediate` applies them after consent, before any step runs.',
+    fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent', requires_exclusive: true,
+      why: 'Applies the pending schema migrations (the same ones every command applies on connect).',
+      verify: { argv: ['gbrain', 'doctor', '--only', 'schema_version', '--json'] } },
+  };
+}
+
+/**
  * CLI wrapper around computeRemediationPlan. Read-only — never enqueues,
- * never mutates. JSON adds a `command` per job step, the repair steps and
- * the combined command to the library's stable envelope.
+ * never mutates, never migrates (the engine is probe-only). JSON adds a
+ * `command` per job step, the repair steps, the combined command and a
+ * `notices` array (pending migrations) to the library's stable envelope.
  */
 export async function runRemediationPlan(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REMEDIATE_HELP); return; }
   const { computeRemediationPlan } = await import('../../core/remediation/index.ts');
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
   const noEmbed = args.includes('--no-embed');
+  const migrations = await pendingMigrationsNotice(engine);
   const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed } });
   const planHash = plan.repair_steps?.length ? await remediationPlanHash(engine, args, plan) : undefined;
   if (args.includes('--json')) {
     await writeJsonDocument(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
-      combined_command: combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, { noEmbed, planHash }), ...(planHash ? { plan_hash: planHash } : {}) }, null, 2));
+      combined_command: combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, { noEmbed, planHash }), ...(planHash ? { plan_hash: planHash } : {}),
+      ...(migrations ? { notices: [renderNotice(migrations, cliRenderContext())] } : {}) }, null, 2));
     return;
+  }
+  if (migrations) {
+    const fix = renderNotice(migrations, cliRenderContext()).fix;
+    console.log(`Schema migrations pending: ${migrations.why}`);
+    if (fix?.command) console.log(`  apply: ${fix.command}`);
   }
   for (const line of renderRemediationPlanLines(plan, targetScore, { noEmbed, planHash })) console.log(line);
 }

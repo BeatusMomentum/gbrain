@@ -31,7 +31,8 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   // (cheap path D7), NOT the full doctor walk.
   if (args.includes('--remediation-plan')) {
     const { runRemediationPlan } = await import('../../commands/doctor.ts');
-    const eng = await connectEngine();
+    // ENG-6: observational — probe-only connect (no migrations, no maintenance); pending migrations are reported in the plan.
+    const eng = await connectEngine({ probeOnly: true });
     try { await runRemediationPlan(eng, args); } finally { await finishCliTeardown({ engine: eng }); }
     return;
   }

@@ -861,6 +861,7 @@
   "test/files.test.ts": 710,
   "test/filing-audit.test.ts": 5,
   "test/find-experts-op.test.ts": 435,
+  "test/fix-routing.test.ts": 3000,
   "test/fix-wave-structural.test.ts": 8,
   "test/fixtures/preload-guard/guard-probe.test.ts": 2,
   "test/fixtures/preload-guard/operator-env-probe.test.ts": 556,

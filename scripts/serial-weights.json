@@ -93,6 +93,7 @@
   "test/doctor-harness-smoke.serial.test.ts": 8,
   "test/doctor-memory-writeback.serial.test.ts": 3,
   "test/doctor-no-migrate.serial.test.ts": 23,
+  "test/doctor-remediation-plan-observational.serial.test.ts": 11,
   "test/doctor-remote.serial.test.ts": 1,
   "test/doctor-report-remote.serial.test.ts": 10,
   "test/dream-drain-failure-summary.serial.test.ts": 3,
