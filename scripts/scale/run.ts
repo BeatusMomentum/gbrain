@@ -73,6 +73,8 @@ process.env.GBRAIN_HOME = home;
 delete process.env.DATABASE_URL;
 delete process.env.GBRAIN_DATABASE_URL;
 for (const key of Object.keys(process.env)) if (/_API_KEY$|_API_TOKEN$/.test(key)) delete process.env[key];
+// Time get_health's computation, not its in-process memo: a repeat call within the TTL returns the memoized counters in well under 1 ms.
+process.env.GBRAIN_HEALTH_CACHE_TTL_MS = '0';
 
 const { createEngine } = await import('../../src/core/engine-factory.ts');
 const { importFromContent } = await import('../../src/core/import-file.ts');
