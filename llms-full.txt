@@ -8906,8 +8906,8 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-Five explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
-`captured-facts` and `loop-facts`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
+Seven explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
+`captured-facts`, `loop-facts`, `orphan-children` and `failed-writes`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
@@ -8997,7 +8997,7 @@ gives each a fresh row number); it never deletes or rewrites a page.
 | `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each kind). Rerun the same command to continue. |
 | `--no-embed` | `safe-chunks` and `contextual-mode`: skip the embedding provider. Run `gbrain embed --stale` later. `timeline` and `visibility` pages are re-embedded by their publication either way. |
 | `--all` | Run every automatic kind in order. Explicit-only kinds are listed with their preview command, never run. |
-| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `extractor-facts`, `captured-facts` and `loop-facts`. |
+| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `extractor-facts`, `captured-facts`, `loop-facts` and `failed-writes`. |
 | `--include-ambiguous` | `extractor-facts` and `captured-facts` only: widen the hashed set to `ambiguous` facts. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts) and [Captured facts](#captured-facts). |
 | `--json` | Print `{ scope, mode, results[], paid_kinds }`, one result per kind with `paid`, `affected`, `sample`, `residuals`, `cost`, `capacity`, `resumed_from`, `applied`, `skipped`, `complete`, `stopped` and `apply_command`, plus `explicit_kinds[]` when the run skipped explicit-only kinds. |
 
@@ -9404,6 +9404,53 @@ in one coordinated write, exactly for the previewed set; a loop or fact that
 changed since the preview reports `changed_since_preview` and is kept. No
 withdrawal is recorded, so the same promise made again is stored normally.
 
+<a id="failed-writes"></a>
+### Failed writes
+
+Before v0.60.38.0, on a managed brain whose `tags`, `timeline_entries` or
+`takes` table had a `source_id` column gbrain does not create, the managed
+writer guard refused writes it should have allowed (#5983). Each refused write
+keeps a failed receipt with its full intent until receipt compaction
+(`persistence.receipt_retention_days`, 30 days by default). `gbrain repair
+failed-writes` submits those writes again. It is explicit-only and
+preview-bound, and needs v0.60.38.0 or later (`gbrain doctor --json` reports
+schema version 197 or later).
+
+**Say to your agent:** *"Preview which refused writes gbrain can replay, show
+me the list, then apply after I agree."* The agent runs `gbrain repair
+failed-writes` and, after you agree, the printed apply command.
+
+```bash
+gbrain config set persistence.receipt_retention_days 90   # keep the receipts while you recover
+gbrain repair failed-writes --source <id>                 # preview: every refused write with its class
+gbrain repair failed-writes --source <id> --apply --expect <hash>
+gbrain repair failed-writes --source <id>                 # replayed writes now read already_written
+```
+
+Candidates are failed receipts refused by the guard: `writer_coordinator_required`,
+or `storage_error` "Publication failed (P0001)" from releases that did not keep
+the guard's message. Only writes a caller made directly are replayed:
+`put_page`, `add_timeline_entry` and `remember`. The preview gives every
+candidate one class:
+
+| Class | Meaning | What happens |
+| --- | --- | --- |
+| `replay` | No later write supersedes it. | Replayed on apply. |
+| `already_written` | A later request with the same intent committed, or an earlier apply replayed it. | Kept. |
+| `duplicate` | A later request with the same intent exists; that one is the candidate. | Kept. |
+| `superseded` | A later write of the page committed (`put_page`, whose full content would overwrite it) or the page was deleted (any operation). | Kept. Read the page and re-issue the change by hand if it is still wanted. |
+| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content, such as `gbrain sync --source <id> --no-pull --retry-failed --json`. |
+
+The apply replays exactly the previewed set. Each write is classified again and
+its original caller's authority is checked again first: a write that changed
+class since the preview reports `changed_since_preview`, and one whose caller
+lost its grant or whose source was re-created reports `authority_revoked`;
+both are kept. A replay is submitted by the local owner under a new request id
+derived from the failed one, so its attribution names the owner, a rerun after
+a crash waits on the same request, and a second apply never writes it twice. A
+replay that the brain refuses reports `refused` (or `conflict` for a stale
+`expected_revision`) with the code. The failed receipts stay as history.
+
 ## Resume
 
 Runs are resumable. After each page commits, the position is saved under the
@@ -9574,7 +9621,7 @@ walk me through it before changing anything."*
 
 | Symptom or error text | Issue | Preview | Apply | Verify |
 | --- | --- | --- | --- | --- |
-| Tag, timeline or take writes fail with `writer_coordinator_required` or `storage_error: Publication failed (P0001)` on a managed brain; sync ends `PARTIAL` at a tagged page | #5983 | `gbrain doctor --json` (`schema_version` is 197 or later) | the original `gbrain sync --source <source> … --no-pull --retry-failed --json`, then `gbrain extract --stale --source-id <source>` and `gbrain extract timeline --source db --source-id <source>`, then `gbrain facts relink --source <source> --dry-run` (paid tier only after the user agrees) | `gbrain sources status` shows the new `last_commit`; a second `gbrain extract timeline --source db` run adds no rows |
+| Tag, timeline or take writes fail with `writer_coordinator_required` or `storage_error: Publication failed (P0001)` on a managed brain; sync ends `PARTIAL` at a tagged page | #5983 | `gbrain doctor --json` (`schema_version` is 197 or later) | the original `gbrain sync --source <source> … --no-pull --retry-failed --json`, then `gbrain extract --stale --source-id <source>` and `gbrain extract timeline --source db --source-id <source>`, then `gbrain facts relink --source <source> --dry-run` (paid tier only after the user agrees), then `gbrain repair failed-writes --source <source>` and, after the user agrees, its printed `--apply --expect <hash>` | `gbrain sources status` shows the new `last_commit`; a second `gbrain extract timeline --source db` run adds no rows; a second `gbrain repair failed-writes` preview lists nothing to replay |
 | Sync `BLOCKED` with `checkpoint_validation_timeout` | #5762 | `gbrain doctor` (`persistence_request_indexes`) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <source> --no-pull --retry-failed …` | `gbrain doctor` shows `persistence_request_indexes` ok; `gbrain sources status` shows the new `last_commit` |
 | Doctor `persistence_request_indexes` warns | #5762 | `gbrain repair request-indexes` | `gbrain repair request-indexes --apply` | `gbrain doctor` |
 | Doctor `persistence_request_growth` warns | #5751, #5762 | `gbrain doctor --json` | the printed `gbrain config set persistence.limits.<limit> <value>` | `gbrain doctor --json` (check `persistence_request_growth`) |
@@ -9991,7 +10038,7 @@ a receipt can report has a row here.
 | `writer_registration_required` | `writer_registration_required` | The source needs an active canonical owner before this operation, for example activation. | Claim the source on its owner host (`gbrain sources writer status <source>` names the next step). |
 | `writer_identity_invalid` | `writer_identity_invalid` | This host's local writer identity file is unreadable or has an unknown format. | Run `gbrain doctor` on the host; it names the identity file to repair. |
 | `writer_not_initialized` | `writer_not_initialized` | The brain has no persistence identity yet, usually because migrations have not run. | Run `gbrain apply-migrations --yes` on the brain host. |
-| <a id="managed-guard-page-children"></a>`writer_coordinator_required: canonical writer must use the persistence coordinator` on a tag, timeline or take write; on the client `storage_error: Publication failed (P0001)` | `writer_coordinator_required` (`storage_error` on the stored receipt) | Before v0.60.38.0, on a managed brain whose `tags`, `timeline_entries` or `takes` table had a `source_id` column gbrain does not create, the managed writer guard refused every insert and update of those rows, including coordinated ones (#5983). From v0.60.38.0 those rows always take their source from their page and the column is ignored. An uncoordinated delete of such a row on a live page is now refused there too, as on every other brain. | Upgrade to v0.60.38.0 or later on the brain host, then follow its recovery steps in the [CHANGELOG](../../CHANGELOG.md) (or [repair](repair.md#recover-after-upgrading-to-this-release)): `gbrain sync … --no-pull --retry-failed`, `gbrain extract --stale`, `gbrain extract timeline --source db`, then a previewed `gbrain facts relink`. |
+| <a id="managed-guard-page-children"></a>`writer_coordinator_required: canonical writer must use the persistence coordinator` on a tag, timeline or take write; on the client `storage_error: Publication failed (P0001)` | `writer_coordinator_required` (`storage_error` on the stored receipt) | Before v0.60.38.0, on a managed brain whose `tags`, `timeline_entries` or `takes` table had a `source_id` column gbrain does not create, the managed writer guard refused every insert and update of those rows, including coordinated ones (#5983). From v0.60.38.0 those rows always take their source from their page and the column is ignored. An uncoordinated delete of such a row on a live page is now refused there too, as on every other brain. | Upgrade to v0.60.38.0 or later on the brain host, then follow its recovery steps in the [CHANGELOG](../../CHANGELOG.md) (or [repair](repair.md#recover-after-upgrading-to-this-release)): `gbrain sync … --no-pull --retry-failed`, `gbrain extract --stale`, `gbrain extract timeline --source db`, a previewed `gbrain facts relink`, then `gbrain repair failed-writes` (preview, then `--apply --expect <hash>`) for the refused `put_page`, `add_timeline_entry` and `remember` calls; see [failed writes](repair.md#failed-writes). |
 | `writer_coordinator_required` | `writer_coordinator_required` | The operation needs managed persistence (the write coordinator) and this brain or call path does not use it. A file write refused because the path sits in a managed canonical worktree names that worktree in the message, and its `detail` reads `root=<directory> source=<id or unknown> evidence=<marker file, managed-root registry or source binding>`. | Run the operation through the command the message names, on a managed brain. When the brain is not managed and the evidence is an ownership file (`.gbrain-owner.json`, `.gbrain-owner-<hash>.json`, `.gbrain-managed`), check it with `gbrain sources writer status` before removing anything: a half-finished claim is finished or rolled back through writer administration. |
 | `fact_already_expired` | `fact_already_expired` | The fact the write targets is already expired or withdrawn. | Nothing to do; list active facts to find the current one. |
 | `source_writeback_required` | `source_writeback_required` | The write needs a correction to the source's repository files, and this caller or profile never writes them. | Make the correction in the source repository, then sync. |

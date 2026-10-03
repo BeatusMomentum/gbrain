@@ -10,6 +10,37 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.39.0] - 2026-10-03
+
+**`gbrain repair failed-writes` replays the `put_page`, `add_timeline_entry` and `remember` calls the managed writer guard refused before v0.60.38.0 (#5983), from the content their failed receipts still hold. Each write is replayed once, and never over a later write of the same page.**
+
+v0.60.38.0 fixed the guard, but writes it had already refused stayed failed. Resubmitting under the same request id returns the stored failure, and the calling agent often has no copy of what it sent. Each failed receipt keeps the write's full intent until receipt compaction (30 days by default). The new repair kind finds receipts the guard refused, sorts them, and submits the caller writes again through their normal path as the local owner under new request ids.
+
+The preview gives every refused write a class:
+- `replay`: replayed on apply.
+- `already_written`: the same write committed later, or an earlier apply replayed it.
+- `duplicate`: a later attempt of the same write is the candidate instead.
+- `superseded`: the page was written or deleted later, or a newer failed save of the page exists, so replaying would overwrite or recreate it.
+- `unpinned_target`: a `remember` that was saved unattributed. Replaying it would guess its subject again, so it is kept.
+- `producer_owned`: gbrain produced the write itself, through sync or file imports, reconcile, relink or a maintenance page. The preview prints the command that produces it again from current content instead.
+
+The apply replays exactly the previewed set (`--expect <hash>`). It first re-checks each write's class and its original caller's authority. A write an agent sent over MCP is prepared as a remote write again, so it can do no more than the original. A page save is bound to the page revision the preview saw, so it never overwrites a page that changed. The failed receipts stay as history.
+
+## To take advantage of v0.60.39.0
+
+On the brain host, after the v0.60.38.0 recovery steps:
+
+1. **Keep the receipts while you recover** (if you have not already):
+   ```bash
+   gbrain config set persistence.receipt_retention_days 90
+   ```
+2. **Preview, show the user the listing, then apply after they agree:**
+   ```bash
+   gbrain repair failed-writes --source <id>
+   gbrain repair failed-writes --source <id> --apply --expect <hash>
+   ```
+3. **Verify:** a second preview lists nothing to replay (`already_written` instead), and the replayed pages show their tags, timeline entries and facts. For each `superseded` write, read the page and re-issue the change by hand if it is still wanted.
+
 ## [0.60.38.0] - 2026-10-03
 
 **On a managed brain whose `tags`, `timeline_entries` or `takes` table carries a `source_id` column gbrain never created, every tag, timeline and take write was refused, even coordinated ones. Managed sync stalled at the first tagged page, `facts relink` aborted, autopilot dropped timeline rows every cycle, and `remember`, `add_timeline_entry` and maintenance-page writes failed. Those writes commit again (#5983).**
@@ -49,7 +80,7 @@ Tags, timeline entries and takes now always take their source from their page. A
    gbrain facts relink --source <id> --max-usd <n>   # only after the user agrees
    ```
    Follow the printed `next_command` until `has_more` is false. Exit 0 alone does not mean the backlog is done.
-6. **Writes that failed outright are not replayed by the upgrade.** A `remember`, `add_timeline_entry` or maintenance-page write refused by this bug keeps its failed receipt; resubmitting the same request id returns that failure. Re-issue the ones you have a record of with a new request id, and tell the user which writes from the incident window could not be recovered.
+6. **Writes that failed outright are not replayed by the upgrade.** A `remember`, `add_timeline_entry` or maintenance-page write refused by this bug keeps its failed receipt; resubmitting the same request id returns that failure. From v0.60.39.0, `gbrain repair failed-writes` replays the caller writes from those receipts. Before that, re-issue the ones you have a record of with a new request id.
 
 ## [0.60.37.0] - 2026-10-03
 
