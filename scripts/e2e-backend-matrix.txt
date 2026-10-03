@@ -46,3 +46,4 @@ test/e2e/takes-scorecard-parity.test.ts
 test/e2e/evidence-delivery-parity.test.ts
 test/e2e/apply-migrations-orchestration-lock.test.ts
 test/e2e/postgres-poisoned-connection.test.ts
+test/e2e/write-attribution-postgres.test.ts

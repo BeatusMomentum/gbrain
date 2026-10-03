@@ -276,6 +276,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/persistence/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
   "src/core/persistence/write-wait.ts": ["test/e2e/write-contract-conformance.test.ts"],
   "src/core/ops/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
+  // Foundations 1 write attribution: actor settings and BEFORE ROW triggers, direct and through PgBouncer.
+  "src/core/persistence/attribution.ts": ["test/e2e/write-attribution-postgres.test.ts"],
+  "src/core/persistence/attribution-schema.ts": ["test/e2e/write-attribution-postgres.test.ts"],
+  "src/core/persistence/context.ts": ["test/e2e/write-attribution-postgres.test.ts"],
   "src/core/persistence/**": [
     "test/e2e/fix-wave-3-integration.test.ts",
     "test/e2e/persistence-http-liveness.test.ts",
