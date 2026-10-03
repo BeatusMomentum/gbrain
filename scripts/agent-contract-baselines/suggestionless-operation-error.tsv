@@ -123,7 +123,6 @@ src/core/search/evidence-delivery.ts	1
 src/core/shared-skills/adapter.ts	2
 src/core/shared-skills/catalog.ts	15
 src/core/shared-skills/compatibility.ts	2
-src/core/shared-skills/manifest.ts	26
 src/core/shared-skills/membership-authority.ts	1
 src/core/shared-skills/membership.ts	1
 src/core/shared-skills/migration-export.ts	25
@@ -131,7 +130,6 @@ src/core/shared-skills/migration-projection.ts	2
 src/core/shared-skills/migration.ts	8
 src/core/shared-skills/optimizer.ts	18
 src/core/shared-skills/policy.ts	16
-src/core/shared-skills/publication.ts	59
 src/core/shared-skills/retention.ts	7
 src/core/shared-skills/setup-files.ts	11
 src/core/shared-skills/setup-source-policy.ts	2
