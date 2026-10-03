@@ -23,6 +23,7 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
 import { existsSync, statSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
+import { promptYesNo } from '../core/interaction.ts';
 
 interface ReinitOpts {
   embeddingModel: string;
@@ -96,7 +97,11 @@ export async function runReinitPglite(args: string[]): Promise<void> {
         'Non-TTY environment requires --yes to confirm destruction.',
       );
     }
-    const confirmed = await promptYesNo('Wipe and reinit?');
+    // Defense in depth behind the non-TTY refusal above: a non-TTY stdin declines
+    // instead of reading. The shared prompt treats EOF as a decline and writes to
+    // stderr so stdout stays clean for --json payloads.
+    const confirmed = process.stdin.isTTY === true
+      && await promptYesNo('Wipe and reinit? (y/N): ', { output: process.stderr });
     if (!confirmed) {
       if (opts.jsonOutput) {
         console.log(JSON.stringify({ status: 'aborted', reason: 'user_declined' }));
@@ -332,32 +337,4 @@ function fail(jsonOutput: boolean, reason: string, message: string): never {
     console.error(message);
   }
   process.exit(1);
-}
-
-async function promptYesNo(question: string): Promise<boolean> {
-  // W0 fix-wave (Tier-1 #15): non-interactive stdin (CI, pipes, spawned
-  // agents) resolves to the safe default instead of hanging — this prompt
-  // had no TTY guard and no end/EOF path, so a closed stdin parked the
-  // process permanently. This command wipes the store; decline-by-default
-  // is the only safe non-interactive answer (--yes stays the escape hatch).
-  if (!process.stdin.isTTY) return false;
-  // Prompt on stderr so stdout stays clean for --json payloads.
-  process.stderr.write(`${question} (y/N): `);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stdin = process.stdin as any;
-  stdin.setEncoding?.('utf8');
-  return new Promise<boolean>((resolve) => {
-    const cleanup = () => {
-      stdin.off?.('data', onData);
-      stdin.off?.('end', onEnd);
-    };
-    const onEnd = () => { cleanup(); resolve(false); }; // EOF = decline
-    const onData = (chunk: string) => {
-      const answer = chunk.trim().toLowerCase();
-      cleanup();
-      resolve(answer === 'y' || answer === 'yes');
-    };
-    stdin.on?.('data', onData);
-    stdin.on?.('end', onEnd);
-  });
 }
