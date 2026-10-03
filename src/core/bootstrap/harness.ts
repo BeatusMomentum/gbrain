@@ -96,6 +96,7 @@ import {
   addPermissionsAllowEntry,
   claudeSettingsPath,
   committedHookEvents,
+  parseSeatFlags,
   removeClaudeHooksAt,
   removePermissionsAllowEntry,
   writeClaudeHooksAt,
@@ -160,6 +161,8 @@ export interface HarnessFlags {
   json: boolean;
   gbrainBin?: string;
   skills?: 'follow' | 'memory-only';
+  /** #4618 `--seat <label>` ('' = `--no-seat`); undefined keeps the installed seat. */
+  seat?: string;
   error?: string;
 }
 
@@ -259,6 +262,9 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   out.json = rest.includes('--json');
   const bin = value('--gbrain-bin');
   if (bin !== undefined) out.gbrainBin = bin;
+  const seat = parseSeatFlags(rest);
+  if (seat.error) out.error = out.error ?? seat.error;
+  if (seat.seat !== undefined) out.seat = seat.seat;
   // [X14] Conflicting invocations error instead of resolving by precedence.
   if (out.url !== undefined && out.port !== undefined) {
     out.error = out.error ?? 'pass --url OR --port, not both (the url wins would be a silent guess)';
@@ -1414,6 +1420,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         const env: ClaudeHookEnv = {
           ...(hookSource !== null ? { GBRAIN_SOURCE: hookSource } : {}),
           GBRAIN_HOOK_LANE: 'harness',
+          GBRAIN_SEAT: flags.seat,
         };
         const bin = flags.gbrainBin ?? d.gbrainBin;
         if (!bin) {

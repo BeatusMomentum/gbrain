@@ -77,6 +77,19 @@ export function ledgerFileName(sessionId: string): string {
   return `${safeIdComponent(sessionId)}.ledger.json`;
 }
 
+/** #4618 per-session seat sidecar (context/seat.ts owns its content). One
+ * per SESSION, not per corpus file: the session-end `.txt`, its checkpoint
+ * segments and its writeback turns all share it. */
+export const SEAT_SIDECAR_SUFFIX = '.seat.json';
+
+export function seatFileName(sessionId: string): string {
+  return `${safeIdComponent(sessionId)}${SEAT_SIDECAR_SUFFIX}`;
+}
+
+/** A seat sidecar written ahead of its corpus file is never reaped inside
+ * this window (the writer renames the corpus file within seconds). */
+const SEAT_ORPHAN_GRACE_MS = 10 * 60 * 1000;
+
 /** Receipt sidecar suffix (harvest link candidates persisted before manifest
  * publish). Lives HERE so the engine-free hook lane can GC orphaned receipts
  * without importing the engine-typed harvest module. */
@@ -475,9 +488,10 @@ export async function decideCorpusMode(
 
 /**
  * GC companion for the corpus dir (extends the hook's `.txt`-only GC): remove
- * ledgers past the retention window, and remove ORPHANED sidecars whose base
- * `.txt` is gone (previously they lived forever). Best-effort per file; never
- * throws.
+ * ledgers past the retention window, ORPHANED sidecars whose base `.txt` is
+ * gone (previously they lived forever), and a session's seat sidecar once no
+ * `.txt` of that session remains (after a grace window, so a sidecar written
+ * just ahead of its corpus file survives). Best-effort per file; never throws.
  */
 export function gcCorpusArtifacts(
   dir: string,
@@ -486,9 +500,17 @@ export function gcCorpusArtifacts(
 ): void {
   try {
     const cutoff = Date.now() - maxAgeMs;
-    for (const name of readdirSync(dir)) {
+    const names = readdirSync(dir);
+    const liveSessions = new Set(names.filter((n) => n.endsWith('.txt')).map(corpusFileSessionId));
+    for (const name of names) {
       const p = join(dir, name);
       try {
+        if (name.endsWith(SEAT_SIDECAR_SUFFIX)) {
+          if (!liveSessions.has(name.slice(0, -SEAT_SIDECAR_SUFFIX.length)) && statSync(p).mtimeMs < Date.now() - SEAT_ORPHAN_GRACE_MS) {
+            rmSync(p, { force: true });
+          }
+          continue;
+        }
         if (name.endsWith('.ledger.json')) {
           if (statSync(p).mtimeMs < cutoff) rmSync(p, { force: true });
           continue;
