@@ -37,7 +37,9 @@ import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { currentCliWriteWait } from './core/persistence/write-wait.ts';
 import { isScopeErrorCode } from './core/error-catalogue.ts';
-import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
+import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery, jsonRequested, noteRenderedErrorCode } from './core/cli-force-exit.ts';
+import { renderCliError } from './core/agent-output.ts';
+import { agentJsonGuardMode } from './cli/json-guard.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
@@ -3118,12 +3120,18 @@ if (import.meta.main) {
   installCleanupSignalHandlers();
   // #4383: CLI_ONLY payloads (console.log / bare process.stdout.write) get
   // delivery-exact serialized writes; `serve` keeps native streaming stdout.
-  if (shouldForceExitAfterMain()) installStdoutPipeDelivery();
+  if (shouldForceExitAfterMain()) installStdoutPipeDelivery(agentJsonGuardMode(process.argv.slice(2)));
   main().then(
     () => {
       if (shouldForceExitAfterMain()) flushThenExit(currentExitCode());
     },
     (e) => {
+      if (e?.code !== 'pglite_busy' && jsonRequested(process.argv.slice(2))) {
+        const r = renderCliError(e, { json: true, command: process.argv[2] ?? '', tty: false });
+        noteRenderedErrorCode(JSON.parse(r.stdout!).code);
+        void writeStdoutFinal(r.stdout!).finally(() => flushThenExit(r.exitCode));
+        return;
+      }
       if (e?.code === 'pglite_busy' && process.argv.includes('--json')) {
         console.log(JSON.stringify({ error: 'pglite_busy', retryable: true, reason: e.reason,
           next_action: 'Wait for the current command or server to close, then retry. Do not remove a live lock.' }));

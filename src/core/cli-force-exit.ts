@@ -682,10 +682,17 @@ function chainStdoutWrite(data: string | Uint8Array, encoding?: BufferEncoding):
  * (always true: the chain owns backpressure, and flushThenExit awaits it).
  */
 export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' } = {}): void {
-  void opts;
   if (stdoutInterposed) return;
-  if (process.stdout.isTTY) return;
+  // Agent contract v1 (D2 guard mode): under `--json` the guard installs even
+  // on a TTY, because the contract is "fd 1 carries exactly the document".
+  if (process.stdout.isTTY && !opts.json) return;
   stdoutInterposed = true;
+  jsonGuardMode = opts.json ?? null;
+  const toStderr = (data: string | Uint8Array, encoding?: BufferEncoding): Promise<void> => {
+    try { process.stderr.write(typeof data === 'string' ? Buffer.from(data, encoding ?? 'utf8') : data); } catch { /* best effort */ }
+    return Promise.resolve();
+  };
+  const sink = jsonGuardMode ? toStderr : chainStdoutWrite;
   const interposed = function (
     chunk: string | Uint8Array,
     encodingOrCb?: BufferEncoding | ((err?: Error | null) => void),
@@ -699,7 +706,7 @@ export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' }
       encoding = encodingOrCb;
       if (typeof maybeCb === 'function') cb = maybeCb;
     }
-    const settled = chainStdoutWrite(chunk, encoding);
+    const settled = sink(chunk, encoding);
     if (cb) void settled.then(() => cb(null));
     return true;
   };
@@ -714,8 +721,11 @@ export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' }
   // resolveStdoutDrainDeadlineMs, same policy as the async drain), then call
   // the real exit. flushThenExit is unaffected — it drains via the pump
   // before it ever reaches exit, so the patched drain is a no-op there.
+  // Guard mode: a non-zero exit that wrote no final document gets the
+  // fallback document (A0 golden json-fallback.json) so fd 1 always parses.
   const realExit = process.exit.bind(process);
   const patchedExit = ((code?: number | string | null): never => {
+    writeJsonFallbackIfMissing(typeof code === 'number' ? code : Number(code ?? process.exitCode ?? 0) || 0);
     if (stdoutTailPending > 0) drainStdoutQueueSync();
     return realExit(code as number);
   }) as typeof process.exit;
@@ -726,13 +736,58 @@ export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' }
   // that process.exit discards — the `orphans --json` truncation). Formatting
   // parity comes from util.formatWithOptions (what Node's Console uses);
   // colors stay off — this path is non-TTY by construction. console.error /
-  // console.warn are stderr-bound and stay native.
+  // console.warn are stderr-bound and stay native. Guard mode sends them to
+  // stderr: only writeStdoutFinal / writeNdjsonLine reach fd 1.
   const consoleToChain = (...args: unknown[]): void => {
-    void chainStdoutWrite(formatWithOptions({ colors: false }, ...args) + '\n');
+    void sink(formatWithOptions({ colors: false }, ...args) + '\n');
   };
   console.log = consoleToChain;
   console.info = consoleToChain;
   console.debug = consoleToChain;
+}
+
+let jsonGuardMode: 'document' | 'ndjson' | null = null;
+let jsonDocumentWritten = false;
+let lastRenderedErrorCode: string | undefined;
+
+/** renderCliError's callers record the code they rendered so the fallback document can carry it. */
+export function noteRenderedErrorCode(code: string): void {
+  lastRenderedErrorCode = code;
+}
+
+/** Test seam. */
+export function _resetJsonGuardForTests(): void {
+  jsonGuardMode = null;
+  jsonDocumentWritten = false;
+  lastRenderedErrorCode = undefined;
+}
+
+function writeJsonFallbackIfMissing(exitCode: number): void {
+  if (!jsonGuardMode || jsonDocumentWritten) return;
+  if (exitCode === 0) {
+    // Exit 0 with no document is a bug in the command (D5 fails it); log it, never invent a result.
+    recordJsonDocumentMissing();
+    return;
+  }
+  jsonDocumentWritten = true;
+  const doc = {
+    ...(jsonGuardMode === 'ndjson' ? { status: 'error' } : {}),
+    error: 'command_failed',
+    code: lastRenderedErrorCode ?? 'command_failed',
+    message: `The command exited with status ${exitCode} without writing its JSON result.`,
+    suggestion: 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
+    exit_code: exitCode,
+    contract_version: 1,
+  };
+  const text = `${JSON.stringify(doc, null, jsonGuardMode === 'ndjson' ? undefined : 2)}\n`;
+  void chainStdoutWrite(text).catch(() => { /* fd 1 gone */ });
+}
+
+let jsonMissingHook: (() => void) | null = null;
+/** E11 seam, set by the CLI so this module stays free of config imports. */
+export function setJsonDocumentMissingHook(hook: () => void): void { jsonMissingHook = hook; }
+function recordJsonDocumentMissing(): void {
+  try { jsonMissingHook?.(); } catch { /* fail-open */ }
 }
 
 /**
@@ -754,6 +809,7 @@ export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' }
  * wrapper has been initialized (see the #4383 block comment above).
  */
 export async function writeStdoutFinal(output: string): Promise<void> {
+  jsonDocumentWritten = true;
   await chainStdoutWrite(output);
 }
 
@@ -771,6 +827,8 @@ export function jsonRequested(argv: readonly string[]): boolean {
 
 /** One NDJSON line on fd 1 (the only stdout path for `json: 'ndjson'` commands under the guard). */
 export async function writeNdjsonLine(line: unknown): Promise<void> {
+  const status = (line as { status?: unknown } | null)?.status;
+  if (status === 'error' || status === 'done' || status === 'ok') jsonDocumentWritten = true;
   await chainStdoutWrite(`${JSON.stringify(line)}\n`);
 }
 
@@ -780,7 +838,10 @@ export async function writeNdjsonLine(line: unknown): Promise<void> {
  * otherwise stdio is inherited. The one sanctioned `stdio: 'inherit'` site.
  */
 export function spawnCliChild(cmd: string, args: readonly string[], opts: SpawnOptions = {}): ChildProcess {
-  return spawn(cmd, [...args], { stdio: 'inherit', ...opts });
+  if (!jsonGuardMode) return spawn(cmd, [...args], { stdio: 'inherit', ...opts });
+  const child = spawn(cmd, [...args], { ...opts, stdio: ['inherit', 'pipe', 'inherit'] });
+  child.stdout?.on('data', (chunk: Buffer) => { try { process.stderr.write(chunk); } catch { /* best effort */ } });
+  return child;
 }
 
 export interface FinishCliTeardownOpts {

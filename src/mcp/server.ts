@@ -3,7 +3,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations } from '../core/operations.ts';
+import { operations, opError, OperationError } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
@@ -484,10 +484,10 @@ export async function handleToolCall(
   opts?: { sourceId?: string; localFederatedSourceIds?: string[]; writeWaitMs?: number },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
-  if (!op) throw new Error(`Unknown tool: ${tool}`);
+  if (!op) throw opError('unknown_tool', `Unknown tool: ${tool}`, 'Run `gbrain --tools-json` to list the tool names.');
 
   const validationError = validateParams(op, params);
-  if (validationError) throw new Error(validationError);
+  if (validationError) throw new OperationError('invalid_params', validationError, `Read the ${tool} schema in \`gbrain --tools-json\` (required params and types).`);
 
   const ctx = buildOperationContext(engine, params, {
     remote: false,

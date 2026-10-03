@@ -2,12 +2,15 @@ import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceWithTier, localFederatedSourceIds } from '../core/source-resolver.ts';
 import { bigintToStringReplacer } from '../core/utils.ts';
-import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { loadConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
+import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
+import { exitCodeForCode } from '../core/error-catalogue.ts';
+import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
+import { operations } from '../core/operations.ts';
 
 /**
  * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
@@ -99,6 +102,15 @@ export async function runCall(
   await out(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
     if (await reportPersistenceCliError(error, true, out)) return;
-    throw error;
+    // Agent contract v1 (A1): `gbrain call` is a JSON surface, so a failure is
+    // the same envelope an MCP caller gets, on stdout, with the registry's exit.
+    const op = operations.find(o => o.name === tool);
+    const envelope = toAgentError(error, {
+      transport: 'cli', op: tool, mutating: op?.mutating === true, idempotent: op?.idempotent === true,
+      outcome: op?.mutating ? 'unknown' : 'failed', render: cliRenderContext(),
+    });
+    await out(JSON.stringify(envelope, null, 2) + '\n');
+    console.error(`Error [${envelope.code}]: ${envelope.message}`);
+    setCliExitVerdict(exitCodeForCode(envelope.code));
   }
 }
