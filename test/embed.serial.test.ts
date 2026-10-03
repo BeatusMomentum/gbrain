@@ -1080,6 +1080,7 @@ describe('embed --stale time-budget stop is loud (large-brain ceiling)', () => {
     try {
       await run(budgetEngine(), ['--stale', '--batch-size', '1'], { SELECTED_CONFIG_BY_ENGINE: new Map() } as never);
       expect(currentExitCode()).toBe(BUDGET_STOP_EXIT_CODE);
+      expect(BUDGET_STOP_EXIT_CODE).toBe(11);
     } finally {
       console.log = log;
       _resetCliExitVerdictForTests();
