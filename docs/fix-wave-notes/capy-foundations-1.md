@@ -78,3 +78,12 @@ as statistics (from #5932's 77dcf414, in 902f462e).
   run locally because the Ubicloud gate does not include it.
 - Enforced scale tier at 10k PGLite pages: 5 of 5 runs pass every enforced gate.
 - gstack credential pre-push guard on every push: no HIGH findings.
+
+Wave security scan (`bun run wave-security-scan origin/capy/fix-wave-8..HEAD`,
+before the master merge): gitleaks 0 findings with the test/skills allowlist
+stripped, no `admin/dist` change, no dependency change. The one obfuscation
+alarm is benign: `test/write-attribution-legacy.test.ts` decodes a base64 PNG
+fixture. The one "new" outbound URL is an existing link
+(oven-sh/bun#30305) on a rewritten key-files line. New spawns are the scale
+harness's own `gbrain import` and cold-query children and `gh` in
+`scripts/scale/trend.ts`.
