@@ -24,11 +24,7 @@ export interface DeferredAnnIndex { name: string; def: string }
 
 export const ANN_BUILD_MESSAGE = 'building vector index after re-embed (search runs unindexed until done)';
 
-function safeAnnDef(tables: readonly string[]): RegExp {
-  const names = tables.filter(t => /^[a-z_][a-z0-9_]*$/.test(t)).join('|');
-  return new RegExp(`^CREATE INDEX (?:IF NOT EXISTS )?([a-z_][a-z0-9_]{0,62}) ON (?:public\\.)?(?:${names}) USING hnsw \\(embedding (?:vector|halfvec)_(?:cosine|l2|ip)_ops\\)`
-    + `(?: WITH \\([a-z_]+ ?= ?'?[0-9]+'?(?:, ?[a-z_]+ ?= ?'?[0-9]+'?)*\\))?(?: WHERE [A-Za-z0-9_ ().,:<>=!'-]+)?$`);
-}
+const ANN_DEF = /^CREATE INDEX (?:IF NOT EXISTS )?([a-z_][a-z0-9_]{0,62}) ON (?:public\.)?([a-z_][a-z0-9_]*) USING hnsw \(embedding (?:vector|halfvec)_(?:cosine|l2|ip)_ops\)(?: WITH \([a-z_]+ ?= ?'?[0-9]+'?(?:, ?[a-z_]+ ?= ?'?[0-9]+'?)*\))?(?: WHERE [A-Za-z0-9_ ().,:<>=!'-]+)?$/;
 
 /**
  * Only HNSW definitions over the `embedding` column of the given tables are
@@ -37,11 +33,11 @@ function safeAnnDef(tables: readonly string[]): RegExp {
  */
 export function parseDeferredAnnIndexes(raw: unknown, tables: readonly string[] = ['content_chunks']): DeferredAnnIndex[] {
   if (!Array.isArray(raw)) return [];
-  const pattern = safeAnnDef(tables);
   return raw.flatMap((entry): DeferredAnnIndex[] => {
     if (!entry || typeof entry.name !== 'string' || typeof entry.def !== 'string' || entry.def.includes(';')) return [];
     const def = entry.def.replace(/\s+/g, ' ').trim();
-    return pattern.exec(def)?.[1] === entry.name ? [{ name: entry.name, def }] : [];
+    const match = ANN_DEF.exec(def);
+    return match && match[1] === entry.name && tables.includes(match[2]!) ? [{ name: entry.name, def }] : [];
   });
 }
 

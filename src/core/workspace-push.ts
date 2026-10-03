@@ -502,6 +502,7 @@ export function readPushStatusForRoot(root: string): PushStatusEntry | null {
  * is never reported as this workspace's push state.
  */
 export function pushStatusForWorkspace(entries: readonly PushStatusEntry[], ws: string): PushStatusEntry | null {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- comparison only: normalizes the operator's own push-status repoRoot and workspace path to compare them; nothing is read or written at the resolved path
   const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
   const target = real(ws);
   const own = entries.find((e) => e.repoRoot !== undefined && real(e.repoRoot) === target);
