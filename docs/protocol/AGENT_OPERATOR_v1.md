@@ -627,9 +627,11 @@ command table marks `routes_source`). gbrain appends them when it renders the
 fix, before any bare `--`, and keeps flags the fix already carries. So you can
 run the fix later from another directory, or under a different `GBRAIN_BRAIN_ID`,
 `GBRAIN_SOURCE`, `.gbrain-mount` or `.gbrain-source`, and it still acts on the
-intended brain. Over HTTP the ids stay (they are not sensitive); paths are
-stripped as everywhere else. A thin client pins nothing: it has no local mounts
-and its remote scopes the source.
+intended brain. Over HTTP only the source id is pinned, and only where a thin
+client can send it (an op with a `source_id` scope, or a command the brain
+host's operator runs): a mount id is host topology, and a thin client refuses
+`--brain`. Paths are stripped as everywhere else. A thin client pins nothing of
+its own: it has no local mounts and its remote scopes the source.
 
 `next` is computed when gbrain renders the fix for your connection: from the
 effects, the actor, the transport, which tools you can call and the user's

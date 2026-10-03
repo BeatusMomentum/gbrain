@@ -227,7 +227,7 @@ function renderVerify(v: Action['verify'], ctx: RenderContext): RenderedAction['
   if (!v) return undefined;
   const mcp = v.mcp && ctx.isCallable(v.mcp.tool) ? v.mcp : undefined;
   if (!v.argv && !mcp) return undefined;
-  return { ...(v.argv ? { argv: pinRouting(v.argv, ctx.routing) } : {}), ...(mcp ? { mcp } : {}) };
+  return { ...(v.argv ? { argv: pinRouting(v.argv, ctx.routing, { remote: ctx.transport === 'http' }) } : {}), ...(mcp ? { mcp } : {}) };
 }
 
 /** Render an Action for the caller's surface. Key order is part of the v1 goldens. */
@@ -242,7 +242,8 @@ export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
   const effective: Action = { ...a, mcp, actor };
   const userMessage = a.user_message ?? (relay ? `Call the ${relay.tool} tool over MCP with ${JSON.stringify(relay.arguments)}; this command line cannot call it.` : undefined);
   const verify = renderVerify(a.verify, ctx);
-  const argv = a.argv ? pinRouting(a.argv, ctx.routing) : undefined;
+  const remote = { remote: ctx.transport === 'http' };
+  const argv = a.argv ? pinRouting(a.argv, ctx.routing, remote) : undefined;
   const out: RenderedAction = {
     ...(argv ? { argv, command: shellQuote(argv) } : {}),
     ...(mcp ? { mcp } : {}),
@@ -256,7 +257,7 @@ export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
     requires_exclusive: a.requires_exclusive,
     ...(a.inputs?.length ? { inputs: a.inputs } : {}),
     ...(a.plan_hash ? { plan_hash: a.plan_hash } : {}),
-    ...(a.preview_argv ? { preview_argv: pinRouting(a.preview_argv, ctx.routing) } : {}),
+    ...(a.preview_argv ? { preview_argv: pinRouting(a.preview_argv, ctx.routing, remote) } : {}),
     ...(a.then ? { then: renderAction(a.then, ctx) } : {}),
   };
   return out;

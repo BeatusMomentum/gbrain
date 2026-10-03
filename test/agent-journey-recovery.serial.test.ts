@@ -279,12 +279,13 @@ describe('H1b: exclusive fixes while a live stdio serve holds the lock', () => {
   }, 120_000);
   afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
-  const exclusive: Array<{ label: string; args: () => string[]; done: (r: GbResult) => void }> = [
-    { label: 'import --no-embed', args: () => ['import', writeNotes(join(home, 'notes'), 2), '--no-embed', '--json'],
+  // `pin`: the A1 routing flags the rendered fix appends (apply-migrations always acts on the host config, so none).
+  const exclusive: Array<{ label: string; args: () => string[]; pin: string[]; done: (r: GbResult) => void }> = [
+    { label: 'import --no-embed', args: () => ['import', writeNotes(join(home, 'notes'), 2), '--no-embed', '--json'], pin: ['--brain', 'host'],
       done: r => expect(oneDocument(r, 'import').imported).toBe(2) },
-    { label: 'doctor --remediate (approved)', args: () => ['doctor', '--remediate', '--yes', '--target-score', '50', '--json'],
+    { label: 'doctor --remediate (approved)', args: () => ['doctor', '--remediate', '--yes', '--target-score', '50', '--json'], pin: ['--brain', 'host'],
       done: r => expect(oneDocument(r, 'doctor --remediate').exit_status).toBe(0) },
-    { label: 'apply-migrations', args: () => ['apply-migrations', '--yes', '--no-autopilot-install', '--json'],
+    { label: 'apply-migrations', args: () => ['apply-migrations', '--yes', '--no-autopilot-install', '--json'], pin: [],
       done: r => expect(oneDocument(r, 'apply-migrations').status).not.toBe('failed') },
   ];
 
@@ -302,7 +303,7 @@ describe('H1b: exclusive fixes while a live stdio serve holds the lock', () => {
         expect(fix.argv).toEqual(['kill', String(owner.pid)]);
         expect(fix.actor).toBe('user');
         expect(fix.next).toBe('tell_user_to_run');
-        expect(fix.then?.argv).toEqual(['gbrain', ...args]);
+        expect(fix.then?.argv).toEqual(['gbrain', ...args, ...row.pin]);
         expect(fix.then?.next).toBe('run');
         // Step one: the user stops the owning session. Step two: the agent runs `then` as given.
         await owner.close();
@@ -323,7 +324,7 @@ describe('H1b: exclusive fixes while a live stdio serve holds the lock', () => {
       expect((report.checks as Check[]).filter(c => c.status === 'fail').map(c => c.name)).toEqual([]);
       const connection = (report.checks as Check[]).find(c => c.name === 'connection')!;
       expect(connection.fix?.argv).toEqual(['kill', String(owner.pid)]);
-      expect(connection.fix?.then?.argv).toEqual(['gbrain', 'doctor', '--json']);
+      expect(connection.fix?.then?.argv).toEqual(['gbrain', 'doctor', '--json', '--brain', 'host']);
       expect((report.checks as Check[]).filter(c => c.status === 'warn' && !c.fix?.argv).map(c => c.name)).toEqual([]);
     } finally { await owner.close(); }
   }, 300_000);

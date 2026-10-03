@@ -96,11 +96,16 @@ describe('render-time pin', () => {
     expect(env.suggestion).toContain('gbrain get a --brain teambrain --source wiki');
   });
 
-  test('HTTP keeps the target ids (non-sensitive) and still strips paths', () => {
+  test('HTTP keeps only the source id (no mount topology), where a thin client can send it, and still strips paths', () => {
     const http: RenderContext = { ...cli, transport: 'http' };
     const env = toAgentError(opError('invalid_params', 'bad', 'Fix it.', { fix: read(['gbrain', 'import', '/home/alice-example/notes']) }), { transport: 'http', render: http });
-    expect(env.fix?.argv).toEqual(['gbrain', 'import', '<path>', '--brain', 'teambrain', '--source', 'wiki']);
+    expect(env.fix?.argv).toEqual(['gbrain', 'import', '<path>', '--source', 'wiki']);
     expect(JSON.stringify(env)).not.toContain('/home/alice-example');
+    expect(JSON.stringify(env)).not.toContain('teambrain');
+    expect(renderAction(read(['gbrain', 'get', 'a']), http).argv).toEqual(['gbrain', 'get', 'a', '--source', 'wiki']);
+    // write-request has no source_id scope: a thin client would refuse an explicit --source there.
+    expect(renderAction(read(['gbrain', 'write-request', '--', 'x']), http).argv).toEqual(['gbrain', 'write-request', '--', 'x']);
+    expect(renderAction(read(['gbrain', 'doctor', '--json']), http).argv).toEqual(['gbrain', 'doctor', '--json']);
   });
 
   test('cliRenderContext reads the installed CLI routing; the first resolved source wins', () => {

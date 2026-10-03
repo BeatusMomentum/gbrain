@@ -22,7 +22,8 @@
  * that renders a fix); the op half is registered by src/core/operations.ts.
  *
  * Flags already present are kept as written; the pin goes before a bare `--`
- * so it can never land in the positional lane.
+ * so it can never land in the positional lane. Over HTTP only the source id is
+ * pinned (a mount id is host topology; a thin client refuses `--brain`).
  */
 import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS } from './cli-flag-registry.generated.ts';
 import { ALL_SOURCES, SOURCE_ID_RE } from './source-id.ts';
@@ -33,7 +34,7 @@ const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const pinnableSource = (s: string) => SOURCE_ID_RE.test(s) || s === ALL_SOURCES;
 const SOURCE_SELECTORS = ['--source', '--source-id', '--all-sources', '--sources'];
 
-const opCommands = new Map<string, { ownsSource: boolean }>();
+const opCommands = new Map<string, { ownsSource: boolean; scopesSourceId: boolean }>();
 
 /**
  * Shared-op CLI names (primary + aliases, hidden excluded): every op routes the brain, and `--source`
@@ -42,27 +43,35 @@ const opCommands = new Map<string, { ownsSource: boolean }>();
 export function registerOpRoutes(ops: Iterable<{ params: Record<string, unknown>; cliHints?: { name?: string; aliases?: readonly string[]; hidden?: boolean } }>): void {
   for (const op of ops) {
     if (!op.cliHints?.name || op.cliHints.hidden) continue;
-    for (const name of [op.cliHints.name, ...(op.cliHints.aliases ?? [])]) opCommands.set(name, { ownsSource: 'source' in op.params });
+    for (const name of [op.cliHints.name, ...(op.cliHints.aliases ?? [])]) {
+      opCommands.set(name, { ownsSource: 'source' in op.params, scopesSourceId: 'source_id' in op.params });
+    }
   }
 }
 
-/** The routing flags a command accepts AND routes through (see the module comment). */
-export function routingFlagsFor(command: string): { brain: boolean; source: boolean } {
+/**
+ * The routing flags a command accepts AND routes through (see the module comment).
+ * `remote` (an HTTP render): a mount id is host topology, so `--brain` is never
+ * pinned there, and `--source` only where a thin client can send it (an op with a
+ * `source_id` scope, or a CLI command the brain host's operator runs).
+ */
+export function routingFlagsFor(command: string, opts: { remote?: boolean } = {}): { brain: boolean; source: boolean } {
   const accepted = CLI_FLAG_REGISTRY[command];
   if (accepted) {
     const routed = CLI_ROUTING_FLAGS[command] ?? [];
-    return { brain: accepted.includes('--brain') && routed.includes('--brain'), source: accepted.includes('--source') && routed.includes('--source') };
+    return { brain: !opts.remote && accepted.includes('--brain') && routed.includes('--brain'), source: accepted.includes('--source') && routed.includes('--source') };
   }
   const op = opCommands.get(command);
-  return op ? { brain: true, source: !op.ownsSource } : { brain: false, source: false };
+  if (!op) return { brain: false, source: false };
+  return { brain: !opts.remote, source: !op.ownsSource && (!opts.remote || op.scopesSourceId) };
 }
 
 const hasFlag = (head: readonly string[], flag: string) => head.some(a => a === flag || a.startsWith(`${flag}=`));
 
 /** Append the missing routing flags to one gbrain argv (before a bare `--`). Non-gbrain argv pass through. */
-export function pinRouting(argv: readonly string[], routing: FixRouting | undefined): string[] {
+export function pinRouting(argv: readonly string[], routing: FixRouting | undefined, opts: { remote?: boolean } = {}): string[] {
   if (!routing || argv[0] !== 'gbrain' || argv.length < 2) return [...argv];
-  const flags = routingFlagsFor(argv[1]!);
+  const flags = routingFlagsFor(argv[1]!, opts);
   const end = argv.indexOf('--');
   const head = end === -1 ? argv : argv.slice(0, end);
   const add: string[] = [];
