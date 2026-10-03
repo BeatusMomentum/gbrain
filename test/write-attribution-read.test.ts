@@ -60,6 +60,30 @@ function remote(sourceId: string, scopes: string[]): OperationContext {
 
 const ATTRIBUTION_KEY = /write|archived|principal|written_by|archived_by/;
 
+/**
+ * Make a source's rows look written before attribution existed. With lane
+ * F1a's stamping triggers present, journaled writes are attributed at write
+ * time and attribution is immutable once set, so only a trigger-bypassing
+ * session (test setup only) can recreate pre-attribution rows.
+ */
+async function rawAttributionWrite(sql: string, params: unknown[]) {
+  await engine.transaction(async tx => {
+    await tx.executeRaw('SET LOCAL session_replication_role = replica');
+    await tx.executeRaw(sql, params);
+  });
+}
+
+async function asPreAttributionRows(sourceId: string) {
+  await rawAttributionWrite(`UPDATE pages SET revision_write_request_id=NULL, revision_principal_kind=NULL, revision_principal_id=NULL
+    WHERE source_id=$1`, [sourceId]);
+  await rawAttributionWrite(`UPDATE page_versions SET write_request_id=NULL, write_principal_kind=NULL, write_principal_id=NULL,
+      archived_write_request_id=NULL, archived_principal_kind=NULL, archived_principal_id=NULL
+    WHERE page_id IN (SELECT id FROM pages WHERE source_id=$1)`, [sourceId]);
+  await rawAttributionWrite(`UPDATE facts SET write_request_id=NULL, write_principal_kind=NULL, write_principal_id=NULL,
+      last_write_request_id=NULL, last_write_principal_kind=NULL, last_write_principal_id=NULL, last_written_at=NULL
+    WHERE source_id=$1`, [sourceId]);
+}
+
 async function seedNames() {
   await engine.executeRaw(`INSERT INTO oauth_clients(client_id, client_name) VALUES('client-example', 'agent-example') ON CONFLICT DO NOTHING`);
   const [token] = await engine.executeRaw<{ id: string }>(
@@ -222,6 +246,7 @@ describe('attribution-backfill (spec 2.6, test 13)', () => {
     const revisionOf = async (slug: string) => (await engine.executeRaw<Record<string, string | null>>(
       'SELECT revision_write_request_id::text AS req, revision_principal_kind AS kind FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0];
 
+    await asPreAttributionRows(sourceId);
     const scope = await resolveRepairScope(engine, sourceId);
     const preview = await runRepair(ctx, attributionBackfillRepair, scope, { apply: false });
     expect(preview.mode).toBe('dry_run');
@@ -249,7 +274,7 @@ describe('attribution-backfill (spec 2.6, test 13)', () => {
     expect(again).toMatchObject({ affected: 0, applied: 0, complete: true, resumed_from: null });
     expect(await alpha()).toEqual({ req: r2.id, kind: 'local_cli', pid: r2.principal_id });
 
-    await engine.executeRaw(`UPDATE pages SET revision_write_request_id=NULL, revision_principal_kind='oauth_client', revision_principal_id='client-example'
+    await rawAttributionWrite(`UPDATE pages SET revision_write_request_id=NULL, revision_principal_kind='oauth_client', revision_principal_id='client-example'
       WHERE source_id=$1 AND slug='notes/alpha'`, [sourceId]);
     await runRepair(ctx, attributionBackfillRepair, scope, { apply: true });
     expect(await alpha()).toEqual({ req: null, kind: 'oauth_client', pid: 'client-example' });
