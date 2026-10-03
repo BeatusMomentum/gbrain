@@ -50,9 +50,12 @@ the same registry.
 ```bash
 gbrain init --pglite                                      # 2-second local brain
 claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs     # the memory-verb surface
-gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me
-gbrain recall people/me                                   # …now ask your agent in a NEW session
+gbrain remember "gbrain install check" --provenance install-check
+gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
+
+The marker is a test value, never a fact about the user; ask the agent to
+`forget` it once the new session recalled it.
 
 > Memories agents save are readable by every agent connected to this brain;
 > pass `visibility: "private"` for local-CLI-only facts.

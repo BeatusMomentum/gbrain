@@ -129,9 +129,10 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Drive the brain to a target health score:** preview, then agree.
   `gbrain doctor --remediation-plan --json` previews job steps and the
   PROTECTED repair steps (each marked "requires user agreement", with its
-  exact command); after the user agrees,
-  `gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5`
-  runs the repairs (even when the score target is unreachable) and walks the
+  exact command and the `plan_hash` the approval binds); after the user agrees,
+  `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --target-score 90 --max-usd 5`
+  (`<plan_hash>` from that `--remediation-plan --json` output; a changed plan
+  refuses with `preview_changed`, so preview and ask again) runs the repairs (even when the score target is unreachable) and walks the
   dependency-ordered job plan, re-checking score between steps. The cap is
   cumulative across `--resume`; a paid step that would exceed it is not
   started while free steps still run. Without `--include-repairs`, repair

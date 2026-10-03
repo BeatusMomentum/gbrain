@@ -56,7 +56,7 @@ PGLite brain's single-writer lock. Every step is reported as a named check
 | Step | What happens |
 | --- | --- |
 | `plan` | Resolves options; detects platform, execution environment and engine kind (PGLite vs Postgres); prints what will be installed or changed. A host with **no brain config** (no `gbrain init` yet, or an unreadable config) is refused here with `no_brain_config` — a service there would only crash-loop — unless you pass `--no-service` to publish a server you run yourself (`--dry-run` still prints the plan, with the refusal marked, and exits 0). On a PGLite brain it also reads the lock file: a live process that is not gbrain's own running service adds a `Lock` line and a `pglite_lock` **warning** (the service cannot start until that process exits — stop it, or move to Postgres); the run proceeds. `--no-tailscale` while the receipt says the brain is published on the tailnet (it records a MagicDNS name) is refused with `tailscale_receipt_present` — rewriting the receipt to loopback would leave the live Serve/Funnel mapping unfindable; run `gbrain mcp expose --remove --yes` first, or drop the flag. Then it probes `127.0.0.1:<port>`: **anything listening there** — a TCP connect that is accepted (a non-HTTP service too) or an HTTP answer of any status on `/health` (a 404 or 500 counts — the port is occupied) — with no receipt claiming that port stops the run with `foreign_listener` ("Something already answers on 127.0.0.1:<port> and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted `gbrain mcp expose`, run `gbrain mcp expose --remove --yes` first.") **before** anything is published. `--dry-run` stops here. |
-| `consent` | Installing Tailscale, running `tailscale up`, writing the serve/funnel config and creating a user service change system state. Interactive: one y/N prompt; declining is `pending` / exit 2 with "Nothing changed. Re-run with --yes to confirm." Non-interactive without `--yes`: prints the plan plus "pass --yes to confirm" and exits 2. |
+| `consent` | Installing Tailscale, running `tailscale up`, writing the serve/funnel config and creating a user service change system state (effects `persistent_install`, plus `egress` unless `--no-tailscale`). Interactive: one y/N prompt; declining is `pending` / exit 2 with "Nothing changed: the confirmation was declined." Non-interactive without `--yes` (no terminal, `CI`, or an agent process): prints the plan and an `[AGENT]` block with the words to ask the user, and exits 2; under `--json` the `pending` document also carries the consent fields (`code: confirmation_required`, `effects`, `user_message`, `fix` with `next: ask_user`). |
 | `tailscale.binary` | Finds `tailscale` on PATH or in the usual macOS/Homebrew/Linux locations. Missing: macOS installs `brew install --cask tailscale-app`; Linux runs the official `curl -fsSL https://tailscale.com/install.sh \| sh` installer (it prompts for sudo itself). `--no-install` prints the plan and exits 1 instead. Other platforms: exit 1 with https://tailscale.com/download. |
 | `tailscale.login` | Reads `tailscale status --json`. Not logged in: Linux runs `sudo tailscale set --operator=$USER` first (so you can run `serve` without root afterwards; a failure is noted, not fatal) and then a flagless `sudo tailscale up`; macOS runs the app CLI's `tailscale up` (after a fresh `brew` install it opens the app and gives it a moment first). Linux puts `sudo` in front of the binary **only when it is a system install** (`/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, or a symlink resolving there); a `tailscale` found elsewhere on `PATH` (say `~/.local/bin`) is never run as root — the step stops with `tailscale_login_manual` (exit 2) and, if you trust that binary, asks you to run `sudo <that path> set --operator=$USER && sudo <that path> up` yourself (the full path, because a binary outside sudo's `secure_path` is exactly this case), then re-run. Shows the login URL. Waits up to five minutes; still not running: exit 2 (`tailscale_login_pending`) with the exact re-run command. |
 | `tailscale.identity` | Takes your MagicDNS name → `https://your-machine.your-tailnet.ts.net`, then pre-checks the tailnet features `serve`/`funnel` need — the Tailscale CLI does not fail when they are missing, it prints an enablement URL and waits for you interactively, so `expose` never starts it blind. `CertDomains` empty (HTTPS certificates not enabled) → `pending`, exit 2, reason `tailscale_https_not_enabled`, with https://login.tailscale.com/admin/dns and the re-run command. `--funnel` on a node without the Funnel capability → `pending`, exit 2, reason `tailscale_funnel_not_enabled`, with https://login.tailscale.com/admin/acls and the [Funnel docs](https://tailscale.com/kb/1223/funnel). In both cases nothing has been published yet. |
@@ -432,7 +432,7 @@ check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 | `tailscale_login_manual` (exit 2) — "tailscale at <path> is not a system install, so gbrain will not run it with sudo" | The `tailscale` on your `PATH` lives outside the system install locations, and gbrain never hands root to a user-writable binary. If you trust that binary, sign in yourself with the printed command — `sudo <that path> set --operator=$USER && sudo <that path> up`, the full path because sudo's `secure_path` would not find it — then re-run the printed command. | user | none | `gbrain mcp expose --status --json` |
 | `tailscale_receipt_present` (exit 1, `plan` fails) — "This brain is already published on your tailnet at <url>" | You passed `--no-tailscale` while the receipt records a live Serve/Funnel mapping. Run `gbrain mcp expose --remove --yes` first, or re-run without `--no-tailscale`. | agent, after the user agrees | none | `gbrain mcp expose --status --json` |
 | `tailscale_daemon_not_running` — "failed to connect to local Tailscale service" (exit 2 from the login step, nothing published; exit 1 when a `serve status` read or the publish itself is classified this way) | macOS: `open -a Tailscale`. Linux: `sudo systemctl enable --now tailscaled`. Then re-run. | user | none | `gbrain mcp expose --status --json` |
-| `confirmation_required` / `declined` (exit 2, `consent` pending) | Not a TTY without `--yes`, or you answered no at the prompt. Nothing changed; pass `--yes` once the printed plan is what you want. | agent, after the user agrees | `persistent_install`; `egress` with `--funnel` | `gbrain mcp expose --status --json` |
+| `confirmation_required` / `declined` (exit 2, `consent` pending) | Not a TTY without `--yes`, or you answered no at the prompt. Nothing changed; relay `user_message` and run `fix.command` (it adds `--yes`) once the user agrees to the printed plan. | agent, after the user agrees | `persistent_install`; `egress` unless `--no-tailscale` | `gbrain mcp expose --status --json` |
 | `invalid_arguments` (exit 1) | An unknown, duplicate, conflicting or malformed flag; the message names it. `gbrain mcp expose --help`. | agent | none | `gbrain mcp expose --help` |
 | `tailscale_missing` (exit 1, `--no-install`) / `tailscale_unsupported_platform` (exit 1) / `tailscale_install_failed` (exit 1) | Tailscale is not installed and `expose` would not (or could not) install it: run the printed install command, or install from https://tailscale.com/download, sign in, then re-run. | user | `persistent_install` (installs Tailscale) | `gbrain mcp expose --status --json` |
 | `tailscale_no_dns_name` (exit 1, `tailscale.identity` fails) — the node has no MagicDNS name | Enable **MagicDNS** and **HTTPS Certificates** at https://login.tailscale.com/admin/dns, then re-run. Nothing was published. | user | none | `gbrain mcp expose --status --json` |
@@ -446,7 +446,7 @@ check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 | Another device cannot resolve `your-machine.your-tailnet.ts.net` | Resolution needs **MagicDNS** on the tailnet (https://login.tailscale.com/admin/dns) and "Use Tailscale DNS settings" turned on in that device's Tailscale client. Reaching the name over HTTPS additionally needs the tailnet's **HTTPS Certificates** toggle on the same page (the `tailscale_https_not_enabled` pre-check catches that on the host). | user | none | the other device resolves the name |
 | Service not starting (`--status` reports the service stopped) | Read `~/.gbrain/serve/serve.err`. Typical causes: `gbrain` not on `PATH` for a login-less shell (the wrapper falls back to `type -P gbrain`; install into `~/.bun/bin` or reinstall), a key missing from `~/.gbrain/env`, or the port already taken. `launchctl print gui/$(id -u)/com.gbrain.serve` / `systemctl --user status gbrain-serve.service` show the supervisor's view. | brain host | none | `gbrain mcp expose --status --json` |
 | `foreign_listener` — "Something already answers on 127.0.0.1:<port> and no expose receipt claims it. Stop it, pick another --port, or pass --no-service to only publish it. If this is a gbrain server left behind by an interrupted `gbrain mcp expose`, run `gbrain mcp expose --remove --yes` first." | **Anything** listening on `127.0.0.1:<port>` counts as occupied — an accepted TCP connect (a database, a non-HTTP service) as much as a 404 or 500 on `/health` — and no receipt claims that port. Refused during `plan`, before anything is published. Stop it, choose another `--port`, or pass `--no-service` to only publish the server you already run. A gbrain server left behind by an interrupted run is cleaned up by `gbrain mcp expose --remove --yes` (receipt-less recovery, see [`--remove`](#--remove)). | user | none | `gbrain mcp expose --status --json` |
-| `no_brain_config` (exit 1, `plan` fails) — "No brain is configured on this host (gbrain init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself." | This host has no `gbrain` config (or it cannot be read), so `gbrain serve` would have nothing to open and the supervisor would restart it forever. Run `gbrain init` on this host first, then re-run; or pass `--no-service` to only publish a server you start yourself. `--dry-run` still shows the plan. | agent, after the user agrees | none | `gbrain doctor --json` |
+| `no_brain_config` (exit 1, `plan` fails) — "No brain is configured on this host (gbrain init first), so a service would only crash-loop; pass --no-service to publish a server you run yourself." | This host has no `gbrain` config (or it cannot be read), so `gbrain serve` would have nothing to open and the supervisor would restart it forever. Run `gbrain init` on this host first, then re-run; or pass `--no-service` to only publish a server you start yourself. `--dry-run` still shows the plan. | agent, after the user agrees | none | `gbrain doctor --only connection --json` |
 | `pglite_lock` warn — "a live process holds this PGLite brain (pid N, …): the service cannot start until it exits" | PGLite is single-writer and a process other than gbrain's own running service holds the lock, so the freshly installed service will crash-loop until it exits. Stop that process (or let it finish), then `gbrain mcp expose --status`; for concurrent local use move to Postgres ([ENGINES.md](../ENGINES.md)). The publish itself still completes. | user | none | `gbrain mcp expose --status --json` |
 | "could not read tailscale serve status" — `tailscale.publish` fails during publish (exit 1, reason `tailscale_<kind>`), `--status` (exit 1) or `--remove` (exit 1, `tailscale_serve_status_unreadable`: with a receipt, receipt and wrapper kept; without one, the service is still removed but the wrapper is kept as the corroboration the re-run needs) | `tailscale serve status --json` exited non-zero, was killed, or printed something that is not JSON. The command fails closed rather than guess: nothing is published over, removed from, or reported about a config it could not read. Run `tailscale serve status --json` by hand and apply the classified fix (operator, daemon, login), then re-run the same command. | user | none | `gbrain mcp expose --status --json` |
 | An interrupted `gbrain mcp expose` (no receipt, but a handler / service / wrapper is left behind) — `gbrain mcp expose --status` reports `leftovers_without_receipt` (exit 1) naming each artifact | Run the command `--status` prints: `gbrain mcp expose --remove --yes` (add `--port N` if you published a non-default port; `--force` when only a handler stands) recovers without a receipt: it removes the service, the wrapper and the `:443` handler proxying that port, and leaves the admin token. A handler with no wrapper, unit or service next to it is left in place until you add `--force`. See [`--remove`](#--remove). | agent, after the user agrees | none | `gbrain mcp expose --status --json` |
@@ -1615,7 +1615,7 @@ policy history, revocations, or receipts. See
 
 | Symptom | Next action | Who acts | Consent | Verify |
 | --- | --- | --- | --- | --- |
-| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --json` on the host |
+| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --only connection --json` on the host |
 | Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). | brain host | `egress` when switching to `--funnel` | `gbrain mcp expose --status --json` |
 | Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. | agent | none | re-read the harness's MCP configuration |
 | `grant_conflict` | Fetch the new revision and preview again. | agent, after the user agrees | none | preview the grant again |
@@ -1770,9 +1770,10 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Drive the brain to a target health score:** preview, then agree.
   `gbrain doctor --remediation-plan --json` previews job steps and the
   PROTECTED repair steps (each marked "requires user agreement", with its
-  exact command); after the user agrees,
-  `gbrain doctor --remediate --yes --include-repairs --target-score 90 --max-usd 5`
-  runs the repairs (even when the score target is unreachable) and walks the
+  exact command and the `plan_hash` the approval binds); after the user agrees,
+  `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --target-score 90 --max-usd 5`
+  (`<plan_hash>` from that `--remediation-plan --json` output; a changed plan
+  refuses with `preview_changed`, so preview and ask again) runs the repairs (even when the score target is unreachable) and walks the
   dependency-ordered job plan, re-checking score between steps. The cap is
   cumulative across `--resume`; a paid step that would exceed it is not
   started while free steps still run. Without `--include-repairs`, repair
@@ -2906,8 +2907,10 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 ## Step 9: Verify
 
 For memory-only installs, run the install check from the
-[first-run protocol](docs/protocol/AGENT_OPERATOR_v1.md#first-run): a read-only
-`harness_wiring` smoke check, then `remember` an install-check marker with
+[first-run protocol](docs/protocol/AGENT_OPERATOR_v1.md#first-run): the read-only
+smoke check `gbrain doctor --only harness_wiring --json` (it reads the
+registration and runs initialize, tools/list and one `recall` against it), then
+`remember` an install-check marker with
 provenance `install-check`, ask the user to restart the harness, `recall` it in
 the new session and `forget` it. Never save a made-up fact about the user.
 Also save one user-approved generic test note or fact with
@@ -3053,7 +3056,13 @@ grants.
 ```bash
 export GBRAIN_NO_ONBOARD_NUDGE=1
 ```
-Init + upgrade banners auto-skip in non-TTY too.
+Init and upgrade notices do not skip themselves when there is no terminal:
+non-interactive callers get the onboarding nudge, the init decision bundle and
+the post-upgrade summary as `[AGENT]` blocks (or the `notices` key under
+`--json`), and stdio MCP sessions get the post-upgrade summary once as a notice
+block. `GBRAIN_NO_ONBOARD_NUDGE=1` silences the onboarding nudges and the
+post-upgrade summary everywhere. Only the remote-brain identity banner stays
+TTY-only (`GBRAIN_BANNER=1` forces it, `GBRAIN_NO_BANNER=1` hides it).
 
 ---
 
@@ -3241,7 +3250,7 @@ risk: Spends up to the cap on embedding calls; no data is deleted.
 consent: paid
 actor: agent
 next: ask_user
-if_yes: gbrain doctor --remediate --max-usd 0.60 --yes To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
+if_yes: gbrain doctor --remediate --max-usd 0.60 --yes — To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
 if_no: Nothing runs; nothing was changed. To look first (read-only): gbrain doctor --remediation-plan --json
 [SHOW USER]
 Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?
@@ -3563,7 +3572,7 @@ if_yes: <command to run after the user agrees>
 if_no: <what happens if they decline>
 verify: <read-only check>
 1. <decision question> (id: <decision id>)
-   - <option id>: <label>
+   - <option id>: <label> (run: <command that applies it>)
    default: <option id> — <why this default>
 [SHOW USER]
 <text to relay to the user verbatim>
@@ -3644,16 +3653,30 @@ What changed when contract v1 shipped, for scripts and agents that parsed the
 old behaviour. The release's CHANGELOG entry carries the same table.
 
 | Area | Before | Now | What to change |
-|---|---|---|---|
-| `gbrain embed --stale` time-budget stop | exit 3 | exit 11 | treat 11 as "run `resume_command`"; 3 now only means `confirmation_required` |
+| --- | --- | --- | --- |
+| `gbrain embed --stale` time-budget stop | exit 3 | exit 11 (since v0.60.37.0) | treat 11 as "run `resume_command`"; 3 now only means `confirmation_required` |
+| `gbrain dream --drain` with backlog left | exit 3 | exit 11, `--json` carries `resume_command` | treat 11 as a resumable stop |
 | Other exit-3 sites (`agent run --follow` timeout, `providers test`, `sources harden`, `sources pull`, `sources remove/archive default`, `extract-conversation-facts`) | exit 3 | 124, 1 or 2 ([exit codes](../guides/exit-codes.md#changed-in-this-release)) | branch on the new codes |
-| `gbrain doctor --remediate` without a terminal | ran paid and mutating work with no `--yes` and no cap | refuses with exit 3 and the consent payload; nothing runs | relay `user_message`; pass `--yes` (derived cap) or `--max-usd <n>` only after the user agrees |
+| `migrate embeddings`, `reindex-search-vector`, `reindex-code`, `dream retriage`, `sources connect`, `bootstrap harness` without authorization | exit 2 ("pass `--yes`") | exit 3 with the consent payload | stop, relay `user_message`, run `fix.command` only after the user agrees |
+| `pglite-repair`, `reinit-pglite`, `enrich`, `connect --install` without authorization | exit 1 | exit 3 with the consent payload | same |
+| `book-mirror` paid fan-out without authorization | exit 0 ("cancelled", nothing ran) | exit 3 with the consent payload | same |
+| `gbrain doctor --remediate` without a terminal | ran paid and mutating work with no `--yes` and no cap | refuses with exit 3; nothing runs. Repairs (`--include-repairs`) need `--yes --expect <plan_hash>` from `--remediation-plan --json` | relay `user_message`; pass `--yes` (derived cap) or `--max-usd <n>` only after the user agrees |
 | Paid, destructive, credential, egress and install commands without a terminal | "re-run with `--yes`" text | exit 3 with `effects`, `user_message` and an `ask_user` fix | stop and ask; never add `--yes` on your own |
+| `--yes` on paid work without `--max-usd` | no cap unless the command had its own default | runs under a derived cap (estimate x1.5, floor $0.25; the $5 default with no estimate), printed first; exhaustion exits 1 with a resume command | pass `--max-usd <n>` for a bigger job the user approved |
+| Unpriced model (no per-token rate known) | refused whenever a cap was set | warns and runs under a derived or default cap; under a user cap refuses with a fix to look up the rate and run `gbrain pricing set` | register the rate, then retry |
 | `gbrain reindex-frontmatter --json` | `--json` skipped the confirmation | `--json` never implies consent | pass the authorization the payload names |
-| Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged | read `code`, fall back to `error` |
+| `gbrain jobs submit` on PGLite | queued with no worker to run it | refuses with `no_worker` unless `--follow` or `--queue-only` | add `--follow` (run it now) or `--queue-only` |
+| Invalid input: `autopilot --interval`, `serve --port`, `dream --phase`, `init --mcp-only` missing flags, `delta --since` | exit 1 | exit 2 (`invalid_params`) | treat 2 as "fix the command" |
+| `gbrain doctor --json` with no brain configured | human text or nothing | one `no_brain` envelope with the `gbrain init` fix | parse the document |
+| `gbrain serve` on a brain another serve holds, or with no brain | exited before the MCP handshake | completes the handshake in status-only mode with one `gbrain_status` tool; `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`) restores the early exit for supervisors | read `gbrain_status`; supervisors pass `--fail-fast` |
+| Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged (legacy values frozen) | read `code`, fall back to `error` |
 | Docs pointers in errors | repo-relative paths | absolute URLs pinned to the installed version | open the URL, or run `gbrain errors <code>` offline |
-| MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read notice blocks |
+| MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read the notice blocks |
 | MCP error results | could carry several blocks | exactly one block; notices inside the envelope | parse the one block |
+| MCP tool list on stdio | listed 10 owner-only tools that always refused there | those tools are not listed on stdio; their refusals name the CLI command | use the CLI command the refusal names |
+| MCP advisor on stdio | off | on by default (read-only); remote HTTP stays opt-in | none |
+| MCP `initialize` instructions | one fixed text | generated per surface (`verbs`, `starter`, `full`) from the tools that caller can call | none |
+| Keyless brains (no embedding key) | doctor warned and the health score dropped | doctor reports `severity: info` with the enable command; the score is not penalized | none |
 | stdin reads | could wait forever on an open, silent pipe | 30 s to the first byte, 60 s idle; `GBRAIN_STDIN_TIMEOUT_MS` overrides | close stdin or pipe the payload |
 | Prompts under an agent process or `CI` | prompted whenever stdin was a terminal | decline unless `GBRAIN_INTERACTIVE=1` | answer through the consent payload instead |
 | `--json` stdout for commands that declare it | could mix human text into stdout or print nothing on failure | exactly one JSON document; other output goes to stderr; a fallback document on a silent non-zero exit | parse stdout as one document |
@@ -8048,9 +8071,12 @@ the same registry.
 ```bash
 gbrain init --pglite                                      # 2-second local brain
 claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs     # the memory-verb surface
-gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me
-gbrain recall people/me                                   # …now ask your agent in a NEW session
+gbrain remember "gbrain install check" --provenance install-check
+gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
+
+The marker is a test value, never a fact about the user; ask the agent to
+`forget` it once the new session recalled it.
 
 > Memories agents save are readable by every agent connected to this brain;
 > pass `visibility: "private"` for local-CLI-only facts.
@@ -9100,18 +9126,18 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
 | [Database unreachable or `GBRAIN_DB_ACCESS <reason>`](#database-unreachable) | `gbrain engine status --probe`, then `gbrain db-repair` (diagnose); `gbrain db-repair --yes` applies safe fixes | agent; `--yes` after the user agrees | none to diagnose; `--apply-rewrites` rewrites the config URL (undoable) | `gbrain engine status --probe --json` |
-| [PGLite `RuntimeError: Aborted()` at startup](#pglite-aborted) | automatic repair on the next command; else `gbrain pglite-repair --dry-run`, then `gbrain pglite-repair --yes` | agent; `--yes` after the user agrees | `destructive` (a WAL backup is kept and the restore command printed) | `gbrain doctor --json` |
-| [`expected N dimensions, not M` on import](#embedding-dimensions) | `gbrain doctor` prints the exact `gbrain config set …` or `gbrain migrate embeddings --to <provider:model>` command | agent, after the user agrees | `migrate embeddings`: `paid`, needs the brain's writer lock | `gbrain doctor --json` (check `embeddings`) |
-| [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain init --force --embedding-model <provider:model> --path <brain path>` (keeps pages and facts) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --json` (check `embeddings`) |
-| [Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`)](#doctor-residue) | preview `gbrain doctor --remediation-plan --json` or `gbrain repair`; then `gbrain repair <kind> --apply` | brain host, after the user agrees | `destructive` (rewrites derived rows) | `gbrain doctor --json` |
-| Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` | `gbrain doctor --json` |
-| [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain sources status <id> --json` |
+| [PGLite `RuntimeError: Aborted()` at startup](#pglite-aborted) | automatic repair on the next command; else `gbrain pglite-repair --dry-run`, then `gbrain pglite-repair --yes` | agent; `--yes` after the user agrees | `destructive` (a WAL backup is kept and the restore command printed) | `gbrain doctor --only connection --json` |
+| [`expected N dimensions, not M` on import](#embedding-dimensions) | `gbrain doctor` prints the exact `gbrain config set …` or `gbrain migrate embeddings --to <provider:model>` command | agent, after the user agrees | `migrate embeddings`: `paid`, needs the brain's writer lock | `gbrain doctor --only embeddings,embedding_width_consistency --json` |
+| [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain init --force --embedding-model <provider:model> --path <brain path>` (keeps pages and facts) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --only embeddings --json` |
+| [Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`)](#doctor-residue) | preview `gbrain doctor --remediation-plan --json` or `gbrain repair`; then `gbrain repair <kind> --apply` | brain host, after the user agrees | `destructive` (rewrites derived rows) | `gbrain doctor --only timeline_history,derived_visibility,safe_index_pending --json` |
+| Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
+| [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain doctor --only connector_held_items --json` |
 | [A write was refused with a named reason](#write-refused) | the reason's recovery in [write refusal reasons](write-refusals.md) | as the refusal's `fix` | as the refusal's `fix` | the refusal's `verify` |
-| [Managed sync blocked with `checkpoint_validation_timeout`](#checkpoint-validation-timeout) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …` | brain host | none | `gbrain doctor --json` |
-| [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --json` |
-| [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --json` |
-| [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --json` (check `vector_plan`) |
-| A second `gbrain serve` cannot open the brain | the readiness `harness_wiring` fix: every session shares one `gbrain serve --http` | user | `persistent_install`, `credentials` | `gbrain doctor --json` (check `harness_wiring`) |
+| [Managed sync blocked with `checkpoint_validation_timeout`](#checkpoint-validation-timeout) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …` | brain host | none | `gbrain doctor --only persistence_request_indexes --json` |
+| [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
+| [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
+| [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |
+| A second `gbrain serve` cannot open the brain | the readiness `harness_wiring` fix: every session shares one `gbrain serve --http` | user | `persistent_install`, `credentials` | `gbrain doctor --only harness_wiring --json` |
 | A tool the fix names is missing after a serve recovered | restart the gbrain MCP server in the harness, or start a new session ([why](../protocol/AGENT_OPERATOR_v1.md#tool-catalog-changes-toolslist_changed)) | user | none | list the tools again |
 | A command waits on stdin with no terminal | close stdin (`</dev/null`) or set `GBRAIN_NON_INTERACTIVE=1`; prompts then decline | agent | none | re-run the read-only part of the command |
 | [An outdated build (brainstorm `judge_failed`, lost tags, Windows `ENOTFOUND`)](#outdated-build) | `gbrain upgrade`, then the steps in [recover after upgrading](repair.md#recover-after-upgrading-to-this-release) | agent, after the user agrees | `persistent_install` when it rewrites services | `gbrain --version`, then `gbrain doctor --json` |
@@ -9412,6 +9438,12 @@ they need the user's confirmation (documented legacy; changing it is a v2 item).
 | `gbrain sources remove default` / `gbrain sources archive default` | 3 | 2 | invalid input |
 | `gbrain extract-conversation-facts` pages skipped on a busy lock | 3 | 1 (retryable) | re-run to finish the skipped pages |
 | `gbrain call` invalid parameters | 1 | 2 | invalid input; stdout now carries the error envelope |
+| `gbrain migrate embeddings`, `reindex-search-vector`, `reindex-code`, `dream retriage`, `sources connect`, `bootstrap harness` without authorization | 2 | 3 | a consent stop: the payload names the effects and the words to ask the user |
+| `gbrain pglite-repair`, `reinit-pglite`, `enrich`, `connect --install` without authorization | 1 | 3 | a consent stop, not a failure |
+| `gbrain book-mirror` paid fan-out without authorization | 0 | 3 | nothing ran; it used to report "cancelled" and exit 0 |
+| `gbrain doctor --remediate` without a terminal and without `--yes` | 0 (it ran) | 3 | paid and destructive work waits for the user |
+| `gbrain autopilot --interval`, `serve --port`, `dream --phase`, `init --mcp-only` missing flags, `delta --since` with a bad value | 1 | 2 | invalid input |
+| `gbrain jobs submit` on PGLite without `--follow` or `--queue-only` | 0 (queued, no worker) | 1 (`no_worker`) | the job would wait for a worker that is not running |
 
 ---
 
@@ -9985,7 +10017,7 @@ you pass `--apply`.
 Five explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
 `captured-facts` and `loop-facts`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
-`gbrain doctor --remediate --yes --include-repairs` runs them under a budget
+`gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
 
 **Say to your agent:** *"Doctor says some timeline history is only in the
@@ -10046,7 +10078,8 @@ gbrain repair --all --apply                    # every automatic kind in order
 `--apply` you must name a kind or pass `--all`; `--yes` is refused, and so is
 any other option the table below does not list, including `--max-usd`: a
 refused run changes nothing. To cap paid embedding work, run the repairs
-through `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. `--all`
+through `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd <n>`
+(`<plan_hash>` comes from `gbrain doctor --remediation-plan --json`). `--all`
 runs `timeline`, then `visibility`, then `safe-chunks`, then `contextual-mode`, then `connector-checkpoints`, then `request-indexes`, then `connector-fences`, then `orphan-bindings`, then `embedding-effects`, and stops at the
 first kind that stops.
 The explicit-only kinds (`google-file-modes`, `stale-atoms`, `extractor-facts`) never run under
@@ -10562,7 +10595,7 @@ Repair steps: 2 (requires user agreement; PROTECTED, run on this host only; inde
   R2. safe-chunks — 40 item(s) (~$0.0031 embeddings) [requires user agreement]
      apply: gbrain repair safe-chunks --apply
 
-Apply everything after the user agrees: gbrain doctor --remediate --yes --include-repairs --max-usd 0.01
+Apply everything after the user agrees: gbrain doctor --remediate --yes --include-repairs --max-usd 0.01 --expect ph_3f9c2a1b7d4e5f60a1b2c3d4
 Ask the user before applying any repair step.
 ```
 
@@ -10644,8 +10677,10 @@ walk me through it before changing anything."*
 2. Preview: `gbrain doctor --remediation-plan`. Show the user the repair steps
    and their estimated cost, and ask before applying.
 3. After the user agrees, apply with a budget:
-   `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
-   (the plan prints `<n>` filled in).
+   `gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>`
+   (the plan prints `<n>` and `<plan_hash>` filled in; `--remediation-plan --json`
+   reports the hash as `plan_hash`). If the plan changed since the preview, the
+   run refuses with `preview_changed` and changes nothing: preview and ask again.
 4. If it stops as budget-exhausted, ask the user again, then run the printed
    resume command (raise `--max-usd` only with their agreement).
 5. Follow each `operator_required` instruction the run prints, and note the
@@ -10656,15 +10691,15 @@ walk me through it before changing anything."*
 
 | Symptom or error text | Issue | Preview | Apply | Verify | Who acts | Consent |
 | --- | --- | --- | --- | --- | --- | --- |
-| Sync `BLOCKED` with `checkpoint_validation_timeout` | #5762 | `gbrain doctor` (`persistence_request_indexes`) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <source> --no-pull --retry-failed …` | `gbrain doctor` shows `persistence_request_indexes` ok; `gbrain sources status` shows the new `last_commit` | brain host | none |
-| Doctor `persistence_request_indexes` warns | #5762 | `gbrain repair request-indexes` | `gbrain repair request-indexes --apply` | `gbrain doctor` | brain host | none |
-| Doctor `persistence_request_growth` warns | #5751, #5762 | `gbrain doctor --json` | the printed `gbrain config set persistence.limits.<limit> <value>` | `gbrain doctor --json` (check `persistence_request_growth`) | brain host | none |
+| Sync `BLOCKED` with `checkpoint_validation_timeout` | #5762 | `gbrain doctor` (`persistence_request_indexes`) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <source> --no-pull --retry-failed …` | `gbrain doctor --only persistence_request_indexes --json` reports `ok`; `gbrain sources status` shows the new `last_commit` | brain host | none |
+| Doctor `persistence_request_indexes` warns | #5762 | `gbrain repair request-indexes` | `gbrain repair request-indexes --apply` | `gbrain doctor --only persistence_request_indexes --json` | brain host | none |
+| Doctor `persistence_request_growth` warns | #5751, #5762 | `gbrain doctor --json` | the printed `gbrain config set persistence.limits.<limit> <value>` | `gbrain doctor --only persistence_request_growth --json` | brain host | none |
 | Working-tree sync prints `legacy file(s) skipped … no contextual retrieval mode` | #5751 | `gbrain repair contextual-mode` | `gbrain repair contextual-mode --apply` | the next `gbrain sync --working-tree` no longer prints the line | brain host, after the user agrees | none |
 | Working-tree sync prints `legacy file(s) skipped … not valid UTF-8` | #5751 | `find <checkout> -name '*.md' ! -exec iconv -f UTF-8 -t UTF-8 -o /dev/null {} \; -print` | re-save each listed file as UTF-8 | the next `gbrain sync --working-tree` no longer prints the line | user (re-saves the files) | none |
-| Doctor `google_file_modes` warns, or the upgrade printed `[google] Google source <id> keeps its files in <dir>, outside ~/.gbrain` | #5080 | `gbrain repair google-file-modes --source <id>` | `gbrain repair google-file-modes --source <id> --apply` | `gbrain doctor` (`google_file_modes` ok) | brain host, after the user agrees | none |
-| Recall or hot memory returns facts from gbrain's own claude-cli sessions or from pasted text; doctor `captured_facts_active` warns; the upgrade banner prints `captured_facts_active: N (explicit_kind_required; …)` | #5812, #5820 | `gbrain repair captured-facts` (add `--include-ambiguous` to include paste candidates) | `gbrain repair captured-facts --apply --expect <hash>` with the hash that preview printed | `gbrain doctor` (`captured_facts_active` ok) | brain host, after the user agrees | `destructive` (quarantines facts) |
-| A finished promise still shows on entity cards and in recall after its loop was closed; doctor `loop_facts_drift` warns; the upgrade banner prints `loop_facts_drift: N (explicit_kind_required; …)` | #5869 | `gbrain repair loop-facts` | `gbrain repair loop-facts --apply --expect <hash>` | `gbrain doctor` (`loop_facts_drift` ok) | brain host, after the user agrees | `destructive` (retires facts) |
-| `gbrain upgrade` refuses with `requires Bun >=<floor>` (exit 78), or doctor `self_upgrade_health` says `Auto-upgrade to <target> held` | #5855 | `bun --version` | `bun upgrade`, then `gbrain upgrade` ([Bun floor](upgrades-auto-update.md#bun-floor)) | `gbrain --version` shows the target; `gbrain doctor` (`self_upgrade_health` ok) | user | `persistent_install` |
+| Doctor `google_file_modes` warns, or the upgrade printed `[google] Google source <id> keeps its files in <dir>, outside ~/.gbrain` | #5080 | `gbrain repair google-file-modes --source <id>` | `gbrain repair google-file-modes --source <id> --apply` | `gbrain doctor --only google_file_modes --json` (`google_file_modes` ok) | brain host, after the user agrees | none |
+| Recall or hot memory returns facts from gbrain's own claude-cli sessions or from pasted text; doctor `captured_facts_active` warns; the upgrade banner prints `captured_facts_active: N (explicit_kind_required; …)` | #5812, #5820 | `gbrain repair captured-facts` (add `--include-ambiguous` to include paste candidates) | `gbrain repair captured-facts --apply --expect <hash>` with the hash that preview printed | `gbrain doctor --only captured_facts_active --json` (`captured_facts_active` ok) | brain host, after the user agrees | `destructive` (quarantines facts) |
+| A finished promise still shows on entity cards and in recall after its loop was closed; doctor `loop_facts_drift` warns; the upgrade banner prints `loop_facts_drift: N (explicit_kind_required; …)` | #5869 | `gbrain repair loop-facts` | `gbrain repair loop-facts --apply --expect <hash>` | `gbrain doctor --only loop_facts_drift --json` (`loop_facts_drift` ok) | brain host, after the user agrees | `destructive` (retires facts) |
+| `gbrain upgrade` refuses with `requires Bun >=<floor>` (exit 78), or doctor `self_upgrade_health` says `Auto-upgrade to <target> held` | #5855 | `bun --version` | `bun upgrade`, then `gbrain upgrade` ([Bun floor](upgrades-auto-update.md#bun-floor)) | `gbrain --version` shows the target; `gbrain doctor --only self_upgrade_health --json` (`self_upgrade_health` ok) | user | `persistent_install` |
 
 **Say to your agent:** *"After the upgrade, preview the captured-facts and
 loop-facts repairs and tell me what each would expire before applying
@@ -10772,7 +10807,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 
 | Symptom or error text | Issue | Preview | Apply | Verify | Who acts | Consent |
 | --- | --- | --- | --- | --- | --- | --- |
-| `gbrain upgrade` said the upgrade failed, or migrations ran twice | #5693 | `gbrain apply-migrations --list` | `gbrain apply-migrations --yes` | `gbrain doctor` (`minions_migration` ok) | agent, after the user agrees | none |
+| `gbrain upgrade` said the upgrade failed, or migrations ran twice | #5693 | `gbrain apply-migrations --list` | `gbrain apply-migrations --yes` | `gbrain doctor --only minions_migration --json` (`minions_migration` ok) | agent, after the user agrees | none |
 | `another apply-migrations is running (host …, pid …)` | #5693 | `gbrain doctor` | wait, then `gbrain apply-migrations --yes` | `gbrain apply-migrations --list` | agent | none |
 | doctor `orphan_persistence_bindings`; a re-added source fails with `writer_coordinator_required` | #5732 | `gbrain repair orphan-bindings` | `gbrain repair orphan-bindings --apply` | `gbrain doctor` | brain host, after the user agrees | none |
 | doctor `stale_embedding_effects`; `writer_not_quiesced` names an embedding effect | #5629, #5734 | `gbrain repair embedding-effects --source <id>` | `gbrain repair embedding-effects --source <id> --apply` | `gbrain doctor` (pending until the owner run commits a `retry_queued` effect) | brain host, after the user agrees | none |
@@ -10842,7 +10877,7 @@ Each effect ends in exactly one outcome; no obligation is dropped without one:
 
 `retry_queued` is not success: doctor keeps the effect pending until the
 owner's run commits it. The preview marks retries as paid work; through
-`gbrain doctor --remediate --yes --include-repairs --max-usd <n>`, the estimate
+`gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd <n>`, the estimate
 covers the whole retry budget each grant authorizes. A resumed run replays the
 grant it already made instead of granting another cycle. A signature-mismatched
 vector is never reconciled; it is re-embedded.
@@ -11043,7 +11078,7 @@ of making a duplicate.
 | <a id="migrations_running"></a>`migrations_running` | `migrations_running` (exit 75) | `gbrain apply-migrations` (or the post-upgrade step of `gbrain upgrade`) found another runner holding the brain's orchestration lock and stopped before touching the migration ledger, so migrations never run twice in parallel. The message names the holder's host and pid. A holder that died is taken over automatically on the next run. `gbrain upgrade` reports this as `Migrations: running`, not as a failed upgrade. | Wait for the other run to finish; `gbrain doctor` shows migration progress. Then `gbrain apply-migrations --yes` confirms everything is applied. |
 | <a id="writer_deactivate"></a>`writer_deactivate` blockers | `writer_not_quiesced`, `writer_admin_locked`, `writer_admin_state_changed`, `writer_lock_unavailable` | `gbrain sources writer deactivate` found pending work (a queued, running or recovering write, a topology change or effect that is not settled, a held connector item, or a live connector or maintenance lease), the writer admin lock, a changed admin state, or a local process holding a worktree lock. Nothing changed. The suggestion names each blocker and its exit. | Run `gbrain sources writer deactivate --dry-run` for the full list, run each named exit (`gbrain cancel-write-request <request_id>`, `gbrain sync --source <id> --no-pull --retry-failed`, `gbrain repair embedding-effects --source <id>`, `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, `gbrain sources writer unlock`, `gbrain sources retry-held <id>`), then deactivate again with a fresh `--expected-state` from `gbrain sources writer status --json`. See the [deactivate runbook](../architecture/topologies.md#deactivate-runbook). |
 | <a id="extract-timeline-refused"></a>timeline extract refused | the printed code, usually `writer_coordinator_required` | `gbrain extract timeline --source db` (or a timeline-only `gbrain extract timeline` on a managed brain) could not write a page's timeline rows. It prints `refused: <code>; nothing written; existing timeline rows are untouched` per page, a summary of written versus refused, and exits 1. The rows import already stored for each page stay as they were. | `gbrain extract --stale` (add `--source-id <id>` when you scoped the run) publishes links and missing timeline rows on the managed path. If it refuses too, follow the row for the printed code. |
-| unknown option (repair) | `invalid_params` | `gbrain repair` refuses any option it does not list, so a mistyped flag or `--max-usd` never runs a repair silently without it. | Fix the option (`gbrain repair --help`). To cap paid repair work, run `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. |
+| unknown option (repair) | `invalid_params` | `gbrain repair` refuses any option it does not list, so a mistyped flag or `--max-usd` never runs a repair silently without it. | Fix the option (`gbrain repair --help`). To cap paid repair work, preview with `gbrain doctor --remediation-plan --json` and, after the user agrees, run `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd <n>`. |
 | <a id="colon_slug_windows_write_through"></a>`colon_slug_windows_write_through` | `colon_slug_windows_write_through` | A page slug such as `calendar:abc` is valid, but its canonical file name would contain `:`, which Windows cannot store (it names an alternate data stream). On Windows, a write that would publish that file is refused before admission, and `gbrain sync` skips each such file with this reason instead of failing the run. Database-only writes of the same slug (no repo configured, `sync.write_through` off, an unbound source, or a [read-only mirror](multi-source-brains.md#read-only-mirror-sources) source and pages created while it was one) still succeed, and macOS and Linux are unchanged. | Use a slug without `:` (the suggestion names one), or write the page from a macOS or Linux host that owns the source. For a skipped sync file, rename it without `:` on a macOS or Linux checkout, commit, then run `gbrain sync --source <source> --no-pull` on the Windows host. |
 | <a id="embedding_auth_failed"></a>`embedding_auth_failed` | `embedding_auth_failed` | The embedding provider rejected the configured key (HTTP 401 or 403). Printed once per process on stderr, naming the key source in effect: an environment variable (for example `OPENAI_API_KEY`, which wins over the config key) or the config key in `~/.gbrain/config.json`. No key or part of one is printed. | Environment key in effect but the config key is right: remove the variable from the environment of the process that reported it (shell profile, `~/.gbrain/.env`, or a daemon's service definition) and restart that process. Environment key intended: replace it with a valid key, restart, and run `gbrain config unset openai_api_key` (or the matching key). Config key in effect: `gbrain config set openai_api_key <valid key>`. Then `gbrain embed --stale` embeds what was saved meanwhile. `gbrain doctor` (`embedding_key_source`) shows the key source in doctor's own environment. |
 | <a id="managed_pull_skipped"></a>`managed_pull_skipped` (cycle warn); doctor `sync_freshness` "upstream unknown" or "upstream N commit(s) ahead" | `managed_pull_skipped` | A managed brain never runs `git pull` inside a cycle: Git pull needs an explicit drained maintenance window, so an explicit `gbrain sync` without `--no-pull` is refused with `writer_coordinator_required`. An unattended cycle asked to pull (autopilot passes `pull: true`, `gbrain dream --pull`) instead syncs the checkout as it is and reports it: the sync phase result carries `details.upstream_refresh` (`pulled`, `failed`, `skipped_managed` or `not_requested`), and when the checkout tracks an upstream the phase is `warn` with `details.warning` (`code`, `cause`, `fix`, `docs`). Every sync also records the checkout's last upstream observation (the upstream commit, when it was last fetched or pushed, and how many upstream commits the synced commit lacks) in the source row. Doctor `sync_freshness` reports that separately from the local projection: a source with a `remote_url` whose observation is missing or older than 24 hours is "upstream unknown", and any source whose observation saw upstream commits it has not synced is "behind"; neither is reported fresh. `details.upstream_unknown_count` and `details.upstream_behind_count` count them. | `gbrain sources refresh <source>` (the printed `fix` fills in the source). It drains writes to the source's checkout, fast-forwards it to its upstream and runs the managed sync for every source bound to that checkout; see [worktree refresh refusals](#worktree-refresh-refusals) for what it can refuse. On a brain that is not managed, `gbrain sync --source <source>` pulls and records the observation. |

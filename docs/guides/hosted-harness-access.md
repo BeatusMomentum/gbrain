@@ -313,7 +313,7 @@ policy history, revocations, or receipts. See
 
 | Symptom | Next action | Who acts | Consent | Verify |
 | --- | --- | --- | --- | --- |
-| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --json` on the host |
+| PGLite is busy | Use authenticated host administration (`--admin-token-file ~/.gbrain/serve/admin-token` against the running server) or wait for the current owner to close. Never remove a live lock. | brain host | none | `gbrain doctor --only connection --json` on the host |
 | Published URL unreachable from the agent | On the host, `gbrain mcp expose --status`. A cloud agent needs `--funnel`; tailnet-only reach serves only the owner's own devices. Certificate issuance can leave tailnet health `pending` for a minute. See the [remote MCP troubleshooting table](remote-mcp.md#troubleshooting). | brain host | `egress` when switching to `--funnel` | `gbrain mcp expose --status --json` |
 | Configuration conflict | Select a fresh connection name/root or inspect the changed entry; do not overwrite unrelated settings. | agent | none | re-read the harness's MCP configuration |
 | `grant_conflict` | Fetch the new revision and preview again. | agent, after the user agrees | none | preview the grant again |

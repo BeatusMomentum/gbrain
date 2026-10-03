@@ -17,8 +17,8 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
-import { buildInitFirstRunNotices } from './init-first-run.ts';
-import { renderNotice, cliRenderContext } from '../core/agent-output.ts';
+import { firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
+import { writeCliNotices } from '../core/interop-notices.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
 import type { SearchMode as SearchModeName } from '../core/search/mode.ts';
@@ -1268,7 +1268,7 @@ export async function initPGLite(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      setInitJsonResult({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunNotices(searchMode) });
+      setInitJsonResult({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunJson(await firstRunBundle(engine, searchMode)) });
     } else if (process.env.GBRAIN_IN_AGENT_SETUP === '1') {
       printInAgentReady(dbPath);
     } else {
@@ -1285,20 +1285,15 @@ export async function initPGLite(opts: {
         console.log('  gbrain stats                            (verify links > 0)');
       }
       reportModStatus();
-      const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
-      const { VERSION } = await import('../version.ts');
-      printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
 
       // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
-      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      // Fail-open; 3s wallclock cap.
       const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
       await runInitNudge(engine);
 
-      // Ambient-writeback consent ask (WP8): personal brains only, fires
-      // once ever (sentinel), [AGENT]-relayed on non-TTY, never auto-enables,
-      // never blocks init.
-      const { runWritebackNudge } = await import('../core/onboard/writeback-nudge.ts');
-      await runWritebackNudge(engine, { context: 'init' });
+      // G5: the ONE first-run decision bundle (search mode, writeback,
+      // harness wiring, skills scaffold); never blocks init.
+      writeCliNotices(await firstRunBundle(engine, searchMode));
 
       // The single primary action, last-on-screen.
       printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: true });
@@ -1310,29 +1305,24 @@ export async function initPGLite(opts: {
 
 const INIT_EMBEDDING_HINT = 'Pick an embedding model whose dimensions match (`gbrain init --help`), or pass --no-embedding for a keyless brain.';
 
-/** D2/G5: the first-run decision bundle rendered into init's --json document (`notices`, empty → omitted). */
-function firstRunNotices(searchMode: { mode: SearchModeName; reason: string } | undefined): { notices?: unknown[]; contract_version: 1 } {
-  const notices = buildInitFirstRunNotices({ searchMode, config: loadConfig() }).map(n => renderNotice(n, cliRenderContext()));
-  return { ...(notices.length ? { notices } : {}), contract_version: 1 };
-}
-
 /**
  * MEMORY_VERBS v1 quickstart funnel (E3 + D4B + T1 consent). Printed LAST in
  * both init epilogues as the ONE primary action. The copy-next block is
- * EXACTLY three commands (codex DX 9): wire the harness, write a memory, prove
- * the resurrection. The demo uses the facts arm only, so it works with NO
- * embedding key [F-B]. Secondary paths (import, migrate) ride a single terse
+ * three commands (codex DX 9): wire the harness (the readiness
+ * `harness_wiring` fix: absolute binary, `--surface verbs`), save an
+ * install-check marker (never a made-up fact about the user), and recall it.
+ * The demo uses the facts arm only, so it works with NO embedding key [F-B]. Secondary paths (import, migrate) ride a single terse
  * "More:" footer so they never compete with the primary action.
  */
 function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boolean } = {}): void {
+  const register = harnessRegistrationCommand();
   console.log('');
-  console.log('→ Do this next — give your agent memory (copy these three commands):');
-  console.log('  claude mcp add gbrain -- gbrain serve --surface verbs');
-  console.log('  gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me');
-  // #3697: recall takes the entity as a positional (there is no --entity flag;
-  // the old form only worked because recall skips unknown flags silently).
-  console.log('  gbrain recall people/me');
-  console.log('Then ask your agent in a NEW session — it remembers.');
+  console.log(`→ Do this next — give your agent memory (copy these ${register ? 'three' : 'two'} commands):`);
+  if (register) console.log(`  ${register}`);
+  else console.log('  (register gbrain with your agent app first: install gbrain globally so the registration can use its absolute path, then follow docs/protocol/MEMORY_VERBS_v1.md)');
+  console.log('  gbrain remember "gbrain install check" --provenance install-check');
+  console.log('  gbrain recall --query "gbrain install check"');
+  console.log('Then ask your agent in a NEW session to recall "gbrain install check" — it remembers. Ask it to forget that fact afterwards.');
   console.log('');
   console.log('Note: memories agents save are readable by every agent connected to');
   console.log('this brain; use visibility:"private" for local-only facts.');
@@ -1608,7 +1598,7 @@ export async function initPostgresCore(opts: {
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      setInitJsonResult({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunNotices(searchMode) });
+      setInitJsonResult({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunJson(await firstRunBundle(engine, searchMode)) });
     } else {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
       if (stats.page_count > 0) {
@@ -1619,18 +1609,14 @@ export async function initPostgresCore(opts: {
         console.log('  gbrain stats                            (verify links > 0)');
       }
       reportModStatus();
-      const { printAdvisoryIfRecommended } = await import('../core/skillpack/post-install-advisory.ts');
-      const { VERSION } = await import('../version.ts');
-      printAdvisoryIfRecommended({ version: VERSION, context: 'init' });
 
       // v0.41.18.0 (A4 + A18 + A20, T14): post-initSchema onboard nudge.
-      // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
+      // Fail-open; 3s wallclock cap.
       const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
       await runInitNudge(engine);
 
-      // Ambient-writeback consent ask (WP8) — same contract as the PGLite arm.
-      const { runWritebackNudge } = await import('../core/onboard/writeback-nudge.ts');
-      await runWritebackNudge(engine, { context: 'init' });
+      // G5: the first-run decision bundle — same contract as the PGLite arm.
+      writeCliNotices(await firstRunBundle(engine, searchMode));
 
       // The single primary action, last-on-screen.
       printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0 });

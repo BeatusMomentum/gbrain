@@ -178,7 +178,7 @@ risk: Spends up to the cap on embedding calls; no data is deleted.
 consent: paid
 actor: agent
 next: ask_user
-if_yes: gbrain doctor --remediate --max-usd 0.60 --yes To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
+if_yes: gbrain doctor --remediate --max-usd 0.60 --yes — To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
 if_no: Nothing runs; nothing was changed. To look first (read-only): gbrain doctor --remediation-plan --json
 [SHOW USER]
 Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?
@@ -500,7 +500,7 @@ if_yes: <command to run after the user agrees>
 if_no: <what happens if they decline>
 verify: <read-only check>
 1. <decision question> (id: <decision id>)
-   - <option id>: <label>
+   - <option id>: <label> (run: <command that applies it>)
    default: <option id> — <why this default>
 [SHOW USER]
 <text to relay to the user verbatim>
@@ -581,16 +581,30 @@ What changed when contract v1 shipped, for scripts and agents that parsed the
 old behaviour. The release's CHANGELOG entry carries the same table.
 
 | Area | Before | Now | What to change |
-|---|---|---|---|
-| `gbrain embed --stale` time-budget stop | exit 3 | exit 11 | treat 11 as "run `resume_command`"; 3 now only means `confirmation_required` |
+| --- | --- | --- | --- |
+| `gbrain embed --stale` time-budget stop | exit 3 | exit 11 (since v0.60.37.0) | treat 11 as "run `resume_command`"; 3 now only means `confirmation_required` |
+| `gbrain dream --drain` with backlog left | exit 3 | exit 11, `--json` carries `resume_command` | treat 11 as a resumable stop |
 | Other exit-3 sites (`agent run --follow` timeout, `providers test`, `sources harden`, `sources pull`, `sources remove/archive default`, `extract-conversation-facts`) | exit 3 | 124, 1 or 2 ([exit codes](../guides/exit-codes.md#changed-in-this-release)) | branch on the new codes |
-| `gbrain doctor --remediate` without a terminal | ran paid and mutating work with no `--yes` and no cap | refuses with exit 3 and the consent payload; nothing runs | relay `user_message`; pass `--yes` (derived cap) or `--max-usd <n>` only after the user agrees |
+| `migrate embeddings`, `reindex-search-vector`, `reindex-code`, `dream retriage`, `sources connect`, `bootstrap harness` without authorization | exit 2 ("pass `--yes`") | exit 3 with the consent payload | stop, relay `user_message`, run `fix.command` only after the user agrees |
+| `pglite-repair`, `reinit-pglite`, `enrich`, `connect --install` without authorization | exit 1 | exit 3 with the consent payload | same |
+| `book-mirror` paid fan-out without authorization | exit 0 ("cancelled", nothing ran) | exit 3 with the consent payload | same |
+| `gbrain doctor --remediate` without a terminal | ran paid and mutating work with no `--yes` and no cap | refuses with exit 3; nothing runs. Repairs (`--include-repairs`) need `--yes --expect <plan_hash>` from `--remediation-plan --json` | relay `user_message`; pass `--yes` (derived cap) or `--max-usd <n>` only after the user agrees |
 | Paid, destructive, credential, egress and install commands without a terminal | "re-run with `--yes`" text | exit 3 with `effects`, `user_message` and an `ask_user` fix | stop and ask; never add `--yes` on your own |
+| `--yes` on paid work without `--max-usd` | no cap unless the command had its own default | runs under a derived cap (estimate x1.5, floor $0.25; the $5 default with no estimate), printed first; exhaustion exits 1 with a resume command | pass `--max-usd <n>` for a bigger job the user approved |
+| Unpriced model (no per-token rate known) | refused whenever a cap was set | warns and runs under a derived or default cap; under a user cap refuses with a fix to look up the rate and run `gbrain pricing set` | register the rate, then retry |
 | `gbrain reindex-frontmatter --json` | `--json` skipped the confirmation | `--json` never implies consent | pass the authorization the payload names |
-| Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged | read `code`, fall back to `error` |
+| `gbrain jobs submit` on PGLite | queued with no worker to run it | refuses with `no_worker` unless `--follow` or `--queue-only` | add `--follow` (run it now) or `--queue-only` |
+| Invalid input: `autopilot --interval`, `serve --port`, `dream --phase`, `init --mcp-only` missing flags, `delta --since` | exit 1 | exit 2 (`invalid_params`) | treat 2 as "fix the command" |
+| `gbrain doctor --json` with no brain configured | human text or nothing | one `no_brain` envelope with the `gbrain init` fix | parse the document |
+| `gbrain serve` on a brain another serve holds, or with no brain | exited before the MCP handshake | completes the handshake in status-only mode with one `gbrain_status` tool; `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`) restores the early exit for supervisors | read `gbrain_status`; supervisors pass `--fail-fast` |
+| Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged (legacy values frozen) | read `code`, fall back to `error` |
 | Docs pointers in errors | repo-relative paths | absolute URLs pinned to the installed version | open the URL, or run `gbrain errors <code>` offline |
-| MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read notice blocks |
+| MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read the notice blocks |
 | MCP error results | could carry several blocks | exactly one block; notices inside the envelope | parse the one block |
+| MCP tool list on stdio | listed 10 owner-only tools that always refused there | those tools are not listed on stdio; their refusals name the CLI command | use the CLI command the refusal names |
+| MCP advisor on stdio | off | on by default (read-only); remote HTTP stays opt-in | none |
+| MCP `initialize` instructions | one fixed text | generated per surface (`verbs`, `starter`, `full`) from the tools that caller can call | none |
+| Keyless brains (no embedding key) | doctor warned and the health score dropped | doctor reports `severity: info` with the enable command; the score is not penalized | none |
 | stdin reads | could wait forever on an open, silent pipe | 30 s to the first byte, 60 s idle; `GBRAIN_STDIN_TIMEOUT_MS` overrides | close stdin or pipe the payload |
 | Prompts under an agent process or `CI` | prompted whenever stdin was a terminal | decline unless `GBRAIN_INTERACTIVE=1` | answer through the consent payload instead |
 | `--json` stdout for commands that declare it | could mix human text into stdout or print nothing on failure | exactly one JSON document; other output goes to stderr; a fallback document on a silent non-zero exit | parse stdout as one document |

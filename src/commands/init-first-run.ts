@@ -5,16 +5,20 @@
  * non-blocking (exit 0); the agent relays the message and applies the chosen
  * options' argv.
  *
- * Ownership: Lane G5 owns the bundle's content (adding `writeback` and
- * `skills_scaffold`, the `user_message` wording, the harness smoke follow-up);
- * Lane D ships this seam and the decisions it can build today:
- * `search_mode` (the picker's recommendation and cost matrix) and
- * `harness_wiring` (the A7 readiness fix). Extend `buildInitFirstRunNotices`
- * rather than adding a second notice.
+ * Decisions: `search_mode` (the picker's recommendation and cost matrix),
+ * `writeback` (recommended `salient`, offered on a personal brain whose
+ * operator has not answered), `harness_wiring` (the A7 readiness fix) and the
+ * optional `skills_scaffold` (recommended skills missing from the detected
+ * agent workspace; default skip). Human output renders the same bundle
+ * (`[AGENT]` block without a terminal, `Note` lines on one); it replaces
+ * init's separate writeback ask and skills pointer. Extend
+ * `buildInitFirstRunNotices` rather than adding a second notice.
  */
-import type { Decision, Notice } from '../core/agent-output.ts';
-import type { GBrainConfig } from '../core/config.ts';
-import { configReadiness } from '../core/readiness.ts';
+import { cliRenderContext, renderNotice, shellQuote, type Decision, type Notice } from '../core/agent-output.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import { resolveGbrainBin } from '../core/gbrain-bin.ts';
+import { configReadiness, harnessWiringEntry } from '../core/readiness.ts';
 import type { SearchMode } from '../core/search/mode.ts';
 
 export interface InitFirstRunInputs {
@@ -22,6 +26,10 @@ export interface InitFirstRunInputs {
   searchMode?: { mode: SearchMode; reason: string };
   /** The config init saved; harness wiring is read from its config-plane readiness. */
   config?: GBrainConfig | null;
+  /** True when the ambient-writeback ask applies (`writebackAskApplies`). */
+  writeback?: boolean;
+  /** Recommended skills missing from the agent workspace (`initSkillsScaffold`). */
+  skillsScaffold?: { missing: string[]; argv: string[] } | null;
 }
 
 const SEARCH_MODE_COST =
@@ -54,14 +62,46 @@ function harnessWiringDecision(config: GBrainConfig): Decision | null {
   };
 }
 
+function writebackDecision(): Decision {
+  const set = (mode: string) => ['gbrain', 'config', 'set', 'memory.auto_writeback', mode];
+  return {
+    id: 'writeback',
+    question: 'Should agents save important facts the user states (preferences, decisions, commitments) automatically, with provenance? '
+      + 'Saved facts are readable by agents connected to this brain; transient facts expire. Off any time with `gbrain config set memory.auto_writeback off`.',
+    options: [
+      { id: 'salient', label: 'Save durable facts the user states directly (recommended)', argv: set('salient') },
+      { id: 'all', label: 'Every direct factual statement (more low-value facts, more extraction spend)', argv: set('all') },
+      { id: 'off', label: 'Save only what the user explicitly asks to remember (records the answer)', argv: set('off') },
+    ],
+    default: 'salient',
+    default_reason: 'Recommended for a personal brain: the brain learns what the user tells their agents. It is opt-in, so it applies only when the user accepts the defaults or picks it.',
+  };
+}
+
+function skillsScaffoldDecision(scaffold: { missing: string[]; argv: string[] }): Decision {
+  const preview = scaffold.missing.slice(0, 4).join(', ') + (scaffold.missing.length > 4 ? ', …' : '');
+  return {
+    id: 'skills_scaffold',
+    question: `Install ${scaffold.missing.length} recommended gbrain skill(s) into the agent workspace (${preview})? Optional; \`gbrain advisor\` lists what each does.`,
+    options: [
+      { id: 'skip', label: 'Skip for now.' },
+      { id: 'scaffold', label: 'Scaffold the recommended skills into the workspace.', argv: scaffold.argv },
+    ],
+    default: 'skip',
+    default_reason: 'Optional: the brain works without them; scaffolding writes files into the user\'s workspace.',
+  };
+}
+
 /** The bundle: empty when there is nothing to decide. */
 export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   const decisions: Decision[] = [];
   if (inputs.searchMode) decisions.push(searchModeDecision(inputs.searchMode));
+  if (inputs.writeback) decisions.push(writebackDecision());
   if (inputs.config) {
     const wiring = harnessWiringDecision(inputs.config);
     if (wiring) decisions.push(wiring);
   }
+  if (inputs.skillsScaffold?.missing.length) decisions.push(skillsScaffoldDecision(inputs.skillsScaffold));
   if (decisions.length === 0) return [];
   const defaults = decisions.map(d => `${d.id}: ${d.default}`).join('; ');
   return [{
@@ -71,4 +111,31 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
     user_message: `gbrain is installed. Reply 'defaults' to keep the recommended settings (${defaults}), or tell me what to change.`,
     decisions,
   }];
+}
+
+/** init's bundle for this brain: reads the writeback gate and the agent workspace's missing skills. */
+export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: SearchMode; reason: string } | undefined): Promise<Notice[]> {
+  const { writebackAskApplies } = await import('../core/onboard/writeback-nudge.ts');
+  const { initSkillsScaffold } = await import('../core/skillpack/post-install-advisory.ts');
+  return buildInitFirstRunNotices({ searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold() });
+}
+
+/** D2/G5: the bundle rendered into init's --json document (`notices`, empty → omitted). */
+export function firstRunJson(bundle: Notice[]): { notices?: unknown[]; contract_version: 1 } {
+  const notices = bundle.map(n => renderNotice(n, cliRenderContext()));
+  return { ...(notices.length ? { notices } : {}), contract_version: 1 };
+}
+
+/**
+ * The harness registration line for init's quickstart: the readiness
+ * `harness_wiring` fix (absolute binary, `--surface verbs`) for the detected
+ * harness, else the Claude Code registration built the same way. Null when
+ * the gbrain binary has no absolute path (never registered bare).
+ */
+export function harnessRegistrationCommand(): string | null {
+  const cfg = loadConfig();
+  const detected = cfg ? configReadiness(cfg, { transport: 'cli' }).entries.find(e => e.capability === 'harness_wiring')?.fix : undefined;
+  if (detected?.argv) return shellQuote(detected.argv);
+  const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: resolveGbrainBin() }).fix;
+  return claude?.argv ? shellQuote(claude.argv) : null;
 }
