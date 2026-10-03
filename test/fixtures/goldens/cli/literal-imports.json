@@ -177,7 +177,9 @@
         "./commands/sweep.ts"
       ],
       "sync": [
-        "./commands/sync.ts"
+        "./commands/sync.ts",
+        "./core/agent-output.ts",
+        "./core/cli-force-exit.ts"
       ],
       "takes": [
         "./commands/takes.ts"

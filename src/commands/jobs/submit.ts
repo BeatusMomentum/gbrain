@@ -99,13 +99,13 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     return;
   }
 
+  try { await queue.ensureSchema(); }
+  catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+
   if (engine.kind === 'pglite' && !follow && !hasFlag(args, '--queue-only')) {
     await refuseNoWorker(args, name, queueName);
     return;
   }
-
-  try { await queue.ensureSchema(); }
-  catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
   // v0.35.8.0: pre-enqueue shell-job validation. Validates `inherit:`
   // closed enum, rejects secret env-keys, fail-fasts on missing config.

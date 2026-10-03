@@ -12,6 +12,7 @@
 
 import crypto from 'crypto';
 import type { BrainEngine } from '../engine.ts';
+import { queueWorkerAlive } from '../minions/no-worker.ts';
 import {
   computeRecommendations,
 } from '../brain-score-recommendations.ts';
@@ -43,11 +44,14 @@ import type {
 /**
  * E3: the job steps a run executes. An unreachable score target skips the
  * PAID steps only (their ids land in `job_steps_skipped.skipped`); free steps
- * still run so the brain improves as far as it can.
+ * still run so the brain improves as far as it can — when a worker serves the
+ * queue. With no worker (PGLite, or no supervisor) they would wait out their
+ * timeout, so every job step is skipped as before.
  */
 function planJobSteps(planned: RemediationStep[], manifest: { job_ids: string[] } | undefined, unreachable?: { target: number; ceiling: number }) {
   const remediable = planned.filter((r) => r.status === 'remediable' && (!manifest || manifest.job_ids.includes(r.id)));
-  const freeRecs = remediable.filter((r) => (r.est_usd_cost ?? 0) === 0);
+  const workerRuns = !unreachable || queueWorkerAlive('default') === true;
+  const freeRecs = workerRuns ? remediable.filter((r) => (r.est_usd_cost ?? 0) === 0) : [];
   if (!unreachable) return { recs: remediable, freeRecs, jobStepsSkipped: undefined };
   return {
     recs: freeRecs, freeRecs,
