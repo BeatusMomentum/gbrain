@@ -392,7 +392,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 195 (latest: 195)",
+          "message": "Version 196 (latest: 196)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1117,6 +1117,26 @@
           },
           "message": "Every active fact and take has a voyage:voyage-4 vector for its current text.",
           "name": "fact_take_vectors",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "auto_analyze": true,
+            "checked": [
+              "pages",
+              "links",
+              "facts",
+              "takes",
+              "content_chunks",
+              "timeline_entries"
+            ],
+            "engine": "pglite",
+            "fix": "gbrain repair planner-stats --apply",
+            "stale": []
+          },
+          "message": "Planner statistics are fresh on 6 hot tables.",
+          "name": "planner_stats_stale",
           "status": "ok"
         },
         {
