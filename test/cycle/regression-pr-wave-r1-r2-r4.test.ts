@@ -118,6 +118,7 @@ describe('R4 — cross-platform stdin via fd 0 (PR #1325 regression pin)', () =>
     // reader moved from src/cli.ts to src/core/interaction.ts (agent operator
     // wave A5); cli.ts keeps a legacy-signature shim, so both are checked.
     const root = join(import.meta.dir ?? '.', '..', '..', 'src');
+    // test-reads-source-ok[structural]: the R4 regression pins the absence of the /dev/stdin read in the CLI shim (moved there by A5).
     const src = readFileSync(join(root, 'core', 'interaction.ts'), 'utf-8');
     expect(readFileSync(join(root, 'cli.ts'), 'utf-8')).not.toMatch(/readFileSync\(\s*['"]\/dev\/stdin['"]/);
 

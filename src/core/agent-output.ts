@@ -673,6 +673,17 @@ export function withAgentSiblings<T extends Record<string, unknown>>(
   };
 }
 
+/**
+ * `{ error: StructuredError }` (code-def/code-refs/brainstorm `--json`) with
+ * the v1 siblings: canonical `code`, an optional diagnostic `fix`, docs_cmd.
+ */
+export function legacyNestedErrorDocument(envelope: { code: string }, fixArgv?: string[]): Record<string, unknown> {
+  return withAgentSiblings({ error: envelope }, {
+    code: canonicalCodeFor(envelope.code),
+    ...(fixArgv ? { fix: { argv: fixArgv, consent: [], actor: 'agent' as const, why: 'Shows the arguments this command needs.', requires_exclusive: false } } : {}),
+  }, cliRenderContext());
+}
+
 /** The `--json` exit-time fallback document: a non-zero exit that wrote no final document. */
 export function fallbackJsonDocument(exitCode: number, lastCode?: string): Record<string, unknown> {
   return {

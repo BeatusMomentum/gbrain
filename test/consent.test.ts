@@ -192,6 +192,7 @@ describe('--non-interactive maps explicitly to effects', () => {
   });
 
   test("the post-upgrade apply-migrations call authorizes exactly apply-migrations' install", async () => {
+    // test-reads-source-ok[structural]: the internal upgrade caller's literal argv is the input under test (pinned by upgrade-no-autopilot too).
     const src = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'upgrade.ts'), 'utf8');
     const m = src.match(/runApplyMigrations\(\[([^\]]*?)(?:,\s*\.\.\.|\])/);
     expect(m).not.toBeNull();
