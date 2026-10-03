@@ -349,7 +349,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // fix wave GBRA-35 lane C (#5809/#5832): drain hard stops, bounded counts and lease loss on Postgres.
   "src/core/cycle/extract-atoms-drain.ts": ["test/e2e/extract-atoms-drain-postgres.test.ts", "test/e2e/managed-connector-job-contract.test.ts"],
   "src/core/cycle/extract-atoms.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/cycle.test.ts", "test/e2e/dream.test.ts", "test/e2e/multi-source-bug-class.test.ts", "test/e2e/managed-extract-atoms.test.ts", "test/e2e/managed-atom-regressions.test.ts", "test/e2e/managed-atom-compaction.test.ts"],
-  "src/core/cycle/synthesize*.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/managed-synthesis-postprocess.test.ts", "test/e2e/managed-writers-w3.test.ts"],
+  "src/core/cycle/synthesize*.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/managed-synthesis-postprocess.test.ts", "test/e2e/managed-writers-w3.test.ts", "test/e2e/session-seat-synthesize.test.ts"],
+  // #4618: seat sidecar discovery and the seat stamp on both synthesis write paths.
+  "src/core/cycle/transcript-discovery.ts": ["test/e2e/session-seat-synthesize.test.ts"],
+  "src/core/cycle/dream-provenance.ts": ["test/e2e/session-seat-synthesize.test.ts"],
   "src/core/cycle/concept-publication.ts": ["test/e2e/managed-writers-w3.test.ts"],
   "src/core/chronicle/extract-events.ts": ["test/e2e/managed-writers-w3.test.ts"],
   "src/commands/enrich.ts": ["test/e2e/managed-writers-w3.test.ts"],
