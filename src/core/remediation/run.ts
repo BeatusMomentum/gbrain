@@ -12,6 +12,7 @@
 
 import crypto from 'crypto';
 import type { BrainEngine } from '../engine.ts';
+import { queueWorkerAlive } from '../minions/no-worker.ts';
 import {
   computeRecommendations,
 } from '../brain-score-recommendations.ts';
@@ -40,6 +41,24 @@ import type {
  *
  * Callers decide exit codes from the result.
  */
+/**
+ * E3: the job steps a run executes. An unreachable score target skips the
+ * PAID steps only (their ids land in `job_steps_skipped.skipped`); free steps
+ * still run so the brain improves as far as it can — when a worker serves the
+ * queue. With no worker (PGLite, or no supervisor) they would wait out their
+ * timeout, so every job step is skipped as before.
+ */
+function planJobSteps(planned: RemediationStep[], manifest: { job_ids: string[] } | undefined, unreachable?: { target: number; ceiling: number }) {
+  const remediable = planned.filter((r) => r.status === 'remediable' && (!manifest || manifest.job_ids.includes(r.id)));
+  const workerRuns = !unreachable || queueWorkerAlive('default') === true;
+  const freeRecs = workerRuns ? remediable.filter((r) => (r.est_usd_cost ?? 0) === 0) : [];
+  if (!unreachable) return { recs: remediable, freeRecs, jobStepsSkipped: undefined };
+  return {
+    recs: freeRecs, freeRecs,
+    jobStepsSkipped: { reason: 'target_unreachable' as const, ...unreachable, skipped: remediable.filter((r) => !freeRecs.includes(r)).map((r) => r.id) },
+  };
+}
+
 export async function runRemediation(
   engine: BrainEngine,
   opts: RemediationOpts = {},
@@ -113,20 +132,18 @@ export async function runRemediation(
     : [];
   // Embeddings a budget stop left behind after re-sealing; the re-sealed pages no longer show up in a repair plan.
   let pendingEmbedSources = includeRepairs && manifest ? [...(cp?.pending_embed_sources ?? [])] : [];
-  if (initialPlan.target_unreachable && !(includeRepairs && (repairSteps.length || pendingEmbedSources.length))) {
+  const initialHealth = await engine.getHealth();
+  const { freeRecs, jobStepsSkipped, recs: plannedJobSteps } = planJobSteps(computeRecommendations(initialHealth, ctx, extraRemediations), manifest,
+    initialPlan.target_unreachable ? { target: targetScore, ceiling: initialPlan.max_reachable_score } : undefined);
+  if (jobStepsSkipped && freeRecs.length === 0 && !(includeRepairs && (repairSteps.length || pendingEmbedSources.length))) {
     hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
     return synthetic(initialPlan.brain_score_current, {
       target_unreachable: { target: targetScore, ceiling: initialPlan.max_reachable_score },
       ...(repairs && repairSteps.length ? { repairs: [], repairs_skipped: repairSteps } : {}),
     });
   }
-  const jobStepsSkipped = initialPlan.target_unreachable
-    ? { reason: 'target_unreachable' as const, target: targetScore, ceiling: initialPlan.max_reachable_score } : undefined;
   if (jobStepsSkipped) hooks.onTargetUnreachable?.(targetScore, initialPlan.max_reachable_score);
-
-  const initialHealth = await engine.getHealth();
-  let recs: RemediationStep[] = jobStepsSkipped ? [] : computeRecommendations(initialHealth, ctx, extraRemediations)
-    .filter((r) => r.status === 'remediable' && (!manifest || manifest.job_ids.includes(r.id)));
+  let recs: RemediationStep[] = plannedJobSteps;
   const skippedRepairs = includeRepairs ? [] : repairSteps;
   if (!includeRepairs) repairSteps = [];
   if (recs.length === 0 && repairSteps.length === 0 && pendingEmbedSources.length === 0) {
@@ -404,7 +421,8 @@ export async function runRemediation(
       // would resubmit completed extras every iteration, forever.
       const pendingExtras = extraRemediations.filter((r) => !attemptedIds.has(r.id));
       recs = computeRecommendations(freshHealth, ctx, pendingExtras)
-        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id) && (!manifest || manifest.job_ids.includes(r.id)));
+        .filter((r) => r.status === 'remediable' && !attemptedIds.has(r.id) && (!manifest || manifest.job_ids.includes(r.id))
+          && (!jobStepsSkipped || (r.est_usd_cost ?? 0) === 0));
     }
   };
 

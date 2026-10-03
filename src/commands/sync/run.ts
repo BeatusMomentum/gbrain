@@ -17,6 +17,7 @@ import {
 import type { SyncEmbedBackfillOutcome } from '../../core/sync-embed-backfill.ts';
 import { runBreakLock } from '../../core/sync-lock.ts';
 import { isSyncDisabledConfig } from '../../core/sync-policy.ts';
+import { syncContentDirectory } from '../../core/sync-applicability.ts';
 import { composeAbortSignals } from '../../core/sync-reconcile.ts';
 import { acknowledgeFailures, unacknowledgedSyncFailures } from '../../core/sync.ts';
 import type { SyncResult, SyncOpts } from '../sync.ts';
@@ -320,13 +321,20 @@ async function runSyncAll(
   //     performSync get the [<source-id>] prefix under parallel mode (D6)
   //   - stable JSON envelope {schema_version:1, sources, ...} when --json
   // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
-  const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config));
-  const disabledCount = sources.length - activeSources.length;
+  const notApplicable: string[] = [];
+  for (const s of sources) {
+    if (await syncContentDirectory(engine, { sourceId: s.id, repoPath: s.local_path ?? undefined })) notApplicable.push(s.id);
+  }
+  const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config) && !notApplicable.includes(s.id));
+  const disabledCount = sources.filter((s) => isSyncDisabledConfig(s.config)).length;
   const humanSink: NodeJS.WriteStream = jsonOut ? process.stderr : process.stdout;
   const writeHuman = (line: string) => humanSink.write(line + '\n');
 
   if (disabledCount > 0) {
     writeHuman(`Skipping ${disabledCount} disabled source(s).`);
+  }
+  if (notApplicable.length > 0) {
+    writeHuman(`Skipping ${notApplicable.length} source(s) where sync does not apply (gbrain-owned content directory, not a Git checkout): ${notApplicable.join(', ')}. Add markdown files with \`gbrain import <dir> --source <id>\`.`);
   }
 
   // --missing-path skip: classify sources whose checkout is not on this

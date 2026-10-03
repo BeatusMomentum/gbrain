@@ -163,7 +163,13 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    return runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    // F8: the explanation the CLI formatter prints, as a model-visible notice.
+    if ((result as { degraded_dedup?: boolean } | null)?.degraded_dedup) {
+      const { degradedDedupNotice } = await import('./interop-notices.ts');
+      ctx.emitNotice?.(degradedDedupNotice(ctx.config));
+    }
+    return result;
   },
   cliHints: { name: 'remember', positional: ['fact'] },
 };
@@ -283,12 +289,16 @@ const synthesize: Operation = {
     // unconfigured key routed to the extractive fallback would be masked on
     // every call and never get fixed.
     if (result.warnings.includes('NO_ANTHROPIC_API_KEY')) {
-      throw verbError(
+      // F9: a key enables paid calls, so the fix asks; the key never rides a command line.
+      const { chatKeyFix } = await import('./interop-notices.ts');
+      const e = verbError(
         'unavailable',
         'synthesize needs an LLM and none is configured.',
-        'Set an API key (e.g. `gbrain config set anthropic_api_key sk-...` or ANTHROPIC_API_KEY) and retry. recall and entity work without one.',
+        'Ask the user whether to add a chat-model API key (Anthropic or OpenAI; each synthesized answer is a paid call). Meanwhile recall and entity work without one: answer from their results.',
         'chat gateway unconfigured (NO_ANTHROPIC_API_KEY)',
       );
+      e.fix = chatKeyFix();
+      throw e;
     }
 
     // Best-effort cost block [E5/m3]: actual tokens when the gateway reported

@@ -139,7 +139,7 @@ describe('ambient writeback — hermetic 5-step lifecycle', () => {
     const initOut = execFileSync('bun', ['run', join(REPO, 'src/cli.ts'), 'init', '--pglite', '--no-embedding', '--non-interactive'], {
       env: childEnv() as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 180_000,
     });
-    expect(initOut).toContain('[AGENT] One-time ask');
+    expect(initOut).toContain('ask: Enable ambient memory writeback'); // F7: the [AGENT] decision block
     expect(initOut).toContain('gbrain config set memory.auto_writeback salient');
 
     // The ask fires ONCE: a second init pass over the same brain stays quiet

@@ -1,7 +1,8 @@
 {
   "golden": {
     "commandAgnosticConnectBranches": [
-      "readOnlyTimeoutMs !== null"
+      "readOnlyTimeoutMs !== null",
+      "serveStatusEligible && !loadConfig()"
     ],
     "commands": {
       "advisor": {

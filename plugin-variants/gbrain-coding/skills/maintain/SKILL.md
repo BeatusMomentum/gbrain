@@ -550,3 +550,13 @@ The maintenance report follows this structure:
 - Tag a page in gbrain (add_tag)
 - Remove a tag in gbrain (remove_tag)
 - View timeline in gbrain (get_timeline)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `get_health` → `gbrain doctor --json`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

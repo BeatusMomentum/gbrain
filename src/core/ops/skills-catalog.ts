@@ -7,7 +7,8 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { opError } from './contract.ts';
+import { hostFix, invalidParam } from './op-fix.ts';
 import {
   LIST_SKILLS_DESCRIPTION,
   GET_SKILL_DESCRIPTION,
@@ -39,7 +40,7 @@ const list_skills: Operation = {
   },
   handler: async (ctx, p) => {
     if (p.schema_version === 2) return (await import('../shared-skills/catalog.ts')).listSharedSkills(ctx, p);
-    if (p.schema_version !== undefined && p.schema_version !== 1) throw new OperationError('invalid_params', 'Supported skill catalog schema versions are 1 and 2.');
+    if (p.schema_version !== undefined && p.schema_version !== 1) throw invalidParam(ctx, 'list_skills', 'schema_version', 'Supported skill catalog schema versions are 1 and 2.', { choices: ['1', '2'], example: 2 });
     const compatibility = await import('../shared-skills/compatibility.ts');
     if (await compatibility.sharedCatalogActive(ctx)) return compatibility.listLegacySharedSkills(ctx, typeof p.section === 'string' ? p.section : undefined);
     const sc = await import('../skill-catalog.ts');
@@ -81,8 +82,8 @@ const get_skill: Operation = {
   },
   handler: async (ctx, p) => {
     if (p.schema_version === 2) return (await import('../shared-skills/catalog.ts')).getSharedSkill(ctx, sharedSkillReadSelector(p));
-    if (p.expected_brain_id !== undefined) throw new OperationError('invalid_params', 'expected_brain_id requires schema_version 2; it asserts identity and never selects a brain connection.');
-    if (p.schema_version !== undefined && p.schema_version !== 1) throw new OperationError('invalid_params', 'Supported skill catalog schema versions are 1 and 2.');
+    if (p.expected_brain_id !== undefined) throw opError('invalid_params', 'expected_brain_id requires schema_version 2; it asserts identity and never selects a brain connection.', 'Pass schema_version: 2 with expected_brain_id, or drop expected_brain_id.');
+    if (p.schema_version !== undefined && p.schema_version !== 1) throw invalidParam(ctx, 'get_skill', 'schema_version', 'Supported skill catalog schema versions are 1 and 2.', { choices: ['1', '2'], example: 2 });
     const compatibility = await import('../shared-skills/compatibility.ts');
     if (await compatibility.sharedCatalogActive(ctx)) return compatibility.getLegacySharedSkill(ctx, p.name, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sc = await import('../skill-catalog.ts');
@@ -162,7 +163,7 @@ const import_skill_proposal: Operation = {
   name: 'import_skill_proposal', description: 'Publish explicitly reviewed human-edited canonical skill files through the durable coordinator. Requires exact current file hashes and skill revision; trusted local operator only.',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true, mutating: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'call', 'import_skill_proposal', '<params_json>'] }, mutating: true,
   params: { ...put_skill.params, expected_hashes: { type: 'object', required: true, description: 'Reviewed current SHA-256 hashes for every affected file and skillpack.json; null denotes an absent file.' } },
   handler: async (ctx, p) => (await import('../shared-skills/publication.ts')).importSharedSkillProposal(ctx, p),
 };
@@ -193,7 +194,7 @@ const get_skill_retention: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'skill-retention'] },
   cliHints: { name: 'skill-retention', positional: [] },
   params: { source_id: { type: 'string', description: 'Canonical source to inspect.' } },
   handler: async (ctx, p) => (await import('../shared-skills/retention.ts')).getSharedSkillRetention(ctx, typeof p.source_id === 'string' ? p.source_id : ctx.sourceId),
@@ -202,7 +203,7 @@ const prune_skill_revisions: Operation = {
   name: 'prune_skill_revisions', description: 'Prune one bounded batch of expired shared-skill history. Preserves heads, tombstones, pending publication refs, delivery leases, pins and permanent write receipts.',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true, mutating: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'prune-skill-revisions'] }, mutating: true,
   cliHints: { name: 'prune-skill-revisions', positional: [] },
   params: { source_id: { type: 'string', description: 'Canonical source to prune.' } },
   handler: async (ctx, p) => (await import('../shared-skills/retention.ts')).pruneSharedSkillRevisions(ctx, typeof p.source_id === 'string' ? p.source_id : ctx.sourceId),
@@ -211,7 +212,7 @@ const retain_skill_revision: Operation = {
   name: 'retain_skill_revision', description: 'Pin an exact shared-skill revision for up to 24 hours under a bounded operator quota. Does not grant read or execution permission.',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true, mutating: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'retain-skill-revision'] }, mutating: true,
   cliHints: { name: 'retain-skill-revision', positional: [] },
   params: { ...sharedSkillKeyParams, source_incarnation: { type: 'string', required: true, description: 'Exact source incarnation.' },
     revision: { type: 'string', required: true, description: 'Exact existing immutable revision.' }, hours: { type: 'number', description: 'Pin lifetime greater than zero and at most 24 hours.' } },
@@ -253,29 +254,27 @@ const advisor: Operation = {
     'Ranked, read-only "what to do next" for this brain: version drift, pending migrations, ' +
     'schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a ' +
     'severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask ' +
-    'before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills ' +
-    'because diagnostics are not prose skills).',
+    'before running any fix. On by default for the local stdio server; remote HTTP callers need ' +
+    'mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).',
   publishGateKey: 'mcp.publish_advisor',
   params: {},
   handler: async (ctx) => {
     // Publish gate: a remote caller needs mcp.publish_advisor=true. Local
     // (ctx.remote === false) callers bypass — the trust boundary is the OS.
     if (ctx.remote !== false) {
-      let enabled = false;
-      try {
-        const dbVal = await ctx.engine.getConfig('mcp.publish_advisor');
-        enabled = dbVal != null ? dbVal === 'true' : ctx.config?.mcp?.publish_advisor === true;
-      } catch {
-        enabled = ctx.config?.mcp?.publish_advisor === true;
-      }
+      // F7: on by default for the owner's stdio pipe; opt-in over HTTP.
+      const { readPublishGate } = await import('../../mcp/publish-gates.ts');
+      const enabled = await readPublishGate(ctx.engine, ctx.config, 'mcp.publish_advisor', ctx.transport);
       if (!enabled) {
         // Same k=v detail grammar as assertPublishEnabled (WP1): honest
         // catalogs hide this op at list time; the throw is the backstop.
-        const err = new OperationError(
+        const err = opError(
           'permission_denied',
           'The advisor is not published over MCP by the brain owner, so it is hidden from your ' +
             'tool catalog. Ask the owner to enable it if you need it.',
           'The owner can enable it with `gbrain config set mcp.publish_advisor true`.',
+          { fix: hostFix(ctx, ['gbrain', 'config', 'set', 'mcp.publish_advisor', 'true'],
+            'Publishing the advisor over MCP is the brain owner\'s choice; only the trusted CLI on the brain host changes it.') },
         );
         err.detail = 'config_key=mcp.publish_advisor';
         throw err;

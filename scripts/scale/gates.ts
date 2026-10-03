@@ -121,11 +121,16 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
 
   const { hot_table_stat_rows: statRows, hot_table_rows: tableRows, probed_after: probedAfter } = report.planner;
   const missing = HOT_TABLES.filter(t => tableRows[t]! > PLANNER_STATS_MIN_ROWS && !(statRows[t]! > 0));
-  add('planner_stats', missing.length === 0, policy.enforcePlanner,
+  // Postgres statistics belong to autovacuum, whose timing gbrain does not control (F4b is PGLite-only):
+  // missing pg_stats rows there are reported, never a failure.
+  add('planner_stats', missing.length === 0, policy.enforcePlanner && report.engine === 'pglite',
     missing.length === 0 ? `planner stats: every hot table above ${PLANNER_STATS_MIN_ROWS} rows has pg_stats rows after ${probedAfter}`
       : `planner stats: no pg_stats rows after ${probedAfter} for ${missing.map(t => `${t} (${tableRows[t]} rows)`).join(', ')}; `
-        + 'the planner is guessing row counts on these tables. Import and the first planner-sensitive read must leave statistics behind (F4b); '
-        + `check \`gbrain doctor\` planner_stats_stale and run \`gbrain repair planner-stats --apply\` to confirm. Reproduce: ${repro}`);
+        + 'the planner is guessing row counts on these tables. '
+        + (report.engine === 'pglite'
+          ? 'Import and the first planner-sensitive read must leave statistics behind (F4b); '
+            + `check \`gbrain doctor\` planner_stats_stale and run \`gbrain repair planner-stats --apply\` to confirm. Reproduce: ${repro}`
+          : `Postgres autovacuum collects them on its own schedule, so this is report-only there. Reproduce: ${repro}`));
 
   const loopsLimit = LOOPS_PER_PAGE_MAX * report.pages;
   for (const name of KEY_PLAN_OPS) {

@@ -38,6 +38,18 @@ afterAll(() => {
   rmSync(brainHome, { recursive: true, force: true });
 });
 
+/**
+ * The command parses `--yes`: the generated acceptance registry lists it AND
+ * the command's own module reads the literal (the registry over-approximates
+ * from every module a command imports).
+ */
+function parsesYes(name: string): boolean {
+  if (!(CLI_FLAG_REGISTRY[name] ?? []).includes('--yes')) return false;
+  const src = join(import.meta.dir, '..', 'src');
+  const files = [join(src, 'cli', 'commands', `${name}.ts`), join(src, 'commands', `${name}.ts`), join(src, 'commands', name, 'index.ts')];
+  return files.some(f => existsSync(f) && /['"]--yes['"]/.test(readFileSync(f, 'utf8')));
+}
+
 /** The contract violations of one command's --help output. */
 async function helpViolations(name: string, r: CliResult): Promise<string[]> {
   const out = `${r.stdout}\n${r.stderr}`;
@@ -50,7 +62,7 @@ async function helpViolations(name: string, r: CliResult): Promise<string[]> {
     const listed = [...out.matchAll(/(?<![\w-])--[a-z][a-z0-9-]*/g)].map(m => m[0]);
     if (listed.some(f => !curated.has(f))) v.push('uncurated_flag');
   }
-  if ((CLI_FLAG_REGISTRY[name] ?? []).includes('--yes') && !out.includes('--yes')) v.push('missing_yes');
+  if (parsesYes(name) && !out.includes('--yes')) v.push('missing_yes');
   return v.map(x => `${name}:${x}`);
 }
 

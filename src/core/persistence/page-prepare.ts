@@ -7,7 +7,8 @@ import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { pageIdentityError, yamlLocator } from './page-identity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
@@ -173,7 +174,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
   signal?.throwIfAborted();
   assertPageRevision(snapshot, preparedIntent ? { expectedRevision: preparedIntent.expectedRevision } : engineMutationPrecondition(parseMutationPrecondition(p)));
-  if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page identity changed.');
+  if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page identity changed.');
   const observedRevision = snapshot?.revision ?? null;
   const activePack = (await loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null))?.manifest;
   if (row.operation === 'put_page' && p.allow_empty !== true && snapshot && !snapshot.page.deleted_at
@@ -273,9 +274,13 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   signal?.throwIfAborted();
   if (!prepared) {
     const oversized = result.error?.startsWith('Content too large') === true;
-    throw new OperationError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
-      : /yaml/i.test(result.error ?? '') ? 'Invalid YAML frontmatter. Quote scalar values or fix the frontmatter block.'
-      : 'The content was rejected before publication.');
+    const yaml = !oversized && /yaml/i.test(result.error ?? '');
+    throw opError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
+      : yaml ? `Invalid YAML frontmatter${yamlLocator(result.error)}. Quote scalar values or fix the frontmatter block.`
+      : 'The content was rejected before publication.',
+      oversized ? 'Split the content into smaller pages, then submit each with its own request_id.'
+      : yaml ? 'Quote frontmatter values that contain ": " or start with a special character, then submit the corrected content with a new request_id.'
+      : 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
   }
   const ready = prepared;
   if (ready.observedRevision !== observedRevision) throw new OperationError('revision_conflict', 'The page changed during import preparation.');

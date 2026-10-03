@@ -2,10 +2,11 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { currentVerifiedLocalWriter } from './identity.ts';
 import { runReindexCode, type ReindexCodeOpts } from '../../commands/reindex-code.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 export async function runAuthenticatedCodeReindex(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const verified = currentVerifiedLocalWriter();
-  if (!verified || verified.remote || verified.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Code reindex requires a trusted CLI registration.');
+  if (!verified || verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('Code reindex requires a trusted CLI registration.');
   if (Object.keys(params).some(k => k !== 'options') || !params.options || typeof params.options !== 'object' || Array.isArray(params.options)) throw new OperationError('invalid_params', 'Code reindex requires typed options.');
   const options = params.options as Record<string, unknown>;
   const allowed = ['sourceId', 'dryRun', 'yes', 'json', 'force', 'noEmbed', 'workers', 'maxCostUsd'];

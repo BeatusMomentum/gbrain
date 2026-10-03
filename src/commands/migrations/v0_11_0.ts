@@ -470,8 +470,8 @@ async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult>
     console.log(`  skills/migrations/v0.11.0.md`);
     console.log('');
     console.log('The skill walks the host through each item using GBrain\'s plugin contract.');
-    console.log('Re-run `gbrain apply-migrations --yes` after each batch to auto-rewrite newly-');
-    console.log('registerable crons and mark items done.');
+    console.log('After each batch, `gbrain apply-migrations --yes` (this upgrade\'s own command) rewrites newly-');
+    console.log('registerable crons and marks items done.');
   }
 
   return {

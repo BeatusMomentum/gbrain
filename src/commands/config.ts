@@ -1155,7 +1155,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
               `[config] Switching the default to a low-coverage column silently degrades search.`,
             );
             console.error(
-              `[config] Re-run with --coverage-override (or --yes) to proceed anyway:`,
+              `[config] Ask the user first; to switch anyway, pass --coverage-override:`,
             );
             console.error(
               `[config]   gbrain config set search_embedding_column ${value} --coverage-override`,

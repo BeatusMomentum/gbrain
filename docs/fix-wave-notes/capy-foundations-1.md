@@ -66,7 +66,7 @@ Two harness fixes came out of the enforced runs:
 Integration-only fixes: the F0 refresh test passes an attribution to
 `withCoordinatedWrite` (9a128ddd); `core-persistence.md` split under the 60 KB
 key-files cap (49303357); the reindex perf fixture classifies a bare `ANALYZE`
-as statistics (from #5932's 77dcf414, in 902f462e).
+as statistics (from #5932's 77dcf414, in 902f462e). The first GitHub scale-tier run crashed because its corpus lives under the repository's ignored `.context/`, which `gbrain import` listed as empty; import now walks an explicitly named ignored directory, and the harness validates a reused corpus file by file and refuses an empty or partly listed one with a named fix.
 
 ## Gates
 

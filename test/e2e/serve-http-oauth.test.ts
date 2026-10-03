@@ -1550,6 +1550,12 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       code: 'insufficient_scope',
       message: "Operation put_page requires 'write' scope",
       your_scopes: ['read'],
+      // B5: the exact grant command, run by the brain host's operator.
+      why: `Client ${id} has scopes [read]; put_page needs 'write'.`,
+      fix: {
+        argv: ['gbrain', 'auth', 'rescope', '--client', id, '--scopes', 'read,write'],
+        consent: ['credentials'], actor: 'host_admin', next: 'tell_user_to_run',
+      },
     });
 
     // Allowed control (anti-vacuity): same token, read op succeeds.

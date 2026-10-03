@@ -276,3 +276,12 @@ For structured JSON, `gbrain call get_job '{"id": <id>}'` returns the job row; i
 - Architecture: https://github.com/garrytan/gbrain/blob/master/docs/architecture/type-taxonomy.md
 - Pack-upgrade mechanism: https://github.com/garrytan/gbrain/blob/master/docs/architecture/pack-upgrade-mechanism.md
 - Issue: https://github.com/garrytan/gbrain/issues/1479
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `run_onboard` → `gbrain call run_onboard <params_json>`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

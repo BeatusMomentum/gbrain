@@ -26,7 +26,12 @@ export interface CodeEntry {
   docs?: string;
   /** Default prose suggestion when a site supplies none. */
   suggestion?: string;
-  /** Default fix template: read-only diagnostics only (scanner-checked). */
+  /**
+   * Default fix template: read-only diagnostics only (scanner-checked).
+   * `{slug}`, `{source_id}`, `{request_id}`, `{operation}` placeholders are
+   * filled from envelope/receipt fields at render time; an unfillable
+   * template is dropped, never rendered with a placeholder.
+   */
   fix?: Action;
   effects?: readonly Effect[];
   actor?: Actor;
@@ -170,6 +175,7 @@ export const CODES = {
   no_refresh_token: { class: 'caller', summary: "Google connect credential error: no refresh token.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   no_routing_eval: { class: 'caller', summary: "The skill has no routing-eval rows to bootstrap a benchmark from." },
   no_skill_md: { class: 'caller', summary: "The skill directory has no SKILL.md." },
+  no_worker: { class: 'caller', summary: "No worker is running for this queue, so a queued job would wait until something runs it.", why: "PGLite brains have no background worker (the database is single-writer), and a Postgres queue needs a running `gbrain jobs work` or supervisor. Queuing without one leaves the job waiting with no error." },
   no_worker_surface: { class: 'caller', summary: "No worker surface." },
   not_a_git_repo: { class: 'caller', summary: "The source path must contain committed Git content." },
   not_connected: { class: 'caller', summary: "Google connect credential error: not connected.", docs: 'docs/guides/google-connect.md#troubleshooting' },
@@ -177,8 +183,8 @@ export const CODES = {
   not_found: { class: 'caller', summary: "The requested resource does not exist or is not visible to this caller.", legacy_error: 'invalid_params' },
   overlapping_path: { class: 'caller', summary: "Sources cannot claim overlapping canonical directories." },
   owner_unavailable: { class: 'retryable', summary: "The brain's persistence owner is not reachable right now." },
-  page_identity_changed: { class: 'caller', summary: "The page was deleted or replaced while the operation ran." },
-  page_not_found: { class: 'caller', summary: "No page with that slug exists in the selected source.", legacy_error: 'page_identity_changed' },
+  page_identity_changed: { class: 'caller', summary: "The page was deleted or replaced while the operation ran.", fix: { argv: ['gbrain', 'get', '--source', '{source_id}', '--', '{slug}'], mcp: { tool: 'get_page', arguments: { slug: '{slug}', source_id: '{source_id}' } }, consent: [], actor: 'agent', why: "Shows which page holds the slug now and its revision; a new attempt needs a new request_id.", requires_exclusive: false } },
+  page_not_found: { class: 'caller', summary: "No page with that slug exists in the selected source.", legacy_error: 'page_identity_changed', fix: { argv: ['gbrain', 'get', '--source', '{source_id}', '--', '{slug}'], mcp: { tool: 'get_page', arguments: { slug: '{slug}', source_id: '{source_id}' } }, consent: [], actor: 'agent', why: "Confirms whether the page exists in this source before anything is recreated.", requires_exclusive: false } },
   parse_error: { class: 'caller', summary: "The request body is not valid JSON." },
   pasted_wrong_url: { class: 'caller', summary: "Google connect credential error: pasted wrong url.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   payload_too_large: { class: 'caller', summary: "The payload exceeds the configured size cap." },
@@ -214,11 +220,12 @@ export const CODES = {
   requires_local_engine: { class: 'host_only', summary: "This command needs the brain's local database, and this install is a thin client of a remote brain." },
   response_too_large: { class: 'caller', summary: "Persistence response exceeds the local transport limit." },
   resume_spec_mismatch: { class: 'caller', summary: "Resume spec mismatch." },
-  revision_conflict: { class: 'caller', summary: "The target changed since it was read; the expected revision no longer matches." },
+  revision_conflict: { class: 'caller', summary: "The target changed since it was read; the expected revision no longer matches.", fix: { argv: ['gbrain', 'get', '--source', '{source_id}', '--', '{slug}'], mcp: { tool: 'get_page', arguments: { slug: '{slug}', source_id: '{source_id}' } }, consent: [], actor: 'agent', why: "Reads the current page and revision; resubmit against that revision with a new request_id.", requires_exclusive: false } },
   revision_required: { class: 'caller', summary: "Review the current policy and supply its expected_policy_epoch before changing disclosure." },
   revision_unavailable: { class: 'unavailable', summary: "The exact authorized revision is unavailable." },
   scope_denied: { class: 'host_only', summary: "The connection lacks the scope this memory verb requires." },
   scope_missing: { class: 'caller', summary: "Google connect credential error: scope missing.", docs: 'docs/guides/google-connect.md#troubleshooting' },
+  serve_status_only: { class: 'unavailable', summary: "gbrain serve is in status-only mode: its brain is locked by another server, missing, or its config is unreadable.", reasons: ['lock_held', 'no_brain', 'config_unreadable'], suggestion: 'Call gbrain_status for the cause, the fix and what to tell the user.' },
   shared_skills_unavailable: { class: 'unavailable', summary: "The shared-skills operation was refused." },
   shared_skills_unsupported: { class: 'unavailable', summary: "The server does not expose the shared-skills protocol." },
   skill_asset_not_found: { class: 'caller', summary: "The requested file is not in the approved revision manifest." },
@@ -238,11 +245,13 @@ export const CODES = {
   split_unparseable: { class: 'caller', summary: "Split unparseable." },
   state_mismatch: { class: 'caller', summary: "Google connect credential error: state mismatch.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   storage_error: { class: 'server', summary: "Reading or writing durable storage failed." },
+  sync_not_applicable: { class: 'caller', summary: "Sync does not apply to this source: its directory is not a Git checkout.", why: "Sync imports changes between Git commits. A gbrain-owned content directory (created by init) holds files gbrain manages itself and is not a Git repository, so there is nothing to sync; gbrain never initializes Git on its own.", reasons: ['content_directory'] },
   sync_in_progress: { class: 'retryable', summary: "A sync is running on this source." },
   take_row_collision: { class: 'caller', summary: "A takes fence row number is already used by a different take that is not in this page's canonical fence." },
   target_escape: { class: 'caller', summary: "The skill target must remain within its selected root." },
   timeout: { class: 'retryable', summary: "The operation did not finish within its time bound.", exit: 124 },
   topology_change_required: { class: 'host_only', summary: "Adding this source would replace or overlap another owner root." },
+  trusted_local_only: { class: 'host_only', summary: 'The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it.', legacy_error: 'permission_denied', suggestion: 'Ask the user to run the named gbrain command on the brain host.' },
   unavailable: { class: 'unavailable', summary: "A required dependency or capability cannot serve this request." },
   unexpected_file_bytes: { class: 'server', summary: "A canonical skill file mode changed outside publication." },
   unexpected_staging_bytes: { class: 'server', summary: "Recovery staging has unexpected bytes or identity; the root and its recovery capacity remain reserved." },
@@ -297,5 +306,15 @@ export const NOTICE_CODES = {
   empty_retrieval: { kind: 'info', summary: 'A retrieval returned no results; the notice says whether recall was degraded.' },
   first_run_decisions: { kind: 'ask', summary: 'init finished; the first-run decisions (search mode, harness wiring, …) carry defaults the user may change.' },
   migrations_pending: { kind: 'safety', summary: 'Schema migrations are pending or failed to apply on this brain.' },
+  no_worker: { kind: 'degraded', summary: 'A job was queued but no worker is running to execute it; it waits until a worker runs.' },
   unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
+  listing_truncated: { kind: 'info', summary: 'A listing returned a full page and more rows match; the fix is the next-page call.' },
+  degraded_recall: { kind: 'degraded', summary: 'A retrieval stage that affects recall did not run; an empty or thin result is not proof of absence.' },
+  source_binding_narrowed: { kind: 'info', summary: "A GBRAIN_SOURCE / .gbrain-source binding narrowed an unqualified read that came back empty; the fix reads another source explicitly." },
+  degraded_dedup: { kind: 'info', summary: 'remember ran without an embedding provider, so only exact duplicates are detected.' },
+  synthesis_keyless: { kind: 'info', summary: 'think returned gathered evidence without synthesis because no chat-model key is configured (by design on a keyless brain).' },
+  think_not_saved: { kind: 'info', summary: 'think save/take persist only for the local CLI, so this answer was not saved.' },
+  onboard_opportunities: { kind: 'coaching', summary: 'Onboarding checks found work that would improve this brain (gbrain onboard --check lists it).' },
+  features_auto_fix: { kind: 'coaching', summary: 'gbrain features found auto-fixable gaps; the fix is the auto-fix command (it may spend on embeddings).' },
+  post_upgrade: { kind: 'safety', summary: 'gbrain was upgraded; behavior for scripts and agents changed — read the behavior table once.' },
 } as const satisfies Record<string, NoticeEntry>;

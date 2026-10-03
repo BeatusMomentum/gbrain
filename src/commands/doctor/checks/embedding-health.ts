@@ -15,6 +15,8 @@ import { providerKeyShadows, providerKeySource } from '../../../core/ai/provider
 import { credentialEnvName, keyShadowWarning } from '../../../core/ai/key-warnings.ts';
 import { getRecipe } from '../../../core/ai/recipes/index.ts';
 import type { Check } from '../../doctor.ts';
+import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
+import { checkError, infoCheck, keylessEnablementFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
@@ -25,6 +27,10 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
   // 8b. Embedding provider eval — live smoke test of the configured provider.
   //     Verifies: correct model, API key works, dimensions match config, DB column matches.
   progress.heartbeat('embedding_provider');
+  if (await embeddingsDisabled(engine)) {
+    checks.push(infoCheck('embedding_provider', 'Not probed: embeddings are disabled on this brain by choice (keyword search keeps working).', 'disabled_by_choice', keylessEnablementFix()));
+    return checks;
+  }
   try {
     const {
       getEmbeddingModel,
@@ -404,11 +410,7 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
   } catch (err) {
     // Pre-config brains, registry-validation throws, etc. Surfaces the
     // error message but doesn't fail the doctor run.
-    checks.push({
-      name: 'embedding_column_registry',
-      status: 'warn',
-      message: `Could not check embedding column registry: ${(err as Error).message}`,
-    });
+    checks.push(checkError('embedding_column_registry', 'check embedding column registry', err));
   }
   return checks;
 }

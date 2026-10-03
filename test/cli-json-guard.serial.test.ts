@@ -199,7 +199,9 @@ describe('D2 command migrations: doctor, sync, embed on a keyless brain', () => 
     expect(onlyDocument(stale.stdout)).toMatchObject({ failures: 0 });
     const all = await cli(['embed', '--all', '--json']);
     expect(all.exitCode).toBe(1);
-    expect(onlyDocument(all.stdout)).toMatchObject({ error: 'embedding_disabled', code: 'embedding_disabled', fix: { argv: ['gbrain', 'embeddings', 'enable', '--help'] } });
+    const doc = onlyDocument(all.stdout) as { code?: string; reason?: string; fix?: { argv?: string[] } };
+    expect(doc).toMatchObject({ code: 'embedding_disabled', reason: 'disabled_by_choice' });
+    expect(doc.fix?.argv?.[0]).toBe('gbrain'); // the readiness enablement command (A7)
   }, 120_000);
 
   test('doctor --json with no brain: the no_brain envelope', async () => {

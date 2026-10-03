@@ -17,6 +17,7 @@ import { writerOnboardingPreflight } from './onboarding.ts';
 import { assertWriterAdminUnlocked, readWriterAdminLock, setWriterAdminLock } from './admin-lock.ts';
 import { listBlockingEffects } from './blocking-effects.ts';
 import { listWriterVersions } from './writer-versions.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 const invalid = (message: string) => new OperationError('invalid_params', message);
 function source(value: unknown): string {
@@ -90,7 +91,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (operation === 'company_brain_preview') return { ...await runtime.previewCompanyBrain(engine, input) };
     return { ...await runtime.connectCompanyBrain(engine, input) };
   }
-  if (currentVerifiedLocalWriter()?.remote) throw new OperationError('permission_denied', 'Writer administration requires a trusted local CLI caller.');
+  if (currentVerifiedLocalWriter()?.remote) throw trustedCliRequired('Writer administration requires a trusted local CLI caller.');
   if (operation === 'writer_lock' || operation === 'writer_unlock') {
     keys(params, []);
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
@@ -101,7 +102,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   if (operation === 'writer_extract_stale') {
     keys(params, ['source_id', 'dry_run']);
     const writer = currentVerifiedLocalWriter();
-    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Stale extraction requires a trusted CLI registration.');
+    if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Stale extraction requires a trusted CLI registration.');
     const { managedPersistenceEnabled } = await import('./ownership.ts');
     if (!await managedPersistenceEnabled(engine)) throw new OperationError('writer_coordinator_required', 'Owner-delegated stale extraction requires activated managed persistence.', WRITER_INSPECTION_HINT);
     return { ...await (await import('./links-maintenance.ts')).runManagedStaleExtraction(engine,

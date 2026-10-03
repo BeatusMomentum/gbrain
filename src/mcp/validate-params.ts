@@ -16,31 +16,56 @@ import type { Operation } from '../core/operations.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
+import type { OperationError } from '../core/ops/contract.ts';
+import { invalidParam } from '../core/ops/op-fix.ts';
 
-/** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
-export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+/** One validation failure: the message (never echoes the caller's value) and the param it names. */
+export interface ParamValidationFailure { message: string; param: string }
+
+/** Validate required params exist and have the expected type. Returns the first failure, or null. */
+export function findInvalidParam(op: Operation, params: Record<string, unknown>): ParamValidationFailure | null {
   for (const [key, def] of Object.entries(op.params)) {
+    const fail = (message: string) => ({ message, param: key });
     if (def.required && (params[key] === undefined || params[key] === null)) {
-      return `Missing required parameter: ${key}`;
+      return fail(`Missing required parameter: ${key}`);
     }
     if (params[key] !== undefined && params[key] !== null) {
       const val = params[key];
       const expected = def.type;
-      if (expected === 'string' && typeof val !== 'string') return `Parameter "${key}" must be a string`;
-      if (expected === 'number' && typeof val !== 'number') return `Parameter "${key}" must be a number`;
-      if (expected === 'boolean' && typeof val !== 'boolean') return `Parameter "${key}" must be a boolean`;
-      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return `Parameter "${key}" must be an object`;
-      if (expected === 'array' && !Array.isArray(val)) return `Parameter "${key}" must be an array`;
+      if (expected === 'string' && typeof val !== 'string') return fail(`Parameter "${key}" must be a string`);
+      if (expected === 'number' && typeof val !== 'number') return fail(`Parameter "${key}" must be a number`);
+      if (expected === 'boolean' && typeof val !== 'boolean') return fail(`Parameter "${key}" must be a boolean`);
+      if (expected === 'object' && (typeof val !== 'object' || Array.isArray(val))) return fail(`Parameter "${key}" must be an object`);
+      if (expected === 'array' && !Array.isArray(val)) return fail(`Parameter "${key}" must be an array`);
       // WP3: enum membership is a TYPE error, enforced in BOTH strict modes
       // (warn and reject). The message names the declared values only — the
       // caller's raw value is never echoed (it can land in persistent logs
       // via the error_message column; declared values are safe by definition).
       if (def.enum && typeof val === 'string' && !def.enum.includes(val)) {
-        return `Parameter "${key}" must be one of: ${def.enum.join(', ')}`;
+        return fail(`Parameter "${key}" must be one of: ${def.enum.join(', ')}`);
       }
     }
   }
   return null;
+}
+
+/** Validate required params exist and have the expected type. Returns null on success, error message on failure. */
+export function validateParams(op: Operation, params: Record<string, unknown>): string | null {
+  return findInvalidParam(op, params)?.message ?? null;
+}
+
+/**
+ * B3: the `invalid_params` error for a schema failure — the param's type,
+ * description, valid choices and one example call on the caller's surface
+ * (from the op's ParamDef), never the caller's raw value.
+ */
+export function schemaInvalidParams(
+  op: Operation,
+  failure: ParamValidationFailure,
+  ctx: { remote?: boolean; transport?: 'stdio' | 'http' },
+): OperationError {
+  return invalidParam({ remote: ctx.remote ?? true, transport: ctx.transport }, op.cliHints?.name && ctx.remote === false ? op.cliHints.name : op.name,
+    failure.param, failure.message, { def: op.params[failure.param] });
 }
 
 /**

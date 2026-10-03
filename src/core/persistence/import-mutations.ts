@@ -15,12 +15,13 @@ import { submissionAuthority } from './authority.ts';
 import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 export async function importManagedFile(engine: BrainEngine, filePath: string, sourcePath: string,
   opts: { sourceId?: string; noEmbed?: boolean; activePack?: ImportPack; signal?: AbortSignal; slugRoot?: string } = {}): Promise<ImportResult> {
   const caller = currentSubmissionAuthority();
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
-    throw new OperationError('permission_denied', 'Managed filesystem import requires the trusted local CLI.');
+    throw trustedCliRequired('Managed filesystem import requires the trusted local CLI.');
   }
   opts.signal?.throwIfAborted();
   if (isImageFilePath(sourcePath) && process.env.GBRAIN_EMBEDDING_MULTIMODAL !== 'true') {

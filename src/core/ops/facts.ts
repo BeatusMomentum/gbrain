@@ -18,6 +18,7 @@ import { readHolders } from './context.ts';
 
 import type { Operation, OperationContext } from './contract.ts';
 import { OperationError, verbError } from './contract.ts';
+import { invalidParam, paramUse } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
@@ -44,7 +45,7 @@ const extract_facts: Operation = {
   idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
-    'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: "private"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
+    'Extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: "private"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
   params: {
     request_id: { ...WRITE_REQUEST_PARAM, description: `${WRITE_REQUEST_PARAM.description} Managed extraction returns durable receipts; when omitted, each call gets a new UUID. Unmanaged extraction retains its legacy non-journaled behavior.` },
     turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
@@ -101,10 +102,9 @@ const extract_facts: Operation = {
     if (p.valid_from !== undefined && p.valid_from !== null) {
       const d = new Date(p.valid_from as string);
       if (!Number.isFinite(d.getTime())) {
-        throw new OperationError(
-          'invalid_params',
+        throw invalidParam(ctx, 'extract_facts', 'valid_from',
           `invalid valid_from: "${String(p.valid_from)}" — expected a parseable ISO 8601 datetime`,
-        );
+          { def: extract_facts.params.valid_from, example: '2026-08-11T00:00:00Z' });
       }
       validFrom = d;
     }
@@ -253,9 +253,9 @@ const recall: Operation = {
         : error.code === 'unknown_source' ? 'not_found'
           : error.code === 'invalid_params' ? 'invalid_params' : null;
       if (code === null) throw error;
-      throw verbError(code, error.message,
+      throw Object.assign(verbError(code, error.message,
         error.suggestion ?? 'Choose a permitted active source, or omit source_id to use your existing scope.',
-        error.detail ?? error.code);
+        error.detail ?? error.code), error.fix ? { fix: error.fix } : {});
     }
     // Set-dedupe: a grant carrying a repeated id (or the scalar source again)
     // must not fan out the same source twice into the merge.
@@ -635,7 +635,7 @@ const context_pack: Operation = {
       throw verbError(
         'invalid_params',
         `context_pack: since is not a parseable timestamp: "${rawSince.slice(0, 60)}"`,
-        'Pass an ISO 8601 datetime, e.g. since: "2026-08-11T00:00:00Z".',
+        `Pass an ISO 8601 datetime, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
       );
     }
     // Normalize to ISO (red-team F4): the filter + rendered text use it.
@@ -754,7 +754,7 @@ const delta: Operation = {
       throw verbError(
         'invalid_params',
         `delta: since is not a parseable timestamp: "${rawSince.slice(0, 60)}"`,
-        'Pass an ISO 8601 datetime, e.g. since: "2026-08-11T00:00:00Z".',
+        `Pass an ISO 8601 datetime, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
       );
     }
     // NORMALIZE to ISO immediately (red-team F4): the raw string is echoed
@@ -774,7 +774,7 @@ const delta: Operation = {
       throw verbError(
         'invalid_params',
         `delta: since is not a valid ISO 8601 calendar timestamp: "${rawSince.slice(0, 60)}"`,
-        'Pass a real calendar datetime, e.g. since: "2026-08-11T00:00:00Z".',
+        `Pass a real calendar datetime, e.g. ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')}.`,
       );
     }
     const explicitSince =
@@ -804,7 +804,7 @@ const delta: Operation = {
         throw verbError(
           'invalid_params',
           'delta requires `since` (ISO 8601) or a `session_id` with an established cursor.',
-          'Pass since ("2026-08-11T00:00:00Z") for a stateless delta, or a stable session_id — the first call establishes the cursor and later calls return only newer changes.',
+          `Pass ${paramUse(ctx, 'since', '2026-08-11T00:00:00Z')} for a stateless delta, or a stable ${paramUse(ctx, 'session_id', 'agent-main')} — the first call establishes the cursor and later calls return only newer changes.`,
         );
       }
       // First wake for this session: establish the cursor at now and report an

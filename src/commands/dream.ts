@@ -864,18 +864,22 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     onceForPhase: opts.once ? opts.phases[0]! : undefined,
   });
 
-  // Exit non-zero when the cycle failed overall (helps cron spot real problems).
-  // 'partial' is not a failure — it means some phase warned but the cycle ran —
-  // except when a phase threw and was contained so later phases could run.
-  const failed = report.status === 'failed' || report.phases.some(p => p.details?.contained === true);
+  // Exit non-zero when the cycle failed overall or any phase failed (agent-first
+  // operator wave E4): a 'partial' cycle whose phase reports 'fail' — thrown and
+  // contained, or caught inside the runner — is never success. Warn-only
+  // 'partial' cycles still exit 0.
+  const failedPhases = report.phases.filter(p => p.status === 'fail' || p.details?.contained === true).map(p => p.phase);
+  const failed = report.status === 'failed' || failedPhases.length > 0;
   if (!opts.json) printHuman(report);
   else if (!failed || !jsonGuardActive()) await writeJsonDocument(JSON.stringify(report, null, 2));
   else {
     // D2: under the --json guard a failed cycle is one envelope leading with the CycleReport keys.
-    const bad = report.phases.filter(p => p.status === 'fail' || p.details?.contained === true).map(p => p.phase);
-    writeCliError(opError('cycle_failed', `The dream cycle ${report.status === 'failed' ? 'failed' : 'contained a phase that threw'}${bad.length ? ` (${bad.join(', ')})` : ''}.`,
-      `Read phases[].error for the cause, fix it, then rerun the phase: gbrain dream --phase ${bad[0] ?? '<phase>'}`),
+    writeCliError(opError('cycle_failed', `The dream cycle ${report.status === 'failed' ? 'failed' : 'had failing phases'}${failedPhases.length ? ` (${failedPhases.join(', ')})` : ''}.`,
+      `Read phases[].error for the cause, fix it, then rerun the phase: gbrain dream --phase ${failedPhases[0] ?? '<phase>'}`),
     'dream', { json: true, stderr: false, legacy: { ...report } });
+  }
+  if (failed && !opts.json && failedPhases.length > 0) {
+    console.error(`Dream failed: ${failedPhases.length} phase(s) failed (${failedPhases.join(', ')}); see the phase errors above. After fixing the cause, re-run one with: gbrain dream --phase ${failedPhases[0]}`);
   }
   if (failed) process.exit(1);
 

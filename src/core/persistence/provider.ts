@@ -13,6 +13,7 @@ import { runPersistenceAdministration } from './administration.ts';
 import { boundedWriteWaitMs } from './write-wait.ts';
 export { residentPersistenceConfig } from './local-client.ts';
 import { projectionBacklog } from '../page-state/projections.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {
@@ -67,7 +68,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
   }), administer: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
     assertPersistenceAccepting(engine);
     if (request.brain_id !== brain.brain_id || verified.remote || verified.principal.kind !== 'local_cli') {
-      throw new OperationError('permission_denied', 'Local administration requires this brain’s current trusted CLI registration.');
+      throw trustedCliRequired('Local administration requires this brain’s current trusted CLI registration.');
     }
     return runPersistenceAdministration(engine, request.operation, request.params, config);
   }) };

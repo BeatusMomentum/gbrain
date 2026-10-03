@@ -330,7 +330,7 @@ export async function assertEmbeddingEffectEnabled(engine: BrainEngine, config: 
   if (disabled !== null && disabled !== 'true' && disabled !== 'false') {
     throw new OperationError('embedding_configuration', 'Selected brain embedding_disabled must be true or false.');
   }
-  assertEmbeddingEnabled({ embedding_disabled: disabled === 'true' });
+  assertEmbeddingEnabled({ engine: engine.kind, ...config, embedding_disabled: disabled === 'true' });
 }
 
 function embeddingStorageFailure(error: unknown): unknown {

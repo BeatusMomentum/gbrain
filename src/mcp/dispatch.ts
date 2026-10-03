@@ -14,14 +14,19 @@ import { loadConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
-import { isCallable } from '../core/ops/callable.ts';
+import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
+import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
+import { recallInteropNotices } from '../core/interop-notices.ts';
+import { hiddenToolHint } from './hidden-tool-hint.ts';
+import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
   normalizeOptionalParams,
-  validateParams,
+  findInvalidParam,
+  schemaInvalidParams,
   findUnknownParams,
   buildUnknownParamWarnBlock,
   resolveStrictParamsMode,
@@ -344,6 +349,33 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 }
 
 /**
+ * Model-visible notices the search/query ops attach to `_meta.retrieval`: the
+ * D8 empty-retrieval diagnosis, a reconciled type filter, other names declared in the evidence, and saved
+ * facts that match the query. Each rides as its own text block after the
+ * results (content[0] stays the bare result array for thin clients).
+ */
+export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
+  if (retrieval === null || typeof retrieval !== 'object') return [];
+  const empty = Array.isArray(result) && result.length === 0 ? buildEmptyRetrievalBlock(retrieval) : null;
+  const r = retrieval as {
+    type_filter_notice?: unknown;
+    other_names?: Array<{ name: string; alias: string; slug: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string }>;
+  };
+  const blocks: string[] = empty ? [empty] : [];
+  if (typeof r.type_filter_notice === 'string') blocks.push(r.type_filter_notice);
+  if (r.other_names?.length) {
+    blocks.push(`Other names in these results (documents may use either; search the one you have not tried): ${r.other_names
+      .map(n => `${n.alias} = ${n.name} (declared in ${n.slug})`).join('; ')}.`);
+  }
+  if (r.saved_facts?.length) {
+    blocks.push(`Saved facts (remember) matching this query, newest first; recall returns more:\n${r.saved_facts
+      .map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}]`).join('\n')}`);
+  }
+  return blocks;
+}
+
+/**
  * D8: render the second (model-visible) content block for an empty retrieval
  * result from the handler-emitted `retrieval` meta. Returns null when the
  * meta doesn't carry the expected shape — the block is best-effort loudness,
@@ -453,11 +485,12 @@ export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyErro
     .filter(op => !op.localOnly && !op.publishGateKey && (allowedOps ? allowedOps.has(op.name) : true))
     .map(op => op.name);
   const nearest = suggestNearest(name, candidates);
-  const suggestion = nearest
+  const hint = hiddenToolHint(operations.find(o => o.name === name), opts); // F6: owner's stdio pipe only
+  const suggestion = hint?.suggestion ?? (nearest
     ? `Did you mean "${nearest}"?`
-    : 'List the tools this connection can call (tools/list) and use one of those names.';
+    : 'List the tools this connection can call (tools/list) and use one of those names.');
   return errorResult(opError('unknown_tool', legacyError ? `Unknown: ${name}` : `Unknown tool: ${name}`, suggestion,
-    legacyError ? { legacy_error: legacyError } : {}), opts);
+    { ...(legacyError ? { legacy_error: legacyError } : {}), ...(hint ? { fix: hint.fix } : {}) }), opts);
 }
 
 /**
@@ -635,6 +668,8 @@ export async function dispatchToolCall(
   if (op.localOnly && opts.transport !== 'stdio') {
     return unknownToolEnvelope(name, opts);
   }
+  // F5: an owner-only op is never listed on MCP; a call gets the exact CLI command.
+  if (op.cliOnly && opts.remote !== false) return errorResult(cliOnlyRefusal(op), opts, { op: name });
 
   // --source-guard (plugin lanes): fail-closed write routing. A user-global
   // plugin serve has no per-workspace source binding, so an ambient-tier
@@ -664,13 +699,12 @@ export async function dispatchToolCall(
   }
 
   const safeParams = normalizeOptionalParams(op, params || {});
-  const validationError = validateParams(op, safeParams);
-  if (validationError) {
+  const validationFailure = findInvalidParam(op, safeParams);
+  if (validationFailure) {
     logVerb(false);
-    // [c7] verb validation errors speak the protocol envelope (suggestion +
-    // protocol_version); non-verb ops keep the pre-existing shape untouched.
-    const invalid = new OperationError('invalid_params', validationError,
-      isVerb ? 'Check the tool schema — required params and types are declared there.' : undefined);
+    // [c7] verb validation errors speak the protocol envelope (protocol_version);
+    // B3: every op's suggestion names the param's type, choices and an example.
+    const invalid = schemaInvalidParams(op, validationFailure, { remote: opts.remote, transport: dispatchRenderContext(opts).transport === 'http' ? 'http' : 'stdio' });
     if (isVerb) invalid.protocolVersion = MEMORY_VERBS_VERSION;
     return errorResult(invalid, opts, { op: name });
   }
@@ -713,8 +747,16 @@ export async function dispatchToolCall(
   // #1924 / #1371. Trusted local callers (remote === false) keep the
   // historical fallback via buildOperationContext.
   if ((opts.remote ?? true) && !opts.sourceId) {
-    return errorResult(new OperationError('missing_source_scope',
-      `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.`), opts, { op: name });
+    const viaClient = opts.transport !== 'stdio' && !!opts.auth?.clientId;
+    return errorResult(opError('missing_source_scope',
+      `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.`,
+      viaClient
+        ? `This connection has no source grant. The brain host operator binds one to this client (gbrain auth rescope-client ${opts.auth!.clientId} --source <source-id>), then the call works.`
+        : 'This MCP server resolved no source. Set GBRAIN_SOURCE to a registered source id in the environment that launches it, then restart it.',
+      { fix: hostFix({ remote: true, transport: viaClient ? 'http' : 'stdio' },
+        viaClient ? ['gbrain', 'auth', 'clients', '--json'] : ['gbrain', 'sources', 'list'],
+        viaClient ? 'Shows each OAuth client\'s write source; the operator binds this client to one with `gbrain auth rescope-client`.'
+          : 'Lists the source ids GBRAIN_SOURCE can name.') }), opts, { op: name });
   }
 
   const ctx = buildOperationContext(engine, safeParams, opts);
@@ -749,8 +791,8 @@ export async function dispatchToolCall(
         scopes = verified.remote ? verified.grant.scopes : [];
       }
       if (!operationScopesAllowed(scopes ?? [], op)) {
-        throw new OperationError('permission_denied', 'This operation requires an explicit shared-skills grant.',
-          `Ask the brain owner to grant ${op.requiredScopes.join(', ')} for this connection.`);
+        throw scopeDeniedError({ op: name, required: op.requiredScopes, auth: ctx.auth ? { ...ctx.auth, scopes: scopes ?? [] } : { clientId: '', scopes: scopes ?? [] },
+          transport: ctx.transport === 'stdio' ? 'stdio' : 'http', message: 'This operation requires an explicit shared-skills grant.', legacy_error: 'permission_denied' });
       }
     }
     // Fail-closed gate for slug-bound OAuth clients, applied here because
@@ -791,22 +833,29 @@ export async function dispatchToolCall(
     // array (D3 — deployed thin-clients parse content[0] only); the diagnosis
     // rides the notice channel (its text kept as the `why:` line). Structured
     // consumers read the same facts from _meta.retrieval below.
-    if (Array.isArray(result) && result.length === 0 && responseMeta.retrieval) {
-      const block = buildEmptyRetrievalBlock(responseMeta.retrieval);
-      if (block) notices.push({ code: 'empty_retrieval', kind: block.includes('degraded:') ? 'degraded' : 'info', why: block });
-    }
+    const emptyBlock = Array.isArray(result) && result.length === 0 && responseMeta.retrieval
+      ? buildEmptyRetrievalBlock(responseMeta.retrieval) : null;
+    if (emptyBlock) notices.push({ code: 'empty_retrieval', kind: emptyBlock.includes('degraded:') ? 'degraded' : 'info', why: emptyBlock });
+    // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
+    // data, not advice: they stay plain extra text blocks right after content[0], as measured.
+    const evidenceBlocks = retrievalNoticeBlocks(result, responseMeta.retrieval).slice(emptyBlock ? 1 : 0);
     // WP3/D8: warn-mode unknown-param notices ride the same channel, so the
     // grace period actually corrects clients (old thin-clients read content[0]
     // only — skew-safe). One notice per ignored parameter.
     for (const w of unknownParamWarnings) {
       notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
     }
+    // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
+    notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
+      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding }));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
     // an UNSET marker never probes (fail-closed).
     maybeBackupNotice(notices, opts);
+    if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
+    if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
     }

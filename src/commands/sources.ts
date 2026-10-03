@@ -1292,7 +1292,9 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
     if (!m.local_path) warns.push('no local_path');
     // #1950: don't cry "never synced" while a sync lock is live — it's syncing now.
     if (m.lag_seconds === null && !syncRunning.has(m.source_id)) {
-      warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
+      const { syncContentDirectory } = await import('../core/sync-applicability.ts');
+      const owned = await syncContentDirectory(engine, { sourceId: m.source_id }).catch(() => null);
+      if (!owned) warns.push(`never synced — run \`gbrain sync --source ${m.source_id}\``);
     }
     if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
       warns.push(`${(100 - m.embed_coverage_pct).toFixed(1)}% un-embedded — run \`gbrain embed --stale --source ${m.source_id}\``);
