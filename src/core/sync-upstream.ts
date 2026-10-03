@@ -69,9 +69,8 @@ export async function recordUpstreamObservation(engine: BrainEngine, sourceId: s
   }
 }
 
-/** The managed refresh sequence: make the source a read-only mirror, fast-forward its checkout, sync without pulling. */
-const managedRefreshFix = (sourceId: string, checkout: string) =>
-  `gbrain sources mirror-readonly ${sourceId} && git -C ${JSON.stringify(checkout)} pull --ff-only && gbrain sync --source ${sourceId} --no-pull`;
+/** The managed refresh: a drained, worktree-wide fast-forward of the checkout followed by the managed sync (F0). */
+const managedRefreshFix = (sourceId: string) => `gbrain sources refresh ${sourceId}`;
 
 export interface ManagedPullWarning { code: string; cause: string; fix: string; docs: string }
 
@@ -81,7 +80,7 @@ export function managedPullWarning(sourceId: string, checkout: string): ManagedP
   return {
     code: ERROR_CATALOGUE.managed_pull_skipped.code,
     cause: 'Managed brains do not run git pull inside a cycle; this sync imported the checkout as it is, so new upstream commits are not in the brain.',
-    fix: managedRefreshFix(sourceId, checkout),
+    fix: managedRefreshFix(sourceId),
     docs: ERROR_CATALOGUE.managed_pull_skipped.docs,
   };
 }
@@ -102,7 +101,7 @@ export function upstreamFreshness(
   const gitRemote = sourceConfigHasRemoteUrl(source.config) && parseSourceConfig(source.config).kind == null;
   const unknown = gitRemote && (ageHours === null || ageHours >= UPSTREAM_OBSERVATION_MAX_AGE_HOURS);
   if (!unknown && behind <= 0) return null;
-  const fix = managed ? managedRefreshFix(source.id, source.local_path ?? '<checkout>') : `gbrain sync --source ${source.id}`;
+  const fix = managed ? managedRefreshFix(source.id) : `gbrain sync --source ${source.id}`;
   const fact = unknown
     ? `upstream unknown (${ageHours === null ? 'never checked' : `last checked ${ageHours}h ago`})`
     : `upstream ${behind} commit(s) ahead of the synced commit`;

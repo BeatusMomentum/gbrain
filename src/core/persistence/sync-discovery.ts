@@ -95,7 +95,7 @@ export function assertSyncEntryOrigin(context: Pick<SyncDiscovery, 'root' | 'git
 /** Validate the current owner and source without enumerating a new manifest. */
 export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncOpts): Promise<ManagedSyncContext> {
   await assertManagedSyncActive(engine);
-  if (!opts.noPull && !opts.dryRun) throw new OperationError('writer_coordinator_required', 'Managed sync requires --no-pull; Git pull/rebase needs an explicit drained maintenance window.');
+  if (!opts.noPull && !opts.dryRun) throw new OperationError('writer_coordinator_required', 'Managed sync requires --no-pull; Git pull/rebase needs an explicit drained maintenance window.', `Fast-forward and sync the checkout with gbrain sources refresh ${opts.sourceId ?? 'default'}`);
   if (opts.includeGitignored || opts.skipFailed) throw new OperationError('writer_coordinator_required', 'Managed sync cannot bypass ignored-file or failed-receipt guards.');
   const sourceId = opts.sourceId ?? 'default';
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; last_commit: string | null; config: Record<string, unknown> }>(

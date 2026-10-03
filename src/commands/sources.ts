@@ -19,6 +19,7 @@
  *   gbrain sources federate <id>   — sources.config.federated = true
  *   gbrain sources unfederate <id> — sources.config.federated = false
  *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
+ *   gbrain sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
  *   gbrain sources push [<id>|--path <dir>] — scan-gated add→commit→pull→push
  *                               (agent-bootstrap; core in src/core/workspace-push.ts)
  *
@@ -1867,6 +1868,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
     case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
+    case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
     case 'purge':      return runPurge(engine, rest);
@@ -1953,6 +1955,10 @@ Subcommands:
   unfederate <id>                   Isolate source from default search.
   mirror-readonly <id>              Read-only mirror (#5409): managed writes never touch its checkout.
   mirror-writable <id>              Undo mirror-readonly.
+  refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
+                                    Managed brains: drain writes to the source's worktree, fast-forward
+                                    it to its upstream (git merge --ff-only) and sync every source bound
+                                    to it. --dry-run fetches and previews only.
   set-cr-mode <id> <none|title|per_chunk_synopsis>
                                     Per-source contextual retrieval mode
                                     override (v0.40.3.0). Pass "unset" or
