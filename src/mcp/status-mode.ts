@@ -121,7 +121,7 @@ export function statusHeadline(state: StatusModeState): string {
 
 const RESTART_NOTE = 'If your client does not refresh its tool list after recovery, restart this MCP server.';
 
-function statusFix(state: StatusModeState): { fix: Action; user_message: string; decisions?: Decision[] } {
+function statusFix(state: StatusModeState): { fix: Action; user_message: string; decisions?: Decision[]; plan?: Action } {
   if (state.reason === 'no_brain') {
     return {
       fix: {
@@ -144,15 +144,25 @@ function statusFix(state: StatusModeState): { fix: Action; user_message: string;
     };
   }
   const owner = ownerPhrase(state);
-  const shareHttp: Action = {
-    argv: ['gbrain', 'serve', '--http'], consent: ['persistent_install', 'credentials'], actor: 'user', requires_exclusive: true,
-    why: 'Run ONE shared HTTP server for every agent session on this machine, after closing the current owner; then connect each harness to it.',
-    then: {
-      argv: ['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes'], consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
-      why: 'Mints one bearer token per detected harness through the running HTTP server and rewrites each harness MCP entry to it (the stdio entries keep working until then).',
-      verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] }, docs: 'docs/guides/remote-mcp.md',
-    },
+  const wireHarnesses: Action = {
+    argv: ['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes'], consent: ['persistent_install', 'credentials'], actor: 'agent', requires_exclusive: false,
+    why: 'Mints one bearer token per detected harness through the running HTTP server and rewrites each harness MCP entry to it (each stdio entry keeps working until its harness is rewired).',
+    user_message: 'I can connect your agent apps to the shared gbrain server so every session uses memory at once. That stores an access token in each app\'s config and pre-approves gbrain\'s tools. OK?',
+    verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] }, docs: 'docs/guides/remote-mcp.md',
   };
+  if (state.lock_owner?.transport === 'http') {
+    // A shared HTTP server already owns the brain: only this harness needs rewiring.
+    return { fix: wireHarnesses, user_message: wireHarnesses.user_message! };
+  }
+  const startHttp: Action = {
+    argv: ['gbrain', 'serve', '--http'], consent: ['persistent_install'], actor: 'user', requires_exclusive: true,
+    why: 'Run ONE shared HTTP server for every agent session on this machine (keep it running, e.g. under autopilot or a terminal).',
+    then: wireHarnesses,
+  };
+  const shareHttp: Action = state.lock_owner?.pid !== undefined
+    ? { argv: ['kill', String(state.lock_owner.pid)], consent: [], actor: 'user', requires_exclusive: false,
+      why: `Stop ${owner} first (or quit that session); the shared server needs the brain's single-writer lock.`, then: startHttp }
+    : startHttp;
   const waitFix: Action = {
     mcp: { tool: STATUS_TOOL_NAME, arguments: {} }, consent: [], actor: 'user', requires_exclusive: false,
     why: `Close the session that owns the brain (${owner}); then call gbrain_status again and this server opens the brain in place (re-checked at most every 5 s). ${RESTART_NOTE}`,
@@ -166,11 +176,12 @@ function statusFix(state: StatusModeState): { fix: Action; user_message: string;
       question: 'Two agent sessions want the same brain. Close the other session, or share one HTTP server?',
       options: [
         { id: 'close_owner', label: `Close ${owner.replace(/`/g, '')}; this server recovers on the next gbrain_status call.` },
-        { id: 'share_http', label: 'Run one shared `gbrain serve --http` and connect every harness to it (writes harness config, mints tokens).', argv: shareHttp.argv },
+        { id: 'share_http', label: 'Run one shared `gbrain serve --http` and connect every harness to it (writes harness config, mints tokens); the full plan is share_http_plan.', argv: shareHttp.argv },
       ],
       default: 'close_owner',
       default_reason: 'Nothing is installed or reconfigured; the brain comes back as soon as the other session ends.',
     }],
+    plan: shareHttp,
   };
 }
 
@@ -186,7 +197,7 @@ export function statusPayload(state: StatusModeState): Record<string, unknown> {
       contract_version: 1,
     };
   }
-  const { fix, user_message, decisions } = statusFix(state);
+  const { fix, user_message, decisions, plan } = statusFix(state);
   return {
     status: 'unavailable',
     reason: state.reason,
@@ -197,6 +208,7 @@ export function statusPayload(state: StatusModeState): Record<string, unknown> {
     fix: renderAction(fix, STATUS_RENDER),
     user_message,
     ...(decisions ? { decisions } : {}),
+    ...(plan ? { share_http_plan: renderAction(plan, STATUS_RENDER) } : {}),
     checked_at: new Date(state.checked_at).toISOString(),
     contract_version: 1,
   };

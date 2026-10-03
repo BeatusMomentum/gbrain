@@ -6,7 +6,11 @@
  * documented recoveries end in a successful recall:
  *   (a) the owner closes → the next gbrain_status call opens the brain in
  *       place, tools/list_changed fires and the full catalog answers recall;
- *   (b) no brain → `gbrain init` (the fix) → recovery in place → recall.
+ *   (b) both harnesses move to one shared `gbrain serve --http` with no prior
+ *       HTTP credentials (tokens minted before the shared owner starts): the
+ *       stale stdio server then names the HTTP owner and the rewiring fix, and
+ *       both HTTP sessions recall;
+ *   no brain → `gbrain init` (the fix) → recovery in place → recall.
  * `--fail-fast` keeps the pre-F4 exit for supervisors.
  *
  * Serial: real subprocesses over one temp GBRAIN_HOME (PGLite lock).
@@ -19,6 +23,8 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 
 const MARKER = 'zelkova-status-marker-4q7';
@@ -99,6 +105,10 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
     expect(status.fix.next).toBe('tell_user_to_run');
     expect(status.user_message).toBeTruthy();
     expect(status.decisions[0].options.map((o: { id: string }) => o.id)).toEqual(['close_owner', 'share_http']);
+    // The executable shared-HTTP plan: stop the owner → serve --http → rewire harnesses.
+    expect(status.share_http_plan.argv).toEqual(['kill', String(status.lock_owner.pid)]);
+    expect(status.share_http_plan.then.argv).toEqual(['gbrain', 'serve', '--http']);
+    expect(status.share_http_plan.then.then.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes']);
 
     // Any other tool: one error block that names gbrain_status.
     const refused = await second.client.callTool({ name: 'search', arguments: { query: MARKER } });
@@ -125,7 +135,7 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
   }, 90_000);
 });
 
-describe('status-only serve: no brain → init → recovery in place (b)', () => {
+describe('status-only serve: no brain → init → recovery in place', () => {
   let home: string;
   let env: Record<string, string>;
   let session: { client: Client; transport: StdioClientTransport } | null = null;
@@ -157,4 +167,72 @@ describe('status-only serve: no brain → init → recovery in place (b)', () =>
     expect(recalled.isError).toBeFalsy();
     expect(JSON.stringify(body(recalled))).toContain(MARKER);
   }, 180_000);
+});
+
+describe('status-only serve: lock contention → one shared serve --http (b)', () => {
+  let home: string;
+  let env: Record<string, string>;
+  let http: ChildProcess | null = null;
+  const opened: Array<{ client: Client; transport: StdioClientTransport }> = [];
+  const PORT = 41000 + Math.floor(Math.random() * 2000);
+  const URL_ = `http://127.0.0.1:${PORT}/mcp`;
+
+  beforeAll(() => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-status-http-'));
+    env = envFor(home);
+    expect(cli(['init', '--pglite', '--no-embedding', '--non-interactive'], env).status).toBe(0);
+    const notes = join(home, 'notes');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'm.md'), `---\ntitle: ${MARKER}\n---\n\n# ${MARKER}\n\nShared-HTTP recall proof ${MARKER}.\n`);
+    expect(cli(['import', notes, '--no-embed'], env).status).toBe(0);
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const c of opened) { try { await c.client.close(); } catch { /* best-effort */ } }
+    if (http) { try { http.kill('SIGTERM'); } catch { /* best-effort */ } }
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('tokens minted before the shared owner starts; both harnesses recall over HTTP; the stale stdio server names the HTTP owner', async () => {
+    const owner = await connect(env);
+    opened.push(owner);
+    const stale = await connect(env);
+    opened.push(stale);
+    expect(body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} })).reason).toBe('lock_held');
+
+    // Step 1 of the plan: the owner closes (its session ends).
+    await owner.client.close();
+    opened.shift();
+    // No prior HTTP credentials: mint one token per harness while the lock is free.
+    const tokens = ['harness-a', 'harness-b'].map(name => {
+      const out = cli(['auth', 'create', name, '--scopes', 'read,write'], env);
+      expect(out.status).toBe(0);
+      return (out.stdout.match(/gbrain_[a-f0-9]{64}/) ?? [''])[0];
+    });
+    expect(tokens.every(Boolean)).toBe(true);
+    // Step 2: one shared HTTP server owns the brain.
+    http = spawn('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--bind', '127.0.0.1', '--port', String(PORT)],
+      { cwd: process.cwd(), env, stdio: ['ignore', 'ignore', 'ignore'] });
+    expect(await waitFor(async () => (await fetch(`http://127.0.0.1:${PORT}/health`).catch(() => null))?.ok === true, 60_000)).toBe(true);
+
+    // The stale stdio server cannot take the brain back; it names the HTTP owner and the rewiring fix.
+    const after = body(await stale.client.callTool({ name: 'gbrain_status', arguments: {} }));
+    expect(after.status).toBe('unavailable');
+    expect(after.lock_owner.transport).toBe('http');
+    expect(after.why).toContain('gbrain serve --http');
+    expect(after.fix.argv).toEqual(['gbrain', 'bootstrap', 'harness', '--harness', 'all', '--yes']);
+
+    // Step 3: each harness, rewired to the shared server, recalls.
+    for (const token of tokens) {
+      const client = new Client({ name: 'shared-http', version: '1' }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(URL_), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      try {
+        const found = await client.callTool({ name: 'search', arguments: { query: MARKER } });
+        expect(found.isError).toBeFalsy();
+        expect(JSON.stringify(body(found))).toContain(MARKER);
+      } finally {
+        await client.close();
+      }
+    }
+  }, 240_000);
 });
