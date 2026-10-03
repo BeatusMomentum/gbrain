@@ -132,8 +132,15 @@ uses one slot per attempt. A job refused before any model call (no active
 canonical owner on this host, untrusted caller) dead-letters once with
 `structural_refusal:` and uses no slot; autopilot also skips a source whose
 writer would refuse, and logs why. Checkout-backed and connector sources take
-turns for the daily slots. With a model the tracker cannot price, the dollar
-limit is not enforced (see above); only the attempt count bounds the drain.
+turns for the daily slots. With a model the tracker cannot price (the
+extraction chat model or the embedding route), the default dollar limit is not
+enforced and the phase warns and runs; only the attempt count bounds the drain.
+When you set `cycle.extract_atoms.budget_usd` yourself, an unpriced model
+instead stops the run before any model call: the phase reports `warn` with
+`details.no_pricing` (model, provider, kind, units, `register_command`), the
+stop counts as an expected limit rather than a halt in `extract_health`, and
+`gbrain doctor` names the command until you register the price with
+`gbrain pricing set` (see [registering a model price](#registering-a-model-price)).
 
 Connector pages are opt-in. Gmail threads (`email`) and Calendar events
 (`meeting`) from a Google or GitHub connector source are skipped by atom

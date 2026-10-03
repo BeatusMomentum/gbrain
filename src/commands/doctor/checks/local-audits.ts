@@ -7,6 +7,7 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
+import { applyExtractAtomsNoPricing, readExtractAtomsNoPricing } from '../../../core/cycle/extract-atoms-cost-gate.ts';
 import { join } from 'path';
 import { gbrainPath } from '../../../core/config.ts';
 import { multiSourceDriftGitRootSkipNote, multiSourceDriftAdvice } from '../schema-pack-checks.ts';
@@ -190,7 +191,10 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
   // operator should know the DB cache is degraded). See plan A5 + D-EXTRACT-32.
   if (engine) {
     try {
+      // An explicit extract_atoms cap that refused an unpriced model is an
+      // expected limit in the rollup, not a halt; the overlay names the fix.
       const check = await computeExtractHealthCheck(engine);
+      applyExtractAtomsNoPricing(check, await readExtractAtomsNoPricing(engine).catch(() => []));
       checks.push(check);
     } catch {
       // Best-effort; rollup-table missing on pre-v106 brains is normal

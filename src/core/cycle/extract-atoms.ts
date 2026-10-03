@@ -71,10 +71,9 @@ import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
-import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
-import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
+import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { abortableSleep } from '../retry.ts';
@@ -935,53 +934,18 @@ export async function runPhaseExtractAtoms(
     // Keep safe defaults on any config-read failure: key-aware utility-tier
     // model, $0.30 cap, default input cap (max_input_chars).
   }
-  // A cost cap is only meaningful when the tracker can price EVERY call made
-  // under it. BudgetTracker.reserve() hard-fails with
-  // BudgetExhausted(reason:'no_pricing') when a model is absent from the pricing
-  // maps AND a cap is set; with no cap it warns once and proceeds. Because this
-  // phase always set a cap, every non-Anthropic chat model tripped that
-  // hard-fail on the first item, latched `budgetExhausted`, and skipped the
-  // entire workload while reporting ok.
-  //
-  // The chat model is not the only call under this tracker: the atom write
-  // site below goes through importFromContent, which chunks AND embeds inside
-  // the same withBudgetTracker scope. So the embedding model must be priceable
-  // too. Pre-fix, a $0 local chat model (ollama/llama-server) kept the cap on
-  // while an unpriced embedding route (e.g. `litellm:*`, which is deliberately
-  // NOT assumed free because a proxy can front a paid provider) threw
-  // no_pricing on the FIRST atom import — 0 atoms, `budget_exhausted: true`,
-  // $0 spent, on every run. The operator escape hatch the error message
-  // advertises (`pricing.overrides`, #4312) was also never loaded here, unlike
-  // enrich / ingest-facts / extract-conversation-facts.
-  //
-  // Only a DEFAULT cap may be dropped that way. When the operator set
-  // `cycle.extract_atoms.budget_usd` they asked for a ceiling; the gate keeps
-  // it and bills the unpriced embed route at $0 (warned once, below).
+  // A cap is enforceable only when the tracker can price every call under it:
+  // the extraction chat model AND the embed route importFromContent calls.
+  // A default cap is dropped for an unpriced route (warn and run); a cap the
+  // operator set refuses the run with no_pricing guidance (cost-gate module).
   const pricingOverrides = await loadPricingOverrides(engine);
-  const costGate = resolveExtractAtomsCostGate(
-    extractModel,
-    resolveEmbedModelForCostGate(),
-    pricingOverrides,
-    { explicitBudget },
-  );
-  if (!costGate.enforceCap) {
-    console.error(
-      `[extract_atoms] ${costGate.unpricedKind} model "${costGate.unpricedModel}" is not in the pricing maps; ` +
-        `running without a cost gate (a cap cannot be enforced on an unpriced model). ` +
-        `Look up its per-token price and register it to restore the cap: ` +
-        `${pricingSetCommand(costGate.unpricedModel!, costGate.unpricedKind === 'embed' ? 'embed' : 'chat')} (--rate 0 for local inference).`,
-    );
-  } else if (costGate.zeroPricedEmbedModel) {
-    console.error(
-      `[extract_atoms] embed model "${costGate.zeroPricedEmbedModel}" is not in the pricing maps; ` +
-        `cycle.extract_atoms.budget_usd is set, so the $${budgetCap.toFixed(2)} cap stays enforced and embeds bill at $0 under it. ` +
-        `Look up its real price and register it to meter them: ${pricingSetCommand(costGate.zeroPricedEmbedModel, 'embed')}.`,
-    );
-  }
+  const costGate = resolveExtractAtomsCostGate(extractModel, resolveEmbedModelForCostGate(), pricingOverrides, { explicitBudget });
+  const refused = await settleExtractAtomsCostGate(engine, sourceId, costGate, { budgetCap, extractModel, dryRun: opts.dryRun ?? false });
+  if (refused) return refused;
   const budgetTracker = opts.attempt?.budgetTracker ?? new BudgetTracker({
     maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
-    pricingOverrides: costGate.pricingOverrides ?? pricingOverrides,
+    pricingOverrides,
   });
   if (opts.attempt) opts.attempt.budgetTracker = budgetTracker;
 
