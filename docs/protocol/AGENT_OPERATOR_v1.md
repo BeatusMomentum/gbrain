@@ -956,6 +956,10 @@ old behaviour. The release's CHANGELOG entry carries the same table.
 | stdin reads | could wait forever on an open, silent pipe | 30 s to the first byte, 60 s idle; `GBRAIN_STDIN_TIMEOUT_MS` overrides | close stdin or pipe the payload |
 | Prompts under an agent process or `CI` | prompted whenever stdin was a terminal | decline unless `GBRAIN_INTERACTIVE=1` | answer through the consent payload instead |
 | `--json` stdout for commands that declare it | could mix human text into stdout or print nothing on failure | exactly one JSON document; other output goes to stderr; a fallback document on a silent non-zero exit | parse stdout as one document |
+| Fix commands (`fix.argv`, `command`, `preview_argv`, `verify.argv`, `then`) | a few named the brain and source; most ran against whatever `GBRAIN_BRAIN_ID`, `GBRAIN_SOURCE` or dotfile the shell had | every gbrain fix names `--brain <id>` (and `--source <id>` where the command routes a source), so it acts on the intended brain from any directory | run fixes exactly as given |
+| `gbrain doctor --remediation-plan` on a brain with pending migrations | applied the migrations before computing the plan | never migrates; the plan carries a `migrations_pending` notice whose fix applies them | run the notice's fix, or `doctor --remediate` after consent |
+| `sources harden` with no id, `migrate` without `--to`, `mcp grant` without a NAME, malformed `backup create/restore` | exit 1 (`sources harden`: `internal_error`) | exit 2, `invalid_params`, with the usage and an example | treat 2 as "fix the command" |
+| `gbrain db-repair` under an ambient `GBRAIN_BRAIN_ID` pointing at a mount | refused, ignoring `--brain host` | `--brain host` repairs the host brain | none |
 
 ## Tool catalog changes (`tools/list_changed`)
 

@@ -142,7 +142,7 @@ describe('submit_job recovers through the job list, never a resubmit', () => {
     expect(await jobCount('lint')).toBe(1);
     expect(env).toMatchObject({ code: 'internal_error', retryable: false });
     expect(env.suggestion).toContain('inspect state before resubmitting');
-    expect(env.fix).toMatchObject({ argv: ['gbrain', 'jobs', 'list', '--json'], next: 'run' });
+    expect(env.fix).toMatchObject({ argv: ['gbrain', 'jobs', 'list', '--json', '--brain', 'host'], next: 'run' });
     // Following it: the queued job is visible, so nothing is resubmitted.
     const listed = await dispatchToolCall(engine, 'list_jobs', {}, { remote: false, sourceId: 'default' }) as ToolResultWire;
     expect(JSON.parse(listed.content[0]!.text).map((j: { name: string }) => j.name)).toContain('lint');
@@ -275,7 +275,7 @@ describe('real CLI: interactivity and approval binding', () => {
       const before = await dates();
       const r = await gbrain(approved.fix.argv.slice(1));
       expect(r.exitCode).not.toBe(0);
-      expect(r.json).toMatchObject({ code: 'preview_changed', fix: { argv: ['gbrain', 'reindex-frontmatter', '--force', '--dry-run', '--json'], next: 'run' } });
+      expect(r.json).toMatchObject({ code: 'preview_changed', fix: { argv: ['gbrain', 'reindex-frontmatter', '--force', '--dry-run', '--json', '--brain', 'host'], next: 'run' } });
       expect(r.json.message).toContain(approved.plan_hash);
       expect(await dates()).toBe(before);
       // The preview the fix names is read-only and shows the plan to ask about next.
@@ -286,7 +286,8 @@ describe('real CLI: interactivity and approval binding', () => {
     };
 
     const first = await ask();
-    expect(first.fix.argv.slice(-3)).toEqual(['--yes', '--expect', first.plan_hash]);
+    // The approved command binds the plan (`--yes --expect <hash>`) and, per A1, names the brain.
+    expect(first.fix.argv.slice(-5)).toEqual(['--yes', '--expect', first.plan_hash, '--brain', 'host']);
 
     // A record the user approved changed (its stored date moved) → re-ask.
     await sql("UPDATE pages SET effective_date = '1999-01-01', effective_date_source = 'fallback' WHERE slug = 'idea'");

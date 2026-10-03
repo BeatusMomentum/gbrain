@@ -209,7 +209,9 @@
                 "doctor",
                 "--only",
                 "minions_migration",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
@@ -314,9 +316,11 @@
             "argv": [
               "gbrain",
               "doctor",
-              "--json"
+              "--json",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain doctor --json",
+            "command": "gbrain doctor --json --brain host",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -326,7 +330,9 @@
                 "doctor",
                 "--only",
                 "connection",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the database checks --fast skipped."
@@ -348,9 +354,11 @@
             "argv": [
               "gbrain",
               "doctor",
-              "--json"
+              "--json",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain doctor --json",
+            "command": "gbrain doctor --json --brain host",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -360,7 +368,9 @@
                 "doctor",
                 "--only",
                 "connection",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the database checks --fast skipped."

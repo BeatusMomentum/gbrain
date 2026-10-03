@@ -272,9 +272,11 @@
             "actor": "agent",
             "argv": [
               "gbrain",
-              "db-repair"
+              "db-repair",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain db-repair",
+            "command": "gbrain db-repair --brain host",
             "consent": [],
             "docs": "https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
             "next": "run",
@@ -285,7 +287,9 @@
                 "doctor",
                 "--only",
                 "connection",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. `gbrain db-repair` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix)."
@@ -306,9 +310,11 @@
             "actor": "agent",
             "argv": [
               "gbrain",
-              "db-repair"
+              "db-repair",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain db-repair",
+            "command": "gbrain db-repair --brain host",
             "consent": [],
             "docs": "https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
             "next": "run",
@@ -319,7 +325,9 @@
                 "doctor",
                 "--only",
                 "connection",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. `gbrain db-repair` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix)."

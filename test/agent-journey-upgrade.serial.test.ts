@@ -179,7 +179,7 @@ describe('(1) existing scripts after the upgrade', () => {
     const err = (await run(h, ['call', 'get_page', JSON.stringify({ slug: 'no-such-page' })])).json as Record<string, any>;
     expect(err).toMatchObject({ error: 'page_not_found', code: 'page_not_found' });
     expect(typeof err.suggestion).toBe('string');
-    expect(err.fix?.argv).toEqual(['gbrain', 'get', 'no-such-page', '--include-deleted']);
+    expect(err.fix?.argv).toEqual(['gbrain', 'get', 'no-such-page', '--include-deleted', '--brain', 'host', '--source', 'default']);
   }, 120_000);
 });
 

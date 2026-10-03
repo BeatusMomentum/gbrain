@@ -133,7 +133,7 @@ describe('db-repair --json', () => {
     expect(r.exitCode).toBe(1);
     const env = onlyDocument(r);
     expectEnvelope(env, 'database_error');
-    expect(env).toMatchObject({ schema_version: 1, reason: 'conn_refused', tier: 'auto', fixed: false, fix: { argv: ['gbrain', 'db-repair', '--yes'] } });
+    expect(env).toMatchObject({ schema_version: 1, reason: 'conn_refused', tier: 'auto', fixed: false, fix: { argv: ['gbrain', 'db-repair', '--yes', '--brain', 'host'] } });
   }, 60_000);
 
   test('a PGLite brain: config_error naming pglite-repair; a bad flag combination: invalid_params (exit 2)', async () => {

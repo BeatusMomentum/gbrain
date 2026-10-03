@@ -250,7 +250,9 @@
                 "doctor",
                 "--only",
                 "minions_migration",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
@@ -536,7 +538,9 @@
                 "doctor",
                 "--only",
                 "embeddings",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
@@ -583,7 +587,9 @@
                 "doctor",
                 "--only",
                 "embeddings",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
@@ -1196,9 +1202,11 @@
               "--source",
               "default",
               "--dir",
-              "<BACKUP_DIR>/default"
+              "<BACKUP_DIR>/default",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default'",
+            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
             "consent": [],
             "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
             "inputs": [
@@ -1215,7 +1223,9 @@
                 "doctor",
                 "--only",
                 "backup_coverage",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
@@ -1546,7 +1556,9 @@
                 "doctor",
                 "--only",
                 "embeddings",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Embeddings are off, so search is keyword-only, and no configured embedding key fits this brain. Once the key is set this turns on voyage:voyage-4 (1024d) for the PGLite brain at <home>/.gbrain/brain.pglite. Pages, facts and keyword search are kept; existing chunks and facts are queued for vectors, which `gbrain embed --stale` (or the next maintenance cycle) fills."
@@ -1578,9 +1590,11 @@
               "config",
               "set",
               "takes.bootstrap_enabled",
-              "true"
+              "true",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain config set takes.bootstrap_enabled true",
+            "command": "gbrain config set takes.bootstrap_enabled true --brain host",
             "consent": [
               "paid"
             ],
@@ -1593,7 +1607,9 @@
                 "doctor",
                 "--only",
                 "takes_count",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Takes (typed claims) are opt-in. Enabling the bootstrap lets maintenance extract them from existing pages with a chat model (about $5 on a typical brain), which feeds calibration."

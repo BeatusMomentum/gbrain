@@ -353,10 +353,16 @@ export interface EnvelopeParts {
   retryable?: boolean;
 }
 
-function appendFixToSuggestion(suggestion: string, fix: RenderedAction | undefined): string {
+function appendFixToSuggestion(suggestion: string, fix: RenderedAction | undefined, unpinned?: readonly string[]): string {
   if (!fix) return suggestion;
   const step = renderedStep(fix);
   if (!step || suggestion.includes(step)) return suggestion;
+  // Prose that already quotes the fix before its A1 routing pin quotes the pinned command instead (never both).
+  const bare = unpinned?.length && !fix.mcp ? shellQuote(unpinned) : undefined;
+  if (bare && bare !== step) {
+    const quoted = new RegExp(`${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w/-]|\\s+-)`, 'g');
+    if (quoted.test(suggestion)) return suggestion.replace(quoted, () => step);
+  }
   const prose = suggestion.trim();
   return prose ? `${prose.replace(/[.\s]*$/, '.')} Next: ${step}` : `Next: ${step}`;
 }
@@ -365,7 +371,7 @@ function appendFixToSuggestion(suggestion: string, fix: RenderedAction | undefin
 export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelope {
   const entry = codeEntry(p.code);
   const fix = p.fix ? renderAction(p.fix, ctx) : undefined;
-  const suggestion = appendFixToSuggestion(p.suggestion ?? entry?.suggestion ?? '', fix);
+  const suggestion = appendFixToSuggestion(p.suggestion ?? entry?.suggestion ?? '', fix, p.fix?.argv);
   const docs = p.docs ?? entry?.docs ?? `docs/guides/error-codes.md#${p.code}`;
   const notices = p.notices?.length ? orderNotices(p.notices).map(n => renderNotice(n, ctx)) : undefined;
   return {

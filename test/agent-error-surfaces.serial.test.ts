@@ -177,10 +177,14 @@ afterAll(async () => {
 
 interface Expect { error: string; code: string; fixArgv: string[] | null }
 
-/** error, code and fix.argv as the expectation says (fix absent when fixArgv is null). */
-function expectSurvives(env: Record<string, any>, want: Expect, where: string): void {
+/**
+ * error, code and fix.argv as the expectation says (fix absent when fixArgv is null). `pin` is the A1
+ * routing the surface renders into the argv (`--brain`/`--source` on the CLI and stdio; only a
+ * thin-client-sendable `--source` over HTTP; nothing where no routing is known).
+ */
+function expectSurvives(env: Record<string, any>, want: Expect, where: string, pin: string[] = []): void {
   expect({ where, error: env.error, code: env.code, fixArgv: env.fix?.argv ?? null })
-    .toEqual({ where, error: want.error, code: want.code, fixArgv: want.fixArgv });
+    .toEqual({ where, error: want.error, code: want.code, fixArgv: want.fixArgv ? [...want.fixArgv, ...pin] : null });
   expect(env.contract_version).toBe(1);
 }
 
@@ -206,8 +210,10 @@ const unpriced = (): unknown => {
 };
 
 const DOCTOR = ['gbrain', 'doctor', '--json'];
+const BRAIN_PIN = ['--brain', 'host'];
 
-interface Family { name: string; make(): unknown; want: Expect }
+/** `localPin`: what a routed local render (stdio dispatch here) appends to the fix argv. */
+interface Family { name: string; make(): unknown; want: Expect; localPin?: string[] }
 
 const FAMILIES: Family[] = [
   { name: 'StructuredAgentError', make: () => errorFor({ class: 'UsageError', code: 'code_def_requires_symbol', message: 'code-def requires a symbol name', hint: 'gbrain code-def <symbol>' }),
@@ -215,23 +221,23 @@ const FAMILIES: Family[] = [
   { name: 'GBrainError', make: () => new GBrainError('Invalid engine: "sqlite"', 'Must be "postgres" or "pglite"', 'Pass --engine pglite or --engine postgres'),
     want: { error: 'config_error', code: 'config_error', fixArgv: null } },
   { name: 'PhaseError (legacy object)', make: () => ({ class: 'PhaseError', code: 'storage_error', message: 'disk full during extract' }),
-    want: { error: 'storage_error', code: 'storage_error', fixArgv: DOCTOR } },
+    want: { error: 'storage_error', code: 'storage_error', fixArgv: DOCTOR }, localPin: BRAIN_PIN },
   { name: 'AIConfigError', make: () => new AIConfigError('No OpenAI key configured', 'export OPENAI_API_KEY=<key> in the brain host env'),
-    want: { error: 'unavailable', code: 'unavailable', fixArgv: DOCTOR } },
+    want: { error: 'unavailable', code: 'unavailable', fixArgv: DOCTOR }, localPin: BRAIN_PIN },
   { name: 'CredentialError', make: () => new CredentialError('access_env_missing', ' (GOOGLE_TOKEN)'),
     want: { error: 'access_env_missing', code: 'access_env_missing', fixArgv: null } },
   { name: 'RemoteMcpError (relayed)', make: () => new RemoteMcpError('network', 'Request to http://127.0.0.1:1/mcp timed out', { kind: 'timeout' }),
     want: { error: 'timeout', code: 'timeout', fixArgv: ['gbrain', 'remote', 'doctor'] } },
   { name: 'GBRAIN_DB_ACCESS', make: () => Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' }),
-    want: { error: 'database_error', code: 'database_error', fixArgv: ['gbrain', 'db-repair'] } },
+    want: { error: 'database_error', code: 'database_error', fixArgv: ['gbrain', 'db-repair'] }, localPin: BRAIN_PIN },
   { name: 'F0 refresh refusal', make: () => catalogueError('refresh_dirty', 'The worktree has uncommitted changes.', 'gbrain sources refresh --source wiki --stash'),
-    want: { error: 'refresh_dirty', code: 'refresh_dirty', fixArgv: ['gbrain', 'sources', 'refresh', '--source', 'wiki', '--stash'] } },
+    want: { error: 'refresh_dirty', code: 'refresh_dirty', fixArgv: ['gbrain', 'sources', 'refresh', '--source', 'wiki', '--stash'] }, localPin: BRAIN_PIN },
   { name: 'no_pricing', make: unpriced,
-    want: { error: 'no_pricing', code: 'no_pricing', fixArgv: ['gbrain', 'pricing', 'set', 'example:unpriced-model-x', '--input', '<usd-per-1M-input-tokens>', '--output', '<usd-per-1M-output-tokens>', '--source', '<pricing-page-url>'] } },
+    want: { error: 'no_pricing', code: 'no_pricing', fixArgv: ['gbrain', 'pricing', 'set', 'example:unpriced-model-x', '--input', '<usd-per-1M-input-tokens>', '--output', '<usd-per-1M-output-tokens>', '--source', '<pricing-page-url>'] }, localPin: BRAIN_PIN },
   { name: 'SourceTargetError', make: () => new SourceTargetError('Source "h3-no-such-source" not found or is archived. Available active sources: run `gbrain sources list` to see registered sources, or create/restore "h3-no-such-source" before retrying.'),
-    want: { error: 'unknown_source', code: 'unknown_source', fixArgv: ['gbrain', 'sources', 'list', '--json'] } },
+    want: { error: 'unknown_source', code: 'unknown_source', fixArgv: ['gbrain', 'sources', 'list', '--json'] }, localPin: BRAIN_PIN },
   { name: 'unknown throw', make: () => new Error('boom opening /home/alice-example/.gbrain/brain.pglite (pid 4242) without OPENAI_API_KEY'),
-    want: { error: 'internal_error', code: 'internal_error', fixArgv: DOCTOR } },
+    want: { error: 'internal_error', code: 'internal_error', fixArgv: DOCTOR }, localPin: BRAIN_PIN },
 ];
 
 const OP = 'get_brain_identity';
@@ -242,7 +248,7 @@ describe('every error family survives MCP, CLI human, CLI --json and the thin cl
     test(f.name, async () => {
       // (1a) shared dispatch on the stdio transport.
       const stdio = await withOpHandler(OP, throwing(f), () => dispatchToolCall(engineB, OP, {}, { remote: true, transport: 'stdio', sourceId: 'default' })) as ToolResultWire;
-      expectSurvives(envelopeOf(stdio), f.want, 'mcp stdio dispatch');
+      expectSurvives(envelopeOf(stdio), f.want, 'mcp stdio dispatch', f.localPin);
 
       // (1b) production serve-http over real HTTP.
       const http = await withOpHandler(OP, throwing(f), () => callTool(serve.base, adminToken, OP));
@@ -286,11 +292,13 @@ describe('every error family survives MCP, CLI human, CLI --json and the thin cl
 
 describe('OperationError (REAL: a missing page) on every surface', () => {
   const want: Expect = { error: 'page_not_found', code: 'page_not_found', fixArgv: ['gbrain', 'get', MISSING, '--include-deleted'] };
+  const localPin = ['--brain', 'host', '--source', 'default'];
+  const httpPin = ['--source', 'default'];
 
   test('CLI human and --json', async () => {
     const json = await gbrain(homeA, ['get', MISSING, '--json']);
     expect(json.exitCode).toBe(1);
-    expectSurvives(json.json, want, 'cli --json');
+    expectSurvives(json.json, want, 'cli --json', localPin);
     const human = await gbrain(homeA, ['get', MISSING]);
     expect(human.exitCode).toBe(1);
     expectHuman(human.stderr, json.json, want);
@@ -298,10 +306,10 @@ describe('OperationError (REAL: a missing page) on every surface', () => {
 
   test('real stdio serve (SDK client) and serve-http', async () => {
     const env = await stdioSession(homeA, async c => envelopeOf(await stdioCall(c, 'get_page', { slug: MISSING })));
-    expectSurvives(env, want, 'stdio serve');
+    expectSurvives(env, want, 'stdio serve', localPin);
     expect(env.fix.mcp).toEqual({ tool: 'get_page', arguments: { slug: MISSING, include_deleted: true } });
     const http = envelopeOf(await callTool(serve.base, adminToken, 'get_page', { slug: MISSING }));
-    expectSurvives(http, want, 'serve-http');
+    expectSurvives(http, want, 'serve-http', httpPin);
   }, 120_000);
 
   test('real thin-client CLI against a real `gbrain serve --http` (human and --json)', async () => {
@@ -330,7 +338,8 @@ describe('OperationError (REAL: a missing page) on every surface', () => {
       }));
       const json = await gbrain(homeC, ['get', MISSING, '--json']);
       expect(json.exitCode).toBe(1);
-      expectSurvives(json.json, want, 'thin client CLI --json');
+      // The server's HTTP render pins the source; the thin client adds no routing of its own.
+      expectSurvives(json.json, want, 'thin client CLI --json', httpPin);
       const human = await gbrain(homeC, ['get', MISSING]);
       expect(human.exitCode).toBe(1);
       expectHuman(human.stderr, json.json, want);
@@ -347,7 +356,7 @@ describe('REAL CLI triggers for the other families', () => {
     const r = await gbrain(homeA, ['code-def', '--json']);
     expect(r.exitCode).toBe(2);
     expect(r.json.error).toMatchObject({ class: 'UsageError', code: 'code_def_requires_symbol' });
-    expect(r.json).toMatchObject({ code: 'code_def_requires_symbol', fix: { argv: ['gbrain', 'code-def', '--help'], next: 'run' }, contract_version: 1 });
+    expect(r.json).toMatchObject({ code: 'code_def_requires_symbol', fix: { argv: ['gbrain', 'code-def', '--help', '--brain', 'host'], next: 'run' }, contract_version: 1 });
   }, 90_000);
 
   test('GBrainError: mounts add with an invalid engine → config_error (human and --json)', async () => {
@@ -363,10 +372,13 @@ describe('REAL CLI triggers for the other families', () => {
     const want: Expect = { error: 'database_error', code: 'database_error', fixArgv: ['gbrain', 'db-repair'] };
     const env = { GBRAIN_DATABASE_URL: 'postgresql://h3:h3-secret@127.0.0.1:1/h3' };
     const json = await gbrain(homeA, ['get', MISSING, '--json'], env);
-    expectSurvives(json.json, want, 'cli --json');
+    expectSurvives(json.json, want, 'cli --json', BRAIN_PIN);
     expect(json.json.suggestion).toContain('GBRAIN_DB_ACCESS');
     expect(json.stdout).not.toContain('h3-secret');
-    expectHuman((await gbrain(homeA, ['get', MISSING], env)).stderr, json.json, want);
+    // Human output is the golden-pinned GBRAIN_DB_ACCESS seam (`… Run: gbrain db-repair`), not the rendered fix line.
+    const humanErr = (await gbrain(homeA, ['get', MISSING], env)).stderr;
+    expect(humanErr).toContain('Error [database_error]: ');
+    expect(humanErr).toContain('Run: gbrain db-repair');
   }, 90_000);
 
   test('F0 refresh refusal: the legacy refusal keys stay and the v1 siblings ride beside them (human and --json)', async () => {
@@ -407,12 +419,12 @@ describe('REAL CLI triggers for the other families', () => {
     const env = { GBRAIN_SOURCE: 'h3-no-such-source' };
     const json = await gbrain(homeA, ['import', dir, '--no-embed', '--json'], env);
     expect(json.exitCode).not.toBe(0);
-    expectSurvives(json.json, want, 'cli --json');
+    expectSurvives(json.json, want, 'cli --json', BRAIN_PIN);
     expect(json.json.class).toBe('caller');
     expect(json.json.suggestion).not.toContain('Server-side failure');
     expectHuman((await gbrain(homeA, ['import', dir, '--no-embed'], env)).stderr, json.json, want);
     const malformed = await gbrain(homeA, ['import', dir, '--no-embed', '--json'], { GBRAIN_SOURCE: 'Not A Source' });
-    expectSurvives(malformed.json, { ...want, error: 'invalid_source', code: 'invalid_source' }, 'cli --json (malformed id)');
+    expectSurvives(malformed.json, { ...want, error: 'invalid_source', code: 'invalid_source' }, 'cli --json (malformed id)', BRAIN_PIN);
   }, 120_000);
 
   test('--brain naming no mount: a suggestion and a mounts-list fix (human and --json)', async () => {
@@ -436,7 +448,7 @@ describe('withRelationGuard (REAL: the job table is gone)', () => {
 
     const call = await gbrain(homeA, ['call', 'get_job_stats', '{}']);
     expect(call.exitCode).toBe(1);
-    expectSurvives(call.json, want, 'gbrain call');
+    expectSurvives(call.json, want, 'gbrain call', BRAIN_PIN);
     expect(call.json.message).toContain('a required table is missing');
     // The suggestion is rendered from the fix: it quotes the fix command and names no other one.
     expect(call.json.suggestion).toContain(call.json.fix.command);
@@ -445,7 +457,7 @@ describe('withRelationGuard (REAL: the job table is gone)', () => {
     expect(call.stderr).toContain('Error [unavailable]');
 
     const stdio = await stdioSession(homeA, async c => envelopeOf(await stdioCall(c, 'get_job_stats', {})));
-    expectSurvives(stdio, want, 'stdio serve');
+    expectSurvives(stdio, want, 'stdio serve', BRAIN_PIN);
 
     await drop(engineB);
     const http = envelopeOf(await callTool(serve.base, adminToken, 'get_job_stats', {}));

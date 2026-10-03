@@ -247,7 +247,9 @@
                 "doctor",
                 "--only",
                 "minions_migration",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the setup migrations gbrain init left pending (preferences, host-work notes, shared-skill checkpoints) on the brain host, without installing background services."
@@ -1112,9 +1114,11 @@
               "--source",
               "default",
               "--dir",
-              "<BACKUP_DIR>/default"
+              "<BACKUP_DIR>/default",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default'",
+            "command": "gbrain export --source default --dir '<BACKUP_DIR>/default' --brain host",
             "consent": [],
             "docs": "https://github.com/garrytan/gbrain/blob/master/docs/operations/backup-check.md",
             "inputs": [
@@ -1131,7 +1135,9 @@
                 "doctor",
                 "--only",
                 "backup_coverage",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Writes a Markdown copy of 'default' (pages and facts) to a directory outside the brain so it survives losing the database."
@@ -1465,9 +1471,11 @@
               "config",
               "set",
               "takes.bootstrap_enabled",
-              "true"
+              "true",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain config set takes.bootstrap_enabled true",
+            "command": "gbrain config set takes.bootstrap_enabled true --brain host",
             "consent": [
               "paid"
             ],
@@ -1480,7 +1488,9 @@
                 "doctor",
                 "--only",
                 "takes_count",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Takes (typed claims) are opt-in. Enabling the bootstrap lets maintenance extract them from existing pages with a chat model (about $5 on a typical brain), which feeds calibration."

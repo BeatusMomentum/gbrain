@@ -268,9 +268,11 @@
             "argv": [
               "gbrain",
               "doctor",
-              "--json"
+              "--json",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain doctor --json",
+            "command": "gbrain doctor --json --brain host",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -280,7 +282,9 @@
                 "doctor",
                 "--only",
                 "connection",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the database checks --fast skipped."
@@ -302,9 +306,11 @@
             "argv": [
               "gbrain",
               "doctor",
-              "--json"
+              "--json",
+              "--brain",
+              "host"
             ],
-            "command": "gbrain doctor --json",
+            "command": "gbrain doctor --json --brain host",
             "consent": [],
             "next": "run",
             "requires_exclusive": false,
@@ -314,7 +320,9 @@
                 "doctor",
                 "--only",
                 "connection",
-                "--json"
+                "--json",
+                "--brain",
+                "host"
               ]
             },
             "why": "Runs the database checks --fast skipped."

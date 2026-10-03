@@ -326,7 +326,8 @@ describeE2E('H4: Postgres serve readiness keeps the degraded-serve path', () => 
       const down = expectOneBlockError(await call(s, 'recall', { query: MARKER }), 'recall on a missing database');
       expect(down).toMatchObject({ error: 'unavailable', code: 'unavailable', reason: 'db_missing', protocol_version: 1 });
       // A1 surface rule: a CLI-only fix over stdio is the user's to run on this machine (host_admin is HTTP's actor).
-      expect(down.fix).toMatchObject({ argv: ['gbrain', 'db-repair'], actor: 'user', next: 'tell_user_to_run' });
+      // A1: the fix names the served brain explicitly.
+      expect(down.fix).toMatchObject({ argv: ['gbrain', 'db-repair', '--brain', 'host'], actor: 'user', next: 'tell_user_to_run' });
       expect(JSON.stringify(down)).not.toContain(db.url);
 
       await db.sql.unsafe(`CREATE DATABASE ${db.name}`);

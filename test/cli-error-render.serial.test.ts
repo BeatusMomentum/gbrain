@@ -40,7 +40,7 @@ describe('D1 CLI error rendering', () => {
     const doc = JSON.parse(r.stdout);
     expect(doc).toMatchObject({ status: 'error', reason: 'invalid_flag', error: 'unknown_flag', code: 'unknown_flag', contract_version: 1 });
     expect(doc.suggestion).toContain('--limit');
-    expect(doc.fix).toMatchObject({ argv: ['gbrain', 'search', '--help'], next: 'run' });
+    expect(doc.fix).toMatchObject({ argv: ['gbrain', 'search', '--help', '--brain', 'host'], next: 'run' });
     expect(r.stderr).toContain("unknown flag --limitt for 'gbrain search'");
   });
 
