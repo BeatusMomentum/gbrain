@@ -2,7 +2,6 @@
 src/cli.ts	3
 src/commands/book-mirror.ts	1
 src/commands/capture.ts	4
-src/commands/company-brain-inspect.ts	8
 src/commands/embed-facts-delegate.ts	5
 src/commands/extract-stale-delegate.ts	4
 src/commands/extract-timeline-db.ts	2
@@ -14,10 +13,7 @@ src/commands/sources-lifecycle-args.ts	1
 src/commands/sources-lifecycle.ts	2
 src/commands/sync-persistence-delegate.ts	4
 src/commands/takes-mutation.ts	1
-src/core/company-brain/demo.ts	5
-src/core/company-brain/inspection.ts	8
 src/core/company-brain/policy.ts	2
-src/core/company-brain/profile.ts	7
 src/core/company-brain/receipts.ts	1
 src/core/cycle/phantom-redirect-managed.ts	3
 src/core/cycle/synthesize-postprocess.ts	4
