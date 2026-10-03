@@ -82,8 +82,8 @@ export const QUERY_DESCRIPTION =
   "'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens " +
   "`search` is cheaper (no expansion LLM call). " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
-  "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
-  "get_recent_transcripts. Semantic search returns polished pages and misses " +
+  "'how am I feeling'), prefer get_recent_salience or find_anomalies (raw " +
+  "transcripts are owner-only: `gbrain transcripts recent` on the brain host). Semantic search returns polished pages and misses " +
   "recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' " +
   "mean impressive — they often mean difficult or emotionally charged.";
 

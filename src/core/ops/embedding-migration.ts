@@ -30,7 +30,7 @@ const migrate_embeddings: Operation = {
   },
   mutating: true,
   scope: 'admin',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'migrate', 'embeddings', '--to', '<model>'] },
   handler: async (ctx, p) => {
     // Belt-and-braces on top of localOnly (the get_recent_transcripts
     // pattern): a schema-rebuilding, money-spending op must never be

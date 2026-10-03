@@ -304,7 +304,7 @@ const sources_inspect: Operation = {
     exclude: { type: 'array', items: { type: 'string' }, description: 'Repository-relative exclude globs.' },
   },
   scope: 'read',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'sources', 'inspect', '<path>'] },
   mutating: false,
   handler: async (ctx, params) => {
     if (ctx.remote !== false) throw new OperationError('permission_denied', 'Repository inspection requires the trusted local CLI.');

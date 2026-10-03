@@ -14,7 +14,7 @@ import { loadConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
-import { isCallable } from '../core/ops/callable.ts';
+import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { recallInteropNotices } from '../core/interop-notices.ts';
@@ -636,6 +636,8 @@ export async function dispatchToolCall(
   if (op.localOnly && opts.transport !== 'stdio') {
     return unknownToolEnvelope(name, opts);
   }
+  // F5: an owner-only op is never listed on MCP; a call gets the exact CLI command.
+  if (op.cliOnly && opts.remote !== false) return errorResult(cliOnlyRefusal(op), opts, { op: name });
 
   // --source-guard (plugin lanes): fail-closed write routing. A user-global
   // plugin serve has no per-workspace source binding, so an ambient-tier

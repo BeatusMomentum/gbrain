@@ -160,7 +160,7 @@ const extraction_review: Operation = {
   },
   mutating: true,
   scope: 'write',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'extraction-review', '<action>', '--slugs', '<slugs>'] },
   handler: async (ctx, p) => {
     // The review decision IS the trust gate — if a remote caller could
     // promote, injected content could self-promote and the quarantine lane

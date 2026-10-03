@@ -25,9 +25,9 @@ function legacyHttpList(surface: typeof SURFACES[number], scopes: string[], gate
     .map(op => op.name);
 }
 
-/** The pre-A2 stdio list filter (surface, required-scope grant, gates). */
+/** The pre-A2 stdio list filter (surface, required-scope grant, gates), minus F5's owner-only (`cliOnly`) ops. */
 function legacyStdioList(surface: typeof SURFACES[number], scopes: string[], gates: Record<string, boolean>): string[] {
-  return filterOpsForSurface(operations, surface)
+  return filterOpsForSurface(operations.filter(op => !op.cliOnly), surface)
     .filter(op => !op.requiredScopes?.length || operationScopesAllowed(scopes, op))
     .filter(op => !(op.publishGateKey && gates[op.publishGateKey] !== true))
     .map(op => op.name);
@@ -63,7 +63,8 @@ describe('dispatch refuses what the list hides on the dispatch-enforced axes', (
   const unknown = async (op: Operation, transport: 'stdio' | 'http', allowed: ReadonlySet<string> | undefined) => {
     const r = await dispatchToolCall(engine, op.name, {}, { remote: true, transport, sourceId: 'default', ...(allowed ? { allowedOps: allowed } : {}) });
     if (!r.isError) return false;
-    return JSON.parse(r.content[0].text).code === 'unknown_tool';
+    // F5: an owner-only op on stdio is refused with its CLI command instead.
+    return ['unknown_tool', 'trusted_local_only'].includes(JSON.parse(r.content[0].text).code);
   };
 
   for (const surface of SURFACES) {

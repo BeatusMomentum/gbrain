@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 229615,
-    "stdoutSha256": "aaf93740a028c3db9ce963308738d61d0d1b008b249b4cbf6430e1a6fd859630",
+    "stdoutBytes": 229836,
+    "stdoutSha256": "05879677743f457797f2e950a2dc1b28d33301479253bfcf8e663a4414155457",
     "toolNames": [
       "remember",
       "entity",
@@ -996,7 +996,7 @@
         "scope": "read"
       },
       {
-        "description": "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit; conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience, find_anomalies, or get_recent_transcripts. Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged.",
+        "description": "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit; conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience or find_anomalies (raw transcripts are owner-only: `gbrain transcripts recent` on the brain host). Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -6224,7 +6224,12 @@
               "description": "Notice code, the word after `[gbrain notice` in the block.",
               "enum": [
                 "backup_coverage",
+                "degraded_dedup",
                 "empty_retrieval",
+                "listing_truncated",
+                "source_binding_narrowed",
+                "synthesis_keyless",
+                "think_not_saved",
                 "unknown_param"
               ],
               "type": "string"

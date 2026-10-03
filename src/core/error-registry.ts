@@ -234,6 +234,7 @@ export const CODES = {
   target_escape: { class: 'caller', summary: "The skill target must remain within its selected root." },
   timeout: { class: 'retryable', summary: "The operation did not finish within its time bound.", exit: 124 },
   topology_change_required: { class: 'host_only', summary: "Adding this source would replace or overlap another owner root." },
+  trusted_local_only: { class: 'host_only', summary: 'The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it.', legacy_error: 'permission_denied', suggestion: 'Ask the user to run the named gbrain command on the brain host.' },
   unavailable: { class: 'unavailable', summary: "A required dependency or capability cannot serve this request." },
   unexpected_file_bytes: { class: 'server', summary: "A canonical skill file mode changed outside publication." },
   unexpected_staging_bytes: { class: 'server', summary: "Recovery staging has unexpected bytes or identity; the root and its recovery capacity remain reserved." },
