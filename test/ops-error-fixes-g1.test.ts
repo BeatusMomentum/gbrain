@@ -19,7 +19,7 @@ import {
 } from '../src/core/ops/context.ts';
 import { toAgentError } from '../src/core/agent-output.ts';
 
-const TOKEN_ID = '0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
+const LEGACY_PRINCIPAL_UUID = '0b9a1c2d-3e4f-4a5b-8c6d-7e8f9a0b1c2d';
 const oauth = (over: Partial<AuthInfo> = {}): AuthInfo => ({
   token: 't', clientId: 'cli-alpha', scopes: ['read', 'write'], principal: { kind: 'oauth_client', id: 'cli-alpha' }, ...over,
 });
@@ -40,11 +40,11 @@ const render = (transport: 'stdio' | 'http', callable: string[] = []) => ({
 
 describe('context.ts grant and fence refusals (B6/B7)', () => {
   test('no-source grant names the token and asks for the sources as an input', () => {
-    const e = noSourceGrantError('put_page', oauth({ clientId: 'tok', principal: { kind: 'legacy_token', id: TOKEN_ID } }));
+    const e = noSourceGrantError('put_page', oauth({ clientId: 'tok', principal: { kind: 'legacy_token', id: LEGACY_PRINCIPAL_UUID } }));
     expect(e.code).toBe('permission_denied');
     expect(e.suggestion).not.toContain('<name>');
     expect(e.fix).toMatchObject({
-      argv: ['gbrain', 'auth', 'rescope-token', '--id', TOKEN_ID, '--sources', '<sources>'],
+      argv: ['gbrain', 'auth', 'rescope-token', '--id', LEGACY_PRINCIPAL_UUID, '--sources', '<sources>'],
       actor: 'host_admin', consent: ['credentials'], inputs: [{ name: 'sources' }],
     });
     const env = toAgentError(e, { transport: 'http', op: 'put_page', render: render('http') });
