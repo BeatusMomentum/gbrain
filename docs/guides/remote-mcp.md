@@ -55,7 +55,11 @@ PGLite brain's single-writer lock. Every step is reported as a named check
 
 Exit codes: `0` done, `1` failed, `2` needs confirmation (`--yes`, or you
 declined the prompt) or a step is still pending (a tailnet feature to enable,
-Tailscale login, certificate issuance). Which exit 2 it is matters:
+Tailscale login, certificate issuance). Exit 2 for "needs confirmation" is a documented
+contract v1 legacy: every other gbrain command uses exit 3 for
+`confirmation_required` ([exit codes](exit-codes.md)), and `mcp expose` moves to 3
+in a future contract version. Read the JSON `reason` rather than the exit code
+alone. Which exit 2 it is matters:
 
 - A **pre-check** exit 2 — `consent` (`confirmation_required`, `declined`),
   `tailscale.login` (`tailscale_daemon_not_running`, `tailscale_login_manual`,
