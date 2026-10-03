@@ -165,6 +165,14 @@ This skill guarantees:
 - No real names in examples or reports; the imported transcript is the user's
   private content and stays exact.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `forbidden` (a Cloudflare/bot challenge): the provider refuses server-side fetch from this machine. Tell the user and switch to the export-file lane (`gbrain transcripts ingest`); never loop retries.
+- An auth error (expired cookie or token): ask the user to re-run `gbrain connectors auth` for that provider themselves; the credential belongs to them and stays on their machine.
+- `partial`: some conversations failed and the watermark did not advance. Re-run the sync later; report the count still missing, not "synced".
+
 ## Anti-Patterns
 
 - ❌ Pasting a cookie into config, `sources.config`, chat logs, or a commit —
