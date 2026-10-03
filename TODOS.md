@@ -1,5 +1,32 @@
 # TODOS
 
+## Foundations 1 follow-ups (filed 2026-10-03, follow-up from v0.60.37.0)
+
+- [ ] **P1 — Mutation attribution for the writers still unattributed.**
+  **What:** creation attribution covers journaled and coordinated writes and four unmanaged legacy transactions; the writers listed under "unattributed" in `docs/architecture/system-of-record.md` (extract timeline, sync renames, enrichment, schema-pack conversions, legacy facts and takes helpers, and others) still write `NULL`. **Fix:** route them through `maintenanceTransaction` or the coordinator, shrinking the pinned list. **Effort:** L. **Priority:** P1 (Foundations 2).
+- [ ] **P2 — Classify new content columns for attribution.**
+  **What:** a column added to `facts`, `takes` or `timeline_entries` must be classified in `persistence/attribution-schema.ts` (content vs projection), or an edit to it either misses `last_write_*` or stamps a projection-only update. **Fix:** a guard test that fails on an unclassified column. **Effort:** S. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — Verify `gbrain repair attribution-backfill` on a real managed brain.**
+  **What:** proven on PGLite, Postgres and PgBouncer fixtures only. **Fix:** run the preview and apply on a managed brain with real history and record the filled and unrecorded counts. **Effort:** S. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — `--json` refusals from CLI-only ops print to stderr only.**
+  **What:** `gbrain attribution --json` (and other CLI ops through the shared framework) write refusals to stderr, not as a JSON object on stdout. **Effort:** S. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — PGLite `sources refresh` while `gbrain serve` owns the database.**
+  **What:** the refresh needs the writer lock; with a resident serve on PGLite it waits or refuses. **Fix:** delegate the refresh over the local persistence IPC socket. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [ ] **P3 — The consumer's idle probe ignores the refresh effect fence.**
+  **What:** the resident consumer's idle tick does not consult an active refresh's fence before probing. Harmless today (the probe writes nothing). **Effort:** S. **Priority:** P3 (Foundations 2).
+- [ ] **P2 — Drop the JSONB grant authority for legacy tokens.**
+  **What:** migrated tokens still mirror `permissions` JSON for older binaries, and admin-dashboard-created tokens are still born on the JSONB shape. **Fix:** after one release window, read only the unified columns and have the dashboard mint through `insertUnifiedToken`. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — `--sources none` for OAuth clients.**
+  **What:** refused for clients in F3 (no behavior change); needs per-client takes holders. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — Seat follow-ups (#4618).**
+  **What:** Codex hooks' trust hash changes when a seat is added; the harness Codex note should say so; OpenClaw's heartbeat does not report a seat write failure; a pattern page's `seat` is never removed when its sessions age out. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [ ] **P2 — Large-brain ceilings in the 50k nightly.**
+  **What:** the progress-aware sync deadline, 20k-file `sources add`, the loud embed budget stop and the serve boot window are pinned by unit and CLI tests, not yet asserted by the 50k scale-tier run; delegated syncs (serve-owned) are not yet progress-aware. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [ ] **P3 — Keyword search scoped to one source: 18.2 to 22.1 ms at 10k PGLite pages.**
+  **What:** the five-run ranges overlap (17.4-19.4 vs 18.7-25.0 ms), so this may be noise; the scale tier's calibrated budget will show a trend. **Effort:** S. **Priority:** P3 (Foundations 2).
+- [ ] **P3 — Enforce the scale tier's ceilings and calibrated budgets.**
+  **What:** report-only until `scripts/scale/trend.ts` prints "ceilings stable" over five nightly runs; then set `GBRAIN_SCALE_ENFORCE_CEILINGS=1`. **Effort:** S. **Priority:** P3 (Foundations 2).
+
 ## Fix wave 8 follow-ups (filed 2026-10-02, follow-up from v0.60.36.0)
 
 - [ ] **P1 — Verified engine graduation (PGLite to Postgres) that keeps persistence history.**
@@ -7,14 +34,14 @@
 - [ ] **P2 — Agent-contract conformance suite for every MCP op.**
   **What:** wave 8's conformance gate (`test/fixtures/write-contract-conformance-cases.ts`) covers only the contracts this wave changed. **Fix:** every op × PGLite/Postgres/PgBouncer × stdio/HTTP, asserting the error-code taxonomy. **Effort:** L. **Priority:** P2 (Foundations 2).
 - [ ] **P2 — Restore the `auto_chronicle` trigger (#5876).**
-  **What:** `auto_chronicle=true` still has no effect; doctor and the advisor say so. #5329's backfill idempotency landed in v0.60.32.0, so re-enabling the trigger no longer means duplicate event pages from repeat runs. **Fix:** call `runChronicleBackstop` from the import path behind the flag, with a cost note. **Effort:** M. **Priority:** P2 (Foundations 1).
+  **What:** `auto_chronicle=true` still has no effect; doctor and the advisor say so. #5329's backfill idempotency landed in v0.60.32.0, so re-enabling the trigger no longer means duplicate event pages from repeat runs. **Fix:** call `runChronicleBackstop` from the import path behind the flag, with a cost note. **Effort:** M. **Priority:** P2 (Foundations 2).
 - [ ] **P2 — Cycle-side fence for `row_num IS NULL` facts (#5299).**
-  **What:** facts without a fence row number are invisible to the fence reconciler. **Fix:** the cycle fences them after GBRA-35's facts writeback (now on master). **Effort:** M. **Priority:** P2 (Foundations 1).
+  **What:** facts without a fence row number are invisible to the fence reconciler. **Fix:** the cycle fences them after GBRA-35's facts writeback (now on master). **Effort:** M. **Priority:** P2 (Foundations 2).
 - [ ] **P2 — One-shot repair for supersession chains broken on managed brains (#5886).**
   **What:** v0.60.36.0 writes the supersession pointer on the old take row; chains written before it keep `superseded_by` NULL on managed brains. **Fix:** a `gbrain repair` kind that rebuilds the pointers from the fence. **Effort:** S. **Priority:** P2.
 - [ ] **P2 — Doctor check for pages still waiting on their revision backfill (#5216).**
   **What:** the backfill is resumable and reports progress on upgrade, but a brain whose backfill keeps stopping on a failing row has no standing doctor signal. **Effort:** S. **Priority:** P2.
-- [ ] **P2 — Scale harness gaps (`bun run test:scale`).**
+- [x] **P2 — Scale harness gaps (`bun run test:scale`).** Shipped in v0.60.37.0 (F4c scale tier).
   **What:** the report-only harness lacks injected query vectors, populated facts and takes, a source-scoped grant query, a cold-process first query, concurrent receipt-bearing writers, the Postgres engine and the 10k/20k/50k CI tiers. At 10k pages the per-page import cost of the last 10% is about 8x the first 10% (gate 1.5). **Effort:** L. **Priority:** P2 (Foundations 1, F4).
 - [ ] **P2 — Same-width embedding migrations into a live HNSW index.**
   **What:** #5088 defers the ANN build only when the schema transition rebuilds the column; a same-width model swap still re-embeds into the live index. **Effort:** M. **Priority:** P2.

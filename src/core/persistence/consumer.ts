@@ -13,6 +13,7 @@ import { isWriteErrorCode } from './types.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { maybeRefreshPlannerStats } from '../planner-stats.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
@@ -251,8 +252,9 @@ export class PersistenceConsumer {
           this.nextMaintenance = Date.now() + 300_000;
           await this.phase('refresh_roots', signal => refreshManagedFilesystemRoots(this.engine,
             this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
-          this.maintenanceWorker = compactWriteReceipts(this.engine).catch(error => this.report(error))
-            .finally(() => { this.maintenanceWorker = undefined; });
+          // F4b: idle maintenance also refreshes stale PGLite planner statistics (a no-op on Postgres).
+          this.maintenanceWorker = compactWriteReceipts(this.engine).then(() => maybeRefreshPlannerStats(this.engine, 'idle'))
+            .catch(error => this.report(error)).finally(() => { this.maintenanceWorker = undefined; });
         }
         return;
       }

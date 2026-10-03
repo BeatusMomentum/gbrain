@@ -376,6 +376,15 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "refreshes": []
+          },
+          "message": "No worktree refresh is stuck.",
+          "name": "worktree_refresh_stuck",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "message": "links_link_source_check has the v114 kebab-case gate",
           "name": "links_link_source_check",
@@ -383,19 +392,19 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 100/100 public tables",
+          "message": "RLS enabled on 101/101 public tables",
           "name": "rls",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "Version 192 (latest: 192)",
+          "message": "Version 196 (latest: 196)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "819 column(s) verified against live schema",
+          "message": "834 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -407,7 +416,7 @@
         },
         {
           "category": "brain",
-          "message": "100% coverage, 0 missing",
+          "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
           "name": "embeddings",
           "status": "ok"
         },
@@ -941,6 +950,27 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "legacy_shape_count": 0,
+            "malformed": []
+          },
+          "message": "Every active legacy token uses the unified grant columns.",
+          "name": "legacy_token_grant_shape",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "drift": []
+          },
+          "message": "No legacy token grant has drifted from its permissions mirror.",
+          "name": "legacy_token_grant_drift",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "message": "No image assets indexed yet",
           "name": "image_assets",
@@ -1089,6 +1119,26 @@
           },
           "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
           "name": "fact_take_vectors",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "auto_analyze": null,
+            "checked": [
+              "pages",
+              "links",
+              "facts",
+              "takes",
+              "content_chunks",
+              "timeline_entries"
+            ],
+            "engine": "postgres",
+            "fix": "gbrain repair planner-stats --apply",
+            "stale": []
+          },
+          "message": "Planner statistics are fresh on 6 hot tables.",
+          "name": "planner_stats_stale",
           "status": "ok"
         },
         {

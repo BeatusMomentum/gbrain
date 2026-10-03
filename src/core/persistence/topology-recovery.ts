@@ -10,12 +10,14 @@ import { localHostId } from './identity.ts';
 import { compactStoredManifest, worktreeManifest } from './ownership.ts';
 import { advanceTopology, lockTopologyPrincipal, settleTopologyRequests, topologyCanonicalStamp, withTopologyLocks } from './topology-locks.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { principalAttribution } from './attribution.ts';
 import { releaseTopologyReservation, type TopologyChange } from './topology-receipts.ts';
 import type { TopologyCloneRecovery } from './topology-clone-model.ts';
 import type { CloneLifecycleHooks } from './topology-clone.ts';
 import { flushTopologyDirectory, topologyDirectoryIdentity } from './topology-filesystem.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootStamp, readPhysicalRootReservation } from './physical-root-record.ts';
+import { resumeWorktreeRefreshes } from './worktree-refresh.ts';
 
 async function readChange(engine:BrainEngine,id:string):Promise<TopologyChange>{
   const [row]=await engine.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid',[id]);
@@ -146,7 +148,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
             if(record.operation==='add')await tx.executeRaw('INSERT INTO sources(id,name,local_path,config,incarnation) VALUES($1,$2,$3,$4::text::jsonb,$5::uuid)',
               [record.sourceId,record.input.name??record.sourceId,record.target,JSON.stringify({...record.input.config,remote_url:record.input.remoteUrl,managed_clone:true}),record.incarnation]);
             else await tx.executeRaw('UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid',[record.sourceId,record.incarnation]);
-          });
+          },principalAttribution({kind:'local_cli',id:row.principal_id}));
           await advanceTopology(tx,[record.worktreeId]);
           await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid',[record.worktreeId,JSON.stringify({...(record.manifest?compactStoredManifest(record.manifest):null),canonical_stamp:await topologyCanonicalStamp(tx,record.worktreeId)})]);
           await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
@@ -178,9 +180,14 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
 }
 
 const recoveryCursors=new WeakMap<BrainEngine,string>();
-/** A bounded rotating scan keeps persistent conflicts from starving other roots. */
+/**
+ * A bounded rotating scan keeps persistent conflicts from starving other roots.
+ * It first converges interrupted worktree refreshes (F0, section 1.5) whose
+ * refreshing process has exited; a live refresh holds its lock and is skipped.
+ */
 export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:string;limit?:number;onAttempt?:(id:string,recovered:boolean)=>void}={}):Promise<number>{
   const host=opts.hostId??localHostId(),limit=Math.max(1,Math.min(16,opts.limit??2));
+  await resumeWorktreeRefreshes(engine,{hostId:host});
   const scan=async(after:string|null)=>engine.executeRaw<TopologyChange>(`SELECT c.* FROM persistence_topology_changes c
     JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
     WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND ($2::uuid IS NULL OR c.id>$2::uuid)

@@ -5,6 +5,7 @@ import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } fr
 import { VERB_NAMES } from '../core/verbs.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
+import { onForwardProgress } from '../core/forward-progress.ts';
 import {
   installLoopStallWatchdog,
   resolveServeStallWatchdogMs,
@@ -36,10 +37,11 @@ const CLEANUP_DEADLINE_MS = 5_000;
 // upstream is unreachable) holds the PGLite write lock indefinitely: the
 // post-#2348 lock discipline never steals from a live holder, so every
 // CLI consumer times out until someone hunts down and kills the PID. If
-// startMcpServer hasn't finished connecting the transport within this
-// window, we release the engine (dropping the lock) and exit non-zero so
-// a supervisor can restart with backoff. Env-tunable via
-// GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS; 0 disables.
+// the boot makes no progress (no new boot phase, no forward-progress
+// note) for this window, we release the engine (dropping the lock) and
+// exit non-zero so a supervisor can restart with backoff. A slow boot that
+// keeps advancing is never killed: a large brain legitimately boots past
+// one window. Env-tunable via GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS; 0 disables.
 const DEFAULT_BOOT_TIMEOUT_SECONDS = 60;
 
 // How often the parent-process watchdog polls the live kernel parent PID
@@ -355,11 +357,14 @@ export async function runServe(
   const bootTimeoutMs = opts.bootTimeoutMs ?? resolveBootTimeoutMs();
   let bootDeadline: ReturnType<typeof setTimeout> | null = null;
   let bootPhase = 'starting';
+  let bootProgressAt = Date.now();
+  const bootStartedAt = bootProgressAt;
+  const stopProgressWatch = bootTimeoutMs > 0 ? onForwardProgress(() => { bootProgressAt = Date.now(); }) : () => {};
   if (bootTimeoutMs > 0) {
     const log = opts.log ?? ((msg: string) => console.error(msg));
     const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
-    bootDeadline = setTimeout(() => {
-      log(formatBootTimeout(bootTimeoutMs, bootPhase, engine));
+    const fire = () => {
+      log(formatBootTimeout(bootTimeoutMs, bootPhase, engine, Date.now() - bootStartedAt));
       const cleanup = setTimeout(() => { exit(1); }, CLEANUP_DEADLINE_MS);
       cleanup.unref?.();
       Promise.resolve()
@@ -372,12 +377,22 @@ export async function runServe(
           clearTimeout(cleanup);
           exit(1);
         });
-    }, bootTimeoutMs);
+    };
+    // The window measures time WITHOUT progress: each check re-arms for
+    // whatever remains of the window since the last phase change or
+    // progress note, and fires only once a full window passed without one.
+    const check = () => {
+      const idle = Date.now() - bootProgressAt;
+      if (idle >= bootTimeoutMs) { fire(); return; }
+      bootDeadline = setTimeout(check, bootTimeoutMs - idle);
+      bootDeadline.unref?.();
+    };
+    bootDeadline = setTimeout(check, bootTimeoutMs);
     bootDeadline.unref?.();
   }
 
   try {
-    await start(engine, { surface, ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; }, ...(access === 'read-only' ? { access } : {}) });
+    await start(engine, { surface, ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = Date.now(); }, ...(access === 'read-only' ? { access } : {}) });
     // `--stdio-idle-timeout` arms its timer during lifecycle installation,
     // but its stdin activity listener must wait until startMcpServer has
     // attached the MCP SDK transport listener. Attaching any `data` listener
@@ -386,6 +401,7 @@ export async function runServe(
     activateStdioIdleActivityTracking();
   } finally {
     if (bootDeadline) clearTimeout(bootDeadline);
+    stopProgressWatch();
   }
   // startMcpServer returns after the SDK has wired up its stdin 'data'
   // listener (and completed its engine-dependent boot); that listener keeps
@@ -420,7 +436,7 @@ function resolveEofDrainMs(): number {
  * the engine's pool pressure, so a pool below the resident floor reads as a
  * pool problem instead of a provider-endpoint one.
  */
-function formatBootTimeout(timeoutMs: number, phase: string, engine: BrainEngine): string {
+function formatBootTimeout(timeoutMs: number, phase: string, engine: BrainEngine, elapsedMs: number): string {
   let pool: { tracked: Record<string, number>; poolMax: number | null } | null = null;
   try { pool = (engine as { getPoolDiagnostics?: () => typeof pool }).getPoolDiagnostics?.() ?? null; } catch { /* diagnostic only */ }
   const inFlight = pool ? Object.values(pool.tracked).reduce((sum, n) => sum + n, 0) : 0;
@@ -430,7 +446,7 @@ function formatBootTimeout(timeoutMs: number, phase: string, engine: BrainEngine
   const fix = starved
     ? `export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} (and size the pooler for every resident process)`
     : 'check configured provider endpoints, or export GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=<seconds> (0 disables)';
-  return `GBrain MCP server: boot did not complete within ${timeoutMs}ms — releasing DB lock and exiting so other consumers unblock. `
+  return `GBrain MCP server: boot did not complete — no boot progress for ${timeoutMs}ms (${Math.round(elapsedMs / 1000)}s since boot started); releasing DB lock and exiting so other consumers unblock. `
     + `code=serve_boot_timeout phase=${phase}${poolText}; cause: ${starved ? 'the connection pool is too small or saturated for a resident serve' : `boot stalled in ${phase}`}; `
     + `fix: ${fix}; docs: docs/ENGINES.md#serve-boot-timeout`;
 }

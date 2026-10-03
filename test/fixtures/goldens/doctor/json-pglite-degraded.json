@@ -364,6 +364,15 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "refreshes": []
+          },
+          "message": "No worktree refresh is stuck.",
+          "name": "worktree_refresh_stuck",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "message": "links_link_source_check has the v114 kebab-case gate",
           "name": "links_link_source_check",
@@ -383,13 +392,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 192 (latest: 192)",
+          "message": "Version 196 (latest: 196)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "813 column(s) verified against live schema",
+          "message": "828 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -926,6 +935,27 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "legacy_shape_count": 0,
+            "malformed": []
+          },
+          "message": "Every active legacy token uses the unified grant columns.",
+          "name": "legacy_token_grant_shape",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "drift": []
+          },
+          "message": "No legacy token grant has drifted from its permissions mirror.",
+          "name": "legacy_token_grant_drift",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "message": "No image assets indexed yet",
           "name": "image_assets",
@@ -1087,6 +1117,26 @@
           },
           "message": "Every active fact and take has a voyage:voyage-4 vector for its current text.",
           "name": "fact_take_vectors",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "auto_analyze": true,
+            "checked": [
+              "pages",
+              "links",
+              "facts",
+              "takes",
+              "content_chunks",
+              "timeline_entries"
+            ],
+            "engine": "pglite",
+            "fix": "gbrain repair planner-stats --apply",
+            "stale": []
+          },
+          "message": "Planner statistics are fresh on 6 hot tables.",
+          "name": "planner_stats_stale",
           "status": "ok"
         },
         {

@@ -235,6 +235,32 @@ vars — incident-time escape hatches, not everyday knobs.
    `git status` first. Gitignored files stay excluded either way (use
    `--include-gitignored` for those).
 
+8. **A managed brain pulls only through `gbrain sources refresh`.** Managed
+   sync refuses to pull (`gbrain sync` needs `--no-pull`) and a cycle asked to
+   pull syncs the checkout as it is, because a Git merge rewrites files that
+   accepted writes may be publishing into. To take new upstream commits, run
+   on the owner host:
+
+   ```bash
+   gbrain sources refresh <source-id>
+   ```
+
+   It fetches, refuses new writes to every source that shares the checkout
+   (`worktree_refreshing`, retryable) until queued ones finish, fast-forwards
+   with `git merge --ff-only` and runs the managed `--no-pull` sync for each of
+   those sources. `--dry-run` fetches and previews. Uncommitted files the
+   upstream does not touch are kept and listed; dirty files it does touch, a
+   diverged branch or an unfinished sync cursor refuse with the command to run
+   ([refusal reference](write-refusals.md#worktree-refresh-refusals)). Bounds:
+   `--wait-drain <seconds>` (default 60; `sources.refresh_drain_wait_ms`,
+   `GBRAIN_REFRESH_DRAIN_WAIT_MS`) and `--fetch-timeout-ms` (default 120000;
+   `sources.refresh_fetch_timeout_ms`, `GBRAIN_REFRESH_FETCH_TIMEOUT_MS`).
+   A refresh interrupted by a crash is finished by the restarted owner or by
+   `gbrain sources refresh <source-id> --resume`. A cron that keeps a managed
+   brain current runs the refresh instead of `git pull`.
+
+   **Say to your agent:** *"Bring my notes source up to date with its remote."*
+
 ## How to Verify
 
 1. **Edit a file and search for the change.** Edit a brain markdown file,

@@ -12,11 +12,12 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, basename, sep } from 'node:path';
+import { join, basename, dirname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pruneDir } from '../sync.ts';
 import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
 import { corpusFileSessionId } from '../context/corpus-segments.ts';
+import { readSeatSidecar } from '../context/seat.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -32,6 +33,8 @@ export interface DiscoveredTranscript {
   basename: string;
   /** Inferred date if the basename matches `YYYY-MM-DD...` (or null). */
   inferredDate: string | null;
+  /** #4618: the capturing seat from the session's `.seat.json` sidecar, when one exists. */
+  seat?: string;
 }
 
 export interface DiscoverOpts {
@@ -336,12 +339,14 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
         continue;
       }
 
+      const seat = transcriptSeat(filePath);
       results.push({
         filePath,
         contentHash: hashContent(content),
         content,
         basename: baseName,
         inferredDate,
+        ...(seat ? { seat } : {}),
       });
     }
   }
@@ -393,13 +398,39 @@ export function readSingleTranscript(
   const ext = filePath.endsWith('.md') ? '.md' : '.txt';
       const baseName = basename(filePath, ext);
   const dateMatch = DATE_RE.exec(baseName);
+  const seat = transcriptSeat(filePath);
   return {
     filePath,
     contentHash: hashContent(content),
     content,
     basename: baseName,
     inferredDate: dateMatch ? dateMatch[1] : null,
+    ...(seat ? { seat } : {}),
   };
+}
+
+/**
+ * #4618: credit each ref to the seat of the transcript it was synthesized
+ * from (the seat sidecar discovery read). The synthesis idempotency key never
+ * includes the seat, so a sidecar added later triggers no re-synthesis.
+ */
+export function withTranscriptSeats<T extends { raw_source?: string }>(refs: T[], transcripts: DiscoveredTranscript[]): Array<T & { seat?: string }> {
+  const seats = new Map(transcripts.flatMap(t => (t.seat ? [[t.filePath, t.seat] as const] : [])));
+  return refs.map(ref => {
+    const seat = ref.raw_source ? seats.get(ref.raw_source) : undefined;
+    return seat ? { ...ref, seat } : ref;
+  });
+}
+
+/**
+ * #4618: the seat recorded for a transcript's session. A `.txt` corpus file
+ * (session-end file, checkpoint segment or writeback turn) shares its
+ * session's `<sessionId>.seat.json`; any other file uses its own basename.
+ */
+function transcriptSeat(filePath: string): string | undefined {
+  const name = basename(filePath);
+  const key = name.endsWith('.txt') ? corpusFileSessionId(name) : name.replace(/\.md$/, '');
+  return readSeatSidecar(dirname(filePath), key)?.seat;
 }
 
 // ── #4419: imported type: conversation pages (database discovery) ───────

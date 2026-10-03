@@ -757,8 +757,9 @@ describe('session-end', () => {
       transcriptRoot: projRoot,
     });
     const corpusDir = join(home(), 'transcripts', 'corpus');
-    const files = readdirSync(corpusDir).filter((f) => f.startsWith('sess-dup'));
-    expect(files).toEqual(['sess-dup.txt']);
+    const files = readdirSync(corpusDir).filter((f) => f.startsWith('sess-dup')).sort();
+    // One corpus file plus the session's one seat sidecar (#4618).
+    expect(files).toEqual(['sess-dup.seat.json', 'sess-dup.txt']);
     expect(readFileSync(join(corpusDir, 'sess-dup.txt'), 'utf8')).toContain('resumed pass content');
   });
 

@@ -5,17 +5,17 @@ import { throwIfAborted } from '../abort-check.ts';
  * Dream-provenance DB stamp (#2569): marks pages a dream child wrote with
  * `dream_generated` and a stable first cycle date. Shared by synthesize and
  * patterns (#5733); a page that existed before the child's first write to it
- * is not stamped.
+ * is not stamped. `seat` (#4618) credits the capturing agent seat.
  */
 export async function stampDreamProvenance(
   engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string; raw_source?: string; raw_trace_exempt_reason?: string; first_write_at?: Date }>,
+  refs: Array<{ slug: string; source_id: string; raw_source?: string; seat?: string; raw_trace_exempt_reason?: string; first_write_at?: Date }>,
   cycleDate: string,
   signal?: AbortSignal,
 ): Promise<void> {
   if (refs.length === 0) return;
   const { executeRawJsonb } = await import('../sql-query.ts');
-  for (const { slug, source_id, raw_source, raw_trace_exempt_reason, first_write_at } of refs) {
+  for (const { slug, source_id, raw_source, seat, raw_trace_exempt_reason, first_write_at } of refs) {
     // #4077: per-row abort check — the per-row try below is only for stamp
     // failures and must not swallow the cancellation unwind.
     throwIfAborted(signal, '[dream] synthesize provenance');
@@ -45,6 +45,7 @@ export async function stampDreamProvenance(
         [{
           dream_generated: true,
           ...(raw_source ? { raw_source } : {}),
+          ...(seat ? { seat } : {}),
           ...(raw_trace_exempt_reason ? { raw_trace_exempt: true, raw_trace_exempt_reason } : {}),
         }],
       );

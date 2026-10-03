@@ -66,9 +66,19 @@ the same options resumes the remaining durable cursor.
 The source checkpoint commits only after the entire selected cursor is exhausted
 and every admitted page has a committed receipt. It takes the source-exclusive
 guard before authentication/request/page locks and checks the original anchor,
-source incarnation, topology and owner epoch. Code/image importers, ignored-file
-walks and Git pull/rebase remain explicitly refused in managed mode until their
-own prepared publication and recovery paths exist. Remote sync retains the
+source incarnation, topology and owner epoch. Code/image importers and ignored-file
+walks remain explicitly refused in managed mode until their own prepared
+publication and recovery paths exist. Git pull/rebase stays refused inside sync
+and cycles; the one sanctioned Git writer is `gbrain sources refresh <source>`
+(`src/core/persistence/worktree-refresh.ts`). It refuses new checkout writes for
+every source bound to the worktree at admission (`worktree_refreshing`), waits
+until queued requests and Git effects on the worktree finish, then, holding the
+worktree native lock while claims stop (`fenced`), verifies HEAD and runs
+`git merge --ff-only`. Pages and the source checkpoint advance only through the
+ordinary managed `--no-pull` sync that follows, so every imported page is a
+journaled request. A durable `persistence_worktree_refreshes` row lets a
+restarted owner converge an interrupted refresh without adopting an unverified
+HEAD. Remote sync retains the
 original `submit_job` principal, admin/source/operation ceiling and normalized
 payload; runtime options cannot expand that grant and current revocation is
 checked before publication.

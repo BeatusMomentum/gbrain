@@ -1,4 +1,4 @@
-import { GRANT_PROFILES, GrantError, type GrantPatch, type GrantProfileId } from './model.ts';
+import { GRANT_PROFILES, GrantError, validatePrincipalGrant, type GrantPatch, type GrantProfileId } from './model.ts';
 import { parseScopeString, assertAllowedScopes } from '../scope.ts';
 
 export interface RescopeGrantArgs {
@@ -11,6 +11,12 @@ export interface RescopeGrantArgs {
 }
 
 export function parseRescopeGrantArgs(args: string[]): RescopeGrantArgs {
+  const result = parseRescopeGrantFlags(args);
+  if (!result.profile && Object.keys(result.patch).length === 0) throw new GrantError('invalid_grant', 'Pass a grant field or --profile to rescope');
+  return result;
+}
+
+function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
   const result: RescopeGrantArgs = { patch: {}, repair: false, dryRun: false, json: false };
   const csv = (value: string): string[] => value.split(',').map(s => s.trim()).filter(Boolean);
   for (let i = 0; i < args.length; i++) {
@@ -53,6 +59,109 @@ export function parseRescopeGrantArgs(args: string[]): RescopeGrantArgs {
       default: throw new GrantError('invalid_grant', `Unknown flag: ${flag}`);
     }
   }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// F3: `gbrain auth rescope`, one command for legacy tokens and OAuth clients.
+// ---------------------------------------------------------------------------
+
+export type RescopeCommand =
+  | { kind: 'migrate-legacy'; dryRun: boolean; json: boolean }
+  | { kind: 'token'; args: string[] }
+  | { kind: 'client'; clientId: string; args: string[] }
+  | { kind: 'bare'; name: string; args: string[] };
+
+const BOOLEAN_FLAGS = new Set(['--dry-run', '--json', '--refresh-operations', '--all-new', '--adopt-permissions', '--adopt-columns', '--repair']);
+const TARGET_USAGE = 'Name what to rescope: --token <name>, --id <uuid>, --client <client-id>, a bare token or client name, or --migrate-legacy';
+
+/** Split the target off `auth rescope` args; the remaining flags go to the token or client parser. */
+export function splitRescopeTarget(args: string[]): RescopeCommand {
+  const targets: { token?: string; id?: string; client?: string; bare?: string } = {};
+  const rest: string[] = [];
+  let migrate = false;
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (flag === '--migrate-legacy') { migrate = true; continue; }
+    if (flag === '--token' || flag === '--id' || flag === '--client') {
+      const value = args[++i];
+      if (value === undefined || value.startsWith('--')) throw new GrantError('invalid_grant', `${flag} requires a value`);
+      targets[flag.slice(2) as 'token' | 'id' | 'client'] = value;
+      continue;
+    }
+    if (!flag.startsWith('--')) {
+      if (targets.bare !== undefined) throw new GrantError('invalid_grant', `Unexpected argument: ${flag}`);
+      targets.bare = flag;
+      continue;
+    }
+    rest.push(flag);
+    if (!BOOLEAN_FLAGS.has(flag) && args[i + 1] !== undefined) rest.push(args[++i]);
+  }
+  const named = Object.values(targets).filter(v => v !== undefined).length;
+  if (migrate) {
+    if (named) throw new GrantError('invalid_grant', '--migrate-legacy migrates every unmigrated token; it takes no target');
+    const extra = rest.filter(f => f !== '--dry-run' && f !== '--json');
+    if (extra.length) throw new GrantError('invalid_grant', `--migrate-legacy changes no grant, so it takes only --dry-run and --json (got ${extra.join(' ')})`);
+    return { kind: 'migrate-legacy', dryRun: rest.includes('--dry-run'), json: rest.includes('--json') };
+  }
+  if (named !== 1) throw new GrantError('invalid_grant', named ? `Pass exactly one target. ${TARGET_USAGE}` : TARGET_USAGE);
+  if (targets.token !== undefined) return { kind: 'token', args: [targets.token, ...rest] };
+  if (targets.id !== undefined) return { kind: 'token', args: ['--id', targets.id, ...rest] };
+  if (targets.client !== undefined) return { kind: 'client', clientId: targets.client, args: rest };
+  return { kind: 'bare', name: targets.bare as string, args: rest };
+}
+
+const TOKEN_ONLY_FLAGS: Record<string, string> = {
+  '--takes-holders': 'client_takes_holders_unsupported',
+  '--reset-default': 'client_reset_default_unsupported',
+  '--refresh-operations': 'client_refresh_operations_unsupported',
+  '--add': 'client_refresh_operations_unsupported',
+  '--all-new': 'client_refresh_operations_unsupported',
+  '--adopt-permissions': 'client_adopt_unsupported',
+  '--adopt-columns': 'client_adopt_unsupported',
+};
+
+/**
+ * Client flags of `auth rescope --client`: the unified `--sources a,b`
+ * (element 0 = write source, the list = read set unless `--read-sources`
+ * names a different one), `--read-sources`, `--operations a,b|none` and every
+ * `auth rescope-client` flag. `--sources none` refuses (decision 4: client
+ * deny-all is `auth revoke-client`).
+ */
+export function parseClientRescopeArgs(clientId: string, args: string[]): RescopeGrantArgs {
+  const legacy: string[] = [];
+  let sources: string[] | undefined;
+  let readSources: string[] | undefined;
+  let operations: string[] | undefined;
+  const csv = (value: string): string[] => [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))];
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (TOKEN_ONLY_FLAGS[flag]) {
+      throw new GrantError('invalid_grant', `${flag} applies to legacy tokens only; OAuth client ${clientId} has no such grant in this release (see gbrain auth rescope --help)`, [TOKEN_ONLY_FLAGS[flag]]);
+    }
+    if (!['--sources', '--read-sources', '--operations'].includes(flag)) {
+      legacy.push(flag);
+      if (!BOOLEAN_FLAGS.has(flag) && args[i + 1] !== undefined) legacy.push(args[++i]);
+      continue;
+    }
+    const value = args[++i];
+    if (value === undefined || value.startsWith('--')) throw new GrantError('invalid_grant', `${flag} requires a value`);
+    if (flag === '--sources') sources = value === 'none' ? [] : csv(value);
+    if (flag === '--read-sources') readSources = csv(value);
+    if (flag === '--operations') operations = value === 'none' ? [] : csv(value);
+  }
+  const result = parseRescopeGrantFlags(legacy);
+  if (sources !== undefined) {
+    validatePrincipalGrant({
+      principal: { kind: 'oauth_client', id: clientId }, scopes: [], allowedOperations: null, takesHolders: null, revision: 0,
+      shape: 'unified', drift: [], permissionsMalformed: false,
+      sources: sources.length === 0 ? { kind: 'none' } : { kind: 'federated', writeSource: sources[0], readSources: sources },
+    }, { operationNames: new Set() });
+    result.patch.sourceId = sources[0];
+  }
+  if (readSources !== undefined && readSources.length === 0) throw new GrantError('invalid_grant', '--read-sources needs at least one source id');
+  if (sources !== undefined || readSources !== undefined) result.patch.federatedRead = readSources ?? sources;
+  if (operations !== undefined) result.patch.allowedOperations = operations;
   if (!result.profile && Object.keys(result.patch).length === 0) throw new GrantError('invalid_grant', 'Pass a grant field or --profile to rescope');
   return result;
 }

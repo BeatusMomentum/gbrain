@@ -19,6 +19,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { runImport } from '../src/commands/import.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-file-import-'));
 const engines: BrainEngine[] = [];
@@ -195,7 +196,7 @@ test('publication refuses admitted input-byte, canonical-target and page-identit
     if (race === 'page') {
       await engine.transaction(tx => withCoordinatedWrite(tx, [f.sourceId], () => tx.putPage(slug, {
         type: 'note', title: 'Concurrent page', compiled_truth: 'Concurrent accepted page must survive.', timeline: '', frontmatter: {}, content_hash: 'concurrent',
-      }, { sourceId: f.sourceId })));
+      }, { sourceId: f.sourceId }), TEST_WRITE_ATTRIBUTION));
     } else writeFileSync(changedPath, 'Concurrent local edit must survive.\n');
     const outcome = await publishMutation(engine, row, prepared, localHostId());
     expect(outcome.state).toBe('conflict');

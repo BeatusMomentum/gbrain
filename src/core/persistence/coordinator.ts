@@ -13,6 +13,7 @@ import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type RecoveryRecord, type WriteRequest } from './model.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { requestAttribution } from './attribution.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -238,7 +239,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         });
         await hooks.boundary?.('after_publication', row);
       }
-      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx));
+      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx), requestAttribution(row));
       if (!skill) await classifyUnboundPage(tx, row);
       if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });

@@ -224,34 +224,91 @@ owner approval. TTL changes affect future tokens only.
 
 **Say to your agent:** *"Let the hosted token read the workspace source too."*
 or *"Lock that old token out of every source."* The agent runs
-`gbrain auth rescope-token` on the brain host.
+`gbrain auth rescope --token <name>` on the brain host.
 
-Legacy bearer tokens (`gbrain auth create`, `gbrain bootstrap harness`) keep
-their grants in `access_tokens.permissions`. `gbrain auth rescope-token` edits
-them in place, mirroring `auth rescope-client`. Only the flags you pass
-change; the token secret is unchanged and grants apply on the next request.
+`gbrain auth rescope` is one grant editor for legacy bearer tokens
+(`gbrain auth create`, `gbrain bootstrap harness`) and OAuth clients. Only the
+flags you pass change; the secret is unchanged and grants apply on the next
+request. With no grant flag it prints the stored grants. A bare name works
+when it names exactly one token or client; a name that matches both refuses
+(`rescope_target_ambiguous`), so pass `--token` or `--client`. `--json`
+prints the result, and any refusal, as JSON on stdout.
 
 ```bash
-gbrain auth rescope-token agent-example                     # print the stored grants
-gbrain auth rescope-token agent-example --sources workspace,default
-gbrain auth rescope-token agent-example --takes-holders world,brain
-gbrain auth rescope-token agent-example --operations get_page,search,query
-gbrain auth rescope-token agent-example --sources none        # deny-all
-gbrain auth rescope-token agent-example --reset-default sources,takes-holders
-gbrain auth rescope-token --id TOKEN_ID --sources default --dry-run --json
+gbrain auth rescope --token agent-example                     # print the stored grants
+gbrain auth rescope --token agent-example --sources workspace,default
+gbrain auth rescope --token agent-example --takes-holders world,brain
+gbrain auth rescope --token agent-example --operations get_page,search,query
+gbrain auth rescope --token agent-example --sources none        # deny-all
+gbrain auth rescope --token agent-example --reset-default sources,takes-holders
+gbrain auth rescope --id TOKEN_ID --sources default --if-version 3 --dry-run --json
+gbrain auth rescope --client CLIENT_ID --sources workspace,default --operations get_page,search
 ```
 
 | Flag | Value | Effect |
 | --- | --- | --- |
-| `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the rest are federated reads. `none` grants no source: reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change. |
-| `--takes-holders` | `a,b` or `none` | Takes-holder allow-list; `none` hides every take. |
+| `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the list is the read set. `default` is the source named `default`; to restore the no-grant floor use `--reset-default sources`. Tokens: `none` grants no source, so reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change. Clients: `none` refuses (`client_sources_none_unsupported`); cut a client off with `gbrain auth revoke-client <client_id>`. |
+| `--read-sources` | `a,b` | Client only: a read set that differs from `--sources`. |
+| `--takes-holders` | `a,b` or `none` | Token only: takes-holder allow-list; `none` hides every take. |
 | `--operations` | `op,...` or `none` | Operation snapshot; `none` refuses every operation. |
-| `--reset-default` | `sources,takes-holders,operations` | Restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |
-| `--refresh-operations` | with optional `--add op,...` or `--all-new` | Previews operations added since the snapshot. Without `--add` or `--all-new` nothing is widened. |
+| `--scopes` | `read,write,...` | Replaces the scopes. |
+| `--reset-default` | `sources,takes-holders,operations` | Token only: restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |
+| `--refresh-operations` | with optional `--add op,...` or `--all-new` | Token only: previews operations added since the snapshot. Without `--add` or `--all-new` nothing is widened. |
+| `--if-version` | `N` | Refuses unless the stored grant revision is `N`; the refusal names the current revision. |
+| `--adopt-permissions` / `--adopt-columns` | | Token only: resolves grant drift (below). |
 
 Names are not unique; when several active tokens share a name, pass `--id`
-from `gbrain auth list`. `gbrain auth permissions <name> set-takes-holders`
-remains an alias for `--takes-holders`.
+from `gbrain auth list`. The older commands stay as aliases:
+`gbrain auth rescope-token <name> ...` is `auth rescope --token <name> ...`,
+`gbrain auth rescope-client <client_id> ...` is `auth rescope --client
+<client_id>` with its own flags (`--source`, `--federated-read`,
+`--allowed-operations`, `--surface`, `--profile`, ...), which also pass through
+`auth rescope --client`, and `gbrain auth permissions <name>
+set-takes-holders <list>` is `auth rescope --token <name> --takes-holders <list>`.
+
+### One grant shape and the lazy migration
+
+Tokens store their grant in the same columns as OAuth clients
+(`access_tokens.source_grant`, `source_id`, `federated_read`,
+`allowed_operations`, `takes_holders`, `grant_revision`). `source_grant` is
+`default`, `scalar`, `federated` or `none`; NULL means the token still uses the
+older `permissions` JSON shape. Those tokens keep working unchanged and are not
+re-issued: the next `auth rescope` edit, every `auth create` and every harness
+rotation write the columns, bump `grant_revision`, and rewrite `permissions` as
+a mirror (other keys preserved) so older gbrain binaries enforce the same
+grant. To migrate every remaining token at once, without changing any grant:
+
+```bash
+gbrain auth rescope --migrate-legacy --dry-run    # list
+gbrain auth rescope --migrate-legacy
+```
+
+A token whose `permissions` value is not a JSON object is skipped: the HTTP
+paths read it as no grant while publication denies it, so there is no faithful
+column form. Ask the user which grant it should hold, then run
+`gbrain auth rescope --id <id>` with explicit `--sources`, `--takes-holders`
+and `--operations` (or `--reset-default sources,takes-holders,operations`).
+`gbrain doctor` reports the count as `legacy_token_grant_shape`
+(`details.legacy_shape_count`, `details.malformed`).
+
+### Grant drift
+
+If an older gbrain binary edits a migrated token's `permissions` JSON (for
+example its `auth rescope-token`), the JSON and the columns disagree. Each
+axis that disagrees (`sources`, `takes-holders`, `operations`) denies every
+request until resolved, and grant edits on that token refuse. `gbrain doctor`
+warns `legacy_token_grant_drift` (`details.drift: [{name, id, axes}]`). Ask the
+user which grant is intended, then run one of:
+
+```bash
+gbrain auth rescope --token agent-example --adopt-permissions   # keep the JSON edit
+gbrain auth rescope --token agent-example --adopt-columns       # restore the columns
+```
+
+A harness rotation of a drifted token carries the JSON edit, the same
+resolution as `--adopt-permissions`, and the replaced token is revoked.
+
+### Harness rotation
 
 A `gbrain bootstrap harness` re-run rotates its token and carries the
 replaced token's grants: takes holders and sources as stored (explicit empty
@@ -261,9 +318,63 @@ skills-policy change adds. Newer operations are withheld and the run names
 the preview command:
 
 ```bash
-gbrain auth rescope-token bootstrap-harness --refresh-operations
-gbrain auth rescope-token bootstrap-harness --refresh-operations --add assemble_evidence
+gbrain auth rescope --token bootstrap-harness --refresh-operations
+gbrain auth rescope --token bootstrap-harness --refresh-operations --add assemble_evidence
 ```
+
+## Write attribution
+
+**Say to your agent:** *"Who wrote this page, and which agent changed it last?"*
+or *"Which client saved fact 42?"* The agent runs `gbrain attribution` (or the
+`get_write_attribution` tool with an `admin` grant).
+
+Journaled and coordinated writes record, on pages, page versions, facts, takes
+and timeline entries, which request and which principal (OAuth client, legacy
+token, local CLI or stdio writer, or the application) created each row and last
+changed it. This is creation attribution, not a full audit of every write:
+legacy direct writers record nothing and read as `unrecorded`. Only that (request,
+principal) pair is stored; the operation, time and the principal's current name
+are joined when you read it, so renaming a client renames it in every answer.
+
+```bash
+gbrain attribution notes/example-page              # created, last and live revision of the page
+gbrain attribution notes/example-page --versions   # plus who wrote and who archived each version
+gbrain attribution people/alice-example --fact 42  # one fact (about or fenced on the page)
+gbrain attribution people/alice-example --take 3   # the take at row 3 of the page's takes table
+gbrain attribution people/alice-example --timeline 17
+```
+
+Each attribution is `{ request_id, operation, principal: { kind, id, name }, at,
+origin }`. Branch on `origin`:
+
+| `origin` | Meaning |
+| --- | --- |
+| `request` | Written by the named journaled request; `operation` and `at` come from it. |
+| `maintenance` | Written by a maintenance pass (cycle extraction, repair) as the named principal, with no request. |
+| `unrecorded` | Written before attribution existed, or by a legacy writer that records none. Not an error. |
+
+Who can read it:
+
+- `get_write_attribution` needs `admin` scope (the local CLI always has it).
+  Remote admins stay inside their source grant, see only `world` facts and only
+  the take holders their grant allows. A page outside the grant reads as
+  `page_not_found`.
+- `get_versions` (`gbrain history`) adds `written_by` and `archived_by` to each
+  version only for the local CLI and `admin` holders. A `read` or `write` grant
+  gets the same version rows without any attribution field.
+
+Rows written before this release start `unrecorded`. Fill the ones the write
+journal proves exactly, after you agree; it is free and changes no content:
+
+```bash
+gbrain repair attribution-backfill           # preview: batches per table and the unrecorded_* counts left alone
+gbrain repair attribution-backfill --apply   # fill them; rerun to resume after an interruption
+```
+
+The backfill fills a page revision or version only from the page write whose
+recorded result is that exact revision, and a fact only from the `remember`
+that inserted it. Everything else stays `unrecorded`; nothing is inferred.
+`gbrain repair --all` and the doctor remediation plan include it.
 
 ## Read-only stdio serve
 
@@ -336,7 +447,7 @@ retain request history, audit records, spending reservations, and settlement.
 | Duplicate client name | Inspect the reported existing client ID; recover its setup instead of creating another client. |
 | Mutation response lost or timed out | Outcome may be unknown. Inspect the client/list before retrying; a transport error does not prove nothing changed. |
 | `grant_conflict` | Inspect the current revision and preview the intended action again. |
-| `permission_denied` with `fence=no_source_grant` | The legacy token's source grant is an explicit empty list. Grant sources with `gbrain auth rescope-token <name> --sources <id,...>` ([legacy token grants](#legacy-token-grants)). |
+| `permission_denied` with `fence=no_source_grant` | The legacy token's source grant is an explicit empty list. Grant sources with `gbrain auth rescope --token <name> --sources <id,...>` ([legacy token grants](#legacy-token-grants)). |
 | Client/source list failed | Retry the failed request; an error is not an empty registration list or a missing source. |
 | Public OAuth setup has no secret | Expected for authentication method `none`. Connect using native PKCE. |
 | Confidential secret delivery interrupted | Use `mcp admin setup … --credentials-out PRIVATE_FILE` to recover the retained delivery; never expose it in ordinary output. |

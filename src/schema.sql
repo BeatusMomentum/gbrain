@@ -1928,9 +1928,10 @@ BEGIN
     END IF;
     IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
   ELSIF TG_TABLE_NAME IN ('facts','takes') AND TG_OP='UPDATE' THEN
-    row_data := row_data - ARRAY['embedding_model','embedded_text_hash'];
-    old_data := old_data - ARRAY['embedding_model','embedded_text_hash'];
-    -- Embedding completion and retrieval telemetry are physical projections.
+    row_data := row_data - ARRAY['embedding_model','embedded_text_hash'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
+    old_data := old_data - ARRAY['embedding_model','embedded_text_hash'] - ARRAY['write_request_id','write_principal_kind','write_principal_id','last_write_request_id','last_write_principal_kind','last_write_principal_id','last_written_at'];
+    -- Embedding completion, retrieval telemetry and write attribution
+    -- (attribution-schema.ts; a journal backfill fills it) are physical projections.
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;
   END IF;
@@ -2024,6 +2025,29 @@ CREATE TABLE IF NOT EXISTS persistence_topology_changes (
 ALTER TABLE persistence_topology_changes ADD COLUMN IF NOT EXISTS intent_bytes bigint NOT NULL DEFAULT 0 CHECK(intent_bytes>=0);
 CREATE INDEX IF NOT EXISTS persistence_topology_recovering ON persistence_topology_changes(created_at) WHERE state='recovering';
 -- END GENERATED from src/core/persistence/topology-schema.ts (PERSISTENCE_TOPOLOGY_SCHEMA_SQL)
+
+-- BEGIN GENERATED from src/core/persistence/worktree-refresh-schema.ts (WORKTREE_REFRESH_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS persistence_worktree_refreshes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  worktree_id uuid NOT NULL REFERENCES persistence_worktrees(id),
+  source_ids text[] NOT NULL,
+  principal_id uuid NOT NULL,
+  owner_epoch bigint NOT NULL,
+  topology_generation bigint NOT NULL,
+  state text NOT NULL CHECK (state IN ('draining','fenced','merged','syncing','completed','aborted','recovery_required')),
+  old_head text NOT NULL,
+  target_head text NOT NULL,
+  upstream_ref text NOT NULL,
+  preserved_uncommitted text[] NOT NULL DEFAULT '{}',
+  outcome jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS persistence_worktree_refreshes_active
+  ON persistence_worktree_refreshes(worktree_id)
+  WHERE state IN ('draining','fenced','merged','syncing','recovery_required');
+-- END GENERATED from src/core/persistence/worktree-refresh-schema.ts (WORKTREE_REFRESH_SCHEMA_SQL)
 
 -- BEGIN GENERATED from src/core/company-brain/receipt-schema.ts (SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS source_ingestion_receipts (
@@ -2477,3 +2501,4 @@ END $rls$;
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_checked_at TIMESTAMPTZ;
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_commit TEXT;
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS upstream_behind INTEGER;
+

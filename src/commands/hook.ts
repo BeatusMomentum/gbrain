@@ -74,6 +74,7 @@ import {
   HARVEST_RECEIPT_SUFFIX,
   segmentHash,
 } from '../core/context/corpus-segments.ts';
+import { hookLaneLabel, resolveSeat, seatReasonHint, writeSeatSidecar } from '../core/context/seat.ts';
 import { gateWritebackTurn, WRITEBACK_SKIP_REASONS } from '../core/facts/writeback-gate.ts';
 import { resolveWritebackConfigFromFile } from '../core/facts/writeback-config.ts';
 import { memorableGateAllowed, recordAndRelayReceipt, redactedToolCallsJson } from '../core/context/hook-heartbeat.ts';
@@ -1303,6 +1304,7 @@ async function hookCompact(io: HookIo): Promise<number> {
   let reason: string | undefined;
   let segment: string | undefined;
   let flushAck: string | undefined;
+  let seatReasons: string[] = [];
 
   const work = (async () => {
     const j = await readStdinJson(io, 300);
@@ -1312,6 +1314,7 @@ async function hookCompact(io: HookIo): Promise<number> {
     let turns: WindowTurn[] = [];
     let boundaryTurnIndexes: number[] = [];
     let allTurns: WindowTurn[] = [];
+    let transcriptPath: string | undefined;
     if (j.transcript_path !== undefined && j.transcript_path !== null) {
       const conf = confineTranscriptPath(j.transcript_path, {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
@@ -1321,6 +1324,7 @@ async function hookCompact(io: HookIo): Promise<number> {
         allowOversize: true,
       });
       if (!conf.ok) { outcome = 'degraded'; reason = `transcript_${conf.reason}`; return; }
+      transcriptPath = conf.path;
       try {
         const parsed = parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
         allTurns = parsed.turns;
@@ -1347,7 +1351,9 @@ async function hookCompact(io: HookIo): Promise<number> {
     // any IPC. Written for EVERY engine config (the sweep backstop harvests it
     // when serve/IPC is unavailable). Per-step deadline degrades — a scan that
     // can't finish skips the segment ENTIRELY (never write unscanned content).
-    const banked = await bankCompactSegment(await corpusDir(cfg), sessionId, allTurns, boundaryTurnIndexes, {
+    const dir = await corpusDir(cfg);
+    seatReasons = captureSeat(io, dir, sessionId, transcriptPath);
+    const banked = await bankCompactSegment(dir, sessionId, allTurns, boundaryTurnIndexes, {
       remainingMs: remaining,
       minScanMs: SEGMENT_MIN_BUDGET_MS,
       minWriteMs: SEGMENT_WRITE_MIN_BUDGET_MS,
@@ -1396,11 +1402,14 @@ async function hookCompact(io: HookIo): Promise<number> {
     outcome = 'error';
     reason = errorCode(e); // fail-open: exit 0
   }
+  if (outcome === 'ok' && seatReasons.length) { outcome = 'degraded'; reason = seatReasons[0]; }
+  const hint = seatReasonHint(reason);
   await writeHeartbeat(io, {
     ts: new Date().toISOString(),
     event: 'compact',
     outcome,
     ...(reason ? { reason } : {}),
+    ...(hint ? { hint } : {}),
     duration_ms: Date.now() - t0,
     ...(segment ? { segment } : {}),
     ...(flushAck ? { flush: flushAck } : {}),
@@ -1483,8 +1492,10 @@ async function hookStop(io: HookIo): Promise<number> {
       if (!lastUser || !lastUser.text) return 'no_user_turn';
       const gated = gateWritebackTurn(lastUser.text);
       if (!gated.ok) return gated.reason;
+      const dir = await corpusDir(cfg);
+      captureSeat(io, dir, sid, conf.path); // #4618: the seat precedes the banked turn file
       const banked = await bankWritebackTurn(
-        await corpusDir(cfg), sid, gated.normalized, gated.hash24,
+        dir, sid, gated.normalized, gated.hash24,
         // Bank the session's source IN THE NAME so the sweep fallback files
         // the turn into the same source the IPC lane below would have.
         process.env.GBRAIN_SOURCE ?? null,
@@ -1600,6 +1611,17 @@ function corpusRetentionDays(cfg: GBrainConfig | null): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : CORPUS_RETENTION_DAYS_DEFAULT;
 }
 
+/** #4618: record the session's seat sidecar; returns heartbeat reason codes. Never throws. */
+function captureSeat(io: HookIo, dir: string, sessionId: string, transcriptPath: string | undefined): string[] {
+  const harness = io.harness ?? 'claude-code';
+  try {
+    const seat = resolveSeat({ env: process.env, harness, transcriptPath });
+    return seat ? writeSeatSidecar(dir, sessionId, seat, { harness, hookLane: hookLaneLabel(process.env.GBRAIN_HOOK_LANE) }) : [];
+  } catch {
+    return ['seat_write_failed'];
+  }
+}
+
 async function hookSessionEnd(io: HookIo): Promise<number> {
   const t0 = Date.now();
   let outcome: HookHeartbeatEntry['outcome'] = 'ok';
@@ -1699,6 +1721,9 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
         }
       } else if (turnsN > 0) {
         const dir = await corpusDir(cfg);
+        // #4618: the seat is recorded BEFORE any corpus file of this session
+        // is renamed into place, so a sweep never sees one without its seat.
+        deferredReasons.push(...captureSeat(io, dir, sessionId, conf.path));
         // Cathedral 5 dedup contract: when EVERY non-empty boundary window's
         // redacted hash is banked in the segment ledger (exact-set), write
         // only the post-last-boundary REMAINDER; any mismatch ⇒ full
@@ -1853,12 +1878,14 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
   // Deferred reasons apply LAST — visible when nothing about THIS session
   // degraded, never masking a current-session reason.
   for (const r of deferredReasons) degrade(r);
+  const hint = seatReasonHint(reason);
 
   await writeHeartbeat(io, {
     ts: new Date().toISOString(),
     event: 'session-end',
     outcome,
     ...(reason ? { reason } : {}),
+    ...(hint ? { hint } : {}),
     duration_ms: Date.now() - t0,
     ...(turnsN !== undefined ? { turns: turnsN } : {}),
     ...(bytesN !== undefined ? { bytes: bytesN } : {}),

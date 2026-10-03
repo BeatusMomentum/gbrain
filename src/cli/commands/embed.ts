@@ -5,6 +5,7 @@
  * src/cli/command-table.ts.
  */
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
+import { BUDGET_STOP_EXIT_CODE } from '../../core/exit-codes.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import type { CliDispatchContext } from '../command-table.ts';
 
@@ -18,5 +19,7 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
   const embedResult = await runEmbed(engine, args, SELECTED_CONFIG_BY_ENGINE.get(engine) ?? null);
   if (embedResult && embedResult.failures > 0) {
     setCliExitVerdict(1);
+  } else if (embedResult && 'reason' in embedResult && embedResult.reason === 'time_budget') {
+    setCliExitVerdict(BUDGET_STOP_EXIT_CODE);
   }
 }

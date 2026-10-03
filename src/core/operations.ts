@@ -77,6 +77,7 @@ export { MANAGED_LINK_SOURCES } from './ops/links.ts';
 // contractual — docs/TOOL_CATALOG.md is generated from it).
 
 import { adminOperations } from './ops/admin.ts';
+import { attributionOperations } from './ops/attribution.ts';
 import { skillsCatalogOperations } from './ops/skills-catalog.ts';
 import { brainMembershipOperations } from './ops/brain-membership.ts';
 import { syncStatusOperations } from './ops/sync-status.ts';
@@ -147,8 +148,8 @@ export const operations: Operation[] = [
   // Timeline (add_timeline_entry, get_timeline) — ops/timeline.ts
   ...timelineOperations,
   // Admin (get_stats, get_health, run_doctor, get_versions, revert_version
-  // + the v0.31.1 banner packet get_brain_identity) — ops/admin.ts
-  ...adminOperations,
+  // + get_brain_identity) — ops/admin.ts; get_write_attribution — ops/attribution.ts
+  ...adminOperations, ...attributionOperations,
   // PR1: skill catalog over MCP (list_skills, get_skill, list_brain_skillpack,
   // advisor) + v0.41.19.0 get_status_snapshot — ops/skills-catalog.ts
   ...skillsCatalogOperations,
@@ -265,7 +266,7 @@ const OP_AREAS: Record<string, string> = {
   // admin + operations
   get_stats: 'admin', get_health: 'admin', run_doctor: 'admin',
   get_status_snapshot: 'admin', run_onboard: 'admin', run_skillopt: 'admin',
-  migrate_embeddings: 'admin', code_traversal_cache_clear: 'admin',
+  migrate_embeddings: 'admin', code_traversal_cache_clear: 'admin', get_write_attribution: 'admin',
   // identity
   whoami: 'identity', get_brain_identity: 'identity',
   // skills

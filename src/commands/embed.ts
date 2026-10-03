@@ -24,6 +24,7 @@ import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { countRestampOnlyChunks, invalidateStaleSignatureEmbeddingsGuarded } from '../core/embedding-invalidation.ts';
 import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import { slog, serr } from '../core/console-prefix.ts';
+import { embedBudgetStopVerdict, noteEmbedBudgetStop } from '../core/embed-budget-stop.ts';
 import { filterOutEmbedSkipped } from '../core/embed-skip.ts';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted, anySignal, AbortError } from '../core/abort-check.ts';
@@ -349,7 +350,10 @@ export interface EmbedResult {
    * `failures`/`failure_samples` also carry a stall entry so existing
    * failures>0 consumers surface it unchanged.
    */
-  reason?: 'stall_timeout';
+  reason?: 'stall_timeout' | 'time_budget';
+  /** With `reason: 'time_budget'` (src/core/embed-budget-stop.ts): stale chunks left and the command that finishes them. */
+  remaining_stale?: number;
+  resume_command?: string;
   /** #5885: the takes pass of a `stale` drain, when it ran. Its failures are also counted in `failures`. */
   takes?: EmbedTakesResult;
 }
@@ -984,6 +988,9 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
       serr('[embed] exiting non-zero: stall watchdog aborted the drain (reason: stall_timeout); partial progress banked — re-run to resume.');
       process.exit(1);
     }
+    // A budget stop with work left is partial: verdict on stdout, and
+    // src/cli/commands/embed.ts exits with BUDGET_STOP_EXIT_CODE.
+    if (result.reason === 'time_budget') slog(embedBudgetStopVerdict(result));
     return result;
   } catch (e) {
     if (progressStarted) progress.finish();
@@ -1603,6 +1610,7 @@ async function embedAllStale(
   const sourceOpt = sourceId ? { sourceId } : undefined;
   if (isAborted(externalSignal)) return;
   const includeNullSig = !!staleOpts?.includeNullSignature;
+  const noteBudgetStop = () => noteEmbedBudgetStop(engine, result, { sourceId, signature, includeNullSignature: includeNullSig, skip: dryRun || BUDGET_MS === null || isAborted(externalSignal) });
   let reportedArchived = 0;
   const reportArchived = async () => {
     if (dryRun) return;
@@ -1616,17 +1624,17 @@ async function embedAllStale(
   const readinessOptions = { sourceId, existingChunksOnly: true, activeSourcesOnly: true, stale: { signature, includeNullSignature: includeNullSig }, signal: externalSignal,
     deadline: BUDGET_MS === null ? undefined : overallStartedAt + BUDGET_MS };
   let readiness = await prepareEmbeddingProjections(engine, readinessOptions);
-  if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return;
+  if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return await noteBudgetStop();
   if (readiness.blocked && !dryRun) {
     const probeOk = await probeEmbedder((texts, fnOpts) => embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }), signature ?? undefined, externalSignal);
-    if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return;
+    if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return await noteBudgetStop();
     if (!probeOk) {
       result.failures += readiness.blocked;
       result.failure_samples.push('Projection recovery requires a working embedding provider; existing projections were preserved.');
       return;
     }
     readiness = await prepareEmbeddingProjections(engine, { ...readinessOptions, repair: true, assertOwned: staleOpts?.assertOwned });
-    if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return;
+    if (isAborted(externalSignal) || Date.now() >= (readinessOptions.deadline ?? Infinity)) return await noteBudgetStop();
   }
   if (readiness.blocked && !dryRun) {
     result.failures += readiness.blocked;
@@ -2112,6 +2120,7 @@ async function embedAllStale(
     }
   }
 
+  if (budgetSignal.aborted) await noteBudgetStop();
   if (!staleOpts?.quiet) slog(`Embedded ${result.embedded} chunks across ${processedPageKeys.size} pages`);
 
   // #1946 (OV2a): a catch-up pass that completed without being aborted but left

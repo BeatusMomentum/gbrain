@@ -8,6 +8,8 @@ import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetenti
 import { retryWriteAdmission } from './admission-retry.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { writerStamp } from './writer-versions.ts';
+import { catalogueError } from '../error-catalogue.ts';
+import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import {
   isTerminal, principalKey, requestPrincipal, recoveryFiles,
@@ -130,6 +132,7 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
     if (input.worktreeId) {
       await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]);
+      await assertWorktreeNotRefreshing(tx, input);
       const binding = await tx.executeRaw(`SELECT source_id FROM persistence_source_bindings WHERE source_id=$1
         AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4`,
       [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]);
@@ -183,13 +186,45 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
 }
 
 /**
+ * F0: a write to a worktree under an active `gbrain sources refresh` is refused
+ * before it is journaled. The fence insert holds the worktree row FOR UPDATE
+ * and admission holds it FOR SHARE, so an admission either commits before the
+ * fence (and is drained) or sees it. During `syncing` only the managed sync's
+ * own writes are admitted; a `syncing` refresh whose members all reached the
+ * target is completed here, so a later cycle sync converges a crashed refresh.
+ */
+async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission): Promise<void> {
+  const [refresh] = await tx.executeRaw<{ id: string; state: string; source_ids: string[] }>(`SELECT id,state,source_ids FROM persistence_worktree_refreshes
+    WHERE worktree_id=$1::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL}`, [input.worktreeId]);
+  if (!refresh) return;
+  const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
+  if (refresh.state === 'syncing' && managedSync) return;
+  if (refresh.state === 'syncing') {
+    const completed = await tx.executeRaw(`UPDATE persistence_worktree_refreshes f SET state='completed',completed_at=now(),updated_at=now()
+      WHERE f.id=$1::uuid AND f.state='syncing' AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids)
+        AND s.last_commit IS DISTINCT FROM f.target_head) RETURNING f.id`, [refresh.id]);
+    if (completed.length) return;
+  }
+  if (refresh.state === 'recovery_required') throw catalogueError('refresh_recovery_required',
+    `Refresh ${refresh.id} could not verify the checkout HEAD of source ${input.sourceId}; writes to its worktree stay fenced.`,
+    `gbrain sources writer status ${input.sourceId}, then gbrain sources refresh ${input.sourceId} --resume. Retry the same request_id afterwards.`);
+  const error = catalogueError('worktree_refreshing',
+    `Source ${input.sourceId}'s checkout is being fast-forwarded by refresh ${refresh.id} (${refresh.state}); this write was not journaled.`,
+    `Retry the same request_id after retry_after_ms: 1000. Check progress with gbrain sources writer status ${input.sourceId}.`);
+  error.detail = 'retry_after_ms=1000';
+  throw error;
+}
+
+/**
  * The rows `claimNextWrite` may claim, over `persistence_requests r LEFT JOIN
  * persistence_worktrees w`, with $1 = host id and $2 = excluded root keys. An
- * unresolved head blocks its entire root. A file write also waits for an
+ * unresolved head blocks its entire root. A worktree under a refresh fence
+ * (`fenced`, `merged`, `recovery_required`) claims nothing. A file write also waits for an
  * unfinished withdrawal mirror of its page (of every page, for an untargeted
  * mirror), so the mirror never rewrites a file under an accepted request.
  */
 export const CLAIMABLE_WRITE_SQL = `r.state='queued' AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
+      AND (r.worktree_id IS NULL OR ${refreshFenceClear('r')})
       AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($2::text[]))
       AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id

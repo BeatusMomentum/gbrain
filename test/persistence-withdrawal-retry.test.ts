@@ -9,6 +9,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { getWriteRequest } from '../src/core/persistence/journal.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -39,7 +40,7 @@ async function seed(engine: BrainEngine, slug: string) {
     const page = await tx.putPage(slug, { type: 'note', title: 'Example', compiled_truth: 'Canonical example', timeline: '', frontmatter: {} }, { sourceId });
     const fact = await tx.insertFact({ fact: `Withdraw ${slug}`, source: 'test', entity_slug: slug, visibility: 'world' }, { source_id: sourceId });
     return { page, fact };
-  }));
+  }, TEST_WRITE_ATTRIBUTION));
 }
 
 for (const boundary of ['admission-counter', 'completed-withdrawal'] as const) {

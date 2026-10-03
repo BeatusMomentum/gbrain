@@ -17,6 +17,7 @@ import { advanceTopology, lockTopologyPrincipal, lockTopologyRows, settleTopolog
 import { priorTopologyChange, recordTopologyChange, topologyReceipt } from './topology-receipts.ts';
 import { isWriteRequestId } from './types.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { principalAttribution } from './attribution.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { flushTopologyDirectory } from './topology-filesystem.ts';
@@ -129,7 +130,6 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         throw missingCheckoutError(input.sourceId,path);
       }
       const manifest=worktreeManifest(path,{progress:humanManifestProgress()});
-      if(Buffer.byteLength(JSON.stringify(manifest))>1_048_576) throw new OperationError('request_too_large','The verified source manifest exceeds the 1 MiB administration metadata bound.');
       manifests.set(path,manifest);
     }
     return topologyTransaction(engine,async tx=>{
@@ -214,7 +214,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         ...(missingCheckout?{retired_without_checkout:missingCheckout}:{}),
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
         ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:redactSourceConfig({...source?.config,...input.config}),id:input.sourceId}: {})};
-    });
+    },principalAttribution({kind:'local_cli',id:principal}));
     if(admission) await admission.after(tx,String(result.source_incarnation));
     const row=await recordTopologyChange(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,incarnation:source?.incarnation??String(result.source_incarnation),worktrees},result);
     return topologyReceipt(row);

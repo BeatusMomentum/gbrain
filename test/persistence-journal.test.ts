@@ -16,6 +16,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const engines: BrainEngine[] = [];
@@ -230,7 +231,7 @@ describe('durable mutation journal', () => {
         await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
           await tx.putPage('guarded', input('Yes'), { sourceId });
           await tx.addTag('guarded', 'coherent', { sourceId });
-        }));
+        }, TEST_WRITE_ATTRIBUTION));
         expect((await engine.readPageSnapshot('guarded', { sourceId }))!.tags).toEqual(['coherent']);
         await expect(engine.addTag('guarded', 'uncoordinated', { sourceId })).rejects.toThrow('writer_coordinator_required');
       } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }

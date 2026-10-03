@@ -780,6 +780,19 @@ export function sanitizeEngineSessionId(raw: unknown): string | null {
   return s && !/^\.+$/.test(s) ? s : null;
 }
 
+/**
+ * #4618: record the session's seat before its segment is spooled (the hook
+ * lane's ordering), keyed to the OpenClaw agent dir holding `sessions/`.
+ * Additive provenance: a failure never fails the checkpoint.
+ */
+async function recordOpenclawSeat(dir: string, sessionId: string, sessionFile: string): Promise<void> {
+  try {
+    const { resolveSeat, writeSeatSidecar } = await import('./context/seat.ts');
+    const seat = resolveSeat({ env: process.env, harness: 'openclaw', transcriptPath: sessionFile });
+    if (seat) writeSeatSidecar(dir, sessionId, seat, { harness: 'openclaw', hookLane: 'context-engine' });
+  } catch { /* best effort */ }
+}
+
 // ── Engine Implementation ───────────────────────────────────────────────
 
 export function createGBrainContextEngine(ctx: {
@@ -952,6 +965,7 @@ export function createGBrainContextEngine(ctx: {
     const { loadConfig } = await import('./config.ts');
     const cfg = loadConfig();
     const dir = await engineCorpusDir(cfg);
+    await recordOpenclawSeat(dir, sessionId, sessionFile);
     const w = segs.writeSegment(dir, sessionId, rendered.text);
     const ordinal = segs.appendSegmentLedger(dir, sessionId, w.hash);
     const memo = checkpointMemo.get(sessionId) ?? { links: [], polls: 0, expectSeg: null, settled: false };

@@ -5,6 +5,7 @@ import { authorizeWrite, submissionAuthority } from './authority.ts';
 import { managedPersistenceEnabled } from './ownership.ts';
 import { initializeLocalPersistence } from './page-mutations.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { principalAttribution } from './attribution.ts';
 
 /**
  * A coordinated, database-only write on a managed brain: rows with no
@@ -34,6 +35,6 @@ export async function coordinatedDatabaseWrite<T>(ctx: OperationContext, operati
     await authorizeWrite(tx, authority, operation, authoritySlug, true);
     await tx.lockPageKeys(lockSlugs.map(slug => ({ sourceId, slug })));
     return write(tx, sourceId);
-  }));
+  }, principalAttribution(authority.principal)));
   return { value };
 }

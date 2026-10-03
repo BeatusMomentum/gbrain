@@ -38,6 +38,7 @@ import { FACTS_FENCE_BEGIN } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN } from '../takes-fence.ts';
 import { readJournalLimits } from './limits.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { maintenanceAttribution } from './attribution.ts';
 import { readConnectorV2Cutoff } from './connector-checkpoint-migration.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
 
@@ -524,11 +525,12 @@ export class ManagedConnectorSync {
   }
   /** E-D4: the freshness a skipped checkpoint save would have stamped, guarded by the lease and the source incarnation. */
   private async stampFreshness(newestContentAt?: string): Promise<void> {
+    const attribution = await maintenanceAttribution(this.engine);
     await this.engine.transaction(async tx => {
       await this.assertLease(tx);
       await withCoordinatedWrite(tx, [this.sourceId], () => tx.executeRaw(
         'UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-        [this.sourceId, this.source.incarnation, newestContentAt ?? null]));
+        [this.sourceId, this.source.incarnation, newestContentAt ?? null]), attribution);
     });
   }
   /** The run's remaining wait allowance; the caller's own deadline arrives through the lease signal. */

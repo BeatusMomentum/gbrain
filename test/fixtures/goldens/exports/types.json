@@ -43,6 +43,13 @@
         "name": "AnomalyResult"
       },
       {
+        "kind": "type",
+        "name": "AttributedPageVersion",
+        "signature": [
+          "PageVersion & { written_by: WriteAttributionView; archived_by: WriteAttributionView; }"
+        ]
+      },
+      {
         "kind": "interface",
         "members": [
           "addCodeEdges: (edges: CodeEdgeInput[]) => Promise<number>",
@@ -1434,6 +1441,17 @@
           "underfilled: boolean"
         ],
         "name": "VectorPoolMeta"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "at: string | null",
+          "operation: string | null",
+          "origin: \"request\" | \"maintenance\" | \"unrecorded\"",
+          "principal: { kind: string; id: string; name: string | null; } | null",
+          "request_id: string | null"
+        ],
+        "name": "WriteAttributionView"
       },
       {
         "kind": "function",
@@ -7094,6 +7112,13 @@
         "name": "AnomalyResult"
       },
       {
+        "kind": "type",
+        "name": "AttributedPageVersion",
+        "signature": [
+          "PageVersion & { written_by: WriteAttributionView; archived_by: WriteAttributionView; }"
+        ]
+      },
+      {
         "kind": "interface",
         "members": [
           "brain_score: number",
@@ -8098,6 +8123,17 @@
           "underfilled: boolean"
         ],
         "name": "VectorPoolMeta"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "at: string | null",
+          "operation: string | null",
+          "origin: \"request\" | \"maintenance\" | \"unrecorded\"",
+          "principal: { kind: string; id: string; name: string | null; } | null",
+          "request_id: string | null"
+        ],
+        "name": "WriteAttributionView"
       },
       {
         "kind": "function",

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208089,
-    "stdoutSha256": "a63cbbb5e6793515080dcb661c072dc74b491e1ff8fb8c1b3c4bbc9ba9c9bfd0",
+    "stdoutBytes": 209860,
+    "stdoutSha256": "1ec5b407e08b2b2333a2f5fe2c24561fa47447bb9303de69902a0bfe562610df",
     "toolNames": [
       "remember",
       "entity",
@@ -47,6 +47,7 @@
       "revert_version",
       "get_brain_identity",
       "quarantine_list",
+      "get_write_attribution",
       "list_skills",
       "get_skill",
       "list_brain_skillpack",
@@ -1606,7 +1607,7 @@
         }
       },
       {
-        "description": "Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host.",
+        "description": "Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host. `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.",
         "name": "get_health",
         "parameters": {},
         "schema": {
@@ -1626,7 +1627,7 @@
         }
       },
       {
-        "description": "Page version history",
+        "description": "Page version history. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it).",
         "name": "get_versions",
         "parameters": {
           "slug": "string"
@@ -1723,6 +1724,45 @@
             }
           },
           "required": [],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. Each attribution names the request id, operation, principal (kind, id, current name), time and origin (request, maintenance or unrecorded). Remote callers stay inside their source grant and see only world facts.",
+        "name": "get_write_attribution",
+        "parameters": {
+          "fact": "number?",
+          "slug": "string",
+          "take": "number?",
+          "timeline": "number?",
+          "versions": "boolean?"
+        },
+        "schema": {
+          "properties": {
+            "fact": {
+              "description": "Attribute this fact id (a fact about or fenced on the page) instead of the page.",
+              "type": "number"
+            },
+            "slug": {
+              "description": "Slug of the page to attribute (or the page that holds the fact, take or timeline entry).",
+              "type": "string"
+            },
+            "take": {
+              "description": "Attribute the take at this row number of the page's takes table.",
+              "type": "number"
+            },
+            "timeline": {
+              "description": "Attribute this timeline entry id of the page.",
+              "type": "number"
+            },
+            "versions": {
+              "description": "Also list every version snapshot with who wrote and who archived it.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "slug"
+          ],
           "type": "object"
         }
       },
