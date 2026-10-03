@@ -38,7 +38,7 @@ function ownerStatusFix(sourceId: string): Action {
 
 function receiptFix(row: WriteRequest): Action {
   return readFix('The receipt is the record of what this maintenance request did; read it before planning another.',
-    { argv: ['gbrain', 'write-request', '--', row.id] });
+    { argv: ['gbrain', 'write-request', '--', row.request_id] });
 }
 
 function maintenanceRequestId(value: unknown): string {
@@ -266,11 +266,11 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
   const p = row.intent!;
   const facts = p.facts as FactFenceAssignment[];
   if (p.source_incarnation !== row.source_incarnation) throw opError('source_changed', 'The fact adoption source changed.',
-    `Source ${row.source_id} was replaced after fact-fence adoption request ${row.id} for ${row.slug} was accepted, so nothing was published. Read the receipt with gbrain write-request -- ${row.id}; the next fact backfill run plans against the current source.`,
+    `Source ${row.source_id} was replaced after fact-fence adoption request ${row.request_id} for ${row.slug} was accepted, so nothing was published. Read the receipt with gbrain write-request -- ${row.request_id}; the next fact backfill run plans against the current source.`,
     { fix: receiptFix(row) });
   if (new Set(facts.map(f => f.id)).size !== facts.length || new Set(facts.map(f => f.row_num)).size !== facts.length) {
     throw opError('invalid_params', 'A fact adoption assigns one fact or fence position twice.',
-      `Fact-fence adoption request ${row.id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The plan itself is malformed, so report the request ID to the user rather than running the same backfill again.`,
+      `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The plan itself is malformed, so report the request ID to the user rather than running the same backfill again.`,
       { fix: receiptFix(row) });
   }
   const fence = new Map(parseFactsFence(p.content as string).facts.map(f => [f.rowNum, f]));
@@ -281,20 +281,20 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
       if (!fact || digest(fact.value) !== assignment.hash || fact.value.entity_slug !== row.slug
         || fact.value.row_num !== null || fact.value.expired_at !== null) {
         throw opError('revision_conflict', 'A legacy fact changed, was already adopted or moved to another owner before adoption.',
-          `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,
+          `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.request_id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,
           { fix: receiptFix(row) });
       }
       const cell = fence.get(assignment.row_num);
       if (!cell?.active || cell.claim !== fact.value.fact || cell.visibility !== fact.value.visibility) {
         throw opError('invalid_params', 'The adopted fence row does not render its legacy fact.',
-          `Fact-fence adoption request ${row.id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The rendered fence does not match the facts it adopts, so report the request ID to the user rather than running the same backfill again.`,
+          `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The rendered fence does not match the facts it adopts, so report the request ID to the user rather than running the same backfill again.`,
           { fix: receiptFix(row) });
       }
     }
     const occupied = await db.executeRaw(`SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
       AND row_num=ANY($3::integer[])${lock ? ' FOR UPDATE' : ''}`, [row.source_id, row.slug, facts.map(f => f.row_num)]);
     if (occupied.length) throw opError('revision_conflict', 'An adopted fence position is already owned by another fact.',
-      `Another fact took a fence row on ${row.slug} in ${row.source_id} before adoption request ${row.id} published; nothing was written. The next fact backfill run plans from the current fence.`,
+      `Another fact took a fence row on ${row.slug} in ${row.source_id} before adoption request ${row.request_id} published; nothing was written. The next fact backfill run plans from the current fence.`,
       { fix: receiptFix(row) });
   };
   await check(engine, false);
@@ -308,7 +308,7 @@ async function prepareFactFenceAdoption(engine: BrainEngine, row: WriteRequest, 
       WHERE f.source_id=$1 AND f.id=a.id AND f.row_num IS NULL RETURNING f.id`,
     [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num })))]);
     if (adopted.length !== facts.length) throw opError('revision_conflict', 'A legacy fact was adopted by another run.',
-      `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.id} for the final state before planning any new adoption.`,
+      `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} for the final state before planning any new adoption.`,
       { fix: receiptFix(row) });
     const outcome = await applyPreservingTakeResolutions(tx, row.page_id, prepared);
     return { ...outcome, facts_adopted: facts.length };
@@ -357,7 +357,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
   if (row.intent?.kind === 'managed_maintenance_phantom_delete') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomDelete(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_retire_stale_atoms') return (await import('../repair/stale-atoms.ts')).prepareStaleAtomRetirement(engine, row, config);
   if (row.intent?.kind !== 'managed_maintenance_consolidate') throw opError('invalid_params', 'Unsupported maintenance request.',
-    `Request ${row.id} for ${row.slug} in ${row.source_id} carries a maintenance kind this gbrain version does not publish (likely queued by a newer release); nothing changed. Upgrade gbrain on the brain host, and read the receipt before submitting anything new.`,
+    `Request ${row.request_id} for ${row.slug} in ${row.source_id} carries a maintenance kind this gbrain version does not publish (likely queued by a newer release); nothing changed. Upgrade gbrain on the brain host, and read the receipt before submitting anything new.`,
     { fix: receiptFix(row) });
   const p = row.intent;
   const facts = p.facts as FactSnapshot[];
@@ -369,7 +369,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
       const [current] = await tx.executeRaw<{ active: boolean; resolved_at: unknown }>(
         'SELECT active,resolved_at FROM takes WHERE id=$1 AND page_id=$2', [existing.id, row.page_id]);
       if (!current || current.active && !current.resolved_at) throw opError('revision_conflict', 'The retired take changed during preparation.',
-        `The take for this consolidation on ${row.slug} in ${row.source_id} was reactivated while request ${row.id} was being prepared; nothing was written. The next consolidate run re-reads the take.`,
+        `The take for this consolidation on ${row.slug} in ${row.source_id} was reactivated while request ${row.request_id} was being prepared; nothing was written. The next consolidate run re-reads the take.`,
         { fix: receiptFix(row) });
     }, apply: async () => ({ status: 'skipped', reason: 'retired_take', noop: true,
       facts_consolidated: 0, takes_written: 0, take_id: Number(existing.id) }) };
@@ -384,7 +384,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
         const current = await tx.readPageSnapshot(page.slug, { sourceId: row.source_id, excludePrivate: true });
         if (!current || current.page.id !== page.id || current.revision !== page.revision) {
           throw opError('revision_conflict', 'A consolidation evidence page changed.',
-            `Evidence page ${page.slug} in ${row.source_id} changed while consolidation request ${row.id} was being prepared; nothing was written. The next consolidate run re-clusters from the current pages.`,
+            `Evidence page ${page.slug} in ${row.source_id} changed while consolidation request ${row.request_id} was being prepared; nothing was written. The next consolidate run re-clusters from the current pages.`,
             { fix: receiptFix(row) });
         }
       }
@@ -392,7 +392,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
       if (digest(current) !== digest(facts) || current.some(f => f.value.visibility !== 'world' || f.value.expired_at || f.value.consolidated_at ||
         f.value.valid_until && Date.parse(String(f.value.valid_until)) <= Date.now())) {
         throw opError('revision_conflict', 'The consolidation evidence changed.',
-          `Facts behind consolidation request ${row.id} on ${row.slug} in ${row.source_id} changed or expired before it published; nothing was written. The next consolidate run re-clusters the current facts.`,
+          `Facts behind consolidation request ${row.request_id} on ${row.slug} in ${row.source_id} changed or expired before it published; nothing was written. The next consolidate run re-clusters the current facts.`,
           { fix: receiptFix(row) });
       }
     }, apply: async tx => {
@@ -400,7 +400,7 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
       const [take] = await tx.executeRaw<{ id: number }>(
         "SELECT id FROM takes WHERE page_id=$1 AND claim=$2 AND kind='fact' AND holder='self' ORDER BY id LIMIT 1", [row.page_id, p.claim]);
       if (!take) throw opError('storage_error', 'The consolidated take did not commit.',
-        `Consolidation request ${row.id} on ${row.slug} in ${row.source_id} did not find its take inside the publication transaction, so the transaction rolled back. Read the receipt with gbrain write-request -- ${row.id} and check the owner with gbrain sources writer status --source ${row.source_id} --json before any new consolidation.`,
+        `Consolidation request ${row.request_id} on ${row.slug} in ${row.source_id} did not find its take inside the publication transaction, so the transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} and check the owner with gbrain sources writer status --source ${row.source_id} --json before any new consolidation.`,
         { fix: receiptFix(row) });
       for (const fact of facts) await tx.consolidateFact(fact.id, take.id);
       const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
