@@ -153,6 +153,7 @@
   "test/bench/correctness-gate.test.ts": 19,
   "test/bench/qrels-file.test.ts": 5,
   "test/binary-self-update.test.ts": 16,
+  "test/book-mirror-numeric-flags.test.ts": 1000,
   "test/book-mirror.test.ts": 618,
   "test/bootstrap-atomic-write.test.ts": 12,
   "test/bootstrap-codex-door.test.ts": 6,

@@ -51,6 +51,7 @@ import type { MinionJobInput, SubagentHandlerData } from '../core/minions/types.
 import { operations } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
+import { intFlagValue } from '../cli/flag-values.ts';
 
 const COST_PER_CHAPTER_OPUS = 0.30;     // rough; depends on chapter length
 const COST_PER_CHAPTER_SONNET = 0.06;
@@ -102,8 +103,11 @@ function parseFlags(args: string[]): BookMirrorFlags {
   const title = parseFlag(args, '--title');
   const author = parseFlag(args, '--author');
   const model = parseFlag(args, '--model') ?? 'claude-opus-4-7';
-  const maxTurnsStr = parseFlag(args, '--max-turns');
-  const timeoutMsStr = parseFlag(args, '--timeout-ms');
+  // #5909 (D4): a present flag needs a positive safe integer (usage error, exit 2), never a parseInt NaN.
+  const positiveInt = (flag: string, example: number) =>
+    hasFlag(args, flag) ? intFlagValue(parseFlag(args, flag), flag, { min: 1, example }) : undefined;
+  const maxTurns = positiveInt('--max-turns', DEFAULT_MAX_TURNS);
+  const timeoutMs = positiveInt('--timeout-ms', 600000);
 
   return {
     chaptersDir,
@@ -112,8 +116,8 @@ function parseFlags(args: string[]): BookMirrorFlags {
     title,
     author,
     model,
-    maxTurns: maxTurnsStr ? parseInt(maxTurnsStr, 10) : DEFAULT_MAX_TURNS,
-    timeoutMs: timeoutMsStr ? parseInt(timeoutMsStr, 10) : undefined,
+    maxTurns: maxTurns ?? DEFAULT_MAX_TURNS,
+    timeoutMs,
     noConfirm: hasFlag(args, '--no-confirm') || hasFlag(args, '--yes'),
     follow: process.stdout.isTTY === true && !hasFlag(args, '--no-follow'),
     dryRun: hasFlag(args, '--dry-run'),
