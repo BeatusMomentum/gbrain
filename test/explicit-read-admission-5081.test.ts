@@ -30,6 +30,7 @@ import { dispatchToolCall, buildOperationContext, type DispatchOpts } from '../s
 import { resolveMcpStdioSourceScope } from '../src/mcp/server.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
+import { docsUrl } from '../src/core/agent-output.ts';
 
 let engine: PGLiteEngine;
 let outsideCwd: string;
@@ -165,7 +166,8 @@ describe('#5081 — explicit reads from a GBRAIN_SOURCE-bound stdio connection',
 
   test('denials carry the docs anchor', async () => {
     const { body } = await call(await bound(), 'search', { query: MARKER, source_id: 'private' });
-    expect(body.docs).toBe('docs/guides/multi-source-brains.md#explicit-reads-from-a-bound-agent-connection');
+    // Agent contract v1: the wire docs value is the absolute, version-pinned URL of the anchor.
+    expect(body.docs).toBe(docsUrl('docs/guides/multi-source-brains.md#explicit-reads-from-a-bound-agent-connection'));
   });
 
   test('a target that opted out is named as opted out', async () => {

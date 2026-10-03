@@ -15,7 +15,11 @@ import { join } from 'node:path';
 import { VERSION } from '../version.ts';
 import { OperationError } from './ops/contract.ts';
 import { StructuredAgentError } from './errors.ts';
-import { codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
+import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
+import { VERB_NAMES } from './verbs.ts';
+import { classifyPgAccessError, formatDbAccessMarker } from './pg-access-classify.ts';
+import { redactConnectionInfo } from './audit/redact-connection-info.ts';
+import { redactUrlsInText } from './url-redact.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
 
 export const CONTRACT_VERSION = 1 as const;
@@ -105,6 +109,8 @@ export interface AgentErrorContext {
   idempotent?: boolean;
   outcome?: 'not_started' | 'failed' | 'unknown' | 'committed' | 'pending';
   render: RenderContext;
+  /** Additive: the configured DB url + resolved brain id for the GBRAIN_DB_ACCESS classifier row (a mount never reads as host). */
+  db?: { url: string | null; brainId?: string };
 }
 
 export interface CliErrorRender { stdout?: string; stderr?: string; exitCode: number }
@@ -371,36 +377,234 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
   };
 }
 
+const VERB_SET: ReadonlySet<string> = new Set(VERB_NAMES);
+const isVerbOp = (ctx: AgentErrorContext) => ctx.op !== undefined && VERB_SET.has(ctx.op);
+
+/** The registry's diagnostic default: doctor on the brain host (MCP run_doctor where callable). */
+function diagnosticFix(ctx: AgentErrorContext, why: string): Action {
+  const remoteHost = ctx.transport === 'http';
+  return {
+    argv: ['gbrain', 'doctor', '--json'],
+    ...(ctx.render.isCallable('run_doctor') ? { mcp: { tool: 'run_doctor', arguments: {} } } : {}),
+    consent: [],
+    actor: remoteHost ? 'host_admin' : 'agent',
+    why,
+    requires_exclusive: false,
+  };
+}
+
+/**
+ * A1 safe-recovery invariant: a mutating op with an unknown or pending
+ * outcome is never told to retry. The fix inspects state: the caller's own
+ * receipt on its channel, a job's status, or nothing (no receipt → no receipt
+ * command; the op's read-side diagnostic stays the fix).
+ */
+function recoveryFix(p: EnvelopeParts, ctx: AgentErrorContext): Action | undefined {
+  const outcomeOpen = ctx.outcome === 'unknown' || ctx.outcome === 'pending';
+  if (!ctx.mutating || !outcomeOpen) return undefined;
+  const receipt = p.write_request as { request_id?: unknown } | undefined;
+  const requestId = typeof receipt?.request_id === 'string' && /^[0-9a-f-]{36}$/i.test(receipt.request_id) ? receipt.request_id : undefined;
+  if (!requestId) return undefined;
+  const why = 'The write may still commit; its receipt says whether it did. Do not resubmit until the receipt is terminal.';
+  if (ctx.transport === 'cli') {
+    return { argv: ['gbrain', 'write-request', '--', requestId], consent: [], actor: 'agent', why, requires_exclusive: false };
+  }
+  return {
+    argv: ['gbrain', 'write-request', '--', requestId],
+    mcp: { tool: 'get_write_request', arguments: { request_id: requestId } },
+    consent: [], actor: 'agent', why, requires_exclusive: false,
+  };
+}
+
+const REFRESH_REFUSALS: ReadonlySet<string> = new Set([
+  'refresh_not_managed', 'refresh_not_owner', 'refresh_no_upstream', 'fetch_failed', 'refresh_diverged', 'refresh_dirty',
+  'sync_in_progress', 'refresh_in_progress', 'refresh_drain_timeout', 'refresh_source_changed', 'refresh_recovery_required',
+  'worktree_refreshing',
+]);
+
+type Row = { match: (e: unknown) => boolean; map: (e: any, ctx: AgentErrorContext) => EnvelopeParts };
+
+/** RemoteMcpError transport reasons (no server envelope) → registry codes. */
+const REMOTE_REASON_CODE: Record<string, string> = {
+  config: 'config_error', discovery: 'unavailable', auth: 'invalid_token', auth_after_refresh: 'invalid_token',
+  'network:timeout': 'timeout', 'network:aborted': 'interrupted', parse: 'internal_error',
+};
+
+const named = (name: string) => (e: unknown) => e instanceof Error && e.name === name;
+
+/** The normaliser table: first matching row wins; the last row is the unknown-throw fallback. */
+const ROWS: Row[] = [
+  {
+    match: e => e instanceof OperationError,
+    map: (e: OperationError, ctx) => {
+      const j = e.toJSON() as Record<string, unknown>;
+      let fix = e.fix;
+      if (!fix && REFRESH_REFUSALS.has(e.code) && e.suggestion) {
+        const argv = argvFromCommand(e.suggestion);
+        if (argv) fix = { argv, consent: [], actor: 'agent', why: e.message, requires_exclusive: false };
+      }
+      return {
+        error: e.code, code: e.canonicalCode, message: e.message, suggestion: e.suggestion,
+        reason: e.reason, why: e.why, fix, docs: e.docs, notices: e.notices, detail: e.detail,
+        protocol_version: e.protocolVersion === 1 ? 1 : undefined,
+        write_request: j.write_request, write_error: e.writeError,
+      };
+    },
+  },
+  {
+    match: e => e instanceof StructuredAgentError,
+    map: (e: StructuredAgentError) => ({
+      error: e.envelope.code, code: canonicalCodeFor(e.envelope.code), message: e.envelope.message,
+      suggestion: e.envelope.hint, docs: e.envelope.docs_url,
+    }),
+  },
+  {
+    match: e => e instanceof Error && (e as { tag?: unknown }).tag === 'BUDGET_EXHAUSTED',
+    map: (e: Error & { reason: string; cap: number; pricing?: { model: string; units: string[]; lookup: string; register_command: string } }, ctx) => {
+      if (e.reason !== 'no_pricing' || !e.pricing) {
+        return { error: 'cost_cap_exceeded', code: 'cost_cap_exceeded', message: e.message, reason: e.reason };
+      }
+      const argv = argvFromPricing(e.pricing.register_command);
+      return {
+        error: 'no_pricing', code: 'no_pricing', message: e.message, reason: 'no_pricing',
+        suggestion: e.pricing.lookup,
+        fix: argv ? {
+          argv, consent: [], actor: ctx.transport === 'cli' ? 'agent' : 'host_admin',
+          why: 'A cost cap needs a price for every model it covers; registering the rate lets the cap be enforced.',
+          requires_exclusive: false,
+          inputs: e.pricing.units.map(u => ({ name: u, how: e.pricing!.lookup })),
+        } : undefined,
+      };
+    },
+  },
+  {
+    match: named('RemoteMcpError'),
+    map: (e: Error & { reason: string; detail?: Record<string, unknown> }) => {
+      const d = e.detail ?? {};
+      const wire = typeof d.code === 'string' ? d.code : REMOTE_REASON_CODE[e.reason === 'network' ? `network:${String(d.kind)}` : e.reason] ?? 'unavailable';
+      const remoteCode = typeof d.canonical_code === 'string' ? d.canonical_code : canonicalCodeFor(wire);
+      return {
+        error: wire, code: remoteCode, message: typeof d.message === 'string' ? d.message : e.message,
+        suggestion: typeof d.suggestion === 'string' ? d.suggestion : undefined,
+        reason: typeof d.reason === 'string' ? d.reason : undefined,
+        why: typeof d.why === 'string' ? d.why : undefined,
+        docs: typeof d.docs === 'string' ? d.docs : undefined,
+        detail: typeof d.server_detail === 'string' ? d.server_detail : undefined,
+        protocol_version: d.protocol_version === 1 ? 1 : undefined,
+        write_request: d.write_request, write_error: typeof d.write_error === 'string' ? d.write_error : undefined,
+        notices: Array.isArray(d.notices) ? d.notices as Notice[] : undefined,
+        fix: d.fix && typeof d.fix === 'object' ? d.fix as Action : undefined,
+      };
+    },
+  },
+  {
+    match: named('CredentialError'),
+    map: (e: Error & { code: string; problem: string; cause_text: string; fix: string; doc_url: string }) => ({
+      error: e.code, code: e.code, message: e.problem, why: e.cause_text, suggestion: e.fix, docs: e.doc_url,
+    }),
+  },
+  {
+    match: e => named('AIConfigError')(e) || named('AITransientError')(e),
+    map: (e: Error & { fix?: string }) => ({
+      error: 'unavailable', code: 'unavailable', message: e.message,
+      reason: e.name === 'AIConfigError' ? 'ai_config' : 'ai_transient',
+      suggestion: e.fix, retryable: e.name === 'AITransientError',
+    }),
+  },
+  {
+    match: named('GBrainError'),
+    map: (e: Error & { problem: string; cause_description: string; fix: string; docs_url?: string }) => ({
+      error: 'config_error', code: 'config_error', message: e.problem,
+      why: e.cause_description || undefined, suggestion: e.fix, docs: e.docs_url,
+    }),
+  },
+  {
+    match: e => !(e instanceof Error) && !!e && typeof e === 'object'
+      && typeof (e as Record<string, unknown>).code === 'string' && typeof (e as Record<string, unknown>).message === 'string'
+      && typeof (e as Record<string, unknown>).class === 'string',
+    map: (e: { class: string; code: string; message: string; hint?: string }) => ({
+      error: e.code, code: canonicalCodeFor(e.code), message: e.message, suggestion: e.hint,
+    }),
+  },
+];
+
+function argvFromPricing(command: string): string[] | undefined {
+  const s = command.replace(/<([a-z0-9-]+)>/gi, 'PLACEHOLDER_$1');
+  const argv = argvFromCommand(s);
+  return argv?.map(a => a.replace(/^PLACEHOLDER_(.+)$/, '<$1>'));
+}
+
+function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined {
+  const d = classifyPgAccessError(e, { url: ctx.db?.url ?? null, brainId: ctx.db?.brainId });
+  if (d.reason === 'unknown') return undefined;
+  const verb = isVerbOp(ctx);
+  if (d.reason === 'schema_missing') {
+    return {
+      error: 'unavailable', code: 'unavailable', reason: 'schema_missing', message: d.message,
+      suggestion: 'Run gbrain apply-migrations on the brain host, then retry.',
+      fix: {
+        argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: ctx.transport === 'cli' ? 'agent' : 'host_admin',
+        why: 'The code expects a table or column this brain does not have yet.', requires_exclusive: true,
+        verify: { argv: ['gbrain', 'doctor', '--json'] },
+      },
+      ...(verb ? { detail: 'schema_missing', protocol_version: 1 as const } : {}),
+    };
+  }
+  return {
+    error: verb ? 'unavailable' : 'database_error', code: verb ? 'unavailable' : 'database_error', reason: d.reason,
+    message: d.message, suggestion: `${formatDbAccessMarker(d)}. ${d.remediation} Run: gbrain db-repair`,
+    fix: {
+      argv: ['gbrain', 'db-repair'], consent: [], actor: ctx.transport === 'cli' ? 'agent' : 'host_admin',
+      why: 'db-repair diagnoses the database connection without changing anything.', requires_exclusive: false,
+    },
+    ...(verb ? { detail: d.reason, protocol_version: 1 as const } : {}),
+  };
+}
+
+function unknownParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts {
+  const raw = e instanceof Error ? e.message : String(e);
+  let message = raw;
+  try { message = redactUrlsInText(redactConnectionInfo(raw)); } catch { /* keep raw */ }
+  const where = ctx.op ?? ctx.command ?? 'this operation';
+  const verb = isVerbOp(ctx);
+  const resubmit = ctx.mutating ? ' The write may have partly run: inspect state before resubmitting.' : '';
+  return {
+    error: verb ? 'internal' : 'internal_error', code: verb ? 'internal' : 'internal_error',
+    message: redactForTransport(message, ctx.transport),
+    suggestion: `Server-side failure in ${where}, not a caller mistake.${resubmit} Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
+    fix: diagnosticFix(ctx, 'Doctor checks the brain host for the failing dependency.'),
+    ...(verb ? { protocol_version: 1 as const } : {}),
+  };
+}
+
 function genericEnvelope(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
   const message = e instanceof Error ? e.message : String(e);
   const where = ctx.op ?? ctx.command ?? 'this operation';
-  return buildEnvelope({
-    error: 'internal_error',
-    code: 'internal_error',
-    message: redactForTransport(message, ctx.transport),
+  return {
+    error: 'internal_error', code: 'internal_error', message: redactForTransport(message, ctx.transport),
     suggestion: `Server-side failure in ${where}, not a caller mistake. Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
-  }, ctx.render);
+    docs_cmd: ['gbrain', 'errors', 'internal_error'], class: 'server', retryable: false, contract_version: CONTRACT_VERSION,
+  };
 }
 
-/** Total: never throws; on an internal fault returns the prior generic envelope. */
+/** Total: never throws; on an internal fault returns the prior generic envelope and logs the class (E11). */
 export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
   try {
-    if (e instanceof OperationError) {
-      const j = e.toJSON() as Record<string, unknown>;
-      const unsafeRetry = ctx.mutating === true && ctx.idempotent !== true;
-      return buildEnvelope({
-        ...(unsafeRetry ? { retryable: false } : {}),
-        error: e.code, code: e.canonicalCode, message: e.message, suggestion: e.suggestion,
-        reason: e.reason, why: e.why, fix: e.fix, docs: e.docs, notices: e.notices, detail: e.detail,
-        protocol_version: e.protocolVersion === 1 ? 1 : undefined,
-        write_request: j.write_request, write_error: e.writeError,
-      }, ctx.render);
+    const row = ROWS.find(r => r.match(e));
+    let parts = row ? row.map(e, ctx) : dbParts(e, ctx) ?? unknownParts(e, ctx);
+    if (!parts.fix) {
+      const recovery = recoveryFix(parts, ctx);
+      if (recovery) parts = { ...parts, fix: recovery };
     }
-    if (e instanceof StructuredAgentError) {
-      const env = e.envelope;
-      return buildEnvelope({ error: env.code, code: env.code, message: env.message, suggestion: env.hint, docs: env.docs_url }, ctx.render);
+    if (!parts.fix && (codeClass(parts.code) === 'server' || codeClass(parts.code) === 'unavailable')) {
+      parts = { ...parts, fix: diagnosticFix(ctx, 'Doctor reports what is missing or failing on the brain host.') };
     }
-    return genericEnvelope(e, ctx);
+    if (ctx.mutating === true && ctx.idempotent !== true) parts = { ...parts, retryable: false };
+    const env = buildEnvelope(parts, ctx.render);
+    if (env.code === 'internal_error' || env.code === 'internal' || !env.suggestion) {
+      recordAgentContractEvent({ transport: ctx.transport, op: ctx.op, command: ctx.command, code: env.code, has_suggestion: !!env.suggestion, outcome: ctx.outcome });
+    }
+    return ctx.transport === 'http' ? redactForTransport(env, 'http') : env;
   } catch (fault) {
     recordAgentContractEvent({
       transport: ctx.transport, op: ctx.op, command: ctx.command, code: 'internal_error',

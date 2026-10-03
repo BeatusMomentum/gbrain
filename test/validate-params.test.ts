@@ -100,8 +100,9 @@ describe('warn mode (default) — accept + _meta.warnings + model-visible block'
     ]);
     // D8 second-block mechanism carries the grace-period notice.
     expect(out.content.length).toBe(2);
+    // Agent contract v1: the block rides the notice channel (prefix line), its text kept as `why:`.
     expect(out.content[1].text).toBe(
-      'warning: unknown parameter "partal" ignored — did you mean "partial"? A future release rejects unknown parameters.',
+      '[gbrain notice unknown_param kind=info]\nwhy: warning: unknown parameter "partal" ignored — did you mean "partial"? A future release rejects unknown parameters.',
     );
   });
 
@@ -117,7 +118,7 @@ describe('warn mode (default) — accept + _meta.warnings + model-visible block'
     // Nothing within edit distance → no suggestion key at all.
     expect('suggestion' in warnings[0]).toBe(false);
     expect(out.content[1].text).toBe(
-      'warning: unknown parameter "totally_unrelated_key" ignored. A future release rejects unknown parameters.',
+      '[gbrain notice unknown_param kind=info]\nwhy: warning: unknown parameter "totally_unrelated_key" ignored. A future release rejects unknown parameters.',
     );
   });
 

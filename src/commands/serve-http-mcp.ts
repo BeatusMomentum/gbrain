@@ -20,7 +20,9 @@ import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, type ToolResult } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
+import { toAgentError } from '../core/agent-output.ts';
+import { opError } from '../core/ops/contract.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
@@ -403,7 +405,8 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       error: errorPayload,
       timestamp: new Date().toISOString(),
     });
-    return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
+    // Agent contract v1 (A1): the one envelope, not the nested legacy StructuredError.
+    return errorResult(e, { remote: true, transport: 'http', auth: authInfo, surface, ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}) }, { op: name });
   }
 
   return recordMcpToolResult(ctx, state, name, toolResult, logParamsObj, broadcastParams);
@@ -434,7 +437,9 @@ async function rejectUnknownMcpOperation(ctx: ServeHttpContext, state: McpReques
     error: { code: 'unknown_operation', message: `Unknown: ${name}` },
     timestamp: new Date().toISOString(),
   });
-  return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
+  // Frozen v1 pair: `error: unknown_operation` stays; `code: unknown_tool`.
+  return unknownToolEnvelope(name, { remote: true, transport: 'http', auth: authInfo, surface: state.surface,
+    ...(state.surfaceAllowedOps ? { allowedOps: state.surfaceAllowedOps } : {}) }, 'unknown_operation');
 }
 
 async function rejectInsufficientMcpScope(
@@ -472,17 +477,10 @@ async function rejectInsufficientMcpScope(
     error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
     timestamp: new Date().toISOString(),
   });
-  return {
-    content: [{
-      type: 'text',
-      text: JSON.stringify({
-        error: 'insufficient_scope',
-        message: `Operation ${name} requires '${requiredScope}' scope`,
-        your_scopes: authInfo.scopes,
-      }),
-    }],
-    isError: true,
-  };
+  const denial = opError('insufficient_scope', `Operation ${name} requires '${requiredScope}' scope`,
+    `Ask the brain host's operator to grant the '${requiredScope}' scope to this client, then reconnect.`);
+  const envelope = toAgentError(denial, { transport: 'http', op: name, render: dispatchRenderContext({ remote: true, transport: 'http', auth: authInfo }) });
+  return { content: [{ type: 'text', text: JSON.stringify({ ...envelope, your_scopes: authInfo.scopes }) }], isError: true };
 }
 
 async function recordMcpToolResult(
@@ -578,10 +576,7 @@ async function serveMcpRequest(server: Server, req: Request, res: Response): Pro
   } catch (e) {
     console.error('MCP request handler error:', e instanceof Error ? e.message : e);
     if (!res.headersSent) {
-      res.status(500).json({
-        error: 'internal_error',
-        message: e instanceof Error ? e.message : 'Unknown error',
-      });
+      res.status(500).json(toAgentError(e, { transport: 'http', render: dispatchRenderContext({ remote: true, transport: 'http' }) }));
     }
   }
 }

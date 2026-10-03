@@ -35,6 +35,7 @@ import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { currentCliWriteWait } from './core/persistence/write-wait.ts';
+import { isScopeErrorCode } from './core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
@@ -831,7 +832,7 @@ async function runThinClientRouted(
           }
           break;
         case 'tool_error':
-          if (e.detail?.code === 'missing_scope') {
+          if (isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason)) {
             console.error('Missing OAuth scope on this client.');
             console.error('On the host, re-register the client with broader scopes:');
             console.error('  gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin');

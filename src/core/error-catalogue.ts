@@ -63,6 +63,23 @@ export const ERROR_CATALOGUE = {
 
 export type CatalogueName = keyof typeof ERROR_CATALOGUE;
 
+/** Wire constants shared by the server and the thin client (A2). */
+export const WIRE_CODES = {
+  insufficient_scope: 'insufficient_scope',
+  unknown_tool: 'unknown_tool',
+  not_found: 'not_found',
+} as const;
+
+/**
+ * A scope denial in any of its historical spellings: the server's
+ * `insufficient_scope`, the thin client's legacy `missing_scope`, or
+ * `permission_denied` whose canonical code or reason says scope.
+ */
+export function isScopeErrorCode(code: string | undefined, canonical?: string, reason?: string): boolean {
+  if (code === 'insufficient_scope' || code === 'missing_scope' || canonical === 'insufficient_scope') return true;
+  return code === 'permission_denied' && (reason === 'insufficient_scope' || reason === 'missing_scope');
+}
+
 /** Named refusals (one code may carry several anchors). Same table as ERROR_CATALOGUE. */
 export const REFUSALS = ERROR_CATALOGUE;
 

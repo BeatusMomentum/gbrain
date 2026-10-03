@@ -19,7 +19,7 @@ import { withOutputRedaction } from './search/output-redaction.ts';
 // slugOutsideCallerFence, enforceClientSlugFence, BOUND_CLIENT_META_OPS,
 // stampEvidenceSafe, maybeCaptureSearch) are deliberately NOT re-exported —
 // they were never part of this module's surface; import them from ops/context.ts.
-export { OperationError, verbError } from './ops/contract.ts';
+export { OperationError, verbError, opError } from './ops/contract.ts';
 export type {
   ErrorCode,
   ParamDef,

@@ -15,6 +15,7 @@
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken, smokeTestMcp } from './remote-mcp-probe.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult } from './mcp-client.ts';
+import { isScopeErrorCode } from './error-catalogue.ts';
 import { safeCompare, driftLevel, loadPromptState } from './thin-client-upgrade-prompt.ts';
 import { VERSION } from '../version.ts';
 
@@ -430,7 +431,7 @@ async function probeScopes(config: GBrainConfig): Promise<ScopeProbeResult> {
     result.read_ok = true;
   } catch (e) {
     if (e instanceof RemoteMcpError) {
-      result.read_error = e.detail?.code === 'missing_scope' ? 'missing_scope' : e.reason;
+      result.read_error = isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason) ? 'missing_scope' : e.reason;
     } else {
       result.read_error = e instanceof Error ? e.message : String(e);
     }
@@ -443,7 +444,7 @@ async function probeScopes(config: GBrainConfig): Promise<ScopeProbeResult> {
     result.admin_ok = true;
   } catch (e) {
     if (e instanceof RemoteMcpError) {
-      result.admin_error = e.detail?.code === 'missing_scope' ? 'missing_scope' : e.reason;
+      result.admin_error = isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason) ? 'missing_scope' : e.reason;
     } else {
       result.admin_error = e instanceof Error ? e.message : String(e);
     }

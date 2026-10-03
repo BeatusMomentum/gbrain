@@ -112,7 +112,8 @@ test.each(['query_first', 'facts_first'])('thin %s JSON preserves a remote read 
     dispatch: async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify(error) }] }),
   });
   expect(result.exitCode).toBe(1);
-  expect(JSON.parse(result.stdout)).toEqual(error);
+  // Agent contract v1: legacy keys preserved verbatim; the client adds the canonical `code`.
+  expect(JSON.parse(result.stdout)).toEqual({ ...error, code: 'unavailable' });
   expect(validateAgainstSchema(JSON.parse(result.stdout), ERROR_SCHEMA)).toEqual([]);
   expect(result.stderr).toContain('Synthetic service unavailable');
   expect(result.calls).toHaveLength(1);
