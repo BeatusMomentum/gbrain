@@ -486,8 +486,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // unconditionally, so gates-off served the exact listed-but-denied
         // catalog lie E5 (test/truthful-catalog.e2e-lite.test.ts) pins out.
         const gateDisabled = await disabledOpsForPublishGates(engine, fileConfig);
-        // Agent contract v1 (A2): the one callability predicate + the bound-client fence.
-        const publishGates = publishGatesFromDisabled(surfacedOps, gateDisabled);
+        const publishGates = publishGatesFromDisabled(surfacedOps, gateDisabled); // A2: one callability predicate + bound-client fence
         const visibleTools = tools.filter(t => {
           const op = operationsByName[t.name];
           return op && isCallable(op, { transport: 'http', surface, scopes: auth.auth!.scopes, publishGates, allowedOps: surfaceAllowedOps })

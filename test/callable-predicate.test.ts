@@ -16,7 +16,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 
 const SURFACES = ['verbs', 'starter', 'full'] as const;
 const SCOPE_SETS: readonly string[][] = [['read'], ['read', 'write'], ['admin'], ['agent'], ['admin', 'skills_member_self']];
-const GATE_STATES = [{}, { 'mcp.publish_skills': true, 'mcp.publish_advisor': true }];
+const GATE_STATES: Record<string, boolean>[] = [{}, { 'mcp.publish_skills': true, 'mcp.publish_advisor': true }];
 
 /** The pre-A2 HTTP list filter, kept here as the independent oracle. */
 function legacyHttpList(surface: typeof SURFACES[number], scopes: string[], gates: Record<string, boolean>): string[] {

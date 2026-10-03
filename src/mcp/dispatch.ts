@@ -13,7 +13,7 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
-import { toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
+import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { isCallable } from '../core/ops/callable.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
@@ -475,6 +475,16 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
     preapproved: () => false,
     ...(opts.auth?.clientId ? { principal: opts.auth.clientId } : {}),
   };
+}
+
+/** `gbrain call`'s failure envelope: same normaliser, CLI render context, the op's own effect tags. */
+export function localCallErrorEnvelope(tool: string, e: unknown) {
+  const op = operations.find(o => o.name === tool);
+  return toAgentError(e, {
+    transport: 'cli', op: tool, mutating: op?.mutating === true, idempotent: op?.idempotent === true,
+    outcome: op?.mutating ? 'unknown' : 'failed', render: cliRenderContext(),
+    db: { url: configuredDbUrlForClassify(), brainId: brainIdForClassify() },
+  });
 }
 
 /** The one error result path: toAgentError → exactly one content block. */

@@ -7,10 +7,9 @@ import { getCliOptions } from '../core/cli-options.ts';
 import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
-import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
+import { localCallErrorEnvelope } from '../mcp/dispatch.ts';
 import { setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
-import { operations } from '../core/operations.ts';
 
 /**
  * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
@@ -104,11 +103,7 @@ export async function runCall(
     if (await reportPersistenceCliError(error, true, out)) return;
     // Agent contract v1 (A1): `gbrain call` is a JSON surface, so a failure is
     // the same envelope an MCP caller gets, on stdout, with the registry's exit.
-    const op = operations.find(o => o.name === tool);
-    const envelope = toAgentError(error, {
-      transport: 'cli', op: tool, mutating: op?.mutating === true, idempotent: op?.idempotent === true,
-      outcome: op?.mutating ? 'unknown' : 'failed', render: cliRenderContext(),
-    });
+    const envelope = localCallErrorEnvelope(tool, error);
     await out(JSON.stringify(envelope, null, 2) + '\n');
     console.error(`Error [${envelope.code}]: ${envelope.message}`);
     setCliExitVerdict(exitCodeForCode(envelope.code));
