@@ -98,7 +98,15 @@ export async function readBacklinkCounts(query: ReadQuery, ids: number[], scope?
 
 export async function readAdjacencyBoosts(query: ReadQuery, ids: number[], scope?: PageReadScope): Promise<Map<number, AdjacencyRow>> {
   if (!ids.length) return new Map();
-  const params: unknown[] = [ids];
+  // The candidate ids are inlined (integers only), never a bound parameter: once a
+  // statement has run five times Postgres may reuse a generic plan, and without
+  // planner statistics (PGLite) the generic plan of this read walks pages against
+  // links (~7 s per search at 2k pages instead of ~45 ms).
+  const idArray = `ARRAY[${ids.map(id => {
+    if (!Number.isSafeInteger(id)) throw new TypeError(`readAdjacencyBoosts: page id ${String(id)} is not an integer`);
+    return id;
+  }).join(',')}]::int[]`;
+  const params: unknown[] = [];
   const from = pageReadFilter('p', scope, params, !!scope);
   const to = pageReadFilter('t', scope, params, !!scope);
   const origin = originFilter(scope, params);
@@ -107,7 +115,7 @@ export async function readAdjacencyBoosts(query: ReadQuery, ids: number[], scope
       COUNT(DISTINCT CASE WHEN p.source_id <> t.source_id THEN p.source_id END)::int AS cross_source_hits
     FROM links l JOIN pages p ON p.id = l.from_page_id AND p.deleted_at IS NULL
       JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-    WHERE l.from_page_id = ANY($1::int[]) AND l.to_page_id = ANY($1::int[])
+    WHERE l.from_page_id = ANY(${idArray}) AND l.to_page_id = ANY(${idArray})
       AND ${from} AND ${to} AND ${origin}
     GROUP BY l.to_page_id HAVING COUNT(DISTINCT l.from_page_id) >= 1`, params);
   return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
