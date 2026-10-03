@@ -31,7 +31,7 @@ src/core/bootstrap/harness.ts	applyHarness	1167	seed: W5 baseline, refactor wave
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	413	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #5890 close-set spreads INTERNAL_BREADTH_SEARCH_OPTS
 src/core/check-resolvable.ts	checkResolvable	419	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/config.ts	loadConfigWithEngine	362	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5824: search.vector_legacy_guard DB-plane merge
-src/core/context-engine.ts	createGBrainContextEngine	519	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/core/context-engine.ts	createGBrainContextEngine	520	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #4618: seat sidecar call before the segment spool (helper recordOpenclawSeat)
 src/core/context/retrieval-reflex.ts	resolveEntitiesToPointers	355	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/cycle.ts	runCycle	1237	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +5 #5809: extract_atoms phase gets a real abort signal; +2 #5809: cycle_already_running names the lock holder; +1 #4578: a lock steal during the last selected phase reports lock_stolen (one phase per runCycle call)
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	787	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +12 #5809/#5832: hard/soft stop checks, chat-call signal, abortable pacing, no post-stop writes; +1 #5856: one BudgetTracker per drain attempt (reuse the attempt's tracker)
