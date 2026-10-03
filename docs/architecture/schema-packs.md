@@ -95,6 +95,34 @@ silently; silence the ingest warnings with
 `gbrain config set schema.type_warnings false` (the `--with-db` lint rules
 are unaffected).
 
+## Undeclared page types
+
+A page type is **undeclared** when the active pack neither declares it as a
+page type nor lists it as an alias. gbrain stores such a type as written and
+reports it everywhere it measures conformance, all with the same
+classification as `schema lint --with-db`'s `stored_type_undeclared`:
+
+- `put_page` (MCP, `gbrain put`, `gbrain call put_page`) commits the page and
+  returns `type_warning` with `code: page_type_undeclared`, the cause, the fix
+  and this anchor. It warns rather than rejects; `capture` still rejects an
+  undeclared explicit type, and dream subagent writes still normalize it to
+  `note` with `legacy_type`.
+- `gbrain lint <dir>` flags it as `type-undeclared` on the `type:` line.
+- `gbrain schema review-orphans` / MCP `schema_review_orphans` list untyped
+  AND undeclared-type pages (`reason`, `undeclared_types`, a true
+  `orphan_count`); `schema_stats` reports `undeclared_pages` and counts them
+  against `coverage`.
+- doctor `schema_pack_consistency` (the MCP `run_doctor` report) warns on any
+  undeclared type, per source against that source's pack.
+
+Fix one by declaring it (`gbrain schema add-type <type> --primitive <p>
+--prefix <dir/>`) or by rewriting the pages with a declared type. On a managed
+brain the `unify-types` job cannot apply yet, so rewrite the page with
+`put_page` (read it with `get_page include_content:true`, change `type:`, put it
+back). gbrain's own outputs use declared types: `gbrain report` and the dream
+drift report write `type: note` with a `report_type`, and the meeting
+transcript sidecar is `type: source` under `sources/meetings/`.
+
 ## Resolution chain (7 tiers)
 
 When the engine decides "which pack is active for this query?", it walks
@@ -140,6 +168,15 @@ meeting (see [attendance evidence](../guides/attendance-evidence.md)). A pack
 that gives `attended` a phrase `regex` decides attendance itself and keeps its
 outgoing semantics. Brains extracted before this rule re-derive with
 `gbrain extract links --source db --include-frontmatter`.
+
+A link type's `inference.regex` runs before the in-code link matchers, so a
+pack regex decides the verb for a markdown link when it matches. A rule marked
+`ner_only: true` runs only for NER body mentions (`gbrain extract ner`). The
+bundled `gbrain-base` and `gbrain-base-v2` packs mark their `founded`,
+`works_at`, `invested_in` and `advises` sketch regexes this way, so a bare
+"started" or "joined" near a markdown link no longer labels it `founded` or
+`works_at`; the tuned in-code matchers decide those links. Brains extracted
+before this change re-derive with `gbrain extract links --source db`.
 
 ## How the agent uses the active pack
 

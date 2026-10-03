@@ -8,13 +8,13 @@
 path	name	lines	justification
 src/commands/bootstrap.ts	runHooks	597	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/bootstrap.ts	runHooks>withLock(#1)	449	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/commands/config.ts	runConfig	765	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/commands/config.ts	runConfig	767	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5232: persistence.write_wait_ms dispatch line (logic in setFileWriteWait)
 src/commands/doctor/bootstrap-checks.ts	bootstrapDoctorChecks	476	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/doctor/checks/extraction-sync.ts	checkSyncFreshness	333	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/doctor/report-remote.ts	doctorReportRemote	416	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/dream-retriage.ts	runDreamRetriage	524	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/commands/embed.ts	embedAllStale	560	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +9 #5804: a null projection snapshot is a counted failure (archived sources left to reportArchived) with one end-of-run batch summary
-src/commands/embed.ts	runEmbedCore	376	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/commands/embed.ts	embedAllStale	564	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +9 #5804: a null projection snapshot is a counted failure (archived sources left to reportArchived) with one end-of-run batch summary; +4 wave 8 lane D1 #5527: subtract current-model chunks from the mixed-space warning
+src/commands/embed.ts	runEmbedCore	381	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +5 wave 8 lane D1 #5885: stale-drain takes pass call and its watchdog progress counter
 src/commands/eval-longmemeval.ts	runEvalLongMemEval	740	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/extract-conversation-facts.ts	processPage	307	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/extract-conversation-facts.ts	runExtractConversationFactsCore	378	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #5757: managed flag threaded into ExtractCoreState; +4 #5823: shared default-cap wiring and structured budget reason/model; decision logic is in facts/conversation-budget.ts; +2 #5330: strict-eligibility read and the enumeration filter through the shared predicate (rule lives in facts/conversation-types.ts)
@@ -33,8 +33,8 @@ src/core/check-resolvable.ts	checkResolvable	419	seed: W5 baseline, refactor wav
 src/core/config.ts	loadConfigWithEngine	362	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5824: search.vector_legacy_guard DB-plane merge
 src/core/context-engine.ts	createGBrainContextEngine	519	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/context/retrieval-reflex.ts	resolveEntitiesToPointers	355	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/cycle.ts	runCycle	1236	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +5 #5809: extract_atoms phase gets a real abort signal; +2 #5809: cycle_already_running names the lock holder
-src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	823	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +12 #5809/#5832: hard/soft stop checks, chat-call signal, abortable pacing, no post-stop writes; +1 #5856: one BudgetTracker per drain attempt (reuse the attempt's tracker)
+src/core/cycle.ts	runCycle	1237	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +5 #5809: extract_atoms phase gets a real abort signal; +2 #5809: cycle_already_running names the lock holder; +1 #4578: a lock steal during the last selected phase reports lock_stolen (one phase per runCycle call)
+src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	787	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +12 #5809/#5832: hard/soft stop checks, chat-call signal, abortable pacing, no post-stop writes; +1 #5856: one BudgetTracker per drain attempt (reuse the attempt's tracker)
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms>withBudgetTracker(#1)	316	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +11 #5809/#5832: per-item and pre-commit abort checks, chat-call signal, abortable pacing, catch-side stop
 src/core/cycle/extract-facts.ts	runExtractFacts	505	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/cycle/grade-takes.ts	GradeTakesPhase.process	402	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
@@ -43,7 +43,7 @@ src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	427	seed: W5 baseline,
 src/core/cycle/synthesize-concepts.ts	runPhaseSynthesizeConcepts	447	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/cycle/synthesize.ts	runPhaseSynthesizeInner	1046	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 #5854: publish_pending from postprocess, a pending summary publish deferred instead of failing the phase
 src/core/facts/backstop.ts	runPipelineBodyInner	358	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/import-file.ts	importFromContent	857	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
+src/core/import-file.ts	importFromContent	859	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 wave 8 lane D1 #5158: key-order fallback equality and legacy-hash ordering
 src/core/minions/handlers/subagent-oneshot.ts	runSubagentOneshot	377	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/minions/handlers/subagent.ts	makeSubagentHandler	884	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/minions/handlers/subagent.ts	makeSubagentHandler>subagentHandlerInner	814	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

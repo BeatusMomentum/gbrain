@@ -24,6 +24,8 @@ import {
   type IngestionEvent,
 } from '../core/ingestion/types.ts';
 import type { ServeHttpContext } from './serve-http.ts';
+import { NO_SOURCES } from '../core/source-id.ts';
+import { noSourceGrantError } from '../core/ops/context.ts';
 
 /**
  * v0.46: normalize the per-event GitHub webhook payload shape into
@@ -320,6 +322,11 @@ async function handleIngest(
   // The webhook queue bypasses MCP dispatch and does not carry an original
   // operation grant through execution. A snapshot-bound client must use the
   // shared MCP write path until ingestion has that same policy contract.
+  if (authInfo.sourceId === NO_SOURCES) {
+    const refusal = noSourceGrantError('POST /ingest');
+    res.status(403).json({ error: refusal.code, message: refusal.message, detail: refusal.detail, hint: refusal.suggestion, docs_url: refusal.docs });
+    return;
+  }
   if (authInfo.allowedOperations != null || authInfo.grantProjectionDegraded) {
     res.status(403).json({
       error: 'permission_denied',

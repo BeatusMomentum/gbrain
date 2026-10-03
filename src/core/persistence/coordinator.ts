@@ -1,8 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { sha256 } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
@@ -53,16 +54,6 @@ export interface PublicationHooks {
     | 'before_restore' | 'restoration_staging_flushed' | 'restoration_file_replaced' | 'restoration_directory_flushed' | 'after_restore', request: WriteRequest, index: number): void;
 }
 function fileHash(path: string): string | null { return existsSync(path) ? sha256(readFileSync(path)) : null; }
-function flushDirectory(path: string): void {
-  let fd: number | undefined;
-  try { fd = openSync(dirname(path), 'r'); fsyncSync(fd); }
-  catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // Windows cannot open a directory through Node's file descriptor API.
-    // Its atomic replacement is handled by the platform filesystem primitive.
-    if (!(process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes(code ?? ''))) throw error;
-  } finally { if (fd !== undefined) closeSync(fd); }
-}
 function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingFlush?: () => void, mode?: number | null): void {
   if (!isWriteTargetContained(file.path, file.root)) throw new OperationError('storage_error', 'Canonical file target escapes its source root.');
   if (file.publishMode === undefined) mkdirSync(dirname(file.path), { recursive: true });
@@ -71,15 +62,8 @@ function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingF
   const openMode = mode ?? file.publishMode;
   if (file.content === null) {
     try { unlinkSync(file.path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  } else atomicWriteFileSync(file.path, file.content, { durable: true, stagingPath, ...(openMode === undefined ? {} : { mode: openMode }), afterStagingFlush: () => {
-    afterStagingFlush?.();
-    if (mode !== undefined && mode !== null && stagingPath) {
-      chmodSync(stagingPath, mode);
-      const fd = openSync(stagingPath, 'r');
-      try { fsyncSync(fd); } finally { closeSync(fd); }
-    }
-  } });
-  flushDirectory(file.path);
+  } else atomicWriteFileSync(file.path, file.content, { durable: true, stagingPath, ...(openMode === undefined ? {} : { mode: openMode }), afterStagingFlush });
+  flushDirectory(dirname(file.path));
 }
 // Effect recovery uses the same confined durable publication primitive, under
 // its own recovery record and native root capability.
@@ -90,9 +74,11 @@ function requestError(error: unknown): { code: string; message: string } {
   if (code === 'revision_conflict') {
     return { code, message: error instanceof Error && error.message ? error.message : 'The page changed after the supplied revision was read.' };
   }
+  // #5216: the row still awaits its revision backfill; the error names the resume command.
+  if (code === 'revision_backfill_pending' && error instanceof Error) return { code, message: error.message };
   return { code: 'storage_error', message: `Publication failed${code ? ` (${code})` : ''}. Inspect owner diagnostics.` };
 }
-function conflictCode(code: string): boolean { return ['revision_required','revision_conflict','source_changed','page_identity_changed'].includes(code); }
+function conflictCode(code: string): boolean { return ['revision_required','revision_conflict','revision_backfill_pending','source_changed','page_identity_changed'].includes(code); }
 export function transientDatabaseFailure(error: unknown): boolean {
   return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
     'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code));
@@ -260,7 +246,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       outcome.persistence = { mode: files.length ? 'filesystem' : 'database', ...(files.length ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
       outcome.write_through = files.length ? { written: !prepared.noop } : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
       if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
-      if (row.operation === 'put_page' && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id);
+      if ((row.operation === 'put_page' || row.operation === 'edit_page') && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
       if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
         outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.operation, row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };
       }

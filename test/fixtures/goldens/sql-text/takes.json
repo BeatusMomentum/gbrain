@@ -24,8 +24,8 @@
             "params": [
               "object"
             ],
-            "sql": "INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active) SELECT v.page_id, v.row_num, v.claim, v.kind, v.holder, v.weight, v.since_date, v.until_date, v.source, v.superseded_by, v.active FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v( page_id int, row_num int, claim text, kind text, holder text, weight real, since_date text, until_date text, source text, superseded_by int, active boolean ) ON CONFLICT (page_id, row_num) DO UPDATE SET claim = EXCLUDED.claim, kind = EXCLUDED.kind, holder = EXCLUDED.holder, weight = EXCLUDED.weight, since_date = EXCLUDED.since_date, until_date = EXCLUDED.until_date, source = EXCLUDED.source, superseded_by = EXCLUDED.superseded_by, active = EXCLUDED.active, updated_at = now() RETURNING 1",
-            "textSha256": "1232762c3affb0b239b2c6068a6848282f02b82713a2a7d4e0b44a9b2689a01b"
+            "sql": "INSERT INTO takes (page_id, row_num, claim, kind, holder, weight, since_date, until_date, source, superseded_by, active) SELECT v.page_id, v.row_num, v.claim, v.kind, v.holder, v.weight, v.since_date, v.until_date, v.source, v.superseded_by, v.active FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v( page_id int, row_num int, claim text, kind text, holder text, weight real, since_date text, until_date text, source text, superseded_by int, active boolean ) ON CONFLICT (page_id, row_num) DO UPDATE SET embedding = CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim THEN NULL ELSE takes.embedding END, embedded_at = CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim THEN NULL ELSE takes.embedded_at END, embedding_model = CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim THEN NULL ELSE takes.embedding_model END, embedded_text_hash = CASE WHEN takes.claim IS DISTINCT FROM EXCLUDED.claim THEN NULL ELSE takes.embedded_text_hash END, claim = EXCLUDED.claim, kind = EXCLUDED.kind, holder = EXCLUDED.holder, weight = EXCLUDED.weight, since_date = EXCLUDED.since_date, until_date = EXCLUDED.until_date, source = EXCLUDED.source, superseded_by = EXCLUDED.superseded_by, active = EXCLUDED.active, updated_at = now() RETURNING 1",
+            "textSha256": "4beee891a2452a98d6f4163f8a2b6fcb0a96f1750ef67a0be8751e08e8ae0f41"
           }
         ]
       },
@@ -33,9 +33,16 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT count(*)::int AS count FROM takes WHERE active AND embedding IS NULL",
-            "textSha256": "f418172e9208f3e264814797db037b02a3a8b8fc93d51633c58966cbbfe39cea"
+            "params": [
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "SELECT count(*)::int AS count FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND p.deleted_at IS NULL AND EXISTS (SELECT 1 FROM sources s WHERE s.id = p.source_id AND NOT s.archived) AND ($1::text IS NULL OR p.source_id = $2::text) AND (t.embedding IS NULL OR t.embedded_text_hash IS DISTINCT FROM md5(t.claim) OR ($3::text IS NOT NULL AND t.embedding_model IS DISTINCT FROM $4::text) OR ($5::int IS NOT NULL AND vector_dims(t.embedding) <> $6::int))",
+            "textSha256": "bf015146ab51fd3f029ffd8718ae12d2f025c6535640eb8c1fc0e6fd3c7b70b5"
           }
         ]
       },
@@ -177,9 +184,16 @@
         "default": [
           {
             "lane": "pool",
-            "params": [],
-            "sql": "SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND t.embedding IS NULL ORDER BY t.id LIMIT 100000",
-            "textSha256": "1826fa7f471c17386dadfb4590a734fb155ead45b8818788c8025a3b07453165"
+            "params": [
+              "null",
+              "null",
+              "null",
+              "null",
+              "null",
+              "null"
+            ],
+            "sql": "SELECT t.id AS take_id, p.slug AS page_slug, t.row_num, t.claim FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.active AND p.deleted_at IS NULL AND EXISTS (SELECT 1 FROM sources s WHERE s.id = p.source_id AND NOT s.archived) AND ($1::text IS NULL OR p.source_id = $2::text) AND (t.embedding IS NULL OR t.embedded_text_hash IS DISTINCT FROM md5(t.claim) OR ($3::text IS NOT NULL AND t.embedding_model IS DISTINCT FROM $4::text) OR ($5::int IS NOT NULL AND vector_dims(t.embedding) <> $6::int)) ORDER BY t.id LIMIT 100000",
+            "textSha256": "0529abe74d08093373e239ede128c3a8d46ed33c39ec8a63ce4e637f60c23721"
           }
         ]
       },
@@ -527,8 +541,8 @@
             "params": [
               "object"
             ],
-            "sql": "WITH updated AS ( UPDATE takes AS t SET embedding = v.embedding::vector, embedded_at = now(), updated_at = now() FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(take_id bigint, embedding text) WHERE t.id = v.take_id AND t.active RETURNING t.id ) SELECT id FROM updated",
-            "textSha256": "4ad900c932635917a67e63727f07e451aab97d92e159dcbdae478128d7b43765"
+            "sql": "WITH updated AS ( UPDATE takes AS t SET embedding = v.embedding::vector, embedded_at = now(), embedding_model = v.model, embedded_text_hash = md5(v.claim), updated_at = now() FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(take_id bigint, embedding text, claim text, model text) WHERE t.id = v.take_id AND t.active AND t.claim = v.claim RETURNING t.id ) SELECT id FROM updated",
+            "textSha256": "d78838acb39cf84a669f00ad4f3c7ddd1b1cc01a4962a37a12b9610b3fdc28a9"
           }
         ]
       },

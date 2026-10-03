@@ -10,6 +10,20 @@ import { publicationConcurrency } from './pool-capacity.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+
+type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
+/** #5801: the phase a connection checkout belongs to, carried through its async chain. */
+const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
+
+/** #5233: one-line, redacted, length-capped error text for the consumer's stderr line. */
+function errorDetail(error: unknown): string | undefined {
+  const message = (error as { message?: unknown } | null)?.message;
+  if (typeof message !== 'string' || !message.trim()) return undefined;
+  return redactConnectionInfo(message).replace(/\s+/g, ' ').replaceAll('"', "'").trim().slice(0, 200);
+}
 
 /**
  * #5401: one resident projection invocation takes up to this many pages and
@@ -58,7 +72,11 @@ export class PersistenceConsumer {
   private progressWake = false;
   private lastError: { code: string; at: string; phase?: string } | undefined;
   private abort = new AbortController();
-  private phaseObservation: { name: string; started_at: string; deadline_exceeded: boolean; attempt: number } | undefined;
+  private phaseObservation: PhaseObservation | undefined;
+  private phaseStartedAt = 0;
+  private lastPhaseTiming: string | undefined;
+  private loopDelay: IntervalHistogram | null | undefined;
+  private unobserveCheckout: (() => void) | undefined;
   private phaseAttempts = 0;
   private lastLog: { key: string; at: number } | undefined;
   private lastPhaseError: string | undefined;
@@ -68,6 +86,10 @@ export class PersistenceConsumer {
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
     private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void } = {}) {
     this.hostId = opts.hostId ?? localHostId();
+  }
+  private get checkoutObservable(): ((listener: () => void) => () => void) | undefined {
+    const engine = this.engine as { onCheckout?: unknown };
+    return typeof engine.onCheckout === 'function' ? (engine.onCheckout as (listener: () => void) => () => void).bind(this.engine) : undefined;
   }
   start(): void { this.stopping = false; this.abort = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs; this.schedule(0); }
   /**
@@ -142,7 +164,8 @@ export class PersistenceConsumer {
    * probe every few seconds would keep ceil(idle_timeout / interval) sockets
    * alive. Idle probes therefore share one reserved connection; the rest of
    * the pool drains through idle_timeout. Pools too small to spare a long-hold
-   * permit fall back to pooled probes.
+   * permit fall back to pooled probes. The lane always comes from the ordinary
+   * pool, never the direct/session route, whose clients are scarcer (#5233).
    */
   private async acquireIdleLane(signal?: AbortSignal): Promise<ReservedConnection | undefined> {
     if (this.idleLane) return this.idleLane.conn;
@@ -152,7 +175,7 @@ export class PersistenceConsumer {
     if (!pool?.poolMax || pool.poolMax < 3 || Object.values(pool.tracked).some(count => count > 0)) return undefined;
     const held = Promise.withResolvers<void>();
     const reserved = Promise.withResolvers<ReservedConnection>();
-    const done = this.engine.withReservedConnection(async conn => { reserved.resolve(conn); await held.promise; })
+    const done = this.engine.withReservedConnection(async conn => { reserved.resolve(conn); await held.promise; }, { route: 'ordinary' })
       .catch(error => { reserved.reject(error); });
     const aborted = Promise.withResolvers<undefined>();
     const onAbort = () => aborted.resolve(undefined);
@@ -333,19 +356,49 @@ export class PersistenceConsumer {
     return { accepting: !this.stopping, active_preparations: this.active.size, active_worktrees: this.activeRoots.size,
       sampled_at: new Date().toISOString(), observation_scope: 'current_process_reset_on_restart',
       preparation_attempts: this.preparationAttempts,
-      phase: this.phaseObservation ? { ...this.phaseObservation } : null,
+      phase: this.phaseObservation ? { ...this.phaseObservation, ...this.phaseTiming(this.phaseObservation, this.phaseStartedAt) } : null,
       preparations: [...this.preparing.values()].map(value => ({ ...value })),
       ...(this.lastError ? { last_error: { ...this.lastError } } : {}) };
   }
+  /**
+   * #5801: connection-wait and event-loop evidence for a phase. A checkout is
+   * observed only after a connection was obtained inside this phase's async
+   * chain; until then the phase reports how long it has been waiting.
+   */
+  private phaseTiming(observation: PhaseObservation, startedAt: number): { checkout?: 'not_observed'; conn_wait_ms?: number; loop_lag_ms?: number } {
+    let lag: number | undefined;
+    try { if (this.loopDelay) lag = Math.round(this.loopDelay.max / 1e6); } catch { /* fail-open */ }
+    return {
+      ...(this.unobserveCheckout && observation.first_conn_ms === undefined
+        ? { checkout: 'not_observed' as const, conn_wait_ms: Math.round(performance.now() - startedAt) } : {}),
+      ...(lag === undefined ? {} : { loop_lag_ms: lag }),
+    };
+  }
+  private timingText(observation: PhaseObservation, startedAt: number): string {
+    const fields: Record<string, unknown> = { first_conn_ms: observation.first_conn_ms, ...this.phaseTiming(observation, startedAt) };
+    return Object.entries(fields).filter(([, value]) => value !== undefined).map(([key, value]) => ` ${key}=${value}`).join('');
+  }
   private async phase<T>(name: string, run: (signal?: AbortSignal) => Promise<T>): Promise<T> {
-    const observation = { name, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.phaseAttempts };
+    const observation: PhaseObservation = { name, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.phaseAttempts };
+    const startedAt = performance.now();
     this.phaseObservation = observation;
+    this.phaseStartedAt = startedAt;
+    this.unobserveCheckout ??= this.checkoutObservable?.(() => {
+      const scope = phaseScope.getStore();
+      if (scope && scope.observation.first_conn_ms === undefined) scope.observation.first_conn_ms = Math.round(performance.now() - scope.startedAt);
+    });
+    if (this.loopDelay === undefined) {
+      try { this.loopDelay = monitorEventLoopDelay({ resolution: 10 }); this.loopDelay.enable(); } catch { this.loopDelay = null; }
+    }
+    try { this.loopDelay?.reset(); } catch { /* fail-open */ }
     const abort = new AbortController();
     const stop = () => abort.abort(this.abort.signal.reason);
     this.abort.signal.addEventListener('abort', stop, { once: true });
     if (this.stopping) stop();
-    const timer = setTimeout(() => { observation.deadline_exceeded = true; abort.abort(); this.log(name, 'deadline_exceeded'); }, this.opts.phaseMs ?? 5000);
-    try { return await run(this.engine.kind === 'postgres' ? abort.signal : undefined); }
+    const timer = setTimeout(() => {
+      observation.deadline_exceeded = true; abort.abort(); this.log(name, 'deadline_exceeded', undefined, this.timingText(observation, startedAt));
+    }, this.opts.phaseMs ?? 5000);
+    try { return await phaseScope.run({ observation, startedAt }, () => run(this.engine.kind === 'postgres' ? abort.signal : undefined)); }
     catch (error) {
       const cancelled = error as { name?: unknown; code?: unknown; message?: unknown } | null;
       if (this.stopping && abort.signal.aborted && abort.signal.reason === this.abort.signal.reason
@@ -354,7 +407,7 @@ export class PersistenceConsumer {
             && /^(?:57014: )?canceling statement due to user request$/.test(cancelled.message))) {
         throw this.abort.signal.reason;
       }
-      this.lastPhaseError = name; throw error;
+      this.lastPhaseError = name; this.lastPhaseTiming = this.timingText(observation, startedAt); throw error;
     }
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
   }
@@ -364,14 +417,16 @@ export class PersistenceConsumer {
     this.lastError = { code: typeof code === 'string' && (/^[A-Z0-9]{5}$/.test(code) || isWriteErrorCode(code)) ? code : 'storage_error', at: new Date().toISOString(),
       ...(this.lastPhaseError ? { phase: this.lastPhaseError } : {}) };
     if (this.opts.onError) this.opts.onError(error);
-    else this.log(this.lastPhaseError ?? 'execution', this.lastError.code);
+    else this.log(this.lastPhaseError ?? 'execution', this.lastError.code, errorDetail(error), this.lastPhaseError ? this.lastPhaseTiming : undefined);
     this.lastPhaseError = undefined;
+    this.lastPhaseTiming = undefined;
   }
-  private log(phase: string, code: string): void {
+  private log(phase: string, code: string, detail?: string, timing = ''): void {
     const key = `${phase}:${code}`, at = Date.now();
     if (this.lastLog && (at - this.lastLog.at < 1000 || this.lastLog.key === key && at - this.lastLog.at < 30_000)) return;
     this.lastLog = { key, at };
-    if (!this.opts.onError) process.stderr.write(`[persistence] phase=${phase} reason=${code}; unfinished work remains tracked; inspect writer status.\n`);
+    if (!this.opts.onError) process.stderr.write(`[persistence] phase=${phase} reason=${code}${detail ? ` message="${detail}"` : ''}${timing}`
+      + '; unfinished work remains tracked; fix: gbrain sources writer status --json; docs: docs/ENGINES.md#persistence-consumer-log\n');
   }
   private async execute(row: WriteRequest): Promise<boolean> {
     let renewing: Promise<unknown> | undefined;
@@ -383,7 +438,8 @@ export class PersistenceConsumer {
     this.preparing.set(row.id, observation);
     const stop = () => abort.abort({ code: 'consumer_stopping' });
     this.abort.signal.addEventListener('abort', stop, { once: true });
-    const bounded = row.operation === 'remember' || row.operation === 'put_page' && !row.intent?.kind;
+    // edit_page (#5616) builds its content during preparation like put_page, so it shares the deadline.
+    const bounded = row.operation === 'remember' || (row.operation === 'put_page' || row.operation === 'edit_page') && !row.intent?.kind;
     const budget = this.opts.preparationMs ?? 30_000;
     const deadline = performance.now() + budget;
     const timeout = bounded ? setTimeout(() => {
@@ -446,5 +502,9 @@ export class PersistenceConsumer {
     await this.effectsWorker;
     await this.topologyWorker;
     await this.maintenanceWorker;
+    this.unobserveCheckout?.();
+    this.unobserveCheckout = undefined;
+    try { this.loopDelay?.disable(); } catch { /* fail-open */ }
+    this.loopDelay = undefined;
   }
 }

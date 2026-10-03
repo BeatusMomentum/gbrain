@@ -62,6 +62,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'transactionOn': OOS.helper,
   'withReservedConnection': OOS.lifecycle,
   'getPoolDiagnostics': OOS.lifecycle,
+  'onCheckout': OOS.lifecycle,
   'reconnect': OOS.lifecycle,
   'runUnsafe': OOS.helper,
   'executeRaw': OOS.lifecycle,
@@ -655,7 +656,7 @@ export const SQL_CASES: SqlCase[] = [
   ...variants('getTakeEmbeddings', [['default', (e) => e.getTakeEmbeddings([1, 2])]]),
   ...variants('countStaleTakes', [['default', (e) => e.countStaleTakes()]]),
   ...variants('listStaleTakes', [['default', (e) => e.listStaleTakes()]]),
-  ...variants('updateTakeEmbeddings', [['default', (e) => e.updateTakeEmbeddings([{ take_id: 1, embedding: EMB }])]]),
+  ...variants('updateTakeEmbeddings', [['default', (e) => e.updateTakeEmbeddings([{ take_id: 1, embedding: EMB, claim: 'x', model: 'openai:text-embedding-3-large' }])]]),
   ...variants('updateTake', [
     ['default', (e) => e.updateTake(1, 1, { since_date: '2026-01-01' }), [[/UPDATE takes/, [{ id: 1 }]]]],
     ['weight', (e) => e.updateTake(1, 1, { weight: 0.8 }), [[/UPDATE takes/, [{ id: 1 }]]]],

@@ -144,6 +144,7 @@
       "open_loops.open_loops_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "open_loops.open_loops_status_check": "c CHECK ((status = ANY (ARRAY['open'::text, 'done'::text, 'dropped'::text, 'stale'::text])))",
       "page_aliases.page_aliases_pkey": "p PRIMARY KEY (id)",
+      "page_aliases.page_aliases_source_fk": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "page_aliases.page_aliases_uniq": "u UNIQUE (source_id, alias_norm, slug)",
       "page_generation_clock.page_generation_clock_id_check": "c CHECK ((id = 1))",
       "page_generation_clock.page_generation_clock_pkey": "p PRIMARY KEY (id)",
@@ -222,6 +223,7 @@
       "shared_skill_state.shared_skill_state_singleton_check": "c CHECK ((singleton = 1))",
       "slug_aliases.slug_aliases_no_self": "c CHECK ((alias_slug <> canonical_slug))",
       "slug_aliases.slug_aliases_pkey": "p PRIMARY KEY (id)",
+      "slug_aliases.slug_aliases_source_fk": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "slug_aliases.slug_aliases_uniq": "u UNIQUE (source_id, alias_slug)",
       "source_ingestion_receipts.source_ingestion_receipts_approved_revision_check": "c CHECK ((approved_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text))",
       "source_ingestion_receipts.source_ingestion_receipts_check": "c CHECK (((phase = 'COMPLETE'::text) = (outcome = 'complete'::text)))",
@@ -295,7 +297,7 @@
       "bump_page_generation_clock_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=d3359bcd09cccd881585abd9eee81c3dcf4161d935164f7953f2e9fdef73ed3e",
       "bump_page_generation_fn()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=78059745996cfbb72586a2e0e161635b96a62a5db9d0be5c710f4d437d994431",
       "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e0b3db944d3b4281b9483ce77aa734e0c9aa5b0d46bb5dcb5284b6469441a1b8",
-      "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=227a4224dc8cfbe73fec58fdee0c3054a96f3dce748598e5491f50627c7f3513",
+      "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=ae793ff5263f7b76311e0c22593fb658db9f82e7b3781914421d9508b6da0e88",
       "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
       "gbrain_clear_atom_page_state()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=7db0ef05d1220a579e64428b2dd7cf5183191da186fbe64b6496433a7a713d11",
       "gbrain_fact_fingerprint(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=666cc212d15431ede62a3d1e8932676a950705717852262f86df6d836d526ab4",
@@ -308,7 +310,7 @@
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=9beb118551a08451a228146373f50f2aa2ce0cfe89937e937d361b33224aa0aa",
       "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=6c544b9c129b6a17dcabeb5ee8d44a2b0e0af9d02ca3fe47c7d7f22ec313042c",
-      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=9f7ebd3894599fd125d255f78ada3d945b14b15a114e340a43da0414a3de4208",
+      "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e35a67bb4bbcb2555e88ff14c0be82245d5090062da28cf4a63eb13150089b55",
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "notify_minion_job_change()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=17f7c36408688409c80befd0a9ef9314e597d78a195418d1b94426e3d0b662f8",
       "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e12c37d5489202aaf708560db42e6c0c7c8886d198d412e1c5d915c3ae782559",
@@ -2417,7 +2419,10 @@
           "12 trust_frontmatter_overrides boolean/bool NOT NULL DEFAULT false",
           "13 newest_content_at timestamp with time zone/timestamptz NULL",
           "14 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "15 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()"
+          "15 incarnation uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
+          "16 upstream_checked_at timestamp with time zone/timestamptz NULL",
+          "17 upstream_commit text/text NULL",
+          "18 upstream_behind integer/int4 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -2577,7 +2582,9 @@
           "20 embedded_at timestamp with time zone/timestamptz NULL",
           "21 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "22 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "23 resolved_quality text/text NULL"
+          "23 resolved_quality text/text NULL",
+          "24 embedding_model text/text NULL",
+          "25 embedded_text_hash text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

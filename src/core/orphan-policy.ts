@@ -144,3 +144,6 @@ export function shouldExcludeFromOrphanReporting(
 
   return false;
 }
+
+/** #5828: the brain_score timeline component's graded subset of the linkable scope. */
+export { gradeTimelinePages } from './timeline-grading.ts';

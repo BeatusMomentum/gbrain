@@ -24,6 +24,14 @@ const MIGRATION_WAVE_TESTS = [
 ];
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  // Fix wave 8, Lane G: reindex auto-concurrency sizing (#5181).
+  "src/commands/reindex.ts": ["test/e2e/reindex-auto-workers-5181.test.ts"],
+  // Fix wave 8, Lane G: deferred ANN build after the embedding re-embed (#5088).
+  // Fix wave 8, Lane G: page revision rollout (#5216).
+  "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts"],
+  "src/core/embedding-ann-build.ts": ["test/e2e/migrate-embeddings-ann-build-5088-postgres.test.ts", "test/e2e/migrate-embeddings-postgres.test.ts"],
+  // Fix wave 8 lane D2 (#5828): the brain_score timeline grading helper.
+  "src/core/timeline-grading.ts": ["test/e2e/wave8-lane-d2-postgres.test.ts", "test/e2e/health-parity-postgres.test.ts"],
   // GBRA-35 E10: the managed connector-source job contract drives these writers on an unbound connector source.
   "test/helpers/managed-connector-job-contract.ts": ["test/e2e/managed-connector-job-contract.test.ts"],
   "src/core/persistence/atom-maintenance.ts": ["test/e2e/managed-connector-job-contract.test.ts"],
@@ -36,7 +44,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/minions/handlers/autopilot-cycle.ts": ["test/e2e/managed-connector-job-contract.test.ts"],
   // Fix wave 4, Lane D: the apply-migrations orchestration lease (#5693), source deletes and
   // orphan bindings (#5732), and deactivate racing admission (#5455).
-  "src/core/migration-orchestration-lock.ts": ["test/e2e/apply-migrations-orchestration-lock.test.ts"],
+  "src/core/migration-orchestration-lock.ts": ["test/e2e/apply-migrations-orchestration-lock.test.ts", "test/e2e/export-db-only-own-lease-postgres.test.ts"],
   "src/core/source-delete.ts": ["test/e2e/sources-remove-bindings.test.ts"],
   "src/core/persistence/orphan-bindings.ts": ["test/e2e/sources-remove-bindings.test.ts"],
   // Fix wave 5 shared commit: preview-bound approved sets in op_checkpoints.
@@ -95,10 +103,13 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/company-brain/receipt-schema.ts": ["test/e2e/company-brain-receipts.test.ts"],
   "src/core/minions/errors.ts": ["test/e2e/subagent-gateway-path.test.ts", "test/e2e/delegated-http-worker.test.ts", "test/e2e/subagent-crash-replay-multi-provider.test.ts"],
   "src/core/harness/**": ["test/e2e/harness-access.test.ts", "test/e2e/shared-skills-transports.test.ts"],
-  "src/core/shared-skills/**": ["test/e2e/shared-skills-transports.test.ts", "test/e2e/shared-skills-rls.test.ts", "test/e2e/persistence-skill-bundles-postgres.test.ts", "test/e2e/knowledge-source-uri-postgres.test.ts"],
+  "src/core/shared-skills/**": ["test/e2e/export-db-only-own-lease-postgres.test.ts", "test/e2e/shared-skills-transports.test.ts", "test/e2e/shared-skills-rls.test.ts", "test/e2e/persistence-skill-bundles-postgres.test.ts", "test/e2e/knowledge-source-uri-postgres.test.ts"],
   "src/mcp/skill-resources.ts": ["test/e2e/shared-skills-transports.test.ts"],
   "src/core/scope.ts": ["test/e2e/client-grants.test.ts", "test/e2e/shared-skills-transports.test.ts"],
   "src/core/grants/**": ["test/e2e/client-grants.test.ts", "test/e2e/harness-access.test.ts", "test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/delegated-http-worker.test.ts"],
+  // #5231/#5893 (O-ENG-7): legacy-token rescope and the explicit no-source grant on Postgres.
+  "src/core/grants/legacy-token.ts": ["test/e2e/auth-rescope-token.test.ts"],
+  "src/core/legacy-token-scope.ts": ["test/e2e/auth-rescope-token.test.ts", "test/e2e/auth-permissions.test.ts"],
   "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/withdrawal-bounded-safety-postgres.test.ts", "test/e2e/withdrawal-crash-postgres.test.ts", "test/e2e/memory-safety-wave-postgres.test.ts", "test/e2e/fact-withdrawal-scope-postgres.test.ts"],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the
@@ -123,6 +134,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Concrete content and derived-information read policy parity.
   "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts"],
+  "src/core/ops/admin.ts": ["test/e2e/get-health-embedding-column-postgres.test.ts"],
   "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts", "test/e2e/put-page-persistence-postgres.test.ts", "test/e2e/deep-research-source-id.test.ts", "test/e2e/deep-research-http.test.ts", "test/e2e/derived-page-visibility.test.ts"],
   "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts"],
@@ -260,6 +272,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
   "src/core/db-lock.ts": ["test/e2e/db-lock-acquisition-token.test.ts", "test/e2e/sync-lock-overlap-postgres.test.ts", "test/e2e/managed-connector-fencing.test.ts", "test/e2e/managed-connector-recovery.test.ts"],
   "src/core/lease-schema.ts": ["test/e2e/db-lock-acquisition-token.test.ts"],
+  // O-CEO-13 wave-8 write contract gate: receipts, replay, edit_page, publication reauthorization.
+  "src/core/persistence/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
+  "src/core/persistence/write-wait.ts": ["test/e2e/write-contract-conformance.test.ts"],
+  "src/core/ops/page-edit.ts": ["test/e2e/write-contract-conformance.test.ts"],
   "src/core/persistence/**": [
     "test/e2e/fix-wave-3-integration.test.ts",
     "test/e2e/persistence-http-liveness.test.ts",
@@ -356,6 +372,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/fixture-reset-postgres.test.ts",
     "test/e2e/persistence-chaos.test.ts",
+    "test/e2e/postgres-poisoned-connection.test.ts",
+    "test/e2e/postgres-checkout-observer.test.ts",
     "test/e2e/db-lock-acquisition-token.test.ts",
     "test/e2e/chunk-canonical-text-privacy.test.ts",
     "test/e2e/engine-content-privacy.test.ts",
@@ -467,7 +485,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/persistence/memory-mutations.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
   "src/core/persistence/coordinator.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
   "src/core/facts/meta-hook.ts": ["test/e2e/capture-dedup-postgres.test.ts", "test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/facts-context-injection-postgres.test.ts", "test/e2e/serve-http-meta.test.ts"],
-  "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts"],
+  "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/write-contract-conformance.test.ts"],
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
@@ -496,7 +514,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/link-source-check-repair.ts": ["test/e2e/link-source-check-repair-postgres.test.ts"],
   "src/core/vector-index.ts": ["test/e2e/migration-vector-replay-postgres.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
-  "src/mcp/**": ["test/e2e/http-transport.test.ts", "test/e2e/mcp-search-transport-matrix.test.ts"],
+  "src/mcp/**": ["test/e2e/http-transport.test.ts", "test/e2e/mcp-search-transport-matrix.test.ts", "test/e2e/token-usage-skip-locked.test.ts"],
   // Integrity batch-load fast path.
   "src/commands/integrity.ts": ["test/e2e/integrity-batch.test.ts"],
   // Upgrade chains migration ledger; touches both runners. The bun-link arc
@@ -508,6 +526,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   "src/commands/apply-migrations.ts": [
     "test/e2e/apply-migrations-orchestration-lock.test.ts",
+    "test/e2e/export-db-only-own-lease-postgres.test.ts",
     "test/e2e/migration-preview-safety.test.ts",
     "test/e2e/migrate-chain.test.ts",
     "test/e2e/migration-flow.test.ts",
@@ -542,7 +561,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // (per the plan-eng-review E1 decision); the daemon + built-in sources
   // + ingest_capture Minion handler all feed the in-process roundtrip
   // E2E AND the HTTP contract E2E for the webhook route.
-  "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts"],
+  "src/core/oauth-provider.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-oauth.test.ts", "test/e2e/token-usage-skip-locked.test.ts"],
+  // #5730: non-idle pooled connections are discarded by the vendored driver.
+  "vendor/postgres/**": ["test/e2e/postgres-poisoned-connection.test.ts", "test/e2e/persistence-chaos.test.ts"],
+  "src/core/pool-gauge.ts": ["test/e2e/postgres-poisoned-connection.test.ts", "test/e2e/postgres-checkout-observer.test.ts"],
   "src/core/oauth-grants.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
   "src/core/grants/lifecycle.ts": ["test/e2e/oauth-grant-transactions.test.ts", "test/e2e/serve-http-consent.test.ts"],
   "src/commands/serve-http-clients.ts": ["test/e2e/serve-http-consent.test.ts"],

@@ -30,6 +30,7 @@ import {
   maybeBackupCoverageRefresh,
   printSyncResult,
   shouldNudgeAfterSync,
+  isFailedPartial,
 } from './report.ts';
 import { runSyncTrigger } from './trigger.ts';
 
@@ -526,7 +527,7 @@ async function runSyncAll(
   // green exit would hide it from cron/monitoring. Timeout-class partials
   // keep the pre-existing exit-0 behavior (they converge on retry).
   const pullFailedCount = perSourceResults.filter(
-    (r) => r.status === 'ok' && r.result?.status === 'partial' && r.result.reason === 'pull_failed',
+    (r) => r.status === 'ok' && r.result && isFailedPartial(r.result),
   ).length;
   if (errCount > 0 || pullFailedCount > 0) process.exit(1);
   return;
@@ -782,7 +783,7 @@ async function runSingleSourceSync(
     // Routed through the owned verdict channel (NOT bare `process.exitCode`,
     // which PGLite's Emscripten runtime clobbers mid-run — see
     // src/core/cli-force-exit.ts).
-    if (result.managedWrite || result.status === 'blocked_by_failures' || (result.status === 'partial' && result.reason === 'pull_failed')) {
+    if (result.managedWrite || result.status === 'blocked_by_failures' || isFailedPartial(result)) {
       const { setCliExitVerdict } = await import('../../core/cli-force-exit.ts');
       setCliExitVerdict(1);
     }

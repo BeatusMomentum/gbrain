@@ -389,13 +389,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 189 (latest: 189)",
+          "message": "Version 192 (latest: 192)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "816 column(s) verified against live schema",
+          "message": "819 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -919,6 +919,12 @@
         },
         {
           "category": "ops",
+          "message": "Brain-wide maintenance jobs are finishing within their deadline.",
+          "name": "global_maintenance_timeouts",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "details": {
             "active_ids": [],
             "authorizable": {},
@@ -1065,6 +1071,24 @@
           },
           "message": "No active facts yet; nothing to link.",
           "name": "unlinked_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "enabled": false
+          },
+          "message": "auto_chronicle is off.",
+          "name": "auto_chronicle",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "applicable": false
+          },
+          "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
+          "name": "fact_take_vectors",
           "status": "ok"
         },
         {
@@ -1259,7 +1283,7 @@
         },
         {
           "category": "meta",
-          "message": "Active pack gbrain-base-v2@1.2.0+1a2aee67 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.2.0+6c7be06e is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

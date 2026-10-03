@@ -7,9 +7,10 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
+import { applyExtractAtomsNoPricing, readExtractAtomsNoPricing } from '../../../core/cycle/extract-atoms-cost-gate.ts';
 import { join } from 'path';
 import { gbrainPath } from '../../../core/config.ts';
-import { multiSourceDriftGitRootSkipNote, multiSourceDriftAdvice } from '../schema-pack-checks.ts';
+import { multiSourceDriftCheck, multiSourceDriftNotVerified } from '../schema-pack-checks.ts';
 import { computeConversationFormatCoverageCheck } from './conversation-coverage.ts';
 import {
   computeExtractHealthCheck,
@@ -190,7 +191,10 @@ async function runExtractionBacklogs(ctx: DoctorContext): Promise<Check[]> {
   // operator should know the DB cache is degraded). See plan A5 + D-EXTRACT-32.
   if (engine) {
     try {
+      // An explicit extract_atoms cap that refused an unpriced model is an
+      // expected limit in the rollup, not a halt; the overlay names the fix.
       const check = await computeExtractHealthCheck(engine);
+      applyExtractAtomsNoPricing(check, await readExtractAtomsNoPricing(engine).catch(() => []));
       checks.push(check);
     } catch {
       // Best-effort; rollup-table missing on pre-v106 brains is normal
@@ -497,49 +501,12 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
         engine!,
         nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
       );
-      if (result.walk_truncated) {
-        checks.push({
-          name: 'multi_source_drift',
-          status: 'warn',
-          message:
-            `Multi-source drift check skipped — FS walk hit limit/timeout. ` +
-            `Re-run on a quieter brain or shorter walk via GBRAIN_DRIFT_LIMIT/GBRAIN_DRIFT_TIMEOUT_MS.`,
-        });
-      } else if (result.count > 0) {
-        const sampleStr = result.sample.map(s => `${s.slug} (intended=${s.intended_source})`).join(', ');
-        const skipNote = result.git_root_skipped.length > 0
-          ? multiSourceDriftGitRootSkipNote(result.git_root_skipped)
-          : '';
-        checks.push({
-          name: 'multi_source_drift',
-          status: 'warn',
-          message: multiSourceDriftAdvice(result.count, sampleStr) + skipNote,
-        });
-      } else {
-        // #4712: if EVERY candidate source was skipped as git-root-pinned,
-        // no walk actually ran — 'ok' would misreport "verified clean" when
-        // nothing was checked at all. 'warn' only in that all-skipped case;
-        // a partial skip alongside real, clean coverage stays 'ok'.
-        const allSkipped =
-          result.git_root_skipped.length > 0 &&
-          result.git_root_skipped.length >= nonDefaultWithPath.length;
-        checks.push({
-          name: 'multi_source_drift',
-          status: allSkipped ? 'warn' : 'ok',
-          message: allSkipped
-            ? `Multi-source drift check performed no verification` +
-              multiSourceDriftGitRootSkipNote(result.git_root_skipped)
-            : result.git_root_skipped.length > 0
-              ? `No cross-source slug drift detected among checked sources.` +
-                multiSourceDriftGitRootSkipNote(result.git_root_skipped)
-              : 'No cross-source slug drift detected.',
-        });
-      }
+      checks.push(multiSourceDriftCheck(result, nonDefaultWithPath.length, 'local'));
     }
-  } catch {
-    // Best-effort. A broken sources table or unreadable local_path should
-    // not stop doctor. The walk itself catches per-directory errors; this
-    // outer try covers the executeRaw path.
+  } catch (e) {
+    // A broken sources table must not stop doctor, but the check still
+    // reports that it verified nothing (#5432).
+    checks.push(multiSourceDriftNotVerified(e));
   }
 
   // 3c. Orphan clone temp dirs (v0.28 P1). `gbrain sources add --url` clones

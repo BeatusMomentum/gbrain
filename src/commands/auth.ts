@@ -30,6 +30,7 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseRescopeGrantArgs } from '../core/grants/cli.ts';
+import { parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken } from '../core/grants/legacy-token.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -863,6 +864,39 @@ async function rescopeClient(clientId: string, args: string[]) {
   }
 }
 
+/** `gbrain auth rescope-token`: the legacy-token twin of rescope-client (src/core/grants/legacy-token.ts). */
+async function rescopeToken(args: string[]) {
+  try {
+    const parsed = parseRescopeTokenArgs(args);
+    await withConfiguredSql(async (_sql, engine) => {
+      const result = await rescopeLegacyToken(engine, parsed);
+      if (parsed.json) { console.log(JSON.stringify(result, null, 2)); return; }
+      const verb = !result.changed ? 'grants' : result.dryRun ? 'grant preview' : 'rescoped';
+      console.log(`Legacy token ${verb}: ${result.name} (${result.id})`);
+      const rows: Array<[string, keyof typeof result.before]> = [['Sources', 'sources'], ['Takes holders', 'takesHolders'], ['Operations', 'operations']];
+      for (const [label, key] of rows) {
+        const before = renderLegacyGrantAxis(result.before[key]);
+        const after = renderLegacyGrantAxis(result.after[key]);
+        console.log(`  ${label}: ${before === after ? after : `${before} -> ${after}`}`);
+      }
+      if (result.refresh) {
+        const { available, added, unregistered } = result.refresh;
+        console.log(`  New operations available: ${available.length ? available.join(', ') : 'none'}`);
+        if (unregistered.length) console.log(`  Granted but no longer registered: ${unregistered.join(', ')}`);
+        if (added.length) console.log(`  Added: ${added.join(', ')}`);
+        else if (available.length) {
+          const add = available.length <= 8 ? `--add ${available.join(',')}` : '--add <op,...>';
+          console.log(`  Nothing widened. Grant them with: gbrain auth rescope-token ${result.name} --refresh-operations ${add} (or --all-new)`);
+        }
+      }
+      if (result.changed && !result.dryRun) console.log('Grants apply on the next request; the token secret is unchanged.');
+    });
+  } catch (error) {
+    console.error('Error:', error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+}
+
 /**
  * E4 (WP4 expansion): `gbrain auth clients [--usage] [--days N] [--json]`.
  *
@@ -1093,7 +1127,19 @@ Usage:
   gbrain auth revoke <name>                                Revoke a legacy token (ALL active rows with that name)
   gbrain auth revoke --id <uuid>                           Revoke exactly one token by id (names are not unique)
   gbrain auth permissions <name> set-takes-holders <h1,h2,h3>
-                                                          Update visibility for an existing token
+                                                          Update visibility for an existing token (alias of
+                                                          rescope-token --takes-holders)
+  gbrain auth rescope-token <name>|--id <uuid> [options]  Change a legacy token's grants in place (the token
+                                                          twin of rescope-client). Only the flags you pass
+                                                          change; the token secret is unchanged. With no
+                                                          grant flag it prints the stored grants.
+     --sources <id1,id2,...|none>                         Source grant (first = write source; 'none' = deny-all)
+     --takes-holders <h1,h2,...|none>                     Takes-holder allow-list ('none' = deny-all)
+     --operations <op1,op2,...|none>                      Operation snapshot ('none' = deny-all)
+     --reset-default <sources,takes-holders,operations>   Restore the auth create default for those axes
+     --refresh-operations [--add <op,...>|--all-new]      Preview operations added since the snapshot; widen only
+                                                          by the ones --add names (or all with --all-new)
+     --dry-run / --json                                   Preview without writing / machine-readable output
   gbrain auth register-client <name> [options]             Register an OAuth 2.1 client (v0.26+)
      --grant-types <client_credentials,authorization_code>  (default: client_credentials;
                                                             auto-set to authorization_code,refresh_token
@@ -1181,6 +1227,7 @@ export async function runAuth(args: string[]): Promise<void> {
     }
     case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
     case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
+    case 'rescope-token': await rescopeToken(rest); return;
     case 'revoke-client': await revokeClient(rest[0]); return;
     case 'clients': await clientsCmd(rest); return;
     case 'test': {

@@ -131,7 +131,7 @@ still go to the bound source only.
 | `<id> is not federated` | The named source is not federated. | `gbrain sources federate <id>`, or start the connection without the binding. |
 | `<id> opted out of federation` | The named source was unfederated. | `gbrain sources federate <id>` if it should be readable from other sources. |
 | `<bound> opted out of federation …, so it reads no other source` | The bound source itself is isolated (`federated=false`), so it never reads another source. | `gbrain sources federate <bound>`, or start the connection without the binding. |
-| `Your token is not granted <id>` | An HTTP token or OAuth client whose grant does not include the source. | `gbrain auth rescope-client <client_id> --federated-read <ids>` for an OAuth client. |
+| `Your token is not granted <id>` | An HTTP token or OAuth client whose grant does not include the source. | `gbrain auth rescope-client <client_id> --federated-read <ids>` for an OAuth client; `gbrain auth rescope-token <name> --sources <ids>` for a legacy bearer token. |
 
 `search_by_image`, `open_loops` and the code-intel tools keep their stricter
 rule: an explicit `source_id` must be inside the connection's own source or
@@ -245,6 +245,19 @@ maintenance write) is stored database-only too; its receipt says
 write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
+
+A managed brain never pulls inside a cycle, so a mirror is advanced outside
+gbrain and then synced without pulling:
+
+```bash
+git -C <checkout> pull --ff-only
+gbrain sync --source <id> --no-pull
+```
+
+The autopilot cycle syncs the checkout as it is and reports
+`upstream_refresh: "skipped_managed"`; `gbrain doctor` (`sync_freshness`) says
+"upstream unknown" when the checkout was not fetched in the last 24 hours. See
+[`managed_pull_skipped`](write-refusals.md#managed_pull_skipped).
 
 ## The git requirement for --path sources
 

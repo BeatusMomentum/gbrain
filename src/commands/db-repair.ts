@@ -313,6 +313,7 @@ function tierOf(reason: PgAccessReason): 'auto' | 'rewrite' | 'manual' {
     case 'db_missing':
     case 'no_url':
     case 'env_shadowed':
+    case 'storage_corrupt':
     case 'unknown':
       return 'manual';
     default: {
@@ -518,7 +519,7 @@ function buildPlan(d: PgAccessDiagnosis, tier: 'auto' | 'rewrite' | 'manual', ur
     case 'server_starting':
       return ['bounded reconnect (3 attempts, backoff)'];
     case 'pool_exhausted':
-      return ['re-probe on a single connection; emit GBRAIN_POOL_SIZE=2 guidance'];
+      return ['re-probe on a single connection; emit pool-sizing guidance (docs/ENGINES.md#pool-sizing)'];
     case 'conn_refused': {
       const lines = [];
       if (url && isGbrainDockerUrl(url)) {
@@ -645,7 +646,7 @@ async function applyLadder(
 
     case 'pool_exhausted': {
       const retry = await deps.probeAccess(engineConfig, 3);
-      human.push('guidance: export GBRAIN_POOL_SIZE=2  (recommended for low-cap poolers like Supabase Supavisor)');
+      human.push(`guidance: ${d.remediation}`);
       if (retry === null) {
         applied('single_connection_reprobe');
         report.fixed = true;
@@ -776,6 +777,7 @@ async function applyLadder(
     case 'db_missing':
     case 'no_url':
     case 'env_shadowed':
+    case 'storage_corrupt':
     case 'unknown':
       return manualStop();
 

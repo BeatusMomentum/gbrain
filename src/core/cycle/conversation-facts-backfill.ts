@@ -60,6 +60,7 @@ import {
 // the drift-guarded set in test/conversation-facts-type-allowlist-drift.test.ts.
 import { ALLOWED_TYPES, type AllowedType } from '../facts/conversation-types.ts';
 import { conversationFactsCostCap } from '../facts/conversation-budget.ts';
+import { noPricingMessage } from '../budget/no-pricing.ts';
 
 /** Per-phase wrapper opts. */
 export interface ConversationFactsBackfillPhaseOpts {
@@ -337,6 +338,7 @@ export async function runPhaseConversationFactsBackfill(
             budget_exhausted: true,
             budget_reason: err.reason,
             budget_model: err.modelId,
+            ...(err.pricing ? { budget_pricing: err.pricing } : {}),
             error: err.message,
           };
         } else if (isAbortError(err)) {
@@ -416,7 +418,10 @@ export async function runPhaseConversationFactsBackfill(
     (r) => r.error || r.pages_failed > 0 || r.budget_reason === 'no_pricing',
   );
   const status = anyError ? 'warn' : 'ok';
-  const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent`;
+  const noPricing = [...new Map(Object.values(perSourceResults)
+    .flatMap((r) => r.budget_pricing ? [[r.budget_pricing.model, r.budget_pricing] as const] : [])).values()];
+  const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent` +
+    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('');
 
   return {
     phase: 'conversation_facts_backfill',
@@ -446,6 +451,7 @@ export async function runPhaseConversationFactsBackfill(
       // #3627: per-source cap enforcement observability.
       sources_budget_exhausted: sourcesBudgetExhausted,
       sources_walltime_exhausted: sourcesWalltimeExhausted,
+      no_pricing: noPricing,
       types: cfg.types,
       max_cost_usd: cfg.maxCostUsd,
       cost_cap_enforced: costCap !== undefined,

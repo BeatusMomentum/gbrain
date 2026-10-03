@@ -177,7 +177,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
     await assertStoredSkillCapability(ctx.engine, prior.authority, 'skill_editor');
     for (const target of (prior.authority as SkillAuthority).skillSlugsUsed ?? [prior.slug]) await authorizeWrite(ctx.engine, prior.authority, prior.operation, target);
     assertReplayIntent(prior, intentDigest({ operation, sourceId, slug, callerIntent }));
-    return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config));
+    return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, ctx.writeWaitMs));
   }
   await assertSharedSkillPersistence(ctx.engine);
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1', [sourceId]);
@@ -295,7 +295,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
   const row = await admitWrite(ctx.engine, { principal, operation, sourceId, sourceIncarnation: source.incarnation, slug, requestId,
     targetKind: 'skill_bundle', protocolVersion: 2, callerIntent, intent: intent as unknown as Record<string, unknown>, authority,
     worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation });
-  return writeResponse(await waitForWrite(ctx.engine, row, ctx.config));
+  return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, ctx.writeWaitMs));
 }
 
 export async function prepareSharedSkillMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {

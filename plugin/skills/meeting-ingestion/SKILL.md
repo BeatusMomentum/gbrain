@@ -119,8 +119,10 @@ source_url: "..."              # link back to the source platform, if any
   from it into the brain.
 
 Retain the raw transcript when the source provides one: file it as a sidecar
-page (e.g. `meetings/YYYY-MM-DD-{slug}-transcript`) or keep the source file
-reachable, and link it from the meeting page. The transcript is the canonical
+page with `type: source` at `sources/meetings/YYYY-MM-DD-{slug}-transcript`
+(the default pack files raw evidence as `source` under `sources/`; never
+invent `meeting-transcript`, and don't write the `transcript` alias) or keep
+the source file reachable, and link it from the meeting page. The transcript is the canonical
 evidence for every quote and claim check downstream.
 
 **Redact before you retain.** A raw transcript routinely captures pasted
@@ -415,7 +417,7 @@ Phase 4. An unflagged anonymous label means speaker resolution was skipped.
   quote still shares a long contiguous run of content words, a fabricated one
   does not.
   ```bash
-  gbrain get meetings/{date}-{slug}-transcript   # then locate each quote span
+  gbrain get sources/meetings/{date}-{slug}-transcript   # then locate each quote span
   ```
 - **Prompt checklist (no transcript retained):** re-read the source notes and
   attest that each quote traces to them word-for-word.

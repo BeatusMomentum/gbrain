@@ -67,6 +67,7 @@ export type PgAccessReason =
   | 'db_missing'          // 3D000 database does not exist
   | 'schema_missing'      // 42P01 / 42703 missing relation or column
   | 'pgvector_missing'    // vector extension absent
+  | 'storage_corrupt'     // XX000/XX001/XX002: torn TOAST value, catalog/tuple damage (#5216, #4738)
   | 'unknown';
 
 export type PgAccessFix =
@@ -122,6 +123,17 @@ export interface PgAccessDiagnosis {
 export const DB_ACCESS_MARKER_PREFIX = 'GBRAIN_DB_ACCESS';
 
 /**
+ * #5205: the smallest GBRAIN_POOL_SIZE a long-running gbrain process (serve,
+ * autopilot, jobs work) needs: two publication long-holds, the idle probe lane,
+ * the projection and effects workers, and one connection for reads and tool
+ * calls. Below it, boot or projections stall under traffic. Pooler budget:
+ * processes x pool size (+ GBRAIN_DIRECT_POOL_SIZE per process with a direct
+ * route) must fit the pooler's client limit; run fewer processes rather than
+ * shrinking the pool. Documented in docs/ENGINES.md#pool-sizing.
+ */
+export const RESIDENT_POOL_FLOOR = 6;
+
+/**
  * The one emission-policy gate for stderr markers (agents read non-TTY
  * stderr; humans on a TTY get the prose instead; GBRAIN_FORCE_DB_MARKER=1
  * forces it for testing). Every stderr emitter calls THIS — the marker is a
@@ -165,6 +177,16 @@ interface ReasonRow {
  * second person, never preachy.
  */
 const REASON_ROWS: ReadonlyArray<ReasonRow> = [
+  {
+    reason: 'storage_corrupt',
+    transient: false,
+    codes: ['XX001', 'XX002'],
+    patterns: [/unexpected chunk number/i, /missing chunk number/i, /tuple concurrently (deleted|updated)/i, /invalid page in block/i,
+      /could not read block/i, /compressed data is corrupt/i, /found xmin .* from before relfrozenxid/i],
+    remediation: 'Stored data looks damaged (SQLSTATE XX000: a torn TOAST value or a damaged row). First preview orphaned child rows and torn page bodies: '
+      + 'gbrain repair orphan-children. See docs/guides/repair.md#orphan-children for recovery of the rows it names.',
+    fix: { kind: 'run_command', argv: ['gbrain', 'repair', 'orphan-children'] },
+  },
   {
     reason: 'pgvector_missing',
     transient: false,
@@ -222,8 +244,8 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     transient: true,
     codes: ['53300'],
     patterns: [/EMAXCONNSESSION/i, /too many clients already/i, /max.*clients?.*in session mode/i, /remaining connection slots are reserved/i],
-    remediation: 'Connection slots are exhausted. Lower the pool: export GBRAIN_POOL_SIZE=2 (recommended for low-cap poolers like Supabase Supavisor).',
-    fix: { kind: 'set_env', name: 'GBRAIN_POOL_SIZE', value: '2', why: 'low-cap poolers exhaust session slots under the default pool of 10' },
+    remediation: `Connection slots are exhausted: the pooler client limit is below the sum of every gbrain process's pool. Keep each long-running process (serve, autopilot, jobs work) at export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} or more and run fewer of them (share one gbrain serve --http), or raise the pooler limit; one-shot CLI commands may use GBRAIN_POOL_SIZE=2. See docs/ENGINES.md#pool-sizing.`,
+    fix: { kind: 'set_env', name: 'GBRAIN_POOL_SIZE', value: String(RESIDENT_POOL_FLOOR), why: `the floor for a long-running process; when processes x ${RESIDENT_POOL_FLOOR} exceeds the pooler limit, run fewer processes instead of going lower` },
   },
   {
     reason: 'server_starting',

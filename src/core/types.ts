@@ -376,6 +376,13 @@ export interface PageFilters {
    * (search/private-visibility.ts) in BOTH engines.
    */
   excludePrivate?: boolean;
+  /**
+   * #5154: select only the listing columns (identity, type, title, dates).
+   * `compiled_truth` and `timeline` come back as '' and `frontmatter` as {},
+   * so a listing never detoasts or ships page bodies. Only for callers that
+   * read none of those fields (list_pages).
+   */
+  listColumnsOnly?: boolean;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */

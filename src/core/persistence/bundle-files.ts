@@ -1,5 +1,6 @@
-import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { flushDirectory, sameFileMode } from '../fs-durable.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import type { BundleRecoveryRecord, FileRecoveryRecord, WriteRequest } from './model.ts';
@@ -125,13 +126,8 @@ export function bundleFileHash(record: FileRecoveryRecord): string | null {
   const current = readBundleFile(record.path, record.root);
   const hash = current ? sha256(current.bytes) : null;
   const expectedMode = hash === record.beforeHash ? record.mode : record.afterMode ?? record.mode;
-  if (current && expectedMode !== null && current.mode !== expectedMode) throw new OperationError('unexpected_file_bytes', 'A canonical skill file mode changed outside publication.');
+  if (current && expectedMode !== null && !sameFileMode(current.mode, expectedMode)) throw new OperationError('unexpected_file_bytes', 'A canonical skill file mode changed outside publication.');
   return hash;
-}
-
-function flushBundleDirectory(directory: string): void {
-  const fd = openSync(directory, 'r');
-  try { fsyncSync(fd); } finally { closeSync(fd); }
 }
 
 export function stageBundleFile(file: MutationFile, record: FileRecoveryRecord): void {
@@ -140,7 +136,7 @@ export function stageBundleFile(file: MutationFile, record: FileRecoveryRecord):
   let parent = file.root;
   for (const part of relative(file.root, dirname(file.path)).split(sep).filter(Boolean)) {
     const next = join(parent, part);
-    try { mkdirSync(next); flushBundleDirectory(parent); }
+    try { mkdirSync(next); flushDirectory(parent); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     const info = lstatSync(next);
     if (!info.isDirectory() || info.isSymbolicLink()) throw unsafe();
@@ -159,10 +155,10 @@ export function stageBundleFile(file: MutationFile, record: FileRecoveryRecord):
       offset += written;
     }
     const mode = record.afterMode ?? record.mode;
-    if (mode !== null) chmodSync(stage.path, mode);
+    if (mode !== null) fchmodSync(fd, mode);
     fsyncSync(fd);
   } finally { closeSync(fd); }
-  flushBundleDirectory(parent);
+  flushDirectory(parent);
 }
 
 export function publishStagedBundleFile(record: FileRecoveryRecord, boundary?: (phase: 'file_replaced' | 'directory_flushed') => void): void {
@@ -174,11 +170,12 @@ export function publishStagedBundleFile(record: FileRecoveryRecord, boundary?: (
     const stage = record.staging?.publication;
     if (!stage) throw unsafe();
     const staged = readBundleFile(stage.path, record.root);
+    const mode = record.afterMode ?? record.mode;
     if (!staged || staged.bytes.byteLength !== stage.bytes || sha256(staged.bytes) !== stage.hash
-      || stage.hash !== record.afterHash || staged.mode !== (record.afterMode ?? record.mode)) throw unsafe();
+      || stage.hash !== record.afterHash || mode === null || !sameFileMode(staged.mode, mode)) throw unsafe();
     renameSync(stage.path, record.path);
   }
   boundary?.('file_replaced');
-  flushBundleDirectory(dirname(record.path));
+  flushDirectory(dirname(record.path));
   boundary?.('directory_flushed');
 }

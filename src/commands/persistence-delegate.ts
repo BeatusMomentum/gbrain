@@ -6,20 +6,33 @@ import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { PersistenceIpcTransportError } from '../core/persistence/ipc.ts';
 import { RemoteMcpError } from '../core/mcp-client.ts';
+import { getCliOptions } from '../core/cli-options.ts';
+import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
+import { acceptPendingRequested, pendingReceiptOf, pollCommand, WRITE_EXIT_DOCS, writeErrorExitCode } from '../core/persistence/write-wait.ts';
 
 export async function reportPersistenceCliError(error: unknown, json = false,
   out: (payload: string) => Promise<void> = writeStdoutFinal): Promise<boolean> {
   if (!(error instanceof OperationError || error instanceof PersistenceIpcTransportError
     || error instanceof RemoteMcpError && (error.detail?.request_id || error.detail?.write_request))) return false;
   const detail = error.toJSON();
-  if (json) await out(JSON.stringify(detail, null, 2) + '\n');
-  console.error(error instanceof OperationError || error instanceof RemoteMcpError
-    ? `Error [${'write_error' in detail && detail.write_error || detail.error}]: ${detail.message}` : error.message);
+  // #5232: an admitted pending write is not a failure; it exits
+  // PENDING_WRITE_EXIT_CODE (0 with --accept-pending) and names how to poll.
+  const pending = pendingReceiptOf(error);
+  const acceptPending = acceptPendingRequested(getCliOptions().acceptPending);
+  if (json) await out(JSON.stringify(pending ? { ...detail, request_id: pending.request_id, state: pending.state,
+    poll_command: pollCommand(pending.request_id) } : detail, null, 2) + '\n');
+  console.error(pending ? `Pending [write_pending]: ${detail.message} It may still commit.`
+    : error instanceof OperationError || error instanceof RemoteMcpError
+      ? `Error [${'write_error' in detail && detail.write_error || detail.error}]: ${detail.message}` : error.message);
   if (detail.suggestion) console.error(`Fix: ${detail.suggestion}`);
   const receipt = 'write_request' in detail ? detail.write_request : undefined;
   const requestId = receipt?.request_id ?? ('request_id' in detail ? detail.request_id : undefined);
   if (requestId) console.error(`Request: ${requestId}${receipt ? ` (${receipt.state})` : ''}`);
-  setCliExitVerdict(1);
+  if (pending) {
+    console.error(`Poll: ${pollCommand(pending.request_id)}`);
+    if (!acceptPending) console.error(`Exit ${PENDING_WRITE_EXIT_CODE}: accepted, not yet committed. Wait longer with --wait <seconds>, or pass --accept-pending to exit 0 (${WRITE_EXIT_DOCS}).`);
+  }
+  setCliExitVerdict(writeErrorExitCode(error, acceptPending));
   return true;
 }
 

@@ -1413,7 +1413,7 @@ are one principal. See [shared brain skills](shared-brain-skills.md).
 
 A **profile grants authority**. A **surface selects visible tools**. Full surface does not bypass a grant, and `admin` does not imply delegation, the named shared-skill scopes, or owner dashboard/client-management authority. Starter includes authorized skill discovery and membership; the exact seven-tool `verbs` surface is memory-only. Thin CLI adapters use the full surface while retaining their source, operation, and write restrictions. Direct local CLI access is trusted access to the local computer; OAuth profiles do not confine a local shell.
 
-New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them. Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
+New grants snapshot operation names and source access. A later server upgrade does not silently give a snapshot-bound client new operations. Explicitly regrant to include them: `gbrain auth rescope-client <client_id> --allowed-operations …` for OAuth clients, or `gbrain auth rescope-token <name> --refresh-operations` (preview) then `--add <op,...>` for legacy tokens. A `bootstrap harness` re-run carries the replaced token's grants and does not widen its snapshot ([legacy token grants](../mcp/ADMIN.md#legacy-token-grants)). Archived sources are excluded. Legacy clients with a `NULL` operation snapshot retain their prior operation behavior.
 
 Snapshot-bound clients write through approved MCP operations such as `remember`, `capture`, or `put_page`. They cannot use the legacy `POST /ingest` webhook, whose queued writes do not yet enforce operation snapshots. Existing webhook clients with a `NULL` snapshot keep their legacy behavior.
 
@@ -3971,7 +3971,7 @@ Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 | Concurrency | Single process | Connection pooling |
 | Backups | Manual (file copy) | Managed by Supabase |
 
-**Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline, facts) and imports into Supabase. Config rows copy in full minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
+**Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline, facts) and imports into Supabase. Config rows copy in full minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. `gbrain migrate --to pglite` goes the other direction. The copy is lossless for what it carries, but it refuses two kinds of brain: a managed brain (`writer_coordinator_required`, "cannot mutate a managed brain through the legacy writer") and any brain with durable write history, fact withdrawals or canonical worktree ownership (rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees`), because the copier cannot carry request IDs, withdrawals or ownership. A brain that has saved memory through the write coordinator (`remember`, `put_page` from an agent or a resident `gbrain serve`) has that history, so in practice `migrate --to` works only for brains that never used it. For those brains, keep the datastore and repair forward (`gbrain doctor`, `gbrain repair`) instead of migrating, and choose Postgres up front if you expect 1000+ files or several machines. An engine move that preserves request IDs, withdrawals, attribution, grants and ownership is planned, not shipped.
 
 The migration and the autopilot daemon do not race: `migrate --to` claims a
 cooperative pause marker before touching the target. The marker doubles as a
@@ -4194,7 +4194,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS |
 | `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
 | `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
-| `pool_exhausted` | 53300 / session-slot exhaustion — `export GBRAIN_POOL_SIZE=2` guidance |
+| `pool_exhausted` | 53300 / session-slot exhaustion — [pool sizing](#pool-sizing) guidance: `export GBRAIN_POOL_SIZE=6` per long-running process, fewer processes |
 | `conn_refused` | ECONNREFUSED — docker-start arm for gbrain's own container; pooler rewrite for Supabase direct URLs |
 | `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent + Supabase suggests a paused project |
 | `network_unreachable` | ENETUNREACH/ETIMEDOUT — often an IPv6-only direct host; session-pooler rewrite |
@@ -4203,6 +4203,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `db_missing` | 3D000 — the named database does not exist |
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
+| `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 
 The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has
@@ -4227,6 +4228,87 @@ restores die-on-startup. Scope: Postgres startup failures only — PGLite startu
 keep die-on-startup (that lane's repair is `gbrain pglite-repair`), and
 mid-session outages ride the engine's own reconnect plus the per-call
 classified envelopes.
+
+### Pool sizing
+
+<a id="pool-sizing"></a>Each gbrain process opens its own ordinary pool of
+`GBRAIN_POOL_SIZE` connections (default 10; environment variable only, no
+config key). A long-running process (`gbrain serve`, `gbrain autopilot`,
+`gbrain jobs work`) needs at least **6**: two for write publication, one for the
+idle work probe, one each for the projection and effects workers, and one for
+reads and tool calls. Below that, boot or projection draining stalls under
+traffic. One-shot CLI commands can use `GBRAIN_POOL_SIZE=2`.
+
+Size the pooler for every process at once:
+
+```
+long-running processes x GBRAIN_POOL_SIZE
+  + processes with GBRAIN_DIRECT_DATABASE_URL x GBRAIN_DIRECT_POOL_SIZE (default 3)
+  + one-shot commands running at the same time x their pool
+  <= the pooler's client limit (Supabase Supavisor: the project's pool_size)
+```
+
+When the sum does not fit, run fewer long-running processes (for example one
+shared `gbrain serve --http` instead of one stdio `serve` per agent session),
+or raise the pooler's limit. Do not lower a long-running process below 6.
+`pool_exhausted` errors (SQLSTATE `53300`) and the
+[serve boot timeout](#serve-boot-timeout) print this guidance.
+
+<a id="serve-boot-timeout"></a>**`serve_boot_timeout`** (stderr, exit 1).
+`gbrain serve` did not finish booting within `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
+(default 60; 0 disables), so it released the database and exited. The line
+names the boot phase that never finished (`source_preflight`,
+`writeback_config`, `mcp_connect`, `source_scope`, `persistence_consumer`,
+`resolve_ipc_bind`, `startup_sweep`) and the pool pressure
+(`pool=<tracked checkouts>/<pool max>`). When the pool is below 6 or saturated,
+the fix is `export GBRAIN_POOL_SIZE=6` plus pooler sizing as above; otherwise
+check the configured provider endpoints for the named phase, or raise the
+timeout.
+
+### Pool and transaction diagnostics
+
+These warn lines and errors come from the Postgres engine's connection pools.
+Each one names a stable code, its cause, a command and this anchor.
+
+<a id="pg-connection-poisoned"></a>**`pg_connection_poisoned`** (warn).
+A pooled connection came back to the pool inside a transaction (ReadyForQuery
+status `T`) or a failed one (`E`), usually because a caller released a reserved
+connection without `COMMIT` or `ROLLBACK`. The driver terminates that connection
+instead of reusing it, so later statements never run inside the leftover
+transaction and never fail with SQLSTATE `25P02`. Queued statements move to a
+fresh connection. The line names the status byte and the pool (`read` or
+`direct`) and carries no query text. `getPoolDiagnostics().poisonedDiscards`
+counts discards per engine. There is no opt-out. Nothing needs to be repaired;
+if the line repeats, run `gbrain doctor --json` and report the warn lines with
+the operations that preceded them. A pool created with `max: 1` keeps the
+driver's documented single-connection idiom (`BEGIN` as an ordinary query)
+for unreserved statements.
+
+<a id="backfill-rollback-failed"></a>**`backfill_rollback_failed`** (error).
+A `gbrain backfill` batch failed, and its `ROLLBACK` failed too. The run stops
+rather than retrying on a connection whose transaction state is unknown; the
+driver discards that connection. Nothing from the batch was committed and the
+checkpoint did not advance. The message names both errors (redacted, at most
+200 characters each). Fix the cause they name, then run
+`gbrain backfill <kind> --resume`.
+
+<a id="persistence-consumer-log"></a>**`[persistence] phase=<phase> reason=<code>`**
+(stderr). The resident write consumer could not finish a phase. `reason` is
+the SQLSTATE (for example `53300` when a pooler's client limit is reached),
+a write-error code, `storage_error`, or `deadline_exceeded` when the phase
+overran its five-second budget. `message` is the redacted error text, one line,
+at most 200 characters. Connection-wait evidence follows on Postgres:
+`first_conn_ms` is the time from phase start until the phase obtained a
+connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
+one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
+`loop_lag_ms` is the longest event-loop delay during the phase (a busy or
+starved process). The same fields appear in the consumer's status snapshot
+under `phase`. Unfinished work stays tracked and is retried; nothing is lost. Run `gbrain sources writer status --json` to see what is waiting. The
+line is rate-limited (one per second, one per phase and code every 30 seconds).
+An idle consumer keeps one ordinary-pool connection for its work probe and
+never holds a direct or session-pooler connection, so a
+`GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
+idle `gbrain serve` processes.
 
 ## JSONB writes: never double-encode
 
@@ -6227,6 +6309,12 @@ staleness is measurable and the next sweep skips fresh pages.
 
 A sweep with a failing item is partial: it keeps its cursor and does not stamp
 the source as freshly synced, so `gbrain doctor`'s `sync_freshness` shows it.
+`gbrain sync` prints `Sync PARTIAL [connector_item_failures]` with the failed
+item count and pages written (the failure reasons print above it) and exits 1,
+on `--source`, `--all` and delegated runs alike; a connector that stops early
+without naming a cause prints `[connector_partial]` and also exits 1. Only a
+sweep cut short by `--timeout` or cancellation stays `reason=timeout` with
+exit 0, because the next sweep continues it.
 An item that fails three sweeps in a row is held (below) and the cursor moves
 past it. Autopilot keeps a source synced after its first sync; a source that
 has never synced stays idle until you run `gbrain sync --source <id>` once.
@@ -7093,6 +7181,24 @@ re-add the connector, and approve `write` on the consent screen. If the
 client is registered with `read` only, widen it first
 ([ADMIN.md](ADMIN.md#inspect-clients-and-edit-access)).
 
+<a id="stall-watchdog"></a>**`serve --http` stops answering and spins at full CPU**
+Turn on the loop-stall watchdog so a wedged process exits instead of
+spinning until the host runs out of memory:
+`export GBRAIN_SERVE_STALL_WATCHDOG_MS=60000` in the serve process's
+environment (systemd `Environment=`, launchd `EnvironmentVariables`), then
+restart `gbrain serve --http`. A watchdog thread checks the main event loop;
+when the loop has not answered for that many milliseconds, it logs and sends
+SIGTERM, and 30 seconds later, if the loop is still stuck, SIGKILL, so a
+supervisor restarts the server. It is off by default (unset or `0`); values
+below 15000 are raised to 15000. Large PGLite brains pause the loop for tens of
+seconds during checkpoints, so keep 60000 or more there. The watchdog covers
+`serve --http` only; stdio `serve` exits with its client. Before every tool
+call, `serve --http` writes `[gbrain-serve] dispatch op=<name>
+args_sha256=<16 hex>` to stderr, so the last such line before a stall names the
+request that caused it. The digest is a SHA-256 of the call's JSON arguments
+(compute it on the client to match); the arguments themselves are never
+logged.
+
 **Claude Desktop doesn't connect**
 Remote servers must be added via Settings > Integrations, NOT
 `claude_desktop_config.json`. See [CLAUDE_DESKTOP.md](CLAUDE_DESKTOP.md).
@@ -7560,6 +7666,91 @@ For `forget`, a committed source- and visibility-scoped withdrawal is the
 durable memory outcome. Its filesystem mirror may remain pending; stale
 source imports must still respect the withdrawal.
 
+<a id="cli-exit-status-for-writes"></a>
+#### CLI exit status for writes (additive)
+
+On the CLI, exit 0 means the write committed. A write that was admitted but
+has not committed when the wait ends exits **10** and prints its receipt (in
+full with `--json`, plus `poll_command`). It may still commit: poll it, or
+repeat the same command with the same `--request-id`. Exit 10 is distinct
+from 75, which `gbrain upgrade` reads as "another migration runner holds the
+lock".
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Committed (or pending with `--accept-pending`). |
+| 10 | Accepted, still pending; the receipt names the request. |
+| 1 | Not committed: a terminal failure (`conflict`, `failed`, `cancelled`), a refusal before admission (for example "the persistence owner is closing", even with `--accept-pending`), or a lost response whose submission state is unknown (`submission_status: "unknown"`, no receipt). |
+
+The verdict keys on an admitted, non-terminal receipt, never on an error code
+alone. `--accept-pending` maps pending to exit 0 for hooks and cron;
+`GBRAIN_ACCEPT_PENDING=1` is its environment equivalent and
+`--no-accept-pending` overrides it (flag beats environment).
+
+The CLI waits up to 30 s for the commit (agents keep 5 s; a connector sync
+waiting for a retained publication to recover keeps 5 s unless one of the
+settings below is set). Precedence:
+`--wait <seconds>` (0 to 600) > `GBRAIN_WRITE_WAIT_MS` > the file-plane
+`persistence.write_wait_ms` (`gbrain config set persistence.write_wait_ms
+45000`) > 30 s. The wait reaches a resident owner with each request, and over
+a thin client or an older owner the CLI replays the same request ID until the
+wait is spent. Each exchange's transport deadline is the wait plus 15 s of
+admission headroom, so a slow commit exits 10 with a receipt, not with an
+unknown submission. `--timeout` bounds one exchange: with a shorter
+`--timeout` the owner is asked to stop waiting early enough to return the
+receipt, but a remote server's own 5 s wait cannot be shortened, so keep
+`--timeout` above it.
+
+```bash
+gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 < page.md
+echo $?   # 10: accepted, not yet committed
+gbrain call get_write_request '{"request_id":"7f3c0e9a-0000-4000-8000-000000000001"}'
+gbrain put notes/example --request-id 7f3c0e9a-0000-4000-8000-000000000001 --wait 60 < page.md   # 0 once committed
+```
+
+<a id="partial-page-edits-edit_page"></a>
+#### Partial page edits: edit_page (additive)
+
+`edit_page {slug, expected_revision, edits: [{old_text, new_text}], request_id?}`
+changes part of an existing page without resending it; agents should prefer it
+over `put_page` for small changes. Read `get_page` with `include_content:true`
+and pass its `revision`. Each edit replaces `old_text` (non-empty) with
+`new_text`; 1 to 50 edits apply in order, each against the text the previous
+edit produced, and all publish together or none do. Each `old_text` must match
+exactly once in the content `get_page` returned to you. Protected takes and
+facts sections never match and are preserved in place (use the `takes_*`
+operations or `remember`/`forget`); remote callers match against their
+sanitized view, so private facts and non-world takes are never matched,
+echoed or diffed. The write goes through the same receipts, revision check,
+fences, write-through and grants as `put_page`, with revision-bound editing
+semantics: removing a materialized timeline bullet removes its timeline row.
+
+Success returns the committed receipt with the new `revision` and `diff`, a
+unified diff of your view capped at 8 KB (`diff_truncated: true` when cut).
+Refusals name the edit and never include protected text:
+
+| Error | `detail` | Fix |
+| --- | --- | --- |
+| `edit_no_match` | `edit_index=<i> match_count=0` | Copy `old_text` exactly from the current content, remembering earlier edits in the call. |
+| `edit_ambiguous_match` | `edit_index=<i> match_count=<n>` | Quote more surrounding text. |
+| `edit_protected_span` | `edit_index=<i>` | The text touches a takes or facts section; use the scoped operations. |
+| `edit_invalid` | `edit_index=<i>` when one edit is malformed | Pass 1 to 50 `{old_text, new_text}` objects with non-empty `old_text`. |
+| `revision_conflict` | `current_revision=<uuid>` | Read the page again, rebuild the edits, resend. |
+
+```json
+→ get_page {"slug": "projects/example", "include_content": true}
+← {"revision": "5d1c…", "content": "---\ntitle: Example\n---\n\n- Status: draft\n…"}
+→ edit_page {"slug": "projects/example", "expected_revision": "5d1c…",
+             "edits": [{"old_text": "- Status: draft", "new_text": "- Status: shipped"}],
+             "request_id": "0b6e…"}
+← {"state": "committed", "request_id": "0b6e…", "revision": "9a42…",
+   "diff": "--- a/projects/example.md\n+++ b/projects/example.md\n@@ -4,1 +4,1 @@\n-- Status: draft\n+- Status: shipped\n"}
+→ edit_page {"slug": "projects/example", "expected_revision": "5d1c…", "edits": [...], "request_id": "a71f…"}
+← {"error": "revision_conflict", "detail": "current_revision=9a42…", "suggestion": "Read get_page with include_content:true again, …"}
+```
+
+From the CLI: `gbrain call edit_page '{"slug":"projects/example","expected_revision":"…","edits":[{"old_text":"…","new_text":"…"}]}'`.
+
 ### context_pack(entities, budget_tokens?, since?, session_id?, include_private?) — read, zero LLM
 
 One deterministic, budget-packed bundle for a set of standing
@@ -7951,6 +8142,41 @@ If blank, set the key. Then:
 ```bash
 gbrain embed --stale
 ```
+
+### 5a. Fact and take vectors
+
+Chunk coverage says nothing about facts and takes, which are searched by vector
+too (fact dedup and consolidation, `think`, `takes search --semantic`).
+
+**Command:**
+
+```bash
+gbrain doctor --json
+```
+
+**Expected:** the `fact_take_vectors` check is `ok`. On a keyless brain
+(embeddings disabled) it reports "not applicable" and stays `ok`.
+
+**If it warns** (code `stale_vectors`): its `details` count, per source, facts
+and takes with no vector for their current text under the brain's embedding
+model, and `details.fix` lists the exact commands. Takes are repaired by the
+ordinary stale pass:
+
+```bash
+gbrain embed --stale
+```
+
+Facts are repaired per source, after a preview (paid provider calls need
+explicit authorization):
+
+```bash
+gbrain embed --facts --stale --source <source-id> --dry-run --json
+gbrain embed --facts --stale --source <source-id> --yes --max-cost-usd 1
+```
+
+If the check says the vectors were not verified (code `vectors_not_verified`),
+run `gbrain migrate embeddings --status` to see which model and width the brain
+records.
 
 ---
 
@@ -8762,6 +8988,7 @@ should also check `results[].complete`.
 | `orphan-bindings` | `orphan_persistence_bindings` | Deletes persistence source bindings whose source was removed, or that belong to an earlier incarnation of a source re-added under the same id. Releases before this one left the binding behind on `gbrain sources remove` and `gbrain sources purge`, so the re-added source read as claimed and every `gbrain sync --source <id>` failed with `writer_coordinator_required`. Bookkeeping only: no journal admission, no page or file changes, and it runs brain-wide (`--source` does not narrow it). See [orphan bindings](#orphan-bindings). | A binding that a queued, running or recovering write request of the same source incarnation still references. |
 | `embedding-effects` | `stale_embedding_effects` | Settles stale queued and failed embedding effects of committed writes, which block receipt compaction and activation: `reconciled` when current vectors pass the effect verifier, `superseded` when the page was deleted or a newer revision owns its own effect, `retry_queued` for the owner (paid; a used-up retry allowance gets one new bounded cycle per explicit apply). See [stale queued embedding effects](#stale-queued-embedding-effects). | `blocked` effects, counted by reason (`owner_unavailable`, `embedding_disabled`, `embedding_unconfigured`, `projection_pending`, `no_replacement_obligation`). |
 | `safe-chunks` | `safe_index_pending` (also `contextual_retrieval_coverage`, `details.unsealed_pages`) | Rebuilds the chunks of markdown and code pages indexed before the safe-chunk fence, which remote and MCP search withhold. It rebuilds projections only: no page write, no new page version and no request ID. Vectors whose embedding input did not change are kept; the rest are embedded unless you pass `--no-embed` or no embedding model is configured. | `code_without_source_path`: code pages with no recorded file to re-chunk. `unsupported_page_kind`: other page kinds, such as images. Their importer re-seals them. |
+| `orphan-children` | `child_table_orphans` (also a `storage_corrupt` error) | Explicit-only. Deletes rows of page child tables (chunks, versions, tags, takes, raw data, timeline, links) whose page row no longer exists, and clears dangling `links.origin_page_id` and `files.page_id` references, each in one statement that rechecks the orphan condition. See [orphan children](#orphan-children). | `torn_pages`: page rows whose stored body cannot be read (torn TOAST). The preview names them; the repair never changes them. |
 | `contextual-mode` | `contextual_retrieval_coverage` (pages with no recorded mode) | Stamps the contextual retrieval mode on markdown pages imported without one (for example by a large `--no-embed` sync or a connector source before this release), exactly as a fresh import of the page would: the page, source and brain settings decide, and the per-chunk synopsis tier lands at the free title tier. It rebuilds projections only: no page write, no new page version and no request ID. A page whose stored vectors already match the stamped convention keeps them and queues no re-embedding; a page whose embedding input changes has only those vectors cleared and is re-embedded once, unless you pass `--no-embed`. | `unsealed_projection`: pages whose chunks lag their text; `gbrain embed --stale` or `safe-chunks` seals them first, and the next run stamps them. `embed_skip`: pages marked to skip embedding keep their stored vectors and are not stamped. |
 gbrain repair google-file-modes --apply             # explicit-only: runs only when named
 gbrain repair --all --apply                    # every automatic kind in order
@@ -8956,6 +9183,40 @@ gbrain doctor                            # orphan_persistence_bindings is ok
 Do not delete binding rows by hand: the repair rechecks, in the same
 statement, that the binding is still orphaned and that no pending write
 request uses it.
+
+### Orphan children
+
+**Say to your agent:** *"gbrain fails with `unexpected chunk number` or
+`tuple concurrently deleted`, or doctor warns `child_table_orphans`. Fix it."*
+
+These errors (SQLSTATE XX000) mean stored data is damaged, usually after a
+crash or a full disk. Child rows can outlive their page row, and a page body
+can be torn, so every command that reads it fails. Preview first; it changes
+nothing:
+
+```bash
+gbrain repair orphan-children            # orphan child rows per table, plus torn_pages
+gbrain repair orphan-children --apply    # deletes the orphan rows, clears dangling references
+gbrain doctor                            # child_table_orphans is ok
+```
+
+The preview also reads every page body and lists the rows it cannot read
+(`torn_pages`, with page id, source and slug). The repair never changes those
+rows. Recover them from a backup, or create a fresh brain and sync it again
+from its source files. Until then, a write that names the revision of a page
+the upgrade could not backfill is refused with `revision_backfill_pending`;
+`gbrain apply-migrations --yes` resumes that backfill and prints its progress.
+
+### Timeline history scan coverage
+
+Doctor's `timeline_history` check classifies at most 2,000 pages or 10
+seconds of work per run. On a larger brain each run continues where the last
+one stopped (the cursor is kept in the config row
+`doctor.timeline_history.scan:<sources>`), so a few consecutive `gbrain doctor`
+runs finish a full pass and report exact counts. While the next pass is in
+progress, a clean finished pass keeps the check `ok` until a newer timeline row
+is written. A run that has neither says `scan incomplete` and is a lower bound;
+`gbrain repair timeline` (preview) counts the whole brain in one go.
 
 ### Stale atoms
 
@@ -9659,12 +9920,17 @@ of making a duplicate.
 | `targets_parked` (doctor: `parked_effects`) | effect `error_code` | A Git backup or withdrawal target failed five times in a row and was set aside so the other pages keep committing. An effect `error_code` of `git_index_stale` means an index lock older than 10 minutes blocks the checkout: `.git/index.lock` in it (`git -C <checkout> rev-parse --git-path index.lock` for a linked worktree). Remove it only if no git command is running there, then run the `retry-effects` command. A fresher lock (`git_index_locked`) is retried as contention and never parks. The page write itself committed; its Git backup or withdrawal is incomplete. Contention, dependency waits, shutdown and transient database errors never count toward the five. | `gbrain sources writer status <source>`, fix the cause it names, preview with `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, then run it without `--dry-run`. Each run grants one more attempt per parked target; a target that fails again parks again. |
 | <a id="writer_admin_locked"></a>`writer_admin_locked` | `writer_admin_locked` | The operator set the brain's writer admin lock (`gbrain sources writer lock`), so writer claim, activate, transfer prepare and transfer accept refuse for every caller. Ordinary writes are not affected. | Agents: stop and ask the operator; do not unlock it yourself. The operator runs, on the brain host, `gbrain sources writer unlock`, re-reads `gbrain sources writer status <source> --json`, administers, then `gbrain sources writer lock` again. See the [writer admin lock](../architecture/topologies.md#writer-admin-lock). |
 | <a id="writer_not_quiesced"></a>`writer_not_quiesced` | `writer_not_quiesced` | Activation found an older writer, a legacy lock, or queued, running or recovering work. When work blocks it, the message names the blocking effect id, kind, source, page and request id. | Stop the writers named in the [claim and activate runbook](../architecture/topologies.md#claim-and-activate-runbook), inspect the named work with `gbrain sources writer status <source> --json`, let it finish, then retry. A committed write whose embedding effect is stuck queued or failed is settled by `gbrain repair embedding-effects --source <source>` (preview), then the same command with `--apply`; see [stale queued embedding effects](repair.md#stale-queued-embedding-effects). |
+| <a id="activation_source_path_missing"></a>`source_path_missing` | `source_changed` | `gbrain sources writer activate` (with or without `--dry-run`) found a source whose recorded `local_path` no longer exists on this host, for example a checkout that lived in a temporary directory. Activation cannot verify that source's canonical directory, so nothing changed. The message names the source and the missing path. Claiming the source at another directory does not help while the stale path stays recorded. | Run the command the suggestion prints: `gbrain sources set-path <source> <directory>` to point the source at its checkout (the suggestion fills in the claimed directory when the source is claimed), or `gbrain sources remove <source> --confirm-destructive` when the source is no longer needed (`gbrain sources archive <source>` keeps a 72-hour grace period). Then `gbrain sources writer activate --confirm-quiesced --dry-run` and activate. |
+| <a id="source_checkout_missing"></a>canonical checkout missing | `recovery_required` | A managed source lifecycle command (`gbrain sources archive`, `remove`, `purge`, `restore`, `rebind`) found that the source's canonical checkout directory was deleted out of band. A source with **no pages** that is the **only** source on that checkout is retired anyway: archive, remove and purge succeed and the receipt records `retired_without_checkout` with the missing path. Otherwise nothing changed; the message names the path, the page count and how many other sources share the checkout. Recreating an empty directory at the same path does not help (its physical identity differs). | Restore the checkout (for example from a backup) and retry. If it is gone for good, switch the brain to classic mode with `gbrain sources writer deactivate --dry-run`, then the printed `apply_command` (see the [deactivate runbook](../architecture/topologies.md#deactivate-runbook)), and retire the source there with `gbrain sources archive <source>`. |
 | <a id="migrations_running"></a>`migrations_running` | `migrations_running` (exit 75) | `gbrain apply-migrations` (or the post-upgrade step of `gbrain upgrade`) found another runner holding the brain's orchestration lock and stopped before touching the migration ledger, so migrations never run twice in parallel. The message names the holder's host and pid. A holder that died is taken over automatically on the next run. `gbrain upgrade` reports this as `Migrations: running`, not as a failed upgrade. | Wait for the other run to finish; `gbrain doctor` shows migration progress. Then `gbrain apply-migrations --yes` confirms everything is applied. |
 | <a id="writer_deactivate"></a>`writer_deactivate` blockers | `writer_not_quiesced`, `writer_admin_locked`, `writer_admin_state_changed`, `writer_lock_unavailable` | `gbrain sources writer deactivate` found pending work (a queued, running or recovering write, a topology change or effect that is not settled, a held connector item, or a live connector or maintenance lease), the writer admin lock, a changed admin state, or a local process holding a worktree lock. Nothing changed. The suggestion names each blocker and its exit. | Run `gbrain sources writer deactivate --dry-run` for the full list, run each named exit (`gbrain cancel-write-request <request_id>`, `gbrain sync --source <id> --no-pull --retry-failed`, `gbrain repair embedding-effects --source <id>`, `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, `gbrain sources writer unlock`, `gbrain sources retry-held <id>`), then deactivate again with a fresh `--expected-state` from `gbrain sources writer status --json`. See the [deactivate runbook](../architecture/topologies.md#deactivate-runbook). |
 | <a id="extract-timeline-refused"></a>timeline extract refused | the printed code, usually `writer_coordinator_required` | `gbrain extract timeline --source db` (or a timeline-only `gbrain extract timeline` on a managed brain) could not write a page's timeline rows. It prints `refused: <code>; nothing written; existing timeline rows are untouched` per page, a summary of written versus refused, and exits 1. The rows import already stored for each page stay as they were. | `gbrain extract --stale` (add `--source-id <id>` when you scoped the run) publishes links and missing timeline rows on the managed path. If it refuses too, follow the row for the printed code. |
 | unknown option (repair) | `invalid_params` | `gbrain repair` refuses any option it does not list, so a mistyped flag or `--max-usd` never runs a repair silently without it. | Fix the option (`gbrain repair --help`). To cap paid repair work, run `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. |
 | <a id="colon_slug_windows_write_through"></a>`colon_slug_windows_write_through` | `colon_slug_windows_write_through` | A page slug such as `calendar:abc` is valid, but its canonical file name would contain `:`, which Windows cannot store (it names an alternate data stream). On Windows, a write that would publish that file is refused before admission, and `gbrain sync` skips each such file with this reason instead of failing the run. Database-only writes of the same slug (no repo configured, `sync.write_through` off, an unbound source, or a [read-only mirror](multi-source-brains.md#read-only-mirror-sources) source and pages created while it was one) still succeed, and macOS and Linux are unchanged. | Use a slug without `:` (the suggestion names one), or write the page from a macOS or Linux host that owns the source. For a skipped sync file, rename it without `:` on a macOS or Linux checkout, commit, then run `gbrain sync --source <source> --no-pull` on the Windows host. |
 | <a id="embedding_auth_failed"></a>`embedding_auth_failed` | `embedding_auth_failed` | The embedding provider rejected the configured key (HTTP 401 or 403). Printed once per process on stderr, naming the key source in effect: an environment variable (for example `OPENAI_API_KEY`, which wins over the config key) or the config key in `~/.gbrain/config.json`. No key or part of one is printed. | Environment key in effect but the config key is right: remove the variable from the environment of the process that reported it (shell profile, `~/.gbrain/.env`, or a daemon's service definition) and restart that process. Environment key intended: replace it with a valid key, restart, and run `gbrain config unset openai_api_key` (or the matching key). Config key in effect: `gbrain config set openai_api_key <valid key>`. Then `gbrain embed --stale` embeds what was saved meanwhile. `gbrain doctor` (`embedding_key_source`) shows the key source in doctor's own environment. |
+| <a id="managed_pull_skipped"></a>`managed_pull_skipped` (cycle warn); doctor `sync_freshness` "upstream unknown" or "upstream N commit(s) ahead" | `managed_pull_skipped` | A managed brain never runs `git pull` inside a cycle: Git pull needs an explicit drained maintenance window, so an explicit `gbrain sync` without `--no-pull` is refused with `writer_coordinator_required`. An unattended cycle asked to pull (autopilot passes `pull: true`, `gbrain dream --pull`) instead syncs the checkout as it is and reports it: the sync phase result carries `details.upstream_refresh` (`pulled`, `failed`, `skipped_managed` or `not_requested`), and when the checkout tracks an upstream the phase is `warn` with `details.warning` (`code`, `cause`, `fix`, `docs`). Every sync also records the checkout's last upstream observation (the upstream commit, when it was last fetched or pushed, and how many upstream commits the synced commit lacks) in the source row. Doctor `sync_freshness` reports that separately from the local projection: a source with a `remote_url` whose observation is missing or older than 24 hours is "upstream unknown", and any source whose observation saw upstream commits it has not synced is "behind"; neither is reported fresh. `details.upstream_unknown_count` and `details.upstream_behind_count` count them. | For a source whose remote is authoritative (it never receives brain writes you need as files), make it a [read-only mirror](multi-source-brains.md#read-only-mirror-sources) once, then advance it and sync without pulling: `gbrain sources mirror-readonly <source> && git -C <checkout> pull --ff-only && gbrain sync --source <source> --no-pull`. The printed `fix` fills in the real source and checkout. On a brain that is not managed, `gbrain sync --source <source>` pulls and records the observation. A coordinated in-gbrain fast-forward refresh is planned; until then this is the supported sequence. |
+| <a id="facts_absorb_write_refused"></a>`facts_absorb_write_refused (<code>)`; `ingest_log` `write_refused: <code> …` | `facts_absorb_write_refused` | A durable `facts-absorb` job extracted facts but the write path refused to store them, for example `writer_coordinator_required` because the entity's Markdown file sits in a claimed canonical worktree before `sources writer activate`, or `permission_denied`, `invalid_params` or `writer_registration_required`. These refusals do not change on retry, so the job goes straight to `dead` on its first attempt instead of re-running inference; on a brain that is not yet activated, a job whose source root is a claimed worktree is refused before extraction starts, so it makes no model call; the `facts:absorb` row in `ingest_log` (and doctor `facts_extraction_health`) records `write_refused` with the real code, not a provider failure. The source page itself was already saved. | Fix the named cause first: `gbrain sources writer status <source>`, then finish the [claim and activate runbook](../architecture/topologies.md#claim-and-activate-runbook) for a claimed worktree, or fix the grant. Then `gbrain jobs retry <job id>` (the error names the id). |
+| <a id="no_pricing"></a>`no_pricing` | `no_pricing` | A cost cap you set (`--max-cost`, `--max-usd`, `--max-cost-usd`, or an explicit cap in config such as `cycle.extract_atoms.budget_usd`) cannot be enforced, because gbrain has no price for the model the run was about to call. The run stops before that call. Under a default cap an unpriced model warns and runs instead. The message names the model, provider and kind, and JSON output carries the same guidance as fields: `code`, `model`, `provider`, `kind`, `units`, `lookup`, `register_command`, `register_scope` and `docs`. | Look up the provider's current price for the model, for example by searching the web for its pricing page. A chat model needs USD per 1M input tokens and USD per 1M output tokens; an embedding or reranker model needs USD per 1M tokens. On the brain host, run `gbrain pricing set <model> --input <usd> --output <usd> --source <pricing-page-url>` (or `--rate <usd>`), then retry. An agent connected over MCP cannot register prices: give the command to the brain's operator. See [registering a model price](../operations/spend-controls.md#registering-a-model-price). |
 
 ### Other error codes
 
@@ -9676,11 +9942,15 @@ a receipt can report has a row here.
 | `writer_pool_capacity` | `writer_pool_capacity` | The canonical owner has no free publication slot right now; the write stays queued. | Wait and poll the receipt (`gbrain write-request <id>`). If it persists, check `gbrain sources writer status <source>`. |
 | `revision_required` | `revision_required` | The operation must be bound to a revision you reviewed (for example `--if-version` or `expected_revision`), and none was given. | Preview first, then repeat with the revision the preview printed. |
 | `revision_conflict` | `revision_conflict` | The page changed after the revision this write was bound to. Nothing was overwritten. | Re-read the page, merge your change, and save with the new revision. |
+| `revision_backfill_pending` | `revision_backfill_pending` | The page was written before page revisions existed (an upgrade from below schema v150) and the resumable revision backfill has not reached it, so it has no revision to bind to. Its revision reads as `backfill_pending`, never a UUID. Nothing was written. | Resume the backfill with `gbrain apply-migrations --yes` (it prints its progress). If it reports rows it could not update, run `gbrain repair orphan-children` to preview orphaned child rows and torn page bodies ([orphan children](repair.md#orphan-children)). |
 | `idempotency_conflict` | `idempotency_conflict` | The `request_id` was already used for a different target, content or protocol. | Use a new `request_id` for a different write; reuse an ID only to replay the same write. |
-| `write_pending` | `write_pending` | The write was accepted but has not committed yet, or its acknowledgment was lost. It keeps its request ID. | Poll `gbrain write-request <id>`, or repeat the same command with the same options to resume. |
+| <a id="write_pending"></a>`write_pending` | `write_pending` (CLI exit 10) | The write was accepted but has not committed yet. It keeps its request ID and may still commit. The CLI exits 10, not 1; a lost acknowledgment with no receipt is `submission_status: "unknown"` and exits 1. See [CLI exit status for writes](../protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes). | Poll `gbrain call get_write_request '{"request_id":"<id>"}'`, or repeat the same command with the same `--request-id` and a longer `--wait <seconds>`. Scripts that only need the write admitted pass `--accept-pending` (or `GBRAIN_ACCEPT_PENDING=1`) to exit 0. |
+| <a id="invalid_write_wait"></a>`invalid_write_wait` | `invalid_write_wait` | `GBRAIN_WRITE_WAIT_MS` or `persistence.write_wait_ms` is not a whole number of milliseconds from 0 to 600000. Nothing was written. | `unset GBRAIN_WRITE_WAIT_MS` (or set it to e.g. `30000`), or `gbrain config set persistence.write_wait_ms 30000`. |
+| <a id="edit_page"></a>`edit_no_match`, `edit_ambiguous_match`, `edit_protected_span`, `edit_invalid` | same | An `edit_page` edit matched nothing, matched more than once, touched a protected takes/facts section, or was malformed. `detail` names `edit_index` (and `match_count`). Nothing was admitted. | Re-read `get_page include_content:true`, fix the named edit and resend with a **new** request ID. See [partial page edits](../protocol/MEMORY_VERBS_v1.md#partial-page-edits-edit_page). |
 | `storage_error` | `storage_error` | The write did not commit for a reason with no more specific code. | Inspect the durable request with `gbrain write-request <id>` on the source host and follow its message. |
 | `cancelled` | `cancelled` | The request was cancelled before it committed. Nothing was written. | Submit the write again if you still want it. |
 | `permission_denied` | `permission_denied` | The caller is not allowed to make this write (a trust boundary, slug fence or lock). | Run it as a caller that has the permission, usually the trusted local CLI on the brain host. |
+| <a id="no_source_grant"></a>`fence=no_source_grant` | `permission_denied` | The legacy bearer token's source grant is an explicit empty list (`gbrain auth rescope-token <name> --sources none`), so it reads and writes no source. A write accepted before that change is refused at publication. It never falls back to the `default` source. | On the brain host: `gbrain auth rescope-token <name> --sources <id,...>` (see [legacy token grants](../mcp/ADMIN.md#legacy-token-grants)), then retry with the **same** request ID. |
 | `scope_denied` | `scope_denied` | The caller's token or grant does not cover this operation or source. | Use a client with the needed scope and source grant. |
 | `not_found` | `not_found` | The request, source or object named by the call does not exist. | Check the id; `gbrain sources list` lists sources. |
 | `page_not_found` | `page_not_found` | The target page does not exist in that source, or disappeared during the write. | Check the slug and `--source`, then retry. |
@@ -9690,7 +9960,7 @@ a receipt can report has a row here.
 | `writer_registration_required` | `writer_registration_required` | The source needs an active canonical owner before this operation, for example activation. | Claim the source on its owner host (`gbrain sources writer status <source>` names the next step). |
 | `writer_identity_invalid` | `writer_identity_invalid` | This host's local writer identity file is unreadable or has an unknown format. | Run `gbrain doctor` on the host; it names the identity file to repair. |
 | `writer_not_initialized` | `writer_not_initialized` | The brain has no persistence identity yet, usually because migrations have not run. | Run `gbrain apply-migrations --yes` on the brain host. |
-| `writer_coordinator_required` | `writer_coordinator_required` | The operation needs managed persistence (the write coordinator) and this brain or call path does not use it. | Run the operation through the command the message names, on a managed brain. |
+| `writer_coordinator_required` | `writer_coordinator_required` | The operation needs managed persistence (the write coordinator) and this brain or call path does not use it. A file write refused because the path sits in a managed canonical worktree names that worktree in the message, and its `detail` reads `root=<directory> source=<id or unknown> evidence=<marker file, managed-root registry or source binding>`. | Run the operation through the command the message names, on a managed brain. When the brain is not managed and the evidence is an ownership file (`.gbrain-owner.json`, `.gbrain-owner-<hash>.json`, `.gbrain-managed`), check it with `gbrain sources writer status` before removing anything: a half-finished claim is finished or rolled back through writer administration. |
 | `fact_already_expired` | `fact_already_expired` | The fact the write targets is already expired or withdrawn. | Nothing to do; list active facts to find the current one. |
 | `source_writeback_required` | `source_writeback_required` | The write needs a correction to the source's repository files, and this caller or profile never writes them. | Make the correction in the source repository, then sync. |
 | `writer_upgrade_required` | `writer_upgrade_required` | The brain's schema is older than this operation needs. | Run `gbrain upgrade` (or `gbrain apply-migrations --yes`) on the brain host. |

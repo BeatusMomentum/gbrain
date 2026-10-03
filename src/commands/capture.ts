@@ -54,6 +54,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { parseMutationPrecondition } from '../core/persistence/preconditions.ts';
 import { isWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
+import { currentCliWriteWait } from '../core/persistence/write-wait.ts';
 import { maybeDelegateLocalOperation } from '../core/persistence/local-client.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
@@ -383,7 +384,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
     };
     let result: Record<string, unknown>;
     if (isThinClient(cfg)) {
-      const raw = await callRemoteTool(cfg!, 'capture', params, { timeoutMs: getCliOptions().timeoutMs ?? 30_000 });
+      const raw = await callRemoteTool(cfg!, 'capture', params, { timeoutMs: getCliOptions().timeoutMs ?? 30_000, writeWaitMs: currentCliWriteWait().waitMs });
       result = unpackToolResult<Record<string, unknown>>(raw);
     } else {
       const cli = getCliOptions();
@@ -400,7 +401,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
         if (!captureOp) throw new OperationError('unavailable', 'The capture operation is missing; upgrade this installation.');
         const ctx: OperationContext = {
           engine, config: cfg ?? { engine: 'pglite' }, sourceId: resolvedSourceId,
-          remote: false, dryRun: false,
+          remote: false, dryRun: false, writeWaitMs: currentCliWriteWait().waitMs,
           logger: {
             info: (message: string) => process.stderr.write(`[capture] ${message}\n`),
             warn: (message: string) => process.stderr.write(`[capture] WARN: ${message}\n`),

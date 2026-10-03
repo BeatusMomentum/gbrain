@@ -201,6 +201,14 @@ and do not disable guards or change ownership as part of rollback.
 | `failed` | The request ended without commitment. |
 | `cancelled` | Cancelled before publication began. |
 
+On Windows, publication flushes each staged file through the handle it was
+written with and skips the directory flush Windows does not provide. Older
+releases flushed through a read-only handle, which Windows refuses (`EPERM`), so
+a restoration could stay `recovering` and hold every later write on that source
+behind it. After upgrading, the owner retries it on its own; confirm with
+`gbrain doctor --json` (`canonical_content_writes` reports `ok` once recovery
+has drained).
+
 Receipts include `request_id`, `state`, and `retry_after_ms`, with optional
 revision, outcome, persistence status, and timestamps. Terminal receipts have
 `retry_after_ms: null`. Private queued content, credential hashes, and recovery
@@ -236,7 +244,13 @@ was saved. If receipt helpers aren't available, repeat the same verb and origina
 arguments with that UUID. When `next_action` is `inspect_owner`, ask the operator
 to inspect first instead of repeatedly submitting mutations.
 
-`write_pending` means accepted work remains outstanding. `owner_unavailable`
+`write_pending` means accepted work remains outstanding; the CLI exits 10 for it
+(0 with `--accept-pending`) and waits 30 s by default (`--wait <seconds>`,
+`GBRAIN_WRITE_WAIT_MS`, `persistence.write_wait_ms`); see
+[CLI exit status for writes](../protocol/MEMORY_VERBS_v1.md#cli-exit-status-for-writes).
+The admin health indicators count it as `accepted_pending`, outside the error
+rate, with `pending_writes`, `oldest_pending_write_age_seconds` and
+`pending_writes_later_failed`. `owner_unavailable`
 and `writer_lock_unavailable` do not authorize a competing owner or a fresh
 request ID. `queue_capacity` refuses additional admission without evicting
 existing requests. `revision_required`, `revision_conflict`,

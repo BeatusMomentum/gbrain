@@ -16,6 +16,18 @@
 
 **`gbrain doctor` warns `timeline_orphans`?** Timeline rows from an earlier version of a page are still in the database after the dated bullet was edited or deleted. Preview with `gbrain extract timeline --prune-orphans --dry-run`, then remove them with `gbrain extract timeline --prune-orphans` (add `--source-id <id>` to limit it). Rows no page version ever produced, such as enrichment and meeting fan-out, are kept.
 
+**A doctor check says "Not verified"?** <a id="not-verified-doctor-checks"></a>The check could not read its input, so it reports `warn` instead of `ok`; `gbrain doctor --json` carries `details.code: "not_verified"` and the underlying reason in `details.reason`. Fix the cause, then re-run `gbrain doctor`:
+
+| Check | What it could not read | Fix |
+| --- | --- | --- |
+| `multi_source_drift` | a source's `local_path` root or a directory below it (`details.unreadable_sources`), or the walk hit its bound (`details.limit` files / `details.timeout_ms`) | fix the path or permissions (`gbrain sources status`); for a large source re-run with `GBRAIN_DRIFT_LIMIT=<files> GBRAIN_DRIFT_TIMEOUT_MS=<ms> gbrain doctor` |
+| `embed_staleness` | the stale-chunk count (the embed worker's own predicate) | the reason names the database error; re-run `gbrain doctor` once it is fixed |
+| `schema_pack_consistency`, `schema_pack_source_drift` | the pages or config query, or a source's active schema pack | `gbrain schema lint --with-db` runs the same classification locally; `gbrain schema active` debugs pack resolution |
+
+`bootstrap_push_health` and `gbrain bootstrap status` report only the push record of the workspace named by this machine's bootstrap receipt; another workspace's stale or failed push is listed as such (a warn naming that workspace), never as this workspace's state. `reranker_health` auth warnings are audit-log history (`details.live_probe_performed: false`), not a live check of the key. **Behavior change:** a doctor that used to read all green can now show these warns; each one is a check that did not run.
+
+**`brain_score` shows a low "timeline density (entity and event pages)"?** The 15-point timeline component grades only linkable pages whose type's active-pack primitive is `entity` or `temporal` (people, companies, meetings, emails, events…); reference documents such as notes, writing and guides have no events and are not graded, so do not stamp "page created" rows onto them. Types the pack does not declare are still graded. Raise the score by giving those entity and event pages real timeline entries (`gbrain extract timeline`).
+
 **`gbrain doctor` warns `slug_collisions`, or sync prints slug collisions?** Two or more files in a source map to the same page slug (for example `notes/Foo Bar.md` and `notes/foo-bar.md`), and only one is indexed. Rename all but one file in each group, commit, then sync.
 
 **Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
@@ -182,3 +194,52 @@ previous statement while you report it:
 
 The guard is retired in the next release; that release prints a one-time notice
 when the inert setting is still present.
+
+## Global maintenance timeouts
+
+**Doctor warns `global_maintenance_timeouts`, or late maintenance phases
+(orphans, purge, the brain-wide embed) never seem to run?** On a large brain
+one `autopilot-global-maintenance` job may not fit every phase before its
+deadline (30 minutes by default). Each job now stops starting phases that its
+deadline would cut off and the next job resumes at that phase, so one pass can
+span several jobs; the resume point is the config row
+`autopilot.global_maintenance.progress`. A phase that was running when a job
+died is skipped for the rest of that pass so the others still run, and doctor
+warns once it has killed three jobs in a row (or the last three jobs all died
+at the deadline).
+
+1. Run the named phase in the foreground, without the job deadline:
+   `gbrain dream --phase <name>` (for example `gbrain dream --phase embed`).
+2. Give the job more time if your brain needs it:
+   `gbrain config set autopilot.global_maintenance_timeout_ms 3600000`, or set
+   `GBRAIN_GLOBAL_MAINTENANCE_TIMEOUT_MS` in the autopilot service environment
+   (the variable wins over the config key; values below 60000 are ignored).
+   Unset both to return to the default.
+3. Confirm with `gbrain doctor`: `global_maintenance_timeouts` is `ok` after the
+   next job finishes within its deadline.
+## auto_chronicle has no effect
+
+**Say to your agent:** *"Why aren't my meetings showing up as timeline events?"*
+
+`gbrain config set auto_chronicle true` is accepted, but in this version no
+write or cycle step reads it: nothing enqueues chronicle extraction, so new
+meetings and conversations are not swept into `life/events/` pages on their
+own. `gbrain doctor` reports this as the `auto_chronicle` check (code
+`auto_chronicle_no_effect`) and the advisor shows the same finding.
+
+Sweep recent meetings by hand instead. Preview first, then run it:
+
+```bash
+gbrain chronicle-backfill --dry-run
+gbrain chronicle-backfill
+```
+
+To clear the setting so the warning stops:
+
+```bash
+gbrain config unset auto_chronicle
+```
+
+The backfill is not yet idempotent, so run it when you want new events rather
+than on a schedule. Restoring the automatic trigger is tracked for a later
+release.

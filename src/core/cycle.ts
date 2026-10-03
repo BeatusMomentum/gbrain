@@ -52,6 +52,7 @@ import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
+import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts';
@@ -1222,11 +1223,13 @@ async function runPhaseSync(
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
     const sourceId = await resolveSourceForDir(engine, brainDir);
+    // #5255: managed sync refuses `git pull`; a cycle syncs local HEAD and reports it (explicit sync keeps refusing).
+    const managedPullSkipped = pull && await isManagedBrain(engine);
     const result = await performSync(engine, {
       repoPath: brainDir,
       sourceId,
       dryRun,
-      noPull: !pull,
+      noPull: !pull || managedPullSkipped,
       noEmbed: true,                       // embed is a separate phase
       noExtract: willRunExtractPhase,      // dedupe ONLY when cycle's extract phase will also run.
                                            // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
@@ -1249,16 +1252,20 @@ async function runPhaseSync(
     const uncommittedNote = uncommittedTotal > 0
       ? `; ${uncommittedTotal} uncommitted file(s) invisible to commit-driven sync — commit them or set sync.include_working_tree=true`
       : '';
+    const upstreamRefresh: UpstreamRefresh = !pull ? 'not_requested' : managedPullSkipped ? 'skipped_managed' : pullFailedPartial ? 'failed' : 'pulled';
+    const warning = managedPullSkipped ? managedPullWarning(sourceId ?? 'default', brainDir) : undefined;
+    const upstreamNote = warning ? `; upstream not refreshed (${warning.code}): ${warning.fix} (${warning.docs})` : '';
     return {
       phase: 'sync',
-      status: result.status === 'blocked_by_failures' || pullFailedPartial || uncommittedTotal > 0 ? 'warn' : 'ok',
+      status: result.status === 'blocked_by_failures' || pullFailedPartial || uncommittedTotal > 0 || warning ? 'warn' : 'ok',
       duration_ms: 0,
       summary: dryRun
         ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
         : pullFailedPartial
           ? `git pull failed, nothing imported — source may be behind its remote (sync anchor unchanged)`
-          : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted${uncommittedNote}`,
+          : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted${uncommittedNote}${upstreamNote}`,
       details: {
+        source_id: sourceId ?? 'default', upstream_refresh: upstreamRefresh, ...(warning ? { warning } : {}),
         added: result.added,
         modified: result.modified,
         deleted: result.deleted,
@@ -2983,6 +2990,7 @@ export async function runCycle(
   // work it never actually did. Treat an aborted signal as a non-success run:
   // skip the freshness stamp and report status 'partial' with reason 'aborted'.
   const aborted = cycleSignal?.aborted === true;
+  if (aborted && isLockStolenAbort(stolen?.signal, externalSignal)) lockStolenAbort = true;
 
   // #1972 (Decision 7A gating): attribute force-evicts. The minion worker
   // force-evicts a job 30s after abort and logs "handler ignored abort signal";

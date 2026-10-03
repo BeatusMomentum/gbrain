@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { OperationError } from '../ops/contract.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { containsPath } from './ownership.ts';
@@ -36,13 +37,6 @@ function privateDirectory(path: string): void {
   if (!stat.isDirectory() || stat.isSymbolicLink() || !privatePermissions(stat)) {
     throw new OperationError('permission_denied', 'The reconciliation backup directory must be private, owned, and free of symlinks.');
   }
-}
-function flushDirectory(path: string): void {
-  let fd: number | undefined;
-  try { fd = openSync(path, 'r'); fsyncSync(fd); }
-  catch (error) {
-    if (!(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? ''))) throw error;
-  } finally { if (fd !== undefined) closeSync(fd); }
 }
 export async function assertReconcileSize(engine: BrainEngine, artifact: ReconcileArtifact): Promise<void> {
   const limits = await readJournalLimits(engine);

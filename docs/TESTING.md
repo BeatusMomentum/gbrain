@@ -267,6 +267,27 @@ E2E schedule does not shorten a PR critical path dominated by persistence.
 Report matched executed timings separately from dry-run partition estimates,
 including setup, queueing and retries; never count skip-only output as coverage.
 
+### Scale tier
+
+`bun run test:scale -- --pages 2000 [--seed 1] [--out <file.json>]` is the
+contributor scale loop (`scripts/scale/run.ts`). It generates a deterministic
+two-source brain from the seed (`scripts/scale/fixture.ts`; links, timeline
+bullets, partly overlapping bodies, island pages; no embeddings), imports it
+into a fresh in-memory PGLite brain under a temporary `GBRAIN_HOME`, runs
+`extract all --source db`, and writes a JSON report plus a summary: import
+rate (last 10% vs first 10% per-page cost), planner health (hot tables with
+statistics, the worst Nested Loop count in the backlink plan), and p50 over
+five runs after a warmup for `get_health`, `list_pages`, local and MCP-path
+`search`, `traverse_graph` depth 3, `get_backlinks` and `find_orphans`, each
+with a known-answer check. It is report-only: it exits 0 whatever the numbers
+say (a harness crash exits 1) and no CI job runs it yet. The gate shape,
+cadence and enforcement are defined once, by O-CEO-16 and O-ENG-16 in the
+fix-wave-8 plan: rate, planner-health and known-answer checks become enforced
+in the F4 scale tier, and interactive ceilings stay report-only until five
+consecutive nightly runs are stable. Reproduce a report with its printed seed
+and page count. The fixture's determinism is pinned by
+`test/scripts/scale-fixture.test.ts`.
+
 ### Authoring gate
 
 Before adding a test, answer four questions in the PR description or the test
@@ -1003,7 +1024,7 @@ per-file rules. They do not cache passing results. Candidate scanner failures
 fail the guard, and matching files retain the same allowlists and diagnostics.
 
 `scripts/guards-manifest.tsv` is THE single registry of `scripts/check-*`
-guards (currently 67), each classified `scanner` (greps/parses repo sources —
+guards (currently 68), each classified `scanner` (greps/parses repo sources —
 must eventually carry fixtures), `buildfresh`, or `repostate` (build/freshness
 guards are exempt-with-reason, not fixture-tested).
 `scripts/guard-self-test.sh` (`bun run check:guard-self-test`, wired into
@@ -1042,6 +1063,29 @@ load. Take the executor as a parameter and import types from
 and the `Migration` type in `schema-migrations/types.ts`. Fixtures:
 `test/fixtures/guards/check-layering.ts/`; forms are driven in
 `test/scripts/layering.test.ts`.
+
+#### Durable-flush guard
+
+`scripts/check-durable-flush.ts` (`bun run check:durable-flush`, in
+`bun run verify`) fails on an `fsyncSync(fd)` anywhere in `src/` outside
+`src/core/fs-durable.ts` whose `fd` is assigned from a read-only `openSync`
+(flags omitted, a flag string without `w`/`a`/`+`, or `O_RDONLY` without
+`O_WRONLY`/`O_RDWR`), file or directory, and on one whose flags it cannot
+read. Windows refuses fsync on a read-only handle and has no directory flush
+(EPERM), which wedged the managed write queue (#5595) and every skill-bundle
+publication (#5475). Flushes of descriptors opened for writing pass. Each
+failure prints `FAIL [durable_flush_read_handle]: <file>:<line>`, the open it
+traced, a `Fix:` line and this anchor. Fix: fsync the descriptor you wrote
+through before closing it (set its final mode with `fchmodSync(fd)` first), or
+call `flushFile(path)` / `flushDirectory(path, { bestEffort? })` from
+`src/core/fs-durable.ts`. A file that cannot migrate yet goes in the guard's
+`ALLOWLIST` with a reason (empty today); an entry whose file no longer needs it fails as
+`durable_flush_stale_allowlist`. Fixtures:
+`test/fixtures/guards/check-durable-flush.ts/`; forms are driven in
+`test/scripts/durable-flush-guard.test.ts`. The helper and the #5595/#5475
+regressions run natively on the `windows-latest` row of the test.yml
+`security-regressions` job; `test/helpers/win32-flush-semantics.ts` makes them
+discriminate on POSIX hosts too.
 
 #### Engine-sql ratchet
 
@@ -2011,6 +2055,8 @@ Unit tests and what they cover:
 - `test/llm-json-reasoning-ladder.test.ts` — `parseLlmJson`'s reasoning-block recovery ladder: strips a closed or truncated `<think>` block ONLY after a raw parse fails (valid JSON containing the tag text is untouched), case-insensitive, array payloads, and the facts/atoms extractors routing through it (the ORIGINAL failure reason is preserved when the retry also fails).
 - `test/models-per-task-extract-atoms.serial.test.ts` — `gbrain models` reports `models.dream.extract_atoms` through the phase's own resolver (pins the narrow-resolver divergence: `models.tier.utility` is deliberately ignored; unconfigured falls back to the same tier default the runtime uses).
 - `test/conversation-facts-pricing-wiring.test.ts` — `pricing.overrides` reaches every conversation-facts entry point: the strict config registry accepts the key, and direct extraction, the cycle backfill, and `transcripts --facts` all price through the operator override.
+- `test/budget/no-pricing-registration.test.ts` — explicit cost cap + unpriced model: the refusal carries the lookup-and-register guidance as text and structured fields on BudgetTracker, enrich, conversation facts (core and cycle phase) and skillopt; default caps warn (naming `gbrain pricing set`) and run; `gbrain pricing set` merges without clobbering other overrides, validates rates, warns on $0, and the retried run is priced and capped; list/unset; and the trust boundary (no operation registers prices, thin clients refuse `gbrain pricing`). PGLite + gateway test transports.
+- `test/extract-atoms-explicit-cap-no-pricing.test.ts` — extract_atoms with an explicit `cycle.extract_atoms.budget_usd`: an unpriced chat model or embed route is refused (status `warn`, no model call, `details.no_pricing` with `register_command`), the rollup records an expected limit not a halt, doctor's `extract_health` overlay names the command, and after `gbrain pricing set` the retried run extracts and the record clears; a default cap still warns and runs. PGLite + `_chat` seam + embed transport stub.
 - `test/cycle/extract-atoms-model-config-fail-soft.test.ts` — a throwing `getConfig` during extract_atoms model resolution falls back to the tier default instead of rejecting the phase.
 
 ### Lane-move pilot (2026-09)

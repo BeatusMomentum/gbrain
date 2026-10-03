@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 
@@ -22,12 +23,6 @@ export function isPhysicalRootMetadata(name: string): boolean {
 }
 export function physicalRootReservationPath(root: string): string {
   return join(dirname(root), `${RESERVATION_PREFIX}${sha256(root)}.json`);
-}
-function flushDirectory(path: string): void {
-  let fd: number | undefined;
-  try { fd = openSync(path, 'r'); fsyncSync(fd); }
-  catch (error) { if (!(process.platform === 'win32' && ['EISDIR','EPERM','EINVAL','ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? ''))) throw error; }
-  finally { if (fd !== undefined) closeSync(fd); }
 }
 function readPrivate(path: string): unknown | null {
   let fd: number | undefined;

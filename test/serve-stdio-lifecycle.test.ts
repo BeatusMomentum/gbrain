@@ -645,6 +645,43 @@ describe('boot-readiness deadline (#3273)', () => {
     expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
   });
 
+  // #5205: the deadline line used to blame provider endpoints even when the
+  // boot was starved by a pool below what a resident serve needs.
+  test('names the stuck boot phase and a pool below the resident floor', async () => {
+    const h = makeHarness();
+    Object.assign(h.engine, { getPoolDiagnostics: () => ({ tracked: { raw: 0, direct: 0, reserved: 1, tx: 1 }, poolMax: 2, poisonedDiscards: 0 }) });
+    h.opts.startMcpServer = (_engine, startOpts) => {
+      startOpts?.onBootPhase?.('persistence_consumer');
+      return new Promise<void>(() => {});
+    };
+    h.opts.bootTimeoutMs = 20;
+    void runServe(h.engine as unknown as BrainEngine, [], h.opts);
+
+    expect(await h.exited).toBe(1);
+    const line = h.logs.find(l => l.includes('boot did not complete'))!;
+    expect(line).toContain('code=serve_boot_timeout phase=persistence_consumer pool=2/2 tracked checkouts (below the resident floor of 6)');
+    expect(line).toContain('fix: export GBRAIN_POOL_SIZE=6');
+    expect(line).toContain('docs: docs/ENGINES.md#serve-boot-timeout');
+    expect(line).not.toContain('provider endpoints');
+  });
+
+  test('a stall with pool headroom points at the phase, not the pool', async () => {
+    const h = makeHarness();
+    Object.assign(h.engine, { getPoolDiagnostics: () => ({ tracked: { raw: 0, direct: 0, reserved: 0, tx: 0 }, poolMax: 10, poisonedDiscards: 0 }) });
+    h.opts.startMcpServer = (_engine, startOpts) => {
+      startOpts?.onBootPhase?.('startup_sweep');
+      return new Promise<void>(() => {});
+    };
+    h.opts.bootTimeoutMs = 20;
+    void runServe(h.engine as unknown as BrainEngine, [], h.opts);
+
+    expect(await h.exited).toBe(1);
+    const line = h.logs.find(l => l.includes('boot did not complete'))!;
+    expect(line).toContain('phase=startup_sweep pool=0/10 tracked checkouts;');
+    expect(line).toContain('cause: boot stalled in startup_sweep');
+    expect(line).toContain('GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS');
+  });
+
   test('bootTimeoutMs = 0 disables the deadline', async () => {
     const h = makeHarness();
     let resolveBoot!: () => void;

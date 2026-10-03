@@ -4,6 +4,7 @@
  * verifier, the per-request effective surface, tools/list and tools/call
  * through the shared dispatcher, request logging and the admin SSE feed.
  */
+import { createHash } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -19,7 +20,7 @@ import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, type ToolResult } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, type ToolResult } from '../mcp/dispatch.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
@@ -341,6 +342,12 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
     tokenSourceId,
   );
 
+  // #4817: written before dispatch, so a request that never returns (a spin
+  // the stall watchdog later kills) still leaves its op name and an argument
+  // digest behind. The digest identifies the request without logging content.
+  let argsDigest = 'none';
+  try { argsDigest = createHash('sha256').update(JSON.stringify(params ?? null)).digest('hex').slice(0, 16); } catch { /* unserializable */ }
+  process.stderr.write(`[gbrain-serve] dispatch op=${name} args_sha256=${argsDigest}\n`);
   let toolResult: Awaited<ReturnType<typeof dispatchToolCall>>;
   try {
     toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
@@ -505,13 +512,15 @@ async function recordMcpToolResult(
       errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
     } catch { /* ignore */ }
     const errStatus = requestLogStatusForResult(toolResult);
+    // #5249: the opaque request id lets admin stats count pending writes that later fail.
+    const pending = errStatus === 'accepted_pending' ? acceptedPendingReceipt(toolResult) : null;
     try {
       await executeRawJsonb(
         engine,
         `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
         [authInfo.clientId, agentName, name, latency, errStatus, errMsg],
-        [logParamsObj],
+        [pending ? { ...(logParamsObj && typeof logParamsObj === 'object' ? logParamsObj : {}), write_request_id: pending.request_id } : logParamsObj],
       );
     } catch { /* best effort */ }
     broadcastEvent({

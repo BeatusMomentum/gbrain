@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
+import { catalogueError } from '../error-catalogue.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../source-delete.ts';
 import { parseSourceConfig } from '../sources-load.ts';
@@ -72,6 +73,19 @@ export async function installTopologyBinding(tx:BrainEngine,sourceId:string,inca
   return id;
 }
 
+/** #5219: the refusal for a vanished canonical checkout, with its exits. */
+function missingCheckoutError(sourceId:string,path:string,state?:{pages:number;members:number}):OperationError{
+  return catalogueError('source_checkout_missing',
+    `The canonical checkout ${path} of source '${sourceId}' is missing; restore its verified manifest first.`+(state
+      ?` Only a source with no pages that is its checkout's sole member can be retired without it (pages: ${state.pages}, other sources on the checkout: ${state.members}).`:''),
+    `Restore the checkout at ${path} and retry, or switch the brain to classic mode with gbrain sources writer deactivate --dry-run (then the printed apply_command) and retire the source there with gbrain sources archive ${sourceId}.`);
+}
+async function assertRetirableWithoutCheckout(tx:BrainEngine,sourceId:string,path:string):Promise<void>{
+  const [state]=await tx.executeRaw<{pages:number;members:number}>(`SELECT (SELECT count(*)::int FROM pages WHERE source_id=$1) AS pages,
+    (SELECT count(*)::int FROM persistence_source_bindings b JOIN persistence_source_bindings o ON o.worktree_id=b.worktree_id AND o.source_id<>b.source_id WHERE b.source_id=$1) AS members`,[sourceId]);
+  if(Number(state.pages)>0||Number(state.members)>0) throw missingCheckoutError(sourceId,path,{pages:Number(state.pages),members:Number(state.members)});
+}
+
 /** One source transition; shared-root members are fenced and invalidated together. */
 export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceLifecycleInput, admission?: {
   before(tx: BrainEngine): Promise<void>;
@@ -106,8 +120,14 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     // Hash canonical bytes while holding native exclusion, without a database
     // connection checked out. The final transaction rejects new pending mirrors.
     const manifests=new Map<string,WorktreeManifest>();
+    let missingCheckout:string|undefined;
     for(const path of new Set([...bindings.map(binding=>binding.local_path!).filter(Boolean),...(root?[root.worktree]:[])])) {
-      if(!existsSync(path)) {if(input.operation==='add'&&input.createDirectory&&path===root?.worktree)continue;throw new OperationError('recovery_required','The canonical checkout is missing; restore its verified manifest first.');}
+      if(!existsSync(path)) {
+        if(input.operation==='add'&&input.createDirectory&&path===root?.worktree)continue;
+        // #5219: retiring may skip a vanished checkout; the transaction proves the source is empty and its sole member.
+        if(['archive','remove','purge'].includes(input.operation)&&!root){missingCheckout=path;continue;}
+        throw missingCheckoutError(input.sourceId,path);
+      }
       const manifest=worktreeManifest(path,{progress:humanManifestProgress()});
       if(Buffer.byteLength(JSON.stringify(manifest))>1_048_576) throw new OperationError('request_too_large','The verified source manifest exceeds the 1 MiB administration metadata bound.');
       manifests.set(path,manifest);
@@ -126,6 +146,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(input.operation==='add'&&source&&(!root||source.local_path!==null)) throw new OperationError('source_id_taken','Source ID is already registered.');
     if(input.operation==='purge'&&!input.expiredOnly&&!source?.archived) throw new OperationError('invalid_params','Only an archived source can be purged.');
     if(['remove','purge'].includes(input.operation)&&!input.confirmDestructive) throw new OperationError('invalid_params','Source removal requires explicit destructive confirmation.');
+    if(missingCheckout) await assertRetirableWithoutCheckout(tx,input.sourceId,missingCheckout);
     const worktrees=bindings.map(binding=>binding.worktree_id);
     const currentBinding=bindings.find(binding=>binding.source_id===input.sourceId);
     const sameBinding=!!root&&!!currentBinding?.local_path&&currentBinding.local_path===root.worktree
@@ -190,6 +211,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       // stale installations cannot write after a source moved or disappeared.
       await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
       return {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated,
+        ...(missingCheckout?{retired_without_checkout:missingCheckout}:{}),
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
         ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:redactSourceConfig({...source?.config,...input.config}),id:input.sourceId}: {})};
     });

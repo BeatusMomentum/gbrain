@@ -83,6 +83,7 @@ import {
   type HarnessDeps,
   type HarnessDetectOverrides,
 } from '../core/bootstrap/harness.ts';
+import { refreshHarnessSkills } from '../core/bootstrap/harness-skills.ts';
 import { claudeUserSettingsPath, codexConfigPath, opencodeConfigDir, opencodeGlobalConfigPath, opencodeProjectConfigPath } from '../core/bootstrap/host-specs.ts';
 import {
   opencodeEntryKind,
@@ -137,7 +138,7 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   attach [--harness H]            Machine two: adopt a cloned agent workspace.
   harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]
           [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
-          [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--yes] [--json]
+          [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--refresh-skills] [--yes] [--json]
                                   Wire framework-spawned Claude Code / Codex / opencode
                                   sessions to a RUNNING \`gbrain serve --http\` on this box
                                   (#4043): scoped bearer token, user-scope MCP + headless
@@ -147,6 +148,9 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   --source ID: the source the hooks + token bind to
                                   (default: sources.default, else the sole populated
                                   non-default source, else default).
+                                  --refresh-skills: re-join shared skills under the
+                                  recorded credential so the router adopts the current
+                                  enrollment epoch (no token rotation).
                                   (--local is an accepted no-op alias.)
   cloud-setup-script              Print the paste-ready cloud environment setup
                                   script (installs the gbrain binary into the
@@ -1755,6 +1759,7 @@ async function runHarness(rest: string[], home: string, runner: ExecRunner, dete
   }
   ensureHarnessHome(home);
   return withLock(home, async () => {
+    if (flags.refreshSkills) return refreshHarnessSkills(deps);
     if (flags.remove) {
       const code = await removeHarness(flags, deps);
       abortIfInjected('harness');

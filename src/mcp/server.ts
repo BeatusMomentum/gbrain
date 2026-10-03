@@ -7,7 +7,7 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
 import { validateParams, parseStrictParamsMode } from './validate-params.ts';
-import { filterOpsForSurface, allowedOpNames, clampSurface, type McpSurface } from './surface.ts';
+import { filterOpsForSurface, allowedOpNames, clampSurface, isReadOnlyOperation, type McpAccess, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import type { Operation } from '../core/operations.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
@@ -196,10 +196,12 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess } = {}) {
   const config = loadConfig();
+  const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
   // backs (see source-preflight.ts). Throws before any transport is attached.
+  bootPhase('source_preflight');
   await assertStdioSourceBindable(engine);
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
   // to pre-surface behavior), 'starter' (WP4 daily-driver set), or 'verbs'
@@ -213,8 +215,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // (Resolved before Server construction: the initialize instructions need
   // the allowed-op set to decide whether extract_facts may be advertised.)
   const surface: McpSurface = clampSurface(opts.surface ?? 'full');
-  const surfacedOps = filterOpsForSurface(operations, surface);
-  const allowedOps = surface === 'full' ? undefined : allowedOpNames(operations, surface);
+  const readOnly = opts.access === 'read-only';
+  const surfacedOps = filterOpsForSurface(operations, surface).filter(op => !readOnly || isReadOnlyOperation(op));
+  const allowedOps = readOnly ? new Set(surfacedOps.map(op => op.name)) : surface === 'full' ? undefined : allowedOpNames(operations, surface);
 
   // Ambient writeback (opt-in, default off): resolved ONCE at boot — a
   // config flip needs a serve restart on this lane, the same posture as
@@ -225,6 +228,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // private brain. Read failure here yields the OFF bundle — no section,
   // never a wrong posture — and the engine is already connected by the time
   // serve reaches this call.
+  bootPhase('writeback_config');
   const writeback = await resolveWritebackConfig(engine, config);
   const server = new Server(
     { name: 'gbrain', version: VERSION },
@@ -256,7 +260,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
         if (verified.remote) scopes = verified.grant.scopes;
       } catch {}
     }
-    return { transport: 'stdio', scopes, surface, source_id: scope.sourceId,
+    return { transport: 'stdio', scopes, surface, access: readOnly ? 'read-only' : 'full', source_id: scope.sourceId,
       available_operations: available,
       administration: mcpAdministrationGuidance(),
       shared_skills: { protocol_version: 2, catalog: available.includes('list_skills') && available.includes('get_skill'),
@@ -357,6 +361,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   }));
 
   const transport = new StdioServerTransport();
+  bootPhase('mcp_connect');
   await server.connect(transport);
 
   // Engine-dependent boot: the resolve-IPC listener, session-cursor GC, and
@@ -371,11 +376,12 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // (+ delegated sync/sweep) IPC listener. Wiring shared with `serve --http`
     // via bindResolveIpcForServe (#4474) — best-effort; failure to bind never
     // blocks the MCP server.
-    ipcBinding = await bindResolveIpcForServe(
-      engine,
-      (await resolveMcpStdioSourceScope(engine)).sourceId,
-      await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind }),
-    );
+    bootPhase('source_scope');
+    const { sourceId: ipcSourceId } = await resolveMcpStdioSourceScope(engine);
+    bootPhase('persistence_consumer');
+    const persistence = await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
+    bootPhase('resolve_ipc_bind');
+    ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence);
 
     // v0.45.7 ambient recall: age out stale session cursors once per serve boot
     // (7-day TTL, indexed DELETE). Best-effort — GC failure never blocks serve.
@@ -388,6 +394,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // connect, unref'd (can never hold the process open), all errors
     // swallowed inside armStartupSweep. Kill switch: GBRAIN_SWEEP=0 (checked
     // inside the helper). Lazy import keeps sweep code off the boot path.
+    bootPhase('startup_sweep');
     try {
       const { armStartupSweep } = await import('../core/sweep.ts');
       const { sourceId } = await resolveMcpStdioSourceScope(engine);
@@ -469,7 +476,7 @@ export async function handleToolCall(
   engine: BrainEngine,
   tool: string,
   params: Record<string, unknown>,
-  opts?: { sourceId?: string; localFederatedSourceIds?: string[] },
+  opts?: { sourceId?: string; localFederatedSourceIds?: string[]; writeWaitMs?: number },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
   if (!op) throw new Error(`Unknown tool: ${tool}`);
@@ -481,6 +488,7 @@ export async function handleToolCall(
     remote: false,
     logger: { info: console.log, warn: console.warn, error: console.error },
     ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+    ...(opts?.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts?.localFederatedSourceIds
       ? { localFederatedSourceIds: opts.localFederatedSourceIds }
       : {}),

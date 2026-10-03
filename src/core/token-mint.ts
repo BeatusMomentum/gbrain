@@ -19,19 +19,21 @@ import type { BrainEngine } from './engine.ts';
 import { ALLOWED_SCOPES_LIST, assertAllowedScopes } from './scope.ts';
 import { executeRawJsonb, type SqlQuery } from './sql-query.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
+import { coerceLegacyPermissions, parseLegacyOperationGrant, parseTakesHoldersAllowList } from './legacy-token-scope.ts';
 
 /** Canonical token-id shape — shared with the `auth revoke --id` CLI gate. */
 export const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MintLegacyTokenOpts {
   name: string;
-  /** Per-token takes-holder allow-list; harness default ['world']. */
+  /** Per-token takes-holder allow-list; harness default ['world']. `[]` is stored as deny-all. */
   takesHolders: string[];
   /** Scope grant → the scopes TEXT[] column. Must be non-empty known scopes. */
   scopes: string[];
   /**
    * Federation grant → permissions.source_id (array; element 0 = write
-   * floor). Omit for the historical default-source floor.
+   * floor). Omit for the historical default-source floor; `[]` is stored as
+   * the explicit no-source grant.
    */
   sourceGrant?: string[];
   allowedOperations?: string[];
@@ -44,6 +46,8 @@ export interface MintedLegacyToken {
   id: string;
   name: string;
   scopes: string[];
+  /** Rotation only: operations this run would grant that the carried snapshot withheld. */
+  withheldOperations?: string[];
 }
 
 /**
@@ -69,14 +73,10 @@ export async function mintLegacyToken(
       throw new Error('allowedOperations must contain only registered remote operation names');
     }
   }
-  const takesHolders = opts.takesHolders.length > 0 ? opts.takesHolders : ['world'];
-
   const token = generateToken('gbrain_');
   const hash = hashToken(token);
-  const permissions: Record<string, unknown> = { takes_holders: takesHolders };
-  if (opts.sourceGrant && opts.sourceGrant.length > 0) {
-    permissions.source_id = opts.sourceGrant;
-  }
+  const permissions: Record<string, unknown> = { takes_holders: opts.takesHolders };
+  if (opts.sourceGrant !== undefined) permissions.source_id = opts.sourceGrant;
   if (opts.allowedOperations !== undefined) permissions.allowed_operations = [...new Set(opts.allowedOperations)];
 
   // Scopes bind as a Postgres array literal through a TEXT param + ::text[]
@@ -126,4 +126,40 @@ export async function revokeLegacyTokenById(sql: SqlQuery, id: string): Promise<
     RETURNING 1 AS ok
   `;
   return rows.length > 0;
+}
+
+/**
+ * #5893 rotation carry-over: the grants a rotated harness token inherits from
+ * the token it replaces. Takes holders and the source grant are carried as
+ * stored, explicit empty lists included (an explicit `--source` on this run
+ * wins over the stored source grant). A stored operation snapshot is carried
+ * as stored, narrowed to the operations this run would grant, plus only the
+ * operations a skills-policy change adds; `[]` stays `[]`. Operations new
+ * since the snapshot are withheld (reported, never silently granted): widen
+ * with `gbrain auth rescope-token <name> --refresh-operations`.
+ */
+export function carryLegacyGrant(priorRaw: unknown, fresh: {
+  sourceGrant?: string[]; explicitSource: boolean; allowedOperations: string[]; policyAdded: string[];
+}): { takesHolders: string[]; sourceGrant?: string[]; allowedOperations: string[]; withheldOperations: string[] } {
+  const prior = coerceLegacyPermissions(priorRaw) ?? {};
+  const takesHolders = parseTakesHoldersAllowList(prior.takes_holders) ?? ['world'];
+  const storedSource = Array.isArray(prior.source_id)
+    ? prior.source_id.filter((s): s is string => typeof s === 'string' && s.length > 0)
+    : typeof prior.source_id === 'string' && prior.source_id.length > 0 ? [prior.source_id] : undefined;
+  const sourceGrant = fresh.explicitSource || storedSource === undefined ? fresh.sourceGrant : storedSource;
+  const priorOps = parseLegacyOperationGrant(prior.allowed_operations);
+  if (priorOps === undefined) return { takesHolders, sourceGrant, allowedOperations: fresh.allowedOperations, withheldOperations: [] };
+  const allowedOperations = priorOps.length === 0 ? [] : [...new Set([
+    ...priorOps.filter(op => fresh.allowedOperations.includes(op)), ...fresh.policyAdded,
+  ])].sort();
+  return { takesHolders, sourceGrant, allowedOperations,
+    withheldOperations: fresh.allowedOperations.filter(op => !allowedOperations.includes(op)) };
+}
+
+/** The stored grant of an active token, or undefined when it is gone or revoked. */
+export async function readActiveTokenPermissions(engine: BrainEngine, id: string): Promise<unknown> {
+  if (!TOKEN_ID_RE.test(id)) return undefined;
+  const [row] = await engine.executeRaw<{ permissions: unknown }>(
+    'SELECT permissions FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL', [id]);
+  return row ? row.permissions ?? {} : undefined;
 }

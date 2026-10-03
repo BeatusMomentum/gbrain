@@ -71,6 +71,8 @@ export interface ConnectionManagerOpts {
    * not call .end() on disconnect(). Default false (we own both pools).
    */
   readPoolOwnedExternally?: boolean;
+  /** #5730: told when the driver discards a pooled connection left inside a transaction. */
+  onpoisoned?: (pool: 'read' | 'direct', status: string) => void;
 }
 
 /** Default direct-pool size (P1 raised from 2 to 3). Override via env. */
@@ -348,6 +350,7 @@ export class ConnectionManager {
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),
       types: { bigint: postgres.BigInt },
+      onpoisoned: (status: string) => this.opts.onpoisoned?.('read', status),
     };
     const timeouts = resolveSessionTimeouts();
     if (Object.keys(timeouts).length > 0) opts.connection = timeouts;
@@ -497,6 +500,7 @@ export class ConnectionManager {
       // Always use prepared statements on the direct pool — no PgBouncer
       // here, so the prepare-cache invalidation issue doesn't apply.
       prepare: true,
+      onpoisoned: (status: string) => this.opts.onpoisoned?.('direct', status),
       // Apply DDL session GUCs as connection startup parameters (durable
       // through any intermediary pooling layer, same trick as
       // resolveSessionTimeouts).

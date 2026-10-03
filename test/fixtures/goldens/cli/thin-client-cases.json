@@ -108,6 +108,15 @@
       "stdout": []
     },
     {
+      "argv": "pricing",
+      "exitCode": 1,
+      "stderr": [
+        "`gbrain pricing` is not routable. pricing registers model prices in the host brain's config and is trusted-local only (a remote caller could void a cost cap). Ask the brain's operator to run `gbrain pricing set <model> ...` on the host.",
+        "(thin-client of http://127.0.0.1:1/mcp)"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "migrate",
       "exitCode": 1,
       "stderr": [

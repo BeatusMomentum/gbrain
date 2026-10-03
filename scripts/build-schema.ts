@@ -367,6 +367,9 @@ const MIGRATION_TIMING = 'PGLite gets it later from its migration, so fresh PGLi
 export const PGLITE_RULES: readonly Rule[] = [
   { id: 'extension:pgcrypto', reason: 'PGLite ships no pgcrypto; gen_random_uuid() is core', action: 'drop' },
   { id: 'table:sources', reason: `sources.chunker_version: ${MIGRATION_TIMING}`, action: omitColumns('chunker_version') },
+  { id: 'add-column:sources.upstream_checked_at', reason: MIGRATION_TIMING, action: 'drop' },
+  { id: 'add-column:sources.upstream_commit', reason: MIGRATION_TIMING, action: 'drop' },
+  { id: 'add-column:sources.upstream_behind', reason: MIGRATION_TIMING, action: 'drop' },
   { id: 'index:pages_generation_idx', reason: MIGRATION_TIMING, action: 'drop' },
   { id: 'index:idx_pages_updated_at_desc', reason: MIGRATION_TIMING, action: 'drop' },
   {

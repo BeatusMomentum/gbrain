@@ -35,6 +35,7 @@ import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { DERIVE_PHASE_DB_ONLY_DEFAULTS } from '../storage-config.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { readSlugRootMode } from '../sync-anchor.ts';
+import { applyPageEdits, editDiff, parsePageEdits } from './page-edit.ts';
 
 const PURGE_RESIDUALS = 'Brain-repo git history, synced working-tree copies, exports, compiled context files and slug-keyed derived rows (takes, open loops, file records) may still hold the content — rotate the credential and rewrite or regenerate those copies.';
 
@@ -202,7 +203,9 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
         recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
     } };
   }
-  let content = preparedIntent?.content ?? p.content as string;
+  // #5616: edits apply to the caller's view of the locked snapshot (revision checked above).
+  const edited = row.operation === 'edit_page' ? editLockedPage(row, snapshot) : undefined;
+  let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
   let versionTags: string[] | undefined = preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
   // explicitly restore a tombstone; legacy versions leave this state unchanged.
@@ -233,7 +236,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
   const projected = !(row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
-  const writer = row.operation === 'put_page' && p.kind !== 'managed_maintenance_page'
+  const writer = (row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string') ? 'editing' : 'preserving';
   // #5567: database-only timeline rows are written back into the page before
   // the no-op check, digest, rendering and chunking see the body.
@@ -293,7 +296,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const logicalNoop = snapshot !== null && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(ready.parsedPage, tags));
   const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
   const project = projected ? await prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer) : undefined;
-  const ordinaryPage = ['put_page','capture','restore_page','revert_version'].includes(row.operation);
+  const ordinaryPage = ['put_page','capture','restore_page','revert_version','edit_page'].includes(row.operation);
   const advisories = noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : await preparePageAdvisories(engine,row,ready.parsedPage);
   // A managed maintenance page (e.g. the dream write-back after grounding
   // quarantine) republishes a body; its automatic links follow that body.
@@ -338,6 +341,12 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       slug: row.slug, source_id: row.source_id, chunks: ready.result.chunks, noop,
       ...(ready.result.chunks === 0 ? {chunk_skip_reason: noop ? 'write_skipped'
         : isEmbedSkipped(ready.parsedPage.frontmatter) || isQuarantined(ready.parsedPage.frontmatter) ? 'embed_skip' : 'empty_body'} : {}),
-      ...(row.operation === 'capture' ? { channel: 'capture', content_hash: p.capture_hash } : {}) };
+      ...(row.operation === 'capture' ? { channel: 'capture', content_hash: p.capture_hash } : {}),
+      ...(edited ? editDiff(row.slug, edited.before, edited.after) : {}) };
   } };
+}
+
+function editLockedPage(row: WriteRequest, snapshot: PageSnapshot | null) {
+  if (!snapshot || snapshot.page.deleted_at) throw new OperationError('page_not_found', 'Page not found.');
+  return applyPageEdits(snapshot.page, snapshot.tags, row.authority.remote, parsePageEdits(row.intent?.edits));
 }

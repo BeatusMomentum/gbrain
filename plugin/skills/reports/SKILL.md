@@ -39,7 +39,8 @@ This skill guarantees:
    ```yaml
    ---
    title: {report title}
-   type: report
+   type: note            # a type the default pack declares; `report` is undeclared
+   report_type: {category name}
    category: {category name}
    date: {YYYY-MM-DD}
    time: {HH:MM PT}

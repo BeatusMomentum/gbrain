@@ -669,7 +669,10 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
       return {
         name: 'reranker_health',
         status: 'warn',
-        message: `${authFails.length} reranker auth failure(s) in last 7 days (key present but rejected). Fix: verify the reranker provider's API key (e.g. ${readiness.requiredKey ?? 'VOYAGE_API_KEY'}) and run \`gbrain models doctor\`.`,
+        // #5432: the audit log records failures only and this check runs no
+        // live probe, so it reports history, not the key's current state.
+        message: `${authFails.length} reranker auth failure(s) recorded in the last 7 days (key present but rejected at the time). This is audit-log history; no live probe was run, so the key may have recovered since. Fix: verify the reranker provider's API key (e.g. ${readiness.requiredKey ?? 'VOYAGE_API_KEY'}) and run \`gbrain models doctor\`.`,
+        details: { live_probe_performed: false, failures_recorded: authFails.length, window_days: 7 },
       };
     }
 

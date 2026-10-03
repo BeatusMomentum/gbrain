@@ -38,7 +38,9 @@ import { preserveCanonicalFences } from '../core/cycle/concept-publication.ts';
 import type { WriteReceipt } from '../core/persistence/types.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
-import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason } from '../core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
+import { noPricingSteps } from '../core/budget/no-pricing.ts';
+import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
@@ -169,6 +171,8 @@ export interface EnrichResult {
   budget_exhausted_reason?: BudgetReason;
   /** Model that triggered a no_pricing abort, when the tracker knew it (#4032). */
   budget_exhausted_model?: string;
+  /** no_pricing abort: the lookup-and-register guidance (model, provider, kind, units, command, docs). */
+  budget_exhausted_pricing?: NoPricingGuidance;
   /** #2504 — first pool failure ('slug: message'), so pages_failed > 0 always
    *  carries a WHY (pool.failures was previously write-only). */
   first_failure?: string;
@@ -666,6 +670,7 @@ export async function runEnrichCore(
       // branch its advice instead of collapsing every abort into "raise the cap".
       result.budget_exhausted_reason = err.reason;
       if (err.modelId) result.budget_exhausted_model = err.modelId;
+      if (err.pricing) result.budget_exhausted_pricing = err.pricing;
       return result; // partial run; caller surfaces it (NOT a thrown failure)
     }
     throw err;
@@ -909,6 +914,7 @@ function addInto(agg: EnrichResult, r: EnrichResult): void {
   ) {
     agg.budget_exhausted_reason = r.budget_exhausted_reason;
     agg.budget_exhausted_model = r.budget_exhausted_model;
+    agg.budget_exhausted_pricing = r.budget_exhausted_pricing;
   }
   // #2504 — first failure seen across sources sticks (a sample, not a log).
   if (r.first_failure && agg.first_failure === undefined) {
@@ -922,13 +928,13 @@ function addInto(agg: EnrichResult, r: EnrichResult): void {
  * A no_pricing TX2 hard-fail is not a cost overrun — "raise --max-usd"
  * sends the operator after the wrong knob. Exported for tests.
  */
-export function budgetExhaustedMessage(reason?: BudgetReason, modelId?: string): string {
+export function budgetExhaustedMessage(reason?: BudgetReason, modelId?: string, pricing?: NoPricingGuidance): string {
   if (reason === 'no_pricing') {
     const m = modelId ? ` for ${modelId}` : '';
-    return (
-      `  No pricing${m} — the cost cap cannot be enforced. ` +
-      'Add a pricing entry for the model, or re-run uncapped (--max-usd off).'
-    );
+    const steps = pricing
+      ? noPricingSteps(pricing)
+      : `Look up the model's per-token price and register it with \`gbrain pricing set\` (see ${ERROR_CATALOGUE.no_pricing.docs}), then retry.`;
+    return `  No pricing${m} — the cost cap cannot be enforced. ${steps} Or re-run uncapped (--max-usd off).`;
   }
   return '  Budget cap reached. Re-run with a higher --max-usd to continue.';
 }
@@ -1088,7 +1094,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     );
     if (anyBudgetExhausted) {
       console.log(
-        budgetExhaustedMessage(aggregate.budget_exhausted_reason, aggregate.budget_exhausted_model),
+        budgetExhaustedMessage(aggregate.budget_exhausted_reason, aggregate.budget_exhausted_model, aggregate.budget_exhausted_pricing),
       );
     }
   }

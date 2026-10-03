@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204505,
-    "stdoutSha256": "361a0a6ada8208de169e71c9f95264e6bd6e6a3dc652a6148f46230a824035af",
+    "stdoutBytes": 208089,
+    "stdoutSha256": "a63cbbb5e6793515080dcb661c072dc74b491e1ff8fb8c1b3c4bbc9ba9c9bfd0",
     "toolNames": [
       "remember",
       "entity",
@@ -17,6 +17,7 @@
       "purge_deleted_pages",
       "capture",
       "fetch",
+      "edit_page",
       "get_write_request",
       "list_write_requests",
       "cancel_write_request",
@@ -684,6 +685,65 @@
           },
           "required": [
             "id"
+          ],
+          "type": "object"
+        }
+      },
+      {
+        "description": "Change part of an existing page without resending it: prefer this over put_page for small changes to large pages. Read get_page with include_content:true and pass its revision as expected_revision. Each edit replaces old_text with new_text; edits apply in order, each to the text the previous edit produced, and each old_text must match exactly once in that content. Protected takes and facts sections never match (use the takes_* operations or remember/forget). All edits publish together or none do, through the same receipts, fences and write-through as put_page. Returns the new revision and a unified diff of your view (at most 8 KB). Refusals name the edit: edit_no_match, edit_ambiguous_match (with match_count), edit_protected_span, edit_invalid; a stale revision returns revision_conflict with current_revision. Retain request_id and repeat identical arguments after a pending receipt.",
+        "name": "edit_page",
+        "parameters": {
+          "edits": "array",
+          "expected_revision": "string",
+          "request_id": "string?",
+          "slug": "string",
+          "source_id": "string?"
+        },
+        "schema": {
+          "properties": {
+            "edits": {
+              "description": "1 to 50 replacements, applied in order and all or nothing.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "new_text": {
+                    "description": "Replacement text; empty deletes old_text.",
+                    "type": "string"
+                  },
+                  "old_text": {
+                    "description": "Exact existing text (including whitespace) to replace; must occur exactly once in the current content.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "old_text",
+                  "new_text"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "expected_revision": {
+              "description": "The `revision` from get_page include_content:true. The edit is refused if the page changed since.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Optional caller-generated UUID for this write. Reuse the same UUID and original arguments to recover its outcome after a timeout; a different intent requires a new UUID.",
+              "type": "string"
+            },
+            "slug": {
+              "description": "Slug of the existing page to edit.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Source to mutate. Defaults to the selected source. Remote callers may only use their current write source.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "expected_revision",
+            "edits"
           ],
           "type": "object"
         }
@@ -2886,17 +2946,37 @@
         "description": "Find disconnected pages. Default mode \"islanded\" (no live inbound AND no outbound link) matches get_health.orphan_pages; mode \"inbound\" is the legacy no-inbound-only view. Essential for content enrichment cycles.",
         "name": "find_orphans",
         "parameters": {
+          "count_only": "boolean?",
           "include_pseudo": "boolean?",
-          "mode": "string?"
+          "limit": "number?",
+          "mode": "string?",
+          "offset": "number?",
+          "source_id": "string?"
         },
         "schema": {
           "properties": {
+            "count_only": {
+              "description": "Return the totals with no rows.",
+              "type": "boolean"
+            },
             "include_pseudo": {
               "description": "Include auto-generated and pseudo pages (default: false)",
               "type": "boolean"
             },
+            "limit": {
+              "description": "Rows per page (default 100, max 1000); total_orphans counts every orphan and next_offset names the next page.",
+              "type": "number"
+            },
             "mode": {
               "description": "#4524: orphan definition — 'islanded' (default; agrees with get_health.orphan_pages and doctor) or 'inbound' (legacy: no inbound links, even when the page links out).",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Skip the first N orphans (ordered by source_id, then slug).",
+              "type": "number"
+            },
+            "source_id": {
+              "description": "Only orphans from this source (it must be inside your source grant). Each row carries source_id and type.",
               "type": "string"
             }
           },

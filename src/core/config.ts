@@ -69,6 +69,8 @@ export interface GBrainConfig {
   integrations?: { memorable?: { enabled?: boolean } };
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
+  /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
+  persistence?: { write_wait_ms?: number | string };
   database_url?: string;
   database_path?: string;
   openai_api_key?: string;
@@ -1441,7 +1443,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // not a conversation_parser.* prefix: fallback is the only opt-in consumer.
   'conversation_parser.llm_fallback_enabled',
   // Dream cycle config
-  'dream.synthesize.session_corpus_dir',
+  'dream.synthesize.session_corpus_dir', 'dream.synthesize.conversation_pages', // #4419 conversation pages feed synthesis
   'dream.synthesize.meeting_transcripts_dir',
   'dream.synthesize.last_completion_ts',
   'dream.synthesize.verdict_model',
@@ -1576,6 +1578,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
   'takes.bootstrap_enabled',
+  // #5885: `embed --stale` (cycle embed phase, migration drain) also embeds
+  // stale takes; `false` turns that off (GBRAIN_EMBED_TAKES=0 overrides).
+  'takes.auto_embed',
   // B-14: USD cap for one takes-bootstrap run's classifier calls (default 5.0;
   // 0 disables). Read by src/core/extract-takes-from-pages.ts.
   'takes.bootstrap_budget_usd',
@@ -1624,6 +1629,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
+  'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
 ];
 
 /**

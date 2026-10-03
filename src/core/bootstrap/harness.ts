@@ -67,10 +67,11 @@ import {
   redactToken,
   validateToken,
 } from '../mcp-registration.ts';
-import { mintLegacyToken, revokeLegacyTokenById, type MintedLegacyToken } from '../token-mint.ts';
+import { carryLegacyGrant, mintLegacyToken, readActiveTokenPermissions, revokeLegacyTokenById, type MintedLegacyToken } from '../token-mint.ts';
 import { generateToken } from '../utils.ts';
 import { readCredentials, writeCredentials, type HarnessCredentials } from '../harness/credentials.ts';
 import { installSharedSkillsConnection, type SharedSkillsConnectionOptions } from '../harness/shared-skills.ts';
+import { localEnrollment, SKILLS_REFRESH_COMMAND } from './harness-skills.ts';
 import { nativeSharedSkillsDirectory } from '../harness/native-router.ts';
 import { sqlQueryForEngine } from '../sql-query.ts';
 import { BootstrapError, acquireBootstrapLock } from './lock.ts';
@@ -154,6 +155,7 @@ export interface HarnessFlags {
   force: boolean;
   remove: boolean;
   status: boolean;
+  refreshSkills: boolean;
   yes: boolean;
   json: boolean;
   gbrainBin?: string;
@@ -173,6 +175,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
     force: false,
     remove: false,
     status: false,
+    refreshSkills: false,
     yes: false,
     json: false,
   };
@@ -251,6 +254,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   out.force = rest.includes('--force');
   out.remove = rest.includes('--remove');
   out.status = rest.includes('--status');
+  out.refreshSkills = rest.includes('--refresh-skills');
   out.yes = rest.includes('--yes');
   out.json = rest.includes('--json');
   const bin = value('--gbrain-bin');
@@ -262,6 +266,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
   if (out.status && out.remove) {
     out.error = out.error ?? 'pass --status OR --remove, not both';
   }
+  if (out.refreshSkills && (out.status || out.remove)) out.error = out.error ?? 'pass --refresh-skills alone, not with --status or --remove';
   // --user-hooks and --local are accepted, documented no-ops (script clarity).
   // Unknown/typo'd flags never reach this parser through the CLI: cli.ts
   // validates argv against CLI_FLAG_REGISTRY pre-dispatch and rejects them
@@ -306,6 +311,8 @@ export interface HarnessDeps {
     scopes: string[];
     sourceGrant?: string[];
     allowedOperations?: string[];
+    /** #5893: rotate from this token id, carrying its grants (carryLegacyGrant). */
+    carry?: { fromId: string; explicitSource: boolean; policyAdded: string[] };
   }) => Promise<MintedLegacyToken>;
   installSharedSkills?: (credentials: HarnessCredentials, options: SharedSkillsConnectionOptions) => Promise<{
     status: string; reason?: string; retained_files?: string[]; next_action?: string; remote_membership_pending?: boolean;
@@ -330,7 +337,7 @@ export interface HarnessDeps {
   logError?: (line: string) => void;
 }
 
-function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>> & { gbrainBin: string | null } {
+export function resolveHarnessDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>> & { gbrainBin: string | null } {
   return {
     runner: deps.runner,
     gbrainHome: deps.gbrainHome,
@@ -356,7 +363,7 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
       deps.codexAgentsOverride ??
       (deps.codexConfig ? join(dirname(deps.codexConfig), 'AGENTS.override.md') : codexAgentsOverridePath()),
     loadFileConfig: deps.loadFileConfig ?? loadConfigFileOnly,
-    mint: deps.mint ?? defaultMint,
+    mint: deps.mint ?? mintHarnessToken,
     installSharedSkills: deps.installSharedSkills ?? installSharedSkillsConnection,
     nativeSkillsDir: deps.nativeSkillsDir ?? ((host) => {
       const config = host === 'claude-code' ? deps.userSettingsPath : host === 'codex' ? deps.codexConfig : deps.opencodeConfig;
@@ -422,7 +429,7 @@ export function harnessDetectDeps(o?: HarnessDetectOverrides): Partial<HarnessDe
 }
 
 /** Production mint: open the configured engine just long enough to insert. */
-async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?: string[]; allowedOperations?: string[] }): Promise<MintedLegacyToken> {
+export async function mintHarnessToken(opts: Parameters<NonNullable<HarnessDeps['mint']>>[0]): Promise<MintedLegacyToken> {
   const cfg = loadConfig();
   if (!cfg) {
     throw new Error('no brain configured — run `gbrain init` first (the harness wires an EXISTING brain).');
@@ -441,6 +448,13 @@ async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?:
       } catch {
         sourceGrant = undefined; // historical default floor
       }
+    }
+    const prior = opts.carry && await readActiveTokenPermissions(engine, opts.carry.fromId);
+    if (prior !== undefined && opts.carry && opts.allowedOperations) {
+      const carried = carryLegacyGrant(prior, { ...opts.carry, allowedOperations: opts.allowedOperations,
+        ...(sourceGrant && sourceGrant.length > 0 ? { sourceGrant } : {}) });
+      const minted = await mintLegacyToken(engine, { name: opts.name, scopes: opts.scopes, ...carried });
+      return { ...minted, withheldOperations: carried.withheldOperations };
     }
     return await mintLegacyToken(engine, {
       name: opts.name,
@@ -638,7 +652,7 @@ export function parseClaudeMcpGetUrl(out: string): ClaudeMcpGetInfo {
 async function cleanupStalePriorTargets(
   prior: HarnessReceipt,
   receipt: HarnessReceipt,
-  d: ReturnType<typeof resolveDeps>,
+  d: ReturnType<typeof resolveHarnessDeps>,
   save: () => void,
 ): Promise<void> {
   const planned = receipt.targets;
@@ -761,6 +775,18 @@ function isLiveServeFailure(msg: string, d: Pick<Required<HarnessDeps>, 'pgliteL
   return /already open through `gbrain serve`|LiveServeLockError/i.test(msg) || d.pgliteLiveServe();
 }
 
+/** #5893: the token a host's rotation carries grants from, with the operations a skills-policy change adds. */
+async function rotationCarry(prior: HarnessReceipt | null | undefined, host: HarnessTarget['host'], explicitSource: boolean, allowedOperations: string[]) {
+  const fromId = prior?.harness_tokens?.[host]?.minted ? prior.harness_tokens[host]!.id : prior?.token.minted ? prior.token.id : undefined;
+  if (!prior || !fromId) return undefined;
+  const priorSnapshot = await harnessOperationSnapshot(prior.skills_policy === 'follow');
+  return { fromId, explicitSource, policyAdded: allowedOperations.filter(op => !priorSnapshot.includes(op)) };
+}
+
+function withheldOperationsNote(name: string, count: number): string {
+  return `token ${name}: carried the previous grants; ${count} newer operation(s) withheld — preview with \`gbrain auth rescope-token ${name} --refresh-operations\`.`;
+}
+
 async function harnessOperationSnapshot(follow: boolean): Promise<string[]> {
   const { operations } = await import('../operations.ts');
   return operations.filter(op => !op.localOnly && (op.scope === 'read' || op.scope === 'write') &&
@@ -769,7 +795,7 @@ async function harnessOperationSnapshot(follow: boolean): Promise<string[]> {
 
 async function leaveHarnessSkills(
   entry: NonNullable<HarnessReceipt['shared_skills']>[number],
-  d: ReturnType<typeof resolveDeps>,
+  d: ReturnType<typeof resolveHarnessDeps>,
 ): Promise<boolean> {
   try {
     if (entry.status === 'left' || entry.status === 'left_with_retained_files') return true;
@@ -829,7 +855,7 @@ function logAmbientPostureNotes(
 }
 
 export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): Promise<number> {
-  const d = resolveDeps(rawDeps);
+  const d = resolveHarnessDeps(rawDeps);
   // stdout-for-data discipline: under --json, stdout carries ONLY the final
   // JSON document; every prose/progress line flows to stderr (matching the
   // statusHarness --json contract, so machine callers never scrape).
@@ -1211,11 +1237,13 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     const allowedOperations = await harnessOperationSnapshot(skillsPolicy === 'follow');
     for (const host of hosts) {
       let minted: MintedLegacyToken;
+      const carry = await rotationCarry(prior, host, !!flags.source, allowedOperations);
       try {
         minted = await d.mint({
           name: hosts.length === 1 ? flags.tokenName : `${flags.tokenName}-${host}`,
           scopes: skillsPolicy === 'follow' ? ['read', 'write', 'skills_member_self'] : ['read', 'write'],
           allowedOperations,
+          ...(carry ? { carry } : {}),
           // [X2] --source is the write floor — a scalar grant, the stdio
           // env-tier mirror. An implicit non-default source carries its
           // federated read set (#4897 — the same set search/think read, not a
@@ -1229,6 +1257,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         throw e;
       }
       tokens.set(host, minted.token);
+      if (minted.withheldOperations?.length) d.log(withheldOperationsNote(minted.name, minted.withheldOperations.length));
       receipt.harness_tokens![host] = { id: minted.id, name: minted.name, minted: true };
       if (host === hosts[0]) {
         receipt.token.id = minted.id;
@@ -1994,7 +2023,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
 // ── Remove [C9/F2/C8] ───────────────────────────────────────────────────────
 
 export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): Promise<number> {
-  const d = resolveDeps(rawDeps);
+  const d = resolveHarnessDeps(rawDeps);
   const state = readHarnessReceiptState(d.gbrainHome);
   if (state.state === 'absent') {
     d.log('nothing harness-installed on this machine (no harness receipt).');
@@ -2282,7 +2311,7 @@ export function parseCodexBlockBearer(configText: string, expectedUrl?: string):
 
 /** `bootstrap harness --status [--json]` — one screen of live health. */
 export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): Promise<number> {
-  const d = resolveDeps(rawDeps);
+  const d = resolveHarnessDeps(rawDeps);
   const state = readHarnessReceiptState(d.gbrainHome);
   if (state.state === 'absent') {
     if (flags.json) {
@@ -2477,7 +2506,8 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
     d.log(serveLine);
     d.log(tokenLine);
     for (const entry of receipt.shared_skills ?? []) {
-      d.log(`  shared skills (${entry.host}): ${entry.status}${entry.reason ? ` — ${entry.reason}` : ''}; receipt evidence only, native activation unverified.`);
+      const epoch = localEnrollment(entry.root)?.enrollment_epoch;
+      d.log(`  shared skills (${entry.host}): ${entry.status}${entry.reason ? ` — ${entry.reason}` : ''}${epoch === undefined ? '' : `; enrollment epoch ${epoch}`}; receipt evidence only, native activation unverified (stale epoch: ${SKILLS_REFRESH_COMMAND}).`);
       if (entry.retained_files?.length) d.log(`    edited files retained: ${entry.retained_files.join(', ')}`);
     }
     for (const t of liveTargets) {

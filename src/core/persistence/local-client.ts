@@ -17,6 +17,7 @@ import {
   requestPersistenceAdministration,
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
+import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
 
 /** The brain axis must be resolved before inspecting any host lock/socket. */
 export function persistenceConfigForBrain(
@@ -91,7 +92,7 @@ export async function maybeDelegateLocalOperation(
   operation: string,
   params: Record<string, unknown>,
   hostConfig: GBrainConfig | null,
-  options: { brain?: string | null; source?: string | null; cwd?: string; timeoutMs?: number } = {},
+  options: { brain?: string | null; source?: string | null; cwd?: string; timeoutMs?: number; writeWaitMs?: number } = {},
 ): Promise<LocalDelegationResult> {
   if (!isPersistenceIpcOperation(operation)) return { handled: false };
   if (isPersistenceIpcMutation(operation)) {
@@ -127,9 +128,17 @@ export async function maybeDelegateLocalOperation(
       'Upgrade and restart the owner, then retry with the same request ID.');
   }
   const registration = readPersistenceCliRegistration(capability.brain_id);
-  const result = await requestPersistenceOperation(socketPath, {
-    version: 1, kind: 'operation', brain_id: capability.brain_id,
-    operation, params: wireParams, registration, routing: { source, cwd },
-  }, options.timeoutMs);
+  const request = { version: 1 as const, kind: 'operation' as const, brain_id: capability.brain_id,
+    operation, params: wireParams, registration, routing: { source, cwd } };
+  if (!isPersistenceIpcMutation(operation)) return { handled: true, result: await requestPersistenceOperation(socketPath, request, options.timeoutMs) };
+  // #5232: the owner waits the caller's wait within one transport deadline; an
+  // owner without `write_wait` waits its own bound and the replay keeps the rest.
+  const waitMs = options.writeWaitMs ?? currentCliWriteWait().waitMs;
+  const deadline = Date.now() + waitMs;
+  const result = await replayWhilePending(() => {
+    const budget = writeExchangeBudget(Math.max(0, deadline - Date.now()), options.timeoutMs);
+    return requestPersistenceOperation(socketPath,
+      capability.write_wait ? { ...request, write_wait_ms: budget.waitMs } : request, budget.timeoutMs);
+  }, waitMs);
   return { handled: true, result };
 }

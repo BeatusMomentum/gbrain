@@ -44,7 +44,6 @@ beforeEach(async () => {
   await reset();
   home = mkdtempSync(join(tmpdir(), 'gbrain-auto-drain-'));
   await engine.setConfig('autopilot.auto_drain.threshold', '1');
-  await engine.setConfig('cycle.extract_atoms.connector_pages', 'true');
 });
 
 const DAY1 = Date.parse('2026-09-20T12:00:00Z');
@@ -149,13 +148,13 @@ test('the cap counts attempts: a job retried three times consumes three units', 
   expect((await submitted()).map(j => j.source)).toEqual(['git-a', 'git-b']);
 });
 
-test('connector email and meeting pages are opt-in: off, a connector backlog submits nothing', async () => {
+test('connector email and meeting pages drain by default; opted out, a connector backlog submits nothing', async () => {
   await engine.setConfig('cycle.extract_atoms.connector_pages', 'false');
   await connectorSource('gmail', 'email');
   await connectorSource('gcal', 'meeting');
   await tick(DAY1);
   expect(await submitted()).toEqual([]);
-  await engine.setConfig('cycle.extract_atoms.connector_pages', 'true');
+  await engine.executeRaw("DELETE FROM config WHERE key='cycle.extract_atoms.connector_pages'");
   await tick(DAY1);
   expect((await submitted()).map(j => j.source).sort()).toEqual(['gcal', 'gmail']);
 });

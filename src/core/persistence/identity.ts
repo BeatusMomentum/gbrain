@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import type { Principal, SqlEngine } from './model.ts';
@@ -22,14 +23,6 @@ export async function withVerifiedLocalRegistration<T>(engine: SqlEngine, regist
 }
 const defaultGrant = (): LocalGrant => ({ sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null });
 export function persistenceHome(): string { return join(configDir(), 'persistence'); }
-
-function flushRegistrationDirectory(): void {
-  let fd: number | undefined;
-  try { fd = openSync(persistenceHome(), 'r'); fsyncSync(fd); }
-  catch (error) {
-    if (!(process.platform === 'win32' && ['EISDIR', 'EPERM', 'EINVAL', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? ''))) throw error;
-  } finally { if (fd !== undefined) closeSync(fd); }
-}
 
 /** Exclusive create keeps simultaneous installations on one identity without replacing it. */
 function privateJson<T>(path: string, create: () => T): T {
@@ -98,7 +91,7 @@ async function rotateLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', gra
   const pending = `${path}.pending.${next.id}`;
   const fd = openSync(pending, 'wx', 0o600);
   try { writeFileSync(fd, JSON.stringify(next)); fsyncSync(fd); } finally { closeSync(fd); }
-  flushRegistrationDirectory();
+  flushDirectory(persistenceHome());
   let durable = false;
   try {
     await engine.transaction(async tx => {
@@ -114,7 +107,7 @@ async function rotateLocalWriter(engine: BrainEngine, lane: 'cli' | 'stdio', gra
     durable = true;
     linkSync(path, `${path}.revoked.${next.id}`);
     renameSync(pending, path); // readers always see one complete credential document
-    flushRegistrationDirectory();
+    flushDirectory(persistenceHome());
     return next;
   } catch (error) {
     if (!durable) unlinkSync(pending);

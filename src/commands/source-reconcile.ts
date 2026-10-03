@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSy
 import { basename, dirname, join, resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { getCliOptions } from '../core/cli-options.ts';
+import { flushDirectory } from '../core/fs-durable.ts';
 import { finishCliTeardown, setCliExitVerdict, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { isThinClient, loadConfig, toEngineConfig } from '../core/config.ts';
 import { loadMounts } from '../core/brain-registry.ts';
@@ -158,10 +159,7 @@ export function writeReconcilePreview(path: string, preview: unknown): void {
     fd = undefined;
     assertManagedFilesystemWrite(target);
     linkSync(temporary, target);
-    if (process.platform !== 'win32') {
-      const directoryFd = openSync(directory, constants.O_RDONLY);
-      try { fsyncSync(directoryFd); } finally { closeSync(directoryFd); }
-    }
+    flushDirectory(directory);
   } catch (error) {
     if (error instanceof OperationError) throw error;
     throw new OperationError('storage_error', 'Cannot create the private preview file. Use an existing directory outside the canonical worktree and a new filename.');

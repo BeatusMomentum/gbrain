@@ -3,6 +3,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
+import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import {
   installLoopStallWatchdog,
@@ -77,7 +78,7 @@ export interface ServeOptions {
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
   // Defaults to the real implementation when omitted.
-  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; sourceGuard?: boolean }) => Promise<void>;
+  startMcpServer?: (engine: BrainEngine, opts?: { surface?: 'verbs' | 'starter' | 'full'; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: 'full' | 'read-only' }) => Promise<void>;
   // Test seam for the parent-process watchdog. The default
   // (`readLiveParentPid`) reads the live kernel PPID via `ps` on POSIX
   // because `process.ppid` is captured at process creation and does not
@@ -213,9 +214,16 @@ export async function runServe(
   // 'verbs' exposes exactly the seven protocol verbs (the quickstart surface);
   // 'starter' the ~20-op daily-driver set; 'full' (default) keeps every
   // operation — existing installs see no change.
-  const { parseSurfaceFlag, resolveSurface } = await import('../mcp/surface.ts');
+  const { parseSurfaceFlag, resolveSurface, parseAccessFlag } = await import('../mcp/surface.ts');
   const { loadConfig } = await import('../core/config.ts');
   const surface = resolveSurface(parseSurfaceFlag(args), loadConfig());
+  // #4768: stdio read-only access ceiling. HTTP refuses it: per-token grants
+  // (auth rescope-token --operations / rescope-client) are its operation control.
+  const access = parseAccessFlag(args);
+  if (access === 'read-only' && isHttp) {
+    throw new Error('--access read-only applies to stdio serve only; for HTTP narrow each token with ' +
+      'gbrain auth rescope-token <name> --operations <op,...> (see docs/mcp/ADMIN.md#read-only-stdio-serve)');
+  }
 
   // --source-guard (plugin lanes, EV1): fail-closed write routing for
   // user-global serves whose cwd is meaningless (plugin snapshots). Write/
@@ -325,7 +333,7 @@ export async function runServe(
       // v0.45.7: count derives from VERB_NAMES (7 with context_pack + delta)
       // so the banner can't drift from the frozen set again.
       ? `Starting GBrain MCP server (stdio) — serving ${VERB_NAMES.length} memory verbs (MEMORY_VERBS v1)...`
-      : 'Starting GBrain MCP server (stdio)...',
+      : `Starting GBrain MCP server (stdio${access === 'read-only' ? ', read-only' : ''})...`,
   );
 
   // stdout is reserved for JSON-RPC frames from here on. Ops that run
@@ -346,13 +354,12 @@ export async function runServe(
   // us either.
   const bootTimeoutMs = opts.bootTimeoutMs ?? resolveBootTimeoutMs();
   let bootDeadline: ReturnType<typeof setTimeout> | null = null;
+  let bootPhase = 'starting';
   if (bootTimeoutMs > 0) {
     const log = opts.log ?? ((msg: string) => console.error(msg));
     const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
     bootDeadline = setTimeout(() => {
-      log(
-        `GBrain MCP server: boot did not complete within ${bootTimeoutMs}ms — releasing DB lock and exiting so other consumers unblock (check configured provider endpoints; tune via GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS, 0 disables)`,
-      );
+      log(formatBootTimeout(bootTimeoutMs, bootPhase, engine));
       const cleanup = setTimeout(() => { exit(1); }, CLEANUP_DEADLINE_MS);
       cleanup.unref?.();
       Promise.resolve()
@@ -370,7 +377,7 @@ export async function runServe(
   }
 
   try {
-    await start(engine, { surface, ...(sourceGuard ? { sourceGuard } : {}) });
+    await start(engine, { surface, ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; }, ...(access === 'read-only' ? { access } : {}) });
     // `--stdio-idle-timeout` arms its timer during lifecycle installation,
     // but its stdin activity listener must wait until startMcpServer has
     // attached the MCP SDK transport listener. Attaching any `data` listener
@@ -406,6 +413,26 @@ function resolveEofDrainMs(): number {
     return DEFAULT_EOF_DRAIN_MS;
   }
   return Math.floor(n);
+}
+
+/**
+ * #5205: the boot-deadline line names the boot phase that never finished and
+ * the engine's pool pressure, so a pool below the resident floor reads as a
+ * pool problem instead of a provider-endpoint one.
+ */
+function formatBootTimeout(timeoutMs: number, phase: string, engine: BrainEngine): string {
+  let pool: { tracked: Record<string, number>; poolMax: number | null } | null = null;
+  try { pool = (engine as { getPoolDiagnostics?: () => typeof pool }).getPoolDiagnostics?.() ?? null; } catch { /* diagnostic only */ }
+  const inFlight = pool ? Object.values(pool.tracked).reduce((sum, n) => sum + n, 0) : 0;
+  const max = pool?.poolMax ?? null;
+  const starved = max !== null && (max < RESIDENT_POOL_FLOOR || inFlight >= max);
+  const poolText = max === null ? '' : ` pool=${inFlight}/${max} tracked checkouts${max < RESIDENT_POOL_FLOOR ? ` (below the resident floor of ${RESIDENT_POOL_FLOOR})` : ''}`;
+  const fix = starved
+    ? `export GBRAIN_POOL_SIZE=${RESIDENT_POOL_FLOOR} (and size the pooler for every resident process)`
+    : 'check configured provider endpoints, or export GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=<seconds> (0 disables)';
+  return `GBrain MCP server: boot did not complete within ${timeoutMs}ms — releasing DB lock and exiting so other consumers unblock. `
+    + `code=serve_boot_timeout phase=${phase}${poolText}; cause: ${starved ? 'the connection pool is too small or saturated for a resident serve' : `boot stalled in ${phase}`}; `
+    + `fix: ${fix}; docs: docs/ENGINES.md#serve-boot-timeout`;
 }
 
 // Env resolution for the boot deadline. Lenient (warn + default) rather

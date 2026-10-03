@@ -1,4 +1,4 @@
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -11,6 +11,7 @@ import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { notQuiescedError } from './blocking-effects.ts';
 import { inspectLegacyWriterLocks } from './legacy-locks.ts';
 import { deleteLockRowExact } from '../db-lock.ts';
+import { catalogueError } from '../error-catalogue.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 
 export interface ActivationReport {
@@ -32,11 +33,20 @@ async function configuredSources(engine: BrainEngine, lock = false): Promise<Sou
   return sources.map(source => ({ id: source.id, incarnation: source.incarnation, connector: isConnectorSourceKind(source.kind),
     root: source.local_path || (source.id === 'default' ? fallback : null) }));
 }
+/** #5206: a recorded source directory that vanished is a named blocker with its exits, never a bare ENOENT. */
+function sourcePathMissing(source: SourceRoot, claimedRoot: string | null): OperationError {
+  const error = catalogueError('activation_source_path_missing',
+    `Source '${source.id}' records the local path ${source.root}, which does not exist on this host, so activation cannot verify its canonical directory.`,
+    `Point it at its checkout with gbrain sources set-path ${source.id} ${claimedRoot ? JSON.stringify(claimedRoot) : '<directory>'}, or remove it with gbrain sources remove ${source.id} --confirm-destructive; then rerun gbrain sources writer activate --confirm-quiesced --dry-run.`);
+  error.detail = 'source_path_missing';
+  return error;
+}
 async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, lock = false): Promise<WorktreeBinding[]> {
   const bindings: WorktreeBinding[] = [];
   for (const source of sources) {
     let binding = await getWorktreeBinding(engine, source.id, hostId);
     if ((!source.root || source.connector) && !binding) continue;
+    if (!binding && !source.connector && !existsSync(resolve(source.root!))) throw sourcePathMissing(source, null);
     if (binding && lock) {
       await engine.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [binding.worktree_id]);
       binding = await getWorktreeBinding(engine, source.id, hostId);
@@ -49,6 +59,7 @@ async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hos
       'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, binding.owner_host_id]);
     if (!owner?.local_path || !owner.coordination_path) throw new OperationError('writer_registration_required', 'The canonical owner registration is incomplete.');
     if (binding.owner_host_id === hostId) {
+      if (source.root && !existsSync(resolve(source.root))) throw sourcePathMissing(source, binding.local_path && join(binding.local_path, binding.relative_path));
       if (!binding.local_path || !binding.coordination_path
         || source.root && realpathSync(resolve(source.root)) !== realpathSync(join(binding.local_path, binding.relative_path))) {
         throw new OperationError('source_changed', `Source '${source.id}' no longer matches its registered canonical directory.`);

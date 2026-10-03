@@ -1,3 +1,4 @@
+import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../core/config.ts';
 import {
@@ -59,6 +60,8 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   // transports build their initialize response from loadConfig()); the
   // `mcp.` prefix made a DB-plane write accepted and silently ignored.
   'mcp.instructions',
+  // #5232: the CLI resolves its write wait before choosing a transport, engine-free.
+  'persistence.write_wait_ms',
 ]);
 
 /** #5489: every self_upgrade.* reader (cli.ts startup check, autopilot,
@@ -99,7 +102,7 @@ async function unsetFilePlaneKey(key: string): Promise<boolean> {
   const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
   const cfg = loadConfigFileOnly();
   const dot = key.indexOf('.');
-  const top = key.slice(0, dot) as 'push' | 'hooks' | 'backup' | 'mcp' | 'self_upgrade';
+  const top = key.slice(0, dot) as 'push' | 'hooks' | 'backup' | 'mcp' | 'self_upgrade' | 'persistence';
   const leaf = key.slice(dot + 1);
   const branch = cfg?.[top] as Record<string, unknown> | undefined;
   if (!cfg || !branch || !(leaf in branch)) return false;
@@ -291,6 +294,19 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   } catch { /* the value already persisted */ }
 }
 
+/** #5232: the CLI write wait is file-plane so the engine-free CLI reads it before choosing a transport. */
+async function setFileWriteWait(cfg: GBrainConfig, value: string, saveConfig: (cfg: GBrainConfig) => void): Promise<void> {
+  const { MAX_WRITE_WAIT_MS, WRITE_WAIT_CONFIG_KEY, WRITE_WAIT_ENV } = await import('../core/persistence/write-wait.ts');
+  const n = /^\d+$/.test(value.trim()) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(n) || n > MAX_WRITE_WAIT_MS) {
+    console.error(`[config] ${WRITE_WAIT_CONFIG_KEY} must be a whole number of milliseconds from 0 to ${MAX_WRITE_WAIT_MS}`);
+    process.exit(1);
+  }
+  cfg.persistence = { ...(cfg.persistence ?? {}), write_wait_ms: n };
+  saveConfig(cfg);
+  console.log(`Set ${WRITE_WAIT_CONFIG_KEY} = ${n} (file plane: ~/.gbrain/config.json; --wait and ${WRITE_WAIT_ENV} override it)`);
+}
+
 /** `config set` for the FILE_PLANE_DOTTED_KEYS and the memorable consent
  * gate: every one of these is read from ~/.gbrain/config.json by an
  * engine-free reader, so the write never touches the engine. */
@@ -368,6 +384,8 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
     cfg.backup = { ...(cfg.backup ?? {}), check_enabled: on };
     saveConfig(cfg);
     console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+  } else if (key === 'persistence.write_wait_ms') {
+    await setFileWriteWait(cfg, value, saveConfig);
   } else if (key === 'backup.check_interval_days') {
     const n = Number.parseInt(value, 10);
     if (!Number.isFinite(n) || n < 1) {

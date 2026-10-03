@@ -117,6 +117,9 @@
       "pages": [
         "./commands/pages.ts"
       ],
+      "pricing": [
+        "./commands/pricing.ts"
+      ],
       "quarantine": [
         "./commands/quarantine.ts"
       ],

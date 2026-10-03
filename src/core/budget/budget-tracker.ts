@@ -42,9 +42,10 @@ import {
   type PricingOverrides,
 } from './reservation-cost.ts';
 import { ModelLedger, type ModelUsageRow } from './models-used.ts';
+import { noPricingGuidance, noPricingMessage, pricingSetCommand, type NoPricingGuidance } from './no-pricing.ts';
 
 export { isModelPriceable } from './reservation-cost.ts';
-export type { BudgetKind, PricingOverrides };
+export type { BudgetKind, PricingOverrides, NoPricingGuidance };
 
 export type BudgetReason = 'cost' | 'runtime' | 'no_pricing';
 
@@ -169,9 +170,11 @@ export class BudgetExhausted extends Error {
   spent: number;
   cap: number;
   modelId?: string;
+  /** Set when reason is 'no_pricing': the lookup-and-register guidance (no-pricing.ts). */
+  pricing?: NoPricingGuidance;
   constructor(
     message: string,
-    opts: { reason: BudgetReason; spent: number; cap: number; modelId?: string },
+    opts: { reason: BudgetReason; spent: number; cap: number; modelId?: string; pricing?: NoPricingGuidance },
   ) {
     super(message);
     this.name = 'BudgetExhausted';
@@ -179,6 +182,7 @@ export class BudgetExhausted extends Error {
     this.spent = opts.spent;
     this.cap = opts.cap;
     this.modelId = opts.modelId;
+    if (opts.pricing) this.pricing = opts.pricing;
   }
 }
 
@@ -282,12 +286,12 @@ export class BudgetTracker {
       if (this.opts.maxCostUsd !== undefined) {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
-        // void the contract.
+        // void the contract. The refusal tells the agent to look the rate up
+        // and register it (`gbrain pricing set`), then retry.
+        const pricing = noPricingGuidance(estimate.modelId, estimate.kind);
         const pricingFile = estimate.kind === 'chat' ? 'model-pricing.ts' : 'embedding-pricing.ts';
-        const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${pricingFile}, declare an operator rate via ` +
-          `\`gbrain config set pricing.overrides '{"${estimate.modelId}": <usd-per-1M-tokens>}'\` (#4312), ` +
-          `or drop --max-cost.`;
+        const msg = `${noPricingMessage(pricing, { label: this.opts.label, capUsd: this.opts.maxCostUsd })} ` +
+          `(To ship the rate with gbrain itself, add it to src/core/${pricingFile}.)`;
         appendAuditLine(this.auditPath, {
           schema_version: 1,
           ts: new Date().toISOString(),
@@ -308,6 +312,7 @@ export class BudgetTracker {
           spent: this.cumulativeUsd,
           cap: this.opts.maxCostUsd,
           modelId: estimate.modelId,
+          pricing,
         });
       }
       // Legacy warn-once path — cap unset.
@@ -316,7 +321,7 @@ export class BudgetTracker {
         _unpricedWarnings.add(memoKey);
         process.stderr.write(
           `[budget] BUDGET_TRACKER_NO_PRICING: model "${estimate.modelId}" (kind=${estimate.kind}) not in pricing maps. ` +
-            `Cost gate disabled for this call.\n`,
+            `Running it without a cost gate; to meter it, register its rate: ${pricingSetCommand(estimate.modelId, estimate.kind)}\n`,
         );
       }
       appendAuditLine(this.auditPath, {
