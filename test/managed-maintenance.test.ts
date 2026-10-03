@@ -18,6 +18,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { localHostId, revokeLocalWriter } from '../src/core/persistence/identity.ts';
 import { submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { readJournalLimits } from '../src/core/persistence/limits.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../src/core/markdown.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests } from '../src/core/ai/gateway.ts';
@@ -270,7 +271,7 @@ for (const change of ['derived', 'semantic'] as const) {
         await tx.executeRaw(change === 'derived'
           ? 'UPDATE facts SET embedding=embedding,embedded_at=now() WHERE source_id=$1'
           : "UPDATE facts SET fact=fact||' changed' WHERE source_id=$1", [sourceId]);
-      }));
+      }, TEST_WRITE_ATTRIBUTION));
       const outcome = await publishMutation(engine, row, prepared, localHostId());
       expect(outcome.state).toBe(change === 'derived' ? 'committed' : 'conflict');
       expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND consolidated_at IS NOT NULL', [sourceId]))

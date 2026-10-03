@@ -20,6 +20,7 @@ import { runExtract } from '../src/commands/extract.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-lifecycle-'));
 const engines: BrainEngine[] = [];
@@ -288,7 +289,7 @@ test('a managed brain prunes timeline rows an earlier page version left behind, 
     expect(await summaries()).toEqual(['Joined Acme Example']);
     // A row left over from before timeline reconciliation: an earlier version produced it, the current text does not.
     await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.addTimelineEntry('people/bea-example',
-      { ...left, detail: '' }, { sourceId: f.id })));
+      { ...left, detail: '' }, { sourceId: f.id }), TEST_WRITE_ATTRIBUTION));
     expect(await summaries()).toEqual(['Joined Acme Example', 'Left Acme Example']);
     expect((await timelineHistoryCheck(engine, f.id)).details).toMatchObject({ materializable_rows: 0 });
     const printed: string[] = [];

@@ -3,6 +3,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { declarePersistenceProtocol } from '../persistence/protocol.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { requireUuid } from '../persistence/digest.ts';
 import { skillName } from './manifest.ts';
@@ -128,6 +129,7 @@ export async function getSharedSkillRetention(ctx: OperationContext, sourceId = 
 }
 export async function pruneSharedSkillRevisions(ctx: OperationContext, sourceId = ctx.sourceId) {
   const incarnation = await operatorSource(ctx, sourceId);
+  const attribution = await maintenanceAttribution(ctx.engine);
   return ctx.engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
@@ -135,7 +137,7 @@ export async function pruneSharedSkillRevisions(ctx: OperationContext, sourceId 
     return withCoordinatedWrite(tx, [sourceId], async () => {
       const count = await pruneSharedSkillRevisionsInTransaction(tx, sourceId, incarnation);
       return { ...await sharedSkillRetentionStatus(tx, sourceId, incarnation), pruned_revisions: count };
-    });
+    }, attribution);
   });
 }
 export async function retainSharedSkillRevision(ctx: OperationContext, params: { source_id?: string; source_incarnation: string; pack_id: string; name: string; revision: string; hours?: number }) {

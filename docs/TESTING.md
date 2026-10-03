@@ -2105,6 +2105,7 @@ so a change to them selects all E2E (fail-closed); their owners run in every PR.
 
 E2E tests live in `test/e2e/` and run against real Postgres+pgvector (require `DATABASE_URL`), except where noted as PGLite in-memory (no `DATABASE_URL` needed). One file outside the directory also rides the e2e lane: `test/phantom-redirect-engine-parity.test.ts` (Postgres arm; see the file taxonomy above).
 
+- `test/e2e/write-attribution-postgres.test.ts` — runs `test/write-attribution.test.ts` on Postgres, direct and through transaction-mode PgBouncer (`scripts/e2e-backend-matrix.txt`): the coordinator's transaction-local actor reaches page versions, live revisions, facts, takes and timeline rows.
 - `test/e2e/facts-separation-postgres.test.ts` — real-Postgres parity for cross-session facts, supersession, and the pre-limit `unconsolidatedOnly` predicate used by consolidation.
 
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys). Includes dedicated cases for the postgres-engine `addLinksBatch` / `addTimelineEntriesBatch` bind path — postgres-js's JSONB bind (`jsonb_to_recordset(($1::jsonb)->'rows')`) differs from PGLite's and gets its own coverage.

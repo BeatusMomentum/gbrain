@@ -915,6 +915,8 @@ describe('#3374 — transient network retry branch', () => {
         if (prop === 'putPage') {
           return async (slug: string, page: any) => { pageStore.set(slug, page); };
         }
+        // Like a real engine, executeRaw always resolves to a row array.
+        if (prop === 'executeRaw') return () => Promise.resolve([]);
         return () => Promise.resolve(null);
       },
     });

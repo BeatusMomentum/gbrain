@@ -41,6 +41,7 @@ import { drainProjections } from '../src/commands/projections.ts';
 import { projectionBacklog } from '../src/core/page-state/projections.ts';
 import { checkProjectionReadiness } from '../src/commands/doctor/checks/projection-readiness.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -101,7 +102,7 @@ async function prefixExpire(engine: BrainEngine, ctx: OperationContext, slug: st
     await tx.executeRaw('UPDATE persistence_requests SET completed_at=now(), consumer_version=NULL WHERE request_id=$1::uuid', [receipt.request_id]);
     await tx.executeRaw(`UPDATE facts SET expired_at=now(), row_num=NULL WHERE source_id='default' AND source_markdown_slug=$1
       AND source LIKE 'cli:extract-conversation-facts%' AND expired_at IS NULL`, [slug]);
-  }));
+  }, TEST_WRITE_ATTRIBUTION));
 }
 
 for (const backend of testBackends()) {
@@ -129,7 +130,7 @@ for (const backend of testBackends()) {
             SELECT s.incarnation,p.slug,p.knowledge_revision,CASE WHEN p.slug LIKE 'notes/backlog-%' AND right(p.slug,1) IN ('0','2','4','6','8') THEN 'rebuild_failed' ELSE 'protocol_activation' END
             FROM pages p JOIN sources s ON s.id=p.source_id
             WHERE p.source_id='default' AND p.deleted_at IS NULL ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason`);
-        }));
+        }, TEST_WRITE_ATTRIBUTION));
         const queued = (await projectionBacklog(engine)).pending;
         expect(queued).toBe(152);
         const cooling = (await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM page_projection_jobs WHERE reason='rebuild_failed'"))[0].n;
@@ -341,7 +342,7 @@ for (const backend of testBackends()) {
           expect(worktreeManifest(root).digest).toBe(stored.digest);
 
           // A database-only tag makes the page's canonical form differ from its bytes; an upstream edit then syncs database-only.
-          await engine.transaction(tx => withCoordinatedWrite(tx, [id], () => tx.addTag('todos', 'kept-in-brain', { sourceId: id })));
+          await engine.transaction(tx => withCoordinatedWrite(tx, [id], () => tx.addTag('todos', 'kept-in-brain', { sourceId: id }), TEST_WRITE_ATTRIBUTION));
           writeFileSync(join(root, 'TODOS.md'), '# Todos\n\n- keep the mirror pullable\n- and syncing\n');
           commit('upstream edit');
           const next = await performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true });

@@ -17,6 +17,7 @@ import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { requestAttribution } from './attribution.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
@@ -212,7 +213,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
         ? { id: rawId, expired: fact.expired_at === null, reason, protocol_version: 1 }
         : { id, expired: true, path: 'legacy_db', reason: reason ?? 'forgotten' };
       return completeWrite(tx, row, 'committed', { ...outcome, persistence: { mode: 'database' } });
-    });
+    }, requestAttribution(row));
   }));
   // The commit removed the withdrawn pages' chunks. Rebuild them before
   // acknowledging: a CLI process exits without a resident projection worker.

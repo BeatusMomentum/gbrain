@@ -19,6 +19,7 @@ import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { handleToolCall } from '../src/mcp/server.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { inspectUnchanged } from '../src/core/persistence/noop-kernel.ts';
 import { ALL_SOURCES } from '../src/core/source-id.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
@@ -441,7 +442,7 @@ test('#5470 connector kernel: a safe-chunk reseal, projection lag, a pending con
     // render (#5567): the first re-walk may materialize it into the page once; it survives, and later re-walks skip.
     const summaries = () => engine.executeRaw<{ summary: string }>('SELECT t.summary FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1 AND p.slug=$2', [f.id, slug]);
     expect(await admitted(() => engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () =>
-      tx.addTimelineEntry(slug, { date: '2026-01-02', summary: 'Met to review the example plan', source: 'meetings/2026-01-02' }, { sourceId: f.id }))))).toBeLessThanOrEqual(1);
+      tx.addTimelineEntry(slug, { date: '2026-01-02', summary: 'Met to review the example plan', source: 'meetings/2026-01-02' }, { sourceId: f.id }), TEST_WRITE_ATTRIBUTION)))).toBeLessThanOrEqual(1);
     expect(await admitted(async () => {})).toBe(0);
     expect(await summaries()).toEqual([{ summary: 'Met to review the example plan' }]);
     expect(await admitted(() => engine.executeRaw('UPDATE pages SET text_projection_revision=gen_random_uuid() WHERE source_id=$1 AND slug=$2', [f.id, slug]))).toBe(1);

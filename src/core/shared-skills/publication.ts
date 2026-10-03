@@ -16,6 +16,7 @@ import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
 import { localHostId } from '../persistence/identity.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { requestAttribution } from '../persistence/attribution.ts';
 import { normalizeSkillFiles, skillMetadata, skillName, skillPath } from './manifest.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
@@ -364,7 +365,7 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
           WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=$4 FOR UPDATE`, [row.source_id, row.source_incarnation, intent.pack_id, target.name]);
         if ((head?.revision ?? null) !== target.revision) throw new OperationError('revision_conflict', 'A skill in the dependency closure changed.');
       }
-      prunedRevisions = await withCoordinatedWrite(tx, [row.source_id], () => pruneSharedSkillRevisionsInTransaction(tx, row.source_id, row.source_incarnation));
+      prunedRevisions = await withCoordinatedWrite(tx, [row.source_id], () => pruneSharedSkillRevisionsInTransaction(tx, row.source_id, row.source_incarnation), requestAttribution(row));
       const capacity = await sharedSkillRetentionCapacity(tx, row.source_id, row.source_incarnation);
       const [incoming] = await tx.executeRaw<{ bytes: number | string }>(`SELECT COALESCE(SUM(octet_length(r.metadata::text)+octet_length(r.files::text)),0) AS bytes
         FROM jsonb_to_recordset($1::text::jsonb) AS r(metadata jsonb,files jsonb)`, [JSON.stringify(revisions)]);
