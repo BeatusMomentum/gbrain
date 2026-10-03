@@ -19,6 +19,7 @@ import { readManagedSyncFailures } from '../src/core/persistence/sync-failures.t
 import { checkSyncFailures } from '../src/commands/doctor/checks/sync-failures.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { admitWrite, completeWrite, claimNextWrite, markRecovering } from '../src/core/persistence/journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
@@ -62,12 +63,12 @@ test('withdrawal-conflicted sync resumes only through explicit guarded rediscove
     const options = { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true };
     expect((await performManagedSync(engine, options)).status).toBe('first_sync');
     const fact = await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () =>
-      tx.insertFact({ fact: 'synthetic sync withdrawal', source: 'synthetic', visibility: 'world' }, { source_id: f.id })));
+      tx.insertFact({ fact: 'synthetic sync withdrawal', source: 'synthetic', visibility: 'world' }, { source_id: f.id }), TEST_WRITE_ATTRIBUTION));
     writeFileSync(join(f.root, 'a.md'), 'First updated observation.\n');
     writeFileSync(join(f.root, 'z.md'), `Preserve this new prose.\n${body}`); commit(f.root);
     expect((await performManagedSync(engine, options, { maxPages: 1, maxMs: 1000 })).status).toBe('partial');
     await disposePersistenceConsumer(engine);
-    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => recordFactWithdrawal(tx, fact.id, f.id)));
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => recordFactWithdrawal(tx, fact.id, f.id), TEST_WRITE_ATTRIBUTION));
     await expect(performManagedSync(engine, options)).rejects.toMatchObject({ code: 'revision_conflict' });
     expect(await readManagedSyncFailures(engine, [f.id])).toEqual([expect.objectContaining({ phase: 'freeze', path: 'z.md', code: 'revision_conflict' })]);
     await expect(performManagedSync(engine, options)).rejects.toMatchObject({ code: 'revision_conflict' });
@@ -223,7 +224,7 @@ test('checkpoint, discovery, and freeze failures remain diagnosable without a fi
     const f = await fixture(engine, { 'note.md': 'A stable observation before checkpoint.\n' });
     const options = { sourceId: f.id, noPull: true };
     expect((await performManagedSync(engine, options, { maxPages: 1, maxMs: 1000 })).status).toBe('partial');
-    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head])));
+    await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head]), TEST_WRITE_ATTRIBUTION));
     const blocked = await performManagedSync(engine, options);
     expect(blocked).toEqual(expect.objectContaining({ status: 'blocked_by_failures', failures: [expect.objectContaining({ path: '<checkpoint>', phase: 'checkpoint', code: 'revision_conflict' })] }));
     expect(await performManagedSync(engine, options)).toEqual(blocked);
@@ -248,7 +249,7 @@ test('checkpoint, discovery, and freeze failures remain diagnosable without a fi
     await performManagedSync(engine, { sourceId: c.id, noPull: true }, { maxPages: 1, maxMs: 1000 });
     await engine.transaction(tx => withCoordinatedWrite(tx, [c.id], () => tx.putPage('b', {
       type: 'note', title: 'b', compiled_truth: 'A newer accepted database observation.', timeline: '', frontmatter: {}, content_hash: 'newer',
-    }, { sourceId: c.id })));
+    }, { sourceId: c.id }), TEST_WRITE_ATTRIBUTION));
     await expect(performManagedSync(engine, { sourceId: c.id, noPull: true })).rejects.toMatchObject({ code: 'revision_conflict' });
     expect(await readManagedSyncFailures(engine, [c.id])).toEqual([expect.objectContaining({ phase: 'freeze', path: 'b.md', request_id: null, target: c.head })]);
     expect((await engine.getPage('b', { sourceId: c.id }))?.compiled_truth).toContain('newer accepted');

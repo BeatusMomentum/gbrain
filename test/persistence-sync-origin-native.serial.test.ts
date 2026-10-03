@@ -20,6 +20,7 @@ import { admitWrite, claimNextWrite, getWriteRequest } from '../src/core/persist
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { computeSyncDelta } from '../src/core/sync-delta.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -244,7 +245,7 @@ for (const alias of [false, true]) check(`native historical ${alias ? 'alias' : 
   if (process.platform !== 'win32') files[literal] = content;
   const f = await fixture(engine, literal, alias ? 'legacy-example' : 'notes/example', files);
   const history = await engine.getVersions(f.slug, { sourceId: f.id });
-  await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head])));
+  await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head]), TEST_WRITE_ATTRIBUTION));
   const revised = content.replace('title: Example note', 'title: "Example note"');
   writeFileSync(join(f.root, 'notes/example.md'), revised);
   execFileSync('git', ['-C', f.root, 'add', 'notes/example.md']);
@@ -295,7 +296,7 @@ check('deleting an unowned filename preserves the live or tombstoned foreign-ori
     await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
       await tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head]);
       if (deleted) await tx.softDeletePage(f.slug, { sourceId: f.id });
-    }));
+    }, TEST_WRITE_ATTRIBUTION));
     const before = await engine.readPageSnapshot(f.slug, { sourceId: f.id, includeDeleted: true });
     const history = await engine.getVersions(f.slug, { sourceId: f.id });
     unlinkSync(join(f.root, 'notes/example.md'));
@@ -321,7 +322,7 @@ check('unowned deletion rechecks absent ownership and file bytes at publication'
       'notes/recorded.md': content, 'notes/example.md': content,
     });
     await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () =>
-      tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head])));
+      tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head]), TEST_WRITE_ATTRIBUTION));
     unlinkSync(join(f.root, 'notes/example.md'));
     execFileSync('git', ['-C', f.root, 'add', '-A']);
     execFileSync('git', ['-C', f.root, 'commit', '-qm', 'Remove the unowned duplicate']);
@@ -355,7 +356,7 @@ check('unowned deletion rechecks absent ownership and file bytes at publication'
 
 check('a genuine committed Git deletion commits one deletion and the exact checkpoint', async engine => {
   const f = await fixture(engine);
-  await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head])));
+  await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.id, f.head]), TEST_WRITE_ATTRIBUTION));
   const history = await engine.getVersions(f.slug, { sourceId: f.id });
   unlinkSync(join(f.root, 'notes/example.md'));
   execFileSync('git', ['-C', f.root, 'add', '-A']);

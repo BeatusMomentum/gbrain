@@ -16,6 +16,7 @@ import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { admitWrite, claimNextWrite, compactWriteReceipts, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { retainReconcileBackup } from '../src/core/persistence/reconcile-backup.ts';
 import { prepareReconcileMutation } from '../src/core/persistence/reconcile-prepare.ts';
@@ -237,7 +238,7 @@ test('matching legacy scan state migrates only during canonical publication', as
   const f = await fixture(engine);
   const marker = f.snapshot.page.content_hash!.slice(0, 16);
   await withCoordinatedWrite(engine, [f.id], () => engine.executeRaw("UPDATE pages SET frontmatter=frontmatter || $3::text::jsonb WHERE source_id=$1 AND slug=$2",
-    [f.id, f.slug, JSON.stringify({ atoms_scan_hash: marker, atoms_custom: 'preserve' })]));
+    [f.id, f.slug, JSON.stringify({ atoms_scan_hash: marker, atoms_custom: 'preserve' })]), TEST_WRITE_ATTRIBUTION);
   const before = (await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!;
   writeFileSync(f.file, serializePageToMarkdown(before.page, before.tags));
   await local(engine, f.registration, async () => {
@@ -414,7 +415,7 @@ test('source substitution, changed canonical revisions and recreated pages never
       else await withCoordinatedWrite(engine, [f.id], async () => {
         if (mutation === 'identity') await engine.deletePage(f.slug, { sourceId: f.id });
         await engine.putPage(f.slug, { type: 'note', title: 'Example', compiled_truth: 'A later database observation.', frontmatter: {} }, { sourceId: f.id });
-      });
+      }, TEST_WRITE_ATTRIBUTION);
       await expect(runReconcileApply(engine, { source_id: sourceId, slug: f.slug, preview, request_id: randomUUID() })).rejects.toMatchObject({
         code: mutation === 'source' ? 'invalid_params' : 'source_changed' });
       expect(readFileSync(f.file)).toEqual(raw);
@@ -542,7 +543,7 @@ test('file and database edits after reconciliation preparation abort publication
       else await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.putPage(f.slug, {
         type: f.snapshot.page.type, title: f.snapshot.page.title, compiled_truth: 'A competing database observation.',
         timeline: f.snapshot.page.timeline, frontmatter: f.snapshot.page.frontmatter,
-      }, { sourceId: f.id, expectedRevision: f.snapshot.revision })));
+      }, { sourceId: f.id, expectedRevision: f.snapshot.revision }), TEST_WRITE_ATTRIBUTION));
       const competingSnapshot = (await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!;
       const result = await publishMutation(engine, repair.row, repair.prepared);
       expect(result.state).toBe('conflict');
@@ -566,7 +567,7 @@ test('historical basename origins in separate slug directories remain distinct c
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, f.slug, 'example.md']);
       await tx.putPage(otherSlug, { type: 'note', title: 'Other example', compiled_truth: 'An independent historical basename page.',
         frontmatter: { independent: true }, source_path: 'example.md' }, { sourceId: f.id });
-    }));
+    }, TEST_WRITE_ATTRIBUTION));
     const other = (await engine.readPageSnapshot(otherSlug, { sourceId: f.id }))!;
     writeFileSync(otherFile, serializePageToMarkdown(other.page, other.tags));
     const otherBytes = readFileSync(otherFile);
@@ -592,7 +593,7 @@ test('shared provenance URI does not override distinct explicit canonical paths'
       await tx.executeRaw('UPDATE pages SET source_uri=$3 WHERE source_id=$1 AND slug=$2', [f.id, f.slug, sharedUri]);
       await tx.putPage(otherSlug, { type: 'note', title: 'Independent provenance', compiled_truth: 'A distinct file sharing ingestion provenance.',
         frontmatter: {}, source_path: 'other/provenance.md', source_uri: sharedUri }, { sourceId: f.id });
-    }));
+    }, TEST_WRITE_ATTRIBUTION));
     const other = (await engine.readPageSnapshot(otherSlug, { sourceId: f.id }))!;
     writeFileSync(otherFile, serializePageToMarkdown(other.page, other.tags));
     const otherBytes = readFileSync(otherFile);
@@ -618,7 +619,7 @@ test('genuine shared-file origins through explicit paths or URI fallback still r
         : origin === 'repeated-separators' ? 'notes//example.md' : 'notes/example.md';
       await tx.putPage('other/collision', { type: 'note', title: 'Collision', compiled_truth: 'Another page claiming the same file.',
         frontmatter: {}, source_path: sourcePath, source_uri: origin === 'uri' ? uri : null }, { sourceId: f.id });
-    }));
+    }, TEST_WRITE_ATTRIBUTION));
     const snapshot = await engine.readPageSnapshot(f.slug, { sourceId: f.id });
     await local(engine, f.registration, async () => {
       await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).rejects.toMatchObject({
@@ -637,7 +638,7 @@ test('candidate-origin fanout stops at a bounded verification limit rather than 
     await tx.executeRaw(`INSERT INTO pages(source_id,slug,type,title,compiled_truth,frontmatter,source_path,source_uri)
       SELECT $1,'other/candidate-'||n,'note','Independent origin','Independent candidate '||n,'{}'::jsonb,'other/candidate-'||n||'.md',$2
       FROM generate_series(1,101) n`, [f.id, uri]);
-  }));
+  }, TEST_WRITE_ATTRIBUTION));
   await local(engine, f.registration, async () => {
     await expect(runReconcilePreview(engine, { source_id: f.id, slug: f.slug })).rejects.toMatchObject({
       code: 'source_changed', message: 'Too many candidate page origins to verify this exact file safely.' });

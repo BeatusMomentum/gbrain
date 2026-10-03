@@ -10,6 +10,7 @@ import { localHostId } from './identity.ts';
 import { compactStoredManifest, worktreeManifest } from './ownership.ts';
 import { advanceTopology, lockTopologyPrincipal, settleTopologyRequests, topologyCanonicalStamp, withTopologyLocks } from './topology-locks.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { principalAttribution } from './attribution.ts';
 import { releaseTopologyReservation, type TopologyChange } from './topology-receipts.ts';
 import type { TopologyCloneRecovery } from './topology-clone-model.ts';
 import type { CloneLifecycleHooks } from './topology-clone.ts';
@@ -146,7 +147,7 @@ export async function finishTopologyClone(engine:BrainEngine,id:string,hooks:Clo
             if(record.operation==='add')await tx.executeRaw('INSERT INTO sources(id,name,local_path,config,incarnation) VALUES($1,$2,$3,$4::text::jsonb,$5::uuid)',
               [record.sourceId,record.input.name??record.sourceId,record.target,JSON.stringify({...record.input.config,remote_url:record.input.remoteUrl,managed_clone:true}),record.incarnation]);
             else await tx.executeRaw('UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid',[record.sourceId,record.incarnation]);
-          });
+          },principalAttribution({kind:'local_cli',id:row.principal_id}));
           await advanceTopology(tx,[record.worktreeId]);
           await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid',[record.worktreeId,JSON.stringify({...(record.manifest?compactStoredManifest(record.manifest):null),canonical_stamp:await topologyCanonicalStamp(tx,record.worktreeId)})]);
           await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));

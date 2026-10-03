@@ -17,6 +17,7 @@ import { sha256 } from '../src/core/persistence/digest.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { discoverManagedSync } from '../src/core/persistence/sync-discovery.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
@@ -185,7 +186,7 @@ test('repeated slices reuse one manifest and still reject an intervening page id
       expect(manifestReads).toBe(1);
       await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], () => tx.putPage('c', {
         type: 'note', title: 'c', compiled_truth: 'A newer accepted page between sync slices.', timeline: '', frontmatter: {}, content_hash: 'newer',
-      }, { sourceId: f.id })));
+      }, { sourceId: f.id }), TEST_WRITE_ATTRIBUTION));
       await expect(performManagedSync(engine, options, slice)).rejects.toMatchObject({ code: 'revision_conflict' });
       expect(manifestReads).toBe(1);
       expect(await engine.executeRaw('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
@@ -242,9 +243,9 @@ test('a write between batches cannot be overwritten by an older enumerated Git p
     let changed: Promise<void>|undefined;
     const abort=new AbortController();
     const first=await performManagedSync(engine,{sourceId:f.id,noPull:true,signal:abort.signal,onProgress:p=>{
-      if(p.bankedFiles===1){ abort.abort(); changed=engine.transaction(tx=>withCoordinatedWrite(tx,[f.id],async()=>{
+      if(p.bankedFiles===1){ abort.abort(); changed=engine.transaction(tx=>withCoordinatedWrite(tx, [f.id], async()=>{
         await tx.putPage('b',{type:'note',title:'b',compiled_truth:'A concurrently accepted newer observation.',timeline:'',frontmatter:{},content_hash:'newer'}, {sourceId:f.id});
-      })); }
+      }, TEST_WRITE_ATTRIBUTION)); }
     }});
     expect(first.status).toBe('partial'); await changed;
     await expect(performManagedSync(engine,{sourceId:f.id,noPull:true})).rejects.toMatchObject({code:'revision_conflict'});

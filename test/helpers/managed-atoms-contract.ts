@@ -12,6 +12,7 @@ import { isPhysicalRootMetadata } from '../../src/core/persistence/physical-root
 import { __setMaintenanceWriteWaitForTests } from '../../src/core/persistence/maintenance-wait.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalGrant } from '../../src/core/persistence/identity.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './write-attribution.ts';
 import { retryManagedAtomBatch } from '../../src/core/persistence/atom-retry.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { withSubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
@@ -144,7 +145,7 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         // its explicit retry leaves the atom input unchanged.
         if (scenario === 'malformed_retry_revision') {
           const before = (await engine.readPageSnapshot(page.slug, { sourceId }))!;
-          await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.addTag(page.slug, 'reviewed', { sourceId })));
+          await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.addTag(page.slug, 'reviewed', { sourceId }), TEST_WRITE_ATTRIBUTION));
           const after = (await engine.readPageSnapshot(page.slug, { sourceId }))!;
           expect(after.revision).not.toBe(before.revision);
           expect(after.page.content_hash).toBe(page.content_hash);
@@ -578,7 +579,7 @@ export async function exerciseManagedAtomBatch(engine: BrainEngine, scenario: ty
                   const atom = (await tx.getPage(slugs[1], { sourceId }))!;
                   await tx.putPage(slugs[1], { ...atom, compiled_truth: `${atom.compiled_truth}\nAn independent correction.` }, { sourceId });
                 }
-              }));
+              }, TEST_WRITE_ATTRIBUTION));
             }
             return result;
           };
