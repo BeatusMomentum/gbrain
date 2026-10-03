@@ -4,7 +4,7 @@
  * canonical `code`, a `fix` where one applies, and the safe-recovery rule.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { __setDocsRefForTests, toAgentError, type AgentErrorContext, type RenderContext } from '../src/core/agent-output.ts';
+import { __setDocsRefForTests, renderCliError, toAgentError, type AgentErrorContext, type RenderContext } from '../src/core/agent-output.ts';
 import { OperationError, opError } from '../src/core/ops/contract.ts';
 import { catalogueError } from '../src/core/error-catalogue.ts';
 import { errorFor } from '../src/core/errors.ts';
@@ -86,6 +86,26 @@ describe('normaliser rows', () => {
       error: 'permission_denied', code: 'insufficient_scope', message: 'needs write', reason: 'insufficient_scope',
     });
     expect(toAgentError(new RemoteMcpError('network', 'timed out', { kind: 'timeout' }), cx()).code).toBe('timeout');
+  });
+
+  test('thin client: a server fix with only an MCP form is relayed to the CLI user, not dropped', () => {
+    const requestId = '11111111-2222-4333-8444-555555555555';
+    const e = new RemoteMcpError('tool_error', 'pending', {
+      code: 'write_pending', message: 'The write is still pending.', suggestion: 'Read the receipt before resubmitting.',
+      fix: { mcp: { tool: 'get_write_request', arguments: { request_id: requestId } }, consent: [], actor: 'agent', next: 'run',
+        why: 'The receipt says whether the write committed.', requires_exclusive: false },
+    } as never);
+    const cli = render({ transport: 'cli', isCallable: () => false });
+    const env = toAgentError(e, cx({ transport: 'cli', render: cli }));
+    expect(env.fix).toMatchObject({ mcp: { tool: 'get_write_request', arguments: { request_id: requestId } }, actor: 'user', next: 'tell_user_to_run' });
+    expect(env.fix?.argv).toBeUndefined();
+    expect(env.fix?.user_message).toContain('Call the get_write_request tool over MCP');
+    expect(env.suggestion).toContain('get_write_request');
+    const human = renderCliError(e, { json: false, command: 'put', tty: false });
+    expect(human.stderr).toContain(`Fix: call get_write_request over MCP with {"request_id":"${requestId}"}`);
+    // The same fix stays runnable where the tool is callable, and an MCP transport that cannot call it still reports.
+    expect(toAgentError(e, cx()).fix).toMatchObject({ mcp: { tool: 'get_write_request' }, actor: 'agent', next: 'run' });
+    expect(toAgentError(e, cx({ render: render({ isCallable: () => false }) })).fix?.next).toBe('report');
   });
 
   test('DB access errors classify (GBRAIN_DB_ACCESS marker); verbs keep frozen codes', () => {

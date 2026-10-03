@@ -603,7 +603,7 @@ and report it if it repeats.
 interface RenderedAction {
   argv?: string[];                 // ['gbrain', …]: explicit --brain/--source; positionals after '--'
   command?: string;                // shell-quoted from argv; never hand-built
-  mcp?: { tool: string; arguments: Record<string, unknown> };   // present only when callable on your connection
+  mcp?: { tool: string; arguments: Record<string, unknown> };   // present when callable on your connection (or relayed: see below)
   consent: Effect[];               // [] means no consent needed
   actor: 'agent' | 'user' | 'host_admin' | 'provider';
   next: 'run' | 'ask_user' | 'tell_user_to_run' | 'wait' | 'report';
@@ -618,6 +618,18 @@ interface RenderedAction {
   then?: RenderedAction;           // step two of a two-step plan
 }
 ```
+
+**Explicit routing.** Every `gbrain` argv in a fix (`argv`, `preview_argv`,
+`verify.argv`, `then`) names the brain and source the failing call acted on:
+`--brain <id>` for commands that open a brain, `--source <id>` for commands that
+resolve their source through the ambient chain (shared ops, and CLI commands the
+command table marks `routes_source`). gbrain appends them when it renders the
+fix, before any bare `--`, and keeps flags the fix already carries. So you can
+run the fix later from another directory, or under a different `GBRAIN_BRAIN_ID`,
+`GBRAIN_SOURCE`, `.gbrain-mount` or `.gbrain-source`, and it still acts on the
+intended brain. Over HTTP the ids stay (they are not sensitive); paths are
+stripped as everywhere else. A thin client pins nothing: it has no local mounts
+and its remote scopes the source.
 
 `next` is computed when gbrain renders the fix for your connection: from the
 effects, the actor, the transport, which tools you can call and the user's
@@ -651,14 +663,18 @@ First matching row wins.
 
 | # | Condition | `next` |
 |---|---|---|
-| 1 | no runnable step (no `argv`, no callable `mcp`) | `report`: relay `message`; run `gbrain doctor --json` where you can |
+| 1 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
 | 2 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
-| 3 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP | `tell_user_to_run` |
+| 3 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
 | 4 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
 | 5 | otherwise | `run` |
 
 A CLI-only fix rendered for an MCP caller gets actor `user` on stdio and
-`host_admin` on HTTP, and `next: tell_user_to_run`.
+`host_admin` on HTTP, and `next: tell_user_to_run`. The mirror case: an
+MCP-only fix rendered for the CLI (a remote brain's fix on a thin client) keeps
+its `mcp` call as data, gets actor `user`, a `user_message` saying to call that
+tool over MCP, and `next: tell_user_to_run`; the human line reads
+`Fix: call <tool> over MCP with {…}`.
 
 ### Exclusive fixes and two-step plans
 

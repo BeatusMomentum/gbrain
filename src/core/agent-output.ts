@@ -214,9 +214,10 @@ export function docsUrl(anchor: string): string {
 /** The published decision table (first matching row wins). */
 export function deriveNext(a: Action, ctx: RenderContext): Next {
   const callableMcp = a.mcp !== undefined && ctx.isCallable(a.mcp.tool);
-  if (!a.argv?.length && !callableMcp) return 'report';
+  const mcpOnlyOnCli = ctx.transport === 'cli' && !a.argv?.length && a.mcp !== undefined && !callableMcp;
+  if (!a.argv?.length && !callableMcp && !mcpOnlyOnCli) return 'report';
   if (a.actor === 'provider') return 'wait';
-  if (a.actor === 'user' || a.actor === 'host_admin') return 'tell_user_to_run';
+  if (a.actor === 'user' || a.actor === 'host_admin' || mcpOnlyOnCli) return 'tell_user_to_run';
   if (ctx.transport !== 'cli' && !callableMcp) return 'tell_user_to_run';
   if (a.consent.length > 0 && (a.consent.includes('destructive') || !ctx.preapproved(a.consent))) return 'ask_user';
   return 'run';
@@ -231,10 +232,15 @@ function renderVerify(v: Action['verify'], ctx: RenderContext): RenderedAction['
 
 /** Render an Action for the caller's surface. Key order is part of the v1 goldens. */
 export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
-  const mcp = a.mcp && ctx.isCallable(a.mcp.tool) ? a.mcp : undefined;
-  const cliOnlyOnMcp = ctx.transport !== 'cli' && !mcp && a.actor === 'agent' && !!a.argv?.length;
-  const actor: Actor = cliOnlyOnMcp ? (ctx.transport === 'http' ? 'host_admin' : 'user') : a.actor;
+  const callable = a.mcp && ctx.isCallable(a.mcp.tool) ? a.mcp : undefined;
+  const cliOnlyOnMcp = ctx.transport !== 'cli' && !callable && a.actor === 'agent' && !!a.argv?.length;
+  // The mirror case: an MCP-only fix on the CLI (a remote server's fix on a thin client) is kept as
+  // relay data, not dropped: the user (or their MCP client) calls the tool; the CLI cannot.
+  const relay = ctx.transport === 'cli' && !callable && !a.argv?.length && a.mcp ? a.mcp : undefined;
+  const mcp = callable ?? relay;
+  const actor: Actor = cliOnlyOnMcp ? (ctx.transport === 'http' ? 'host_admin' : 'user') : relay && a.actor === 'agent' ? 'user' : a.actor;
   const effective: Action = { ...a, mcp, actor };
+  const userMessage = a.user_message ?? (relay ? `Call the ${relay.tool} tool over MCP with ${JSON.stringify(relay.arguments)}; this command line cannot call it.` : undefined);
   const verify = renderVerify(a.verify, ctx);
   const argv = a.argv ? pinRouting(a.argv, ctx.routing) : undefined;
   const out: RenderedAction = {
@@ -244,7 +250,7 @@ export function renderAction(a: Action, ctx: RenderContext): RenderedAction {
     actor,
     next: deriveNext(effective, ctx),
     why: inertText(a.why),
-    ...(a.user_message !== undefined ? { user_message: inertText(a.user_message) } : {}),
+    ...(userMessage !== undefined ? { user_message: inertText(userMessage) } : {}),
     ...(verify ? { verify } : {}),
     ...(a.docs ? { docs: docsUrl(a.docs) } : {}),
     requires_exclusive: a.requires_exclusive,
@@ -773,7 +779,8 @@ export function renderCliError(e: unknown, opts: { json: boolean; command: strin
   const exitCode = exitCodeForCode(env.code);
   if (opts.json) return { stdout: `${JSON.stringify(env, null, 2)}\n`, exitCode };
   const lines = [`Error [${env.code}]: ${env.message}`];
-  lines.push(`Fix: ${env.fix?.command ?? env.suggestion}`);
+  const relay = env.fix && !env.fix.command && env.fix.mcp ? `call ${env.fix.mcp.tool} over MCP with ${JSON.stringify(env.fix.mcp.arguments)}` : undefined;
+  lines.push(`Fix: ${env.fix?.command ?? relay ?? env.suggestion}`);
   if (env.why) lines.push(`Why: ${env.why}`);
   if (env.docs) lines.push(`Docs: ${env.docs}`);
   return { stderr: `${lines.join('\n')}\n`, exitCode };
