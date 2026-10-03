@@ -73,6 +73,7 @@ import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatch
 import { runMigrations } from './migrate.ts';
 import { supportsHnswIterativeScan } from './vector-index.ts';
 import { searchVectorPool, readVectorPool } from './search/vector-pool.ts';
+import { beforePlannerRead } from './planner-stats.ts';
 import { buildVectorSearchStatement, VECTOR_EXTENSION_VERSION_SQL } from './search/vector-statement.ts';
 import { withVectorSettings } from './search/vector-settings.ts';
 import { PGLITE_SCHEMA_SQL, getPGLiteSchema } from './pglite-schema.ts';
@@ -1157,6 +1158,20 @@ export class PGLiteEngine implements BrainEngine {
 
   private _pageTransaction = false;
 
+  /**
+   * F4b (O-ENG-12): planner-sensitive reads first refresh stale planner
+   * statistics (src/core/planner-stats.ts); call the returned function once the
+   * read has answered. Never inside a transaction.
+   */
+  private async beforePlannerRead(): Promise<() => void> {
+    return this._pageTransaction ? () => {} : beforePlannerRead(this);
+  }
+
+  private async plannerRead<T>(read: () => Promise<T>): Promise<T> {
+    const settle = await this.beforePlannerRead();
+    try { return await read(); } finally { settle(); }
+  }
+
   async putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
     slug = validateSlug(slug);
     return this.transaction(async tx => {
@@ -1272,7 +1287,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
-    return pagesImpl.listPages(scopedRead(this.engineSql), filters);
+    return this.plannerRead(() => pagesImpl.listPages(scopedRead(this.engineSql), filters));
   }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
@@ -1322,6 +1337,7 @@ export class PGLiteEngine implements BrainEngine {
   // than direct window function + GROUP BY. Fetch more chunks than the
   // page limit (3x) to ensure N dedup'd pages survive; bounded and fast.
   async searchKeyword(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    const settle = await this.beforePlannerRead();
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     const offset = opts?.offset || 0;
     const detailFilter = opts?.detail === 'low' ? `AND cc.chunk_source = 'compiled_truth'` : '';
@@ -1351,7 +1367,7 @@ export class PGLiteEngine implements BrainEngine {
         limit, offset, innerLimit, sourceFactorCase,
         hardExcludeClause, visibilityClause, detailFilter, opts,
         dedup: true,
-      });
+      }).finally(settle);
     }
 
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
@@ -1448,6 +1464,7 @@ export class PGLiteEngine implements BrainEngine {
         const fallbackParams = [...params];
         fallbackParams[0] = orQuery;
         ({ rows } = await this.db.query(keywordSql, fallbackParams));
+        settle();
         // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
         // fusion can demote them — an OR-of-common-terms match must not
         // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
@@ -1455,6 +1472,7 @@ export class PGLiteEngine implements BrainEngine {
       }
     }
 
+    settle();
     return (rows as Record<string, unknown>[]).map(rowToSearchResult);
   }
 
@@ -1614,6 +1632,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]> {
+    const settle = await this.beforePlannerRead();
     const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
     if (opts?.limit && opts.limit > searchLimitCap()) {
       console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
@@ -1644,6 +1663,7 @@ export class PGLiteEngine implements BrainEngine {
       },
       opts?.onVectorPoolMeta,
     );
+    settle();
     return rows.map(rowToSearchResult);
   }
 
@@ -1851,7 +1871,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<Link[]> {
-    return linksImpl.getBacklinks(scopedRead(this.engineSql), slug, opts);
+    return this.plannerRead(() => linksImpl.getBacklinks(scopedRead(this.engineSql), slug, opts));
   }
 
   async listLinkSources(
@@ -1874,7 +1894,7 @@ export class PGLiteEngine implements BrainEngine {
     depth: number = 5,
     opts?: import('./engine.ts').TraverseGraphOpts,
   ): Promise<GraphNode[]> {
-    return linksImpl.traverseGraph(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), slug, depth, opts);
+    return this.plannerRead(() => linksImpl.traverseGraph(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), slug, depth, opts));
   }
 
   async traversePaths(
@@ -1888,7 +1908,7 @@ export class PGLiteEngine implements BrainEngine {
     slug: string,
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
   ): Promise<{ paths: GraphPath[]; truncated: boolean }> {
-    return linksImpl.traversePathsDetailed(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), slug, opts);
+    return this.plannerRead(() => linksImpl.traversePathsDetailed(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), slug, opts));
   }
 
   async relationalFanout(
@@ -1932,7 +1952,7 @@ export class PGLiteEngine implements BrainEngine {
     excludePrivate?: boolean;
     mode?: 'inbound' | 'islanded';
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>> {
-    return linksImpl.findOrphanPages(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), opts);
+    return this.plannerRead(() => linksImpl.findOrphanPages(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), opts));
   }
 
   // Tags
@@ -2601,6 +2621,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth> {
+    const settle = await this.beforePlannerRead();
     // Combined metrics from master (brain_score components: dead_links, link_count,
     // pages_with_timeline) and v0.10.3 graph layer (link_coverage, timeline_coverage,
     // most_connected). Both coexist: master's brain_score is the composite
@@ -2781,6 +2802,7 @@ export class PGLiteEngine implements BrainEngine {
     const noDeadLinksScore = pageCount === 0 ? 10 : Math.round(noDeadLinks * 10);
     const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
 
+    settle();
     return {
       page_count: pageCount,
       linkable_page_count: linkablePageCount,

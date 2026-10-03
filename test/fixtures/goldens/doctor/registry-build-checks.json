@@ -575,6 +575,10 @@
       },
       {
         "category": "ops",
+        "name": "planner_stats_stale"
+      },
+      {
+        "category": "ops",
         "name": "chat_fallback_chain_inert"
       },
       {

@@ -383,7 +383,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 192 (latest: 192)",
+          "message": "Version 193 (latest: 193)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1074,6 +1074,26 @@
           },
           "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
           "name": "fact_take_vectors",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "auto_analyze": true,
+            "checked": [
+              "pages",
+              "links",
+              "facts",
+              "takes",
+              "content_chunks",
+              "timeline_entries"
+            ],
+            "engine": "pglite",
+            "fix": "gbrain repair planner-stats --apply",
+            "stale": []
+          },
+          "message": "Planner statistics are fresh on 6 hot tables.",
+          "name": "planner_stats_stale",
           "status": "ok"
         },
         {

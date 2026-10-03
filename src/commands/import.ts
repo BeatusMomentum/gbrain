@@ -33,6 +33,7 @@ import {
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { slog } from '../core/console-prefix.ts';
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
+import { importAnalyzeEveryPages, maybeRefreshPlannerStats, PLANNER_STATS_REPAIR_COMMAND } from '../core/planner-stats.ts';
 import { importManagedFile } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
@@ -634,6 +635,10 @@ export async function runImport(
   const firstCommits = !singleFile && await engine.getConfig('sync.git_first_commit_dates').catch(() => null) === 'true'
     ? gitFirstCommitDates(dir) : null;
 
+  // F4b: PGLite has no autovacuum; refresh stale planner statistics every N files so the import
+  // never plans against the empty tables it started with (O-CEO-17).
+  const analyzeEvery = await importAnalyzeEveryPages(engine);
+
   async function processFile(eng: BrainEngine, filePath: string) {
     if (signal?.aborted) return;
     const relativePath = singleFile ? basename(filePath) : relative(dir, filePath);
@@ -719,6 +724,10 @@ export async function runImport(
     }
     processed++;
     tickProgress();
+    if (analyzeEvery > 0 && processed % analyzeEvery === 0) {
+      await maybeRefreshPlannerStats(engine, 'import', { throttle: false }).catch((e: unknown) =>
+        console.error(`  Warning: planner statistics refresh failed (${e instanceof Error ? e.message : String(e)}); the import continues. Afterwards run: ${PLANNER_STATS_REPAIR_COMMAND}`));
+    }
     if (company) {
       await engine.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('company-brain-content',$1,$2::text::jsonb) ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()",
         [company.receiptId, JSON.stringify([...completed])]);
