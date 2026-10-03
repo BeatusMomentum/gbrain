@@ -472,8 +472,9 @@ async function main() {
       // test/init-migrate-only.test.ts. D1/D3: exit 2 + did-you-mean.
       const message = migrationError?.message ?? `unknown flag ${unknown} for 'gbrain ${command}'`;
       const flagOp = cliOps.get(command) ?? cliAliases.get(command);
-      const known = CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
-      exitCliError(await unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
+      const curated = findCliCommand(command)?.help;
+      const known = curated ? (await curated()).help.flags.map(f => f.name) : CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
+      exitCliError(unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
     const curated = await curatedFlagError(command, subArgs);
     if (curated) exitCliError(curated, command);
