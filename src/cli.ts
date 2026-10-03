@@ -38,6 +38,7 @@ import { isScopeErrorCode } from './core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { agentJsonGuardMode } from './cli/json-guard.ts';
 import { printCuratedHelp } from './cli/help/render.ts';
+import { curatedFlagError } from './cli/help/validate.ts';
 import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeFatalCliError } from './cli/cli-error.ts';
 import { opError } from './core/ops/contract.ts';
 import { opParamValue } from './cli/op-param-values.ts';
@@ -473,6 +474,8 @@ async function main() {
       const known = CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
       exitCliError(await unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
+    const curated = await curatedFlagError(command, subArgs);
+    if (curated) exitCliError(curated, command);
   }
 
   // DB-free durability pull (v0.42.44 D2): the harden cron calls

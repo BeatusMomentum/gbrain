@@ -279,6 +279,7 @@
   "test/cli-format-history-json.test.ts": 84,
   "test/cli-format-search-json.test.ts": 12,
   "test/cli-format-volunteer.test.ts": 38,
+  "test/cli-help-curated.test.ts": 500,
   "test/cli-help-discoverability.test.ts": 9632,
   "test/cli-help-eval-storage-reindex.test.ts": 2595,
   "test/cli-import-no-signal-handlers.test.ts": 285,
