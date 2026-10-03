@@ -304,10 +304,32 @@
       "details": {
         "fix_hint": "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair",
         "reason": "conn_refused",
-        "transient": true
+        "transient": true,
+        "url_source": "database_url in <home>/.gbrain/config.json"
       },
-      "message": "connect ECONNREFUSED  <REDACTED:ipv4>:1",
+      "fix": {
+        "actor": "agent",
+        "argv": [
+          "gbrain",
+          "db-repair"
+        ],
+        "consent": [],
+        "docs": "docs/ENGINES.md#engine-detection-and-access-repair",
+        "requires_exclusive": false,
+        "verify": {
+          "argv": [
+            "gbrain",
+            "doctor",
+            "--only",
+            "connection",
+            "--json"
+          ]
+        },
+        "why": "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. `gbrain db-repair` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix)."
+      },
+      "message": "connect ECONNREFUSED  <REDACTED:ipv4>:1 (database URL from database_url in <home>/.gbrain/config.json)",
       "name": "connection",
+      "readiness_state": "unknown",
       "status": "fail"
     }
   ],

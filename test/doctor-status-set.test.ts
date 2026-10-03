@@ -199,3 +199,31 @@ describe('keyless brain: capability checks are information, not warnings (E2)', 
     });
   });
 });
+
+describe('connection errors name their source; brain score unknown when DB checks did not run (E10)', () => {
+  test('describeUrlSource names the env var or the config file under GBRAIN_HOME', async () => {
+    const { describeUrlSource } = await import('../src/commands/doctor/checks/db-connection.ts');
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-url-source-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        expect(describeUrlSource('env:GBRAIN_DATABASE_URL')).toBe('the GBRAIN_DATABASE_URL environment variable');
+        expect(describeUrlSource('config-file')).toBe(`database_url in ${join(home, '.gbrain', 'config.json')}`);
+        expect(describeUrlSource(null)).toBeNull();
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('a non-ok connection marks the brain score unknown; a live one does not', () => {
+    expect(computeDoctorReport([{ name: 'connection', status: 'fail', message: 'refused' }]).unknown_scores).toEqual(['brain']);
+    expect(computeDoctorReport([{ name: 'connection', status: 'ok', message: 'Connected, 0 pages' }]).unknown_scores).toBeUndefined();
+  });
+
+  test('non-Supabase URLs get no Supabase advice', async () => {
+    const { classifyPgAccessError } = await import('../src/core/pg-access-classify.ts');
+    const err = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' });
+    expect(classifyPgAccessError(err, { url: 'postgresql://u@db.internal.example:5432/brain' }).remediation).not.toMatch(/Supabase/);
+    expect(classifyPgAccessError(err, { url: 'postgresql://u@db.abcdefgh.supabase.co:5432/postgres' }).remediation).toMatch(/Supabase/);
+  });
+});

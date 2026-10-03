@@ -223,8 +223,29 @@
       "status": "ok"
     },
     {
+      "fix": {
+        "actor": "agent",
+        "argv": [
+          "gbrain",
+          "doctor",
+          "--json"
+        ],
+        "consent": [],
+        "requires_exclusive": false,
+        "verify": {
+          "argv": [
+            "gbrain",
+            "doctor",
+            "--only",
+            "connection",
+            "--json"
+          ]
+        },
+        "why": "Runs the database checks --fast skipped."
+      },
       "message": "Skipping DB checks (--fast mode, URL present from config-file)",
       "name": "connection",
+      "readiness_state": "unknown",
       "status": "warn"
     },
     {

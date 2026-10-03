@@ -138,7 +138,7 @@ export {
 } from './doctor/checks/verbs-reflex.ts';
 import type { DoctorContext } from './doctor/context.ts';
 import { runDoctorRegistry, parseOnlyChecks } from './doctor/registry.ts';
-import { finalizeCheckFixes, fixLine, type CheckAgentFields } from './doctor/check-fix.ts';
+import { finalizeCheckFixes, fixLine, unknownScoreCategories, type CheckAgentFields } from './doctor/check-fix.ts';
 import { throttleDoctorHeartbeat } from './doctor/heartbeat.ts';
 import type { RenderContext } from '../core/agent-output.ts';
 export interface Check extends CheckAgentFields {
@@ -236,6 +236,8 @@ export interface DoctorReport {
   db_url_source?: DbUrlSource | null;
   /** E2: capabilities off by choice that bound what this brain can do (e.g. `embeddings_disabled`). Additive. */
   capped_by?: string[];
+  /** E10: category scores that are not evidence because their checks did not run (e.g. `brain` when the DB was unreachable). */
+  unknown_scores?: Array<'brain'>;
 }
 
 function _penaltyScore(checks: Check[]): number {
@@ -296,6 +298,7 @@ export function computeDoctorReport(
     ...(extras?.engine ? { engine: extras.engine } : {}),
     ...(extras?.db_url_source !== undefined ? { db_url_source: extras.db_url_source } : {}),
     ...(capped_by.length ? { capped_by } : {}),
+    ...(unknownScoreCategories(tagged).length ? { unknown_scores: unknownScoreCategories(tagged) } : {}),
   };
 }
 
@@ -586,7 +589,7 @@ function outputResults(
     : null;
 
   console.log('');
-  console.log(`Brain checks:  ${report.brain_checks_score}/100  (category penalty)`);
+  console.log(`Brain checks:  ${report.unknown_scores?.includes('brain') ? 'unknown (database checks did not run)' : `${report.brain_checks_score}/100  (category penalty)`}`);
   console.log(`Skill checks:  ${report.category_scores.skill}/100`);
   console.log(`Ops checks:    ${report.category_scores.ops}/100`);
   console.log(`Meta checks:   ${report.category_scores.meta}/100`);

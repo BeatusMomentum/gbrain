@@ -134,3 +134,13 @@ export function fixLine(fix: CheckAgentFields['fix']): string | null {
   if (!step) return r.user_message ? `Ask the user: ${r.user_message}` : null;
   return r.next === 'run' ? step : `${step}  (${r.next.replace(/_/g, ' ')})`;
 }
+
+/**
+ * E10: categories whose score is not evidence because their checks never ran.
+ * When the `connection` check is present and not ok, no database check ran, so
+ * a `brain` score of 100 would read as "healthy" — it is unknown.
+ */
+export function unknownScoreCategories(checks: readonly CheckLike[]): Array<'brain'> {
+  const conn = checks.find((c) => c.name === 'connection');
+  return conn && conn.status !== 'ok' ? ['brain'] : [];
+}

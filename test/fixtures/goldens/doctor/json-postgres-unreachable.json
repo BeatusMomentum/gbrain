@@ -263,13 +263,36 @@
         {
           "category": "ops",
           "details": {
-            "fix_hint": "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair",
+            "fix_hint": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair",
             "reason": "conn_refused",
-            "transient": true
+            "transient": true,
+            "url_source": "database_url in <home>/.gbrain/config.json"
           },
-          "fix_unavailable_reason": "unstructured",
-          "message": "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "db-repair"
+            ],
+            "command": "gbrain db-repair",
+            "consent": [],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "connection",
+                "--json"
+              ]
+            },
+            "why": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. `gbrain db-repair` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix)."
+          },
+          "message": "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME) (database URL from database_url in <home>/.gbrain/config.json)",
           "name": "connection",
+          "readiness_state": "unknown",
           "status": "fail"
         }
       ],
@@ -279,7 +302,29 @@
       "status": "unhealthy",
       "top_issues": [
         {
-          "fix": "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair",
+          "action": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "db-repair"
+            ],
+            "command": "gbrain db-repair",
+            "consent": [],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/ENGINES.md#engine-detection-and-access-repair",
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "connection",
+                "--json"
+              ]
+            },
+            "why": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. `gbrain db-repair` diagnoses the database URL and access without changing anything (it prints the --yes command for a safe fix)."
+          },
+          "fix": "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair",
           "name": "connection",
           "status": "fail",
           "tier": "root"
@@ -290,12 +335,15 @@
           "status": "warn",
           "tier": "symptom"
         }
+      ],
+      "unknown_scores": [
+        "brain"
       ]
     },
     "stderr": [
-      "[doctor] DB-backed doctor run failed (Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json) — falling back to filesystem-only checks",
+      "[doctor] DB-backed doctor run failed (Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check the database URL; `gbrain engine status --probe` names where it comes from (environment variable or the config file under GBRAIN_HOME)) — falling back to filesystem-only checks",
       "GBRAIN_DB_ACCESS conn_refused",
-      "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
+      "Connection refused: nothing accepted the connection at the configured host and port. Check that the database server is running and that the URL names the right host and port. Run: gbrain db-repair"
     ],
     "stdout": "<json>"
   },

@@ -270,9 +270,31 @@
         },
         {
           "category": "ops",
-          "fix_unavailable_reason": "unstructured",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "doctor",
+              "--json"
+            ],
+            "command": "gbrain doctor --json",
+            "consent": [],
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "connection",
+                "--json"
+              ]
+            },
+            "why": "Runs the database checks --fast skipped."
+          },
           "message": "Skipping DB checks (--fast mode, URL present from config-file-path)",
           "name": "connection",
+          "readiness_state": "unknown",
           "status": "warn"
         }
       ],
@@ -282,6 +304,28 @@
       "status": "warnings",
       "top_issues": [
         {
+          "action": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "doctor",
+              "--json"
+            ],
+            "command": "gbrain doctor --json",
+            "consent": [],
+            "next": "run",
+            "requires_exclusive": false,
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "connection",
+                "--json"
+              ]
+            },
+            "why": "Runs the database checks --fast skipped."
+          },
           "fix": "Skipping DB checks (--fast mode, URL present from config-file-path)",
           "name": "connection",
           "status": "warn",
@@ -293,6 +337,9 @@
           "status": "warn",
           "tier": "symptom"
         }
+      ],
+      "unknown_scores": [
+        "brain"
       ]
     },
     "stderr": [],

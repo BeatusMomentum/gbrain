@@ -218,8 +218,30 @@
       "status": "ok"
     },
     {
-      "message": "No database configured (filesystem checks only). Set GBRAIN_DATABASE_URL or run `gbrain init`.",
+      "fix": {
+        "actor": "agent",
+        "argv": [
+          "gbrain",
+          "init",
+          "--pglite"
+        ],
+        "consent": [],
+        "requires_exclusive": false,
+        "user_message": "There is no gbrain brain on this machine yet. Shall I create a local one?",
+        "verify": {
+          "argv": [
+            "gbrain",
+            "doctor",
+            "--only",
+            "connection",
+            "--json"
+          ]
+        },
+        "why": "No brain is configured on this machine; init creates a local PGLite brain (keyless unless the user adds a provider key)."
+      },
+      "message": "No database configured (filesystem checks only; no URL in the environment or in <home>/.gbrain/config.json). Set GBRAIN_DATABASE_URL or run `gbrain init`.",
       "name": "connection",
+      "readiness_state": "unknown",
       "status": "warn"
     }
   ],
