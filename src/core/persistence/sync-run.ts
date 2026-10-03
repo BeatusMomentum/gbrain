@@ -25,6 +25,7 @@ import { extractManagedStaleLinks } from './links-maintenance.ts';
 import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } from './checkpoint-validation.ts';
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
+import { assertManagedSyncAllowed } from './worktree-refresh.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -257,6 +258,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   assertPersistenceAccepting(engine);
   validateManagedSyncOptions(opts);
   const context = await resolveManagedSyncContext(engine, opts);
+  if (!opts.dryRun) await assertManagedSyncAllowed(engine, context.binding.worktree_id, context.sourceId);
   const authority = await managedSyncAuthority(engine, context.sourceId, context.incarnation, opts.repoPath ?? context.root);
   const company = currentCompanyBrainSync(context.sourceId);
   const processingOptions = syncProcessingOptions(opts);
@@ -512,7 +514,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     }
     if (!opts.dryRun) {
       const code = error instanceof OperationError ? error.code : 'storage_error';
-      if (code !== 'permission_denied') {
+      // A refresh fence is transient admission back-pressure, not a sync failure to record.
+      if (!['permission_denied', 'worktree_refreshing', 'refresh_recovery_required'].includes(code)) {
         const [stored] = cursor ? [] : await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
         const failedCursor = cursor ?? stored?.completed_keys?.[0];
         const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,

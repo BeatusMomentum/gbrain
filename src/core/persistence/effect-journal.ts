@@ -10,6 +10,7 @@ import type { SqlEngine } from './model.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
 import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { refreshFenceClear } from './worktree-refresh-schema.ts';
 
 /** `snapshot` is the publication's final read of the page, including deleted rows, in this transaction. */
 export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest, snapshot: PageSnapshot | null,
@@ -40,14 +41,14 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   }
 }
 
-/** Claims release their database connection before waiting for a filesystem lock/provider. */
+/** Claims release their database connection before waiting for a filesystem lock/provider. Nothing on a refresh-fenced worktree is claimed. */
 export async function claimPersistenceEffect(engine: BrainEngine, hostId: string): Promise<PersistenceEffect | null> {
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
     const [candidate] = await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
       LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
       WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
-      AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid)
+      AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})
       AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
         WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
@@ -82,6 +83,7 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
       WHERE e.worktree_id=$2::uuid AND e.kind='git' AND e.data ? 'relative_path'
       AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'version')
       AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
+      AND ${refreshFenceClear('e')}
       AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
         WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
       AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
