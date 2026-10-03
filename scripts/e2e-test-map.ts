@@ -58,7 +58,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 5 #5401: projection drain CLI and the budgeted resident drain.
   "src/commands/projections.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   "src/core/persistence/consumer.ts": ["test/e2e/projection-drain-postgres.test.ts"],
-  "src/core/persistence/journal.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/withdrawal-followup-writes-postgres.test.ts"],
+  "src/core/persistence/journal.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/withdrawal-followup-writes-postgres.test.ts", "test/e2e/worktree-refresh-postgres.test.ts"],
+  // F0 `gbrain sources refresh`: the refresh state machine, its admission/claim fence and restart recovery.
+  "src/core/persistence/worktree-refresh.ts": ["test/e2e/worktree-refresh-postgres.test.ts"],
   // Fix wave 5 (#5731): the extractor-facts restore and its doctor check.
   "src/core/repair/extractor-facts.ts": ["test/e2e/repair-extractor-facts-postgres.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   "src/core/repair/captured-facts.ts": ["test/e2e/repair-captured-facts-postgres.test.ts"],
@@ -342,7 +344,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/embed-concurrency.ts": ["test/e2e/embed-stale-pool-default-postgres.test.ts"],
   "src/core/embed-stale.ts": ["test/e2e/embed-stale-pool-default-postgres.test.ts"],
   "src/core/persistence/effect-git.ts": ["test/e2e/persistence-git-coalescing-5530-postgres.test.ts"],
-  "src/core/persistence/effect-journal.ts": ["test/e2e/persistence-git-coalescing-5530-postgres.test.ts"],
+  "src/core/persistence/effect-journal.ts": ["test/e2e/persistence-git-coalescing-5530-postgres.test.ts", "test/e2e/worktree-refresh-postgres.test.ts"],
   "src/core/persistence/grandfather.ts": ["test/e2e/persistence-git-coalescing-5530-postgres.test.ts", "test/e2e/grandfather-projection-postgres.test.ts"],
   "src/core/timeline-marker.ts": ["test/e2e/timeline-materialize.test.ts"],
   "src/commands/source-reconcile.ts": ["test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
