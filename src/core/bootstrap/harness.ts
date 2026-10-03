@@ -41,6 +41,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { consentGate } from '../consent-cli.ts';
+import { CONFIRMATION_REQUIRED_EXIT_CODE } from '../exit-codes.ts';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -163,6 +165,8 @@ export interface HarnessFlags {
   skills?: 'follow' | 'memory-only';
   /** #4618 `--seat <label>` ('' = `--no-seat`); undefined keeps the installed seat. */
   seat?: string;
+  /** The raw argv, for the approved command in a consent refusal (the token value is never repeated). */
+  raw: string[];
   error?: string;
 }
 
@@ -181,6 +185,7 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
     refreshSkills: false,
     yes: false,
     json: false,
+    raw: [...rest],
   };
   // [X14] Fail closed: an unattended setup command must never resolve a
   // malformed invocation by silent precedence. Missing values error.
@@ -855,7 +860,7 @@ function logAmbientPostureNotes(
   if (!registrarMode && wb.visibility_posture === 'private') {
     d.logError(
       'WARNING: facts.default_visibility is private, but this harness reads the brain over HTTP MCP — ' +
-        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then re-run gbrain bootstrap harness --yes).`,
+        `${PRIVATE_DEFAULT_REMOTE_CONSEQUENCE} (then run gbrain bootstrap harness again; it asks the user first).`,
     );
   }
 }
@@ -989,17 +994,33 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     ...(instructionsPaths.length > 0 ? { instructionsPaths } : {}),
   });
   d.log(consent);
-  if (!flags.yes) {
-    if (!d.isTTY) {
-      d.logError('\nnon-interactive shell: pass --yes to confirm the wiring above.');
-      return 2;
-    }
-    const answer = (await d.prompt('\nProceed? (y/N) ')).trim().toLowerCase();
-    if (answer !== 'y' && answer !== 'yes') {
-      d.log('aborted — nothing written.');
-      return 1;
-    }
+  // A4/C6: the user decides. --yes is the approval; otherwise a TTY prompt
+  // (EOF/timeout = decline), and with no human at the terminal nothing is
+  // written and the run exits 3 with the consent payload.
+  const harnesses = [wireClaude ? 'Claude Code' : null, wireCodex ? 'Codex' : null, wireOpencode ? 'opencode' : null].filter(Boolean).join(', ');
+  const approvedArgv = ['gbrain', 'bootstrap', 'harness'];
+  for (let i = 0; i < flags.raw.length; i++) {
+    const a = flags.raw[i]!;
+    if (a === '--yes') continue;
+    if (a === '--token') { i++; continue; }
+    approvedArgv.push(a);
   }
+  const auth = await consentGate({
+    command: 'bootstrap harness',
+    effects: flags.token === undefined ? ['persistent_install', 'credentials'] : ['persistent_install'],
+    actor: 'agent',
+    what: `Wire ${harnesses} to the gbrain serve at ${url}`,
+    why: 'Registers the brain\'s memory tools (and the session hooks) in the agent harness so new sessions recall from and save to this brain.',
+    risk: `${flags.token === undefined ? `Mints a bearer token "${flags.tokenName}" with scopes ${skillsPolicy === 'follow' ? 'read, write, skills_member_self' : 'read, write'} and stores it in the harness config. ` : 'Stores the supplied token in the harness config (pass the same --token again). '}`
+      + `Changes the harness configuration persistently${wireHooks ? `, including session hooks (${hookScope})` : ''}. Undo: gbrain bootstrap harness --remove.`,
+    user_message: `Connect ${harnesses} to your brain at ${url}? It adds gbrain's memory tools${wireHooks ? ' and session hooks' : ''} to the harness configuration; gbrain bootstrap harness --remove undoes it.`,
+    argv: approvedArgv,
+    args: flags.yes ? ['--yes'] : [],
+  }, {
+    json: flags.json,
+    env: { interactive: d.isTTY, readLine: async ({ prompt }) => ({ kind: 'line', text: (await d.prompt(prompt)).trim() }) },
+  });
+  if (!auth) return CONFIRMATION_REQUIRED_EXIT_CODE;
 
   // Prior receipt: carries the previous minted token for post-wire rotation
   // [C7], and the prior hook-scope for the user-XOR-project exclusivity check

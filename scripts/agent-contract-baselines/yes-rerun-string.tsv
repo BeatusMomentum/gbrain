@@ -7,7 +7,6 @@ src/commands/doctor/checks/memory-writeback.ts	2
 src/commands/mcp-expose.ts	3
 src/commands/migrations/v0_11_0.ts	1
 src/commands/takes.ts	1
-src/core/bootstrap/harness.ts	1
 src/core/page-state/credential-reseal.ts	1
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	2
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	1
