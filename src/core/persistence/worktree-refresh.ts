@@ -561,6 +561,17 @@ export async function assertManagedSyncAllowed(engine: BrainEngine, worktreeId: 
   throw error;
 }
 
+/** `gbrain sources writer status`: active refreshes (optionally of one source's worktree) with the command that moves each on. */
+export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: string): Promise<Array<Record<string, unknown>>> {
+  const rows = await engine.executeRaw<WorktreeRefreshRow>(`SELECT * FROM persistence_worktree_refreshes WHERE state IN ${ACTIVE_REFRESH_STATES_SQL}
+    AND ($1::text IS NULL OR $1=ANY(source_ids)) ORDER BY created_at`, [sourceId ?? null]);
+  return rows.map(row => ({ refresh_id: row.id, worktree_id: row.worktree_id, state: row.state, source_ids: row.source_ids,
+    old_head: row.old_head, target_head: row.target_head, upstream_ref: row.upstream_ref, updated_at: new Date(row.updated_at).toISOString(),
+    ...(row.outcome.refusal ? { refusal: row.outcome.refusal } : {}),
+    next: row.state === 'draining' ? 'Writes to this worktree are refused while queued work drains; retry them after about a second.'
+      : `gbrain sources refresh ${row.source_ids[0]} --resume` }));
+}
+
 /** Doctor `worktree_refresh_stuck`: active refreshes older than `minutes`. */
 export async function stuckWorktreeRefreshes(engine: BrainEngine, minutes = 15): Promise<Array<Pick<WorktreeRefreshRow, 'id' | 'state' | 'source_ids' | 'updated_at'>>> {
   return engine.executeRaw(`SELECT id,state,source_ids,updated_at FROM persistence_worktree_refreshes

@@ -26,6 +26,7 @@ import { claimCoalescedGitEffects, claimPersistenceEffect } from '../src/core/pe
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
+import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
@@ -81,6 +82,8 @@ test('1. O-ENG-9: writes and syncs to every member are refused while draining, t
     expect(beta.docs).toBe('docs/guides/write-refusals.md#worktree_refreshing');
     await refusedWith(performManagedSync(f.engine, { sourceId: f.beta, noPull: true, noEmbed: true }), 'worktree_refreshing');
     expect(await f.requestCount()).toBe(before);
+    const status = await runPersistenceAdministration(f.engine, 'writer_status', { source_id: f.beta }) as { worktree_refreshes: Array<Record<string, unknown>> };
+    expect(status.worktree_refreshes).toMatchObject([{ state: 'draining', source_ids: [f.alpha, f.beta].sort(), target_head: target }]);
   } } });
   expect(result).toMatchObject({ status: 'completed', target_head: target, source_ids: [f.alpha, f.beta].sort() });
   expect(await f.lastCommit(f.alpha)).toBe(target);
