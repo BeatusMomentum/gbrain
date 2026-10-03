@@ -1322,6 +1322,27 @@ CREATE TABLE IF NOT EXISTS persistence_topology_changes (
 ALTER TABLE persistence_topology_changes ADD COLUMN IF NOT EXISTS intent_bytes bigint NOT NULL DEFAULT 0 CHECK(intent_bytes>=0);
 CREATE INDEX IF NOT EXISTS persistence_topology_recovering ON persistence_topology_changes(created_at) WHERE state='recovering';
 
+CREATE TABLE IF NOT EXISTS persistence_worktree_refreshes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  worktree_id uuid NOT NULL REFERENCES persistence_worktrees(id),
+  source_ids text[] NOT NULL,
+  principal_id uuid NOT NULL,
+  owner_epoch bigint NOT NULL,
+  topology_generation bigint NOT NULL,
+  state text NOT NULL CHECK (state IN ('draining','fenced','merged','syncing','completed','aborted','recovery_required')),
+  old_head text NOT NULL,
+  target_head text NOT NULL,
+  upstream_ref text NOT NULL,
+  preserved_uncommitted text[] NOT NULL DEFAULT '{}',
+  outcome jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS persistence_worktree_refreshes_active
+  ON persistence_worktree_refreshes(worktree_id)
+  WHERE state IN ('draining','fenced','merged','syncing','recovery_required');
+
 CREATE TABLE IF NOT EXISTS source_ingestion_receipts (
   id uuid PRIMARY KEY,
   source_id text NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

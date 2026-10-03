@@ -194,6 +194,7 @@ import { v190 } from './v190-sources-upstream-observation.ts';
 import { v191 } from './v191-alias-source-cascade.ts';
 import { v192 } from './v192-take-embedding-identity.ts';
 import { v193 } from './v193-f1-write-attribution.ts';
+import { v194 } from './v194-f0-worktree-refreshes.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -386,4 +387,5 @@ export const MIGRATIONS: Migration[] = [
   v191,
   v192,
   v193,
+  v194,
 ];

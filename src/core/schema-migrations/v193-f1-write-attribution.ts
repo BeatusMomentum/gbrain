@@ -11,7 +11,6 @@ import { MANAGED_WRITER_GUARD_SQL } from '../persistence/writer-guard-schema.ts'
 // (DDL in src/core/persistence/attribution-schema.ts). No backfill: existing
 // rows read as "unrecorded". The writer guard is re-installed so an
 // attribution-only facts/takes update is not a canonical change.
-// Placeholder version: the Foundations integrator renumbers it.
 export const v193: Migration = {
   version: 193,
   name: 'f1_write_attribution',

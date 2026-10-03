@@ -13,6 +13,7 @@ import { schemaVersionHealth } from '../../../core/schema-version-health.ts';
 import { pgvectorCheck, pagesUpsertArbiterCheck, linkSourceCheckConstraintCheck } from './core-health.ts';
 import { pgliteScaleCheck } from './engine-fit.ts';
 import { checkParkedEffects } from './parked-effects.ts';
+import { checkWorktreeRefreshStuck } from './worktree-refresh.ts';
 import { checkPersistenceCapacity } from './persistence-capacity.ts';
 import { checkPostgresCancellationDriver } from './postgres-cancellation.ts';
 import { checkProjectionReadiness } from './projection-readiness.ts';
@@ -38,7 +39,7 @@ async function runPgvector(ctx: DoctorContext): Promise<Check[]> {
 
   // 4a-bis. Managed write capacity (#5470) and parked postcommit effects (#5612).
   progress.heartbeat('persistence_capacity');
-  checks.push(await checkPersistenceCapacity(engine), await checkParkedEffects(engine));
+  checks.push(await checkPersistenceCapacity(engine), await checkParkedEffects(engine), await checkWorktreeRefreshStuck(engine));
 
   // 4a-ter. #4613: links_link_source_check shape — a ledger-current brain
   // whose CHECK reverted to the pre-v114 allowlist rejects every kebab
@@ -65,6 +66,7 @@ export const pgvectorEntry: DoctorEntry = {
     'text_projection_readiness',
     'persistence_capacity',
     'parked_effects',
+    'worktree_refresh_stuck',
     'links_link_source_check',
     'pglite_scale',
   ],

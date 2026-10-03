@@ -104,9 +104,8 @@ for (const backend of backends) {
         warning: { code: 'managed_pull_skipped', docs: 'docs/guides/write-refusals.md#managed_pull_skipped' } });
       const warning = (sync.details as { warning: { fix: string; cause: string } }).warning;
       expect(warning.cause.length).toBeGreaterThan(0);
-      expect(warning.fix).toContain(`gbrain sources mirror-readonly ${sourceId}`);
-      expect(warning.fix).toContain('pull --ff-only');
-      expect(warning.fix).toContain(`gbrain sync --source ${sourceId} --no-pull`);
+      // F0: the one sanctioned managed refresh (drained, worktree-wide ff-only) replaces the manual pull sequence.
+      expect(warning.fix).toBe(`gbrain sources refresh ${sourceId}`);
       expectRunnableFix(warning.fix);
       expect((await engine().getPage('notes/first', { sourceId }))?.compiled_truth).toContain('The first synced observation.');
     });
@@ -115,7 +114,7 @@ for (const backend of backends) {
   test(`${backend}: an explicit managed sync without --no-pull keeps refusing (O-ENG-15)`, async () => {
     await managedRemoteSource(engine(), async ({ sourceId, root }) => {
       await expect(performSync(engine(), { repoPath: root, sourceId, noPull: false, noEmbed: true }))
-        .rejects.toMatchObject({ code: 'writer_coordinator_required' });
+        .rejects.toMatchObject({ code: 'writer_coordinator_required', suggestion: `Fast-forward and sync the checkout with gbrain sources refresh ${sourceId}` });
     });
   }, 120_000);
 
@@ -148,7 +147,7 @@ for (const backend of backends) {
       const behind = await checkSyncFreshness(engine(), { localOnly: true });
       expect(behind.status).toBe('warn');
       expect(behind.message).toContain(`'${sourceId}' upstream 1 commit(s) ahead of the synced commit`);
-      expect(behind.message).toContain(`gbrain sync --source ${sourceId} --no-pull`);
+      expect(behind.message).toContain(`Fix: gbrain sources refresh ${sourceId} (`);
       expectRunnableFix(behind.message.slice(behind.message.indexOf('Fix: ') + 5));
       expect(behind.details).toMatchObject({ unchanged_count: 1, upstream_behind_count: 1 });
 

@@ -72,3 +72,4 @@ cli	src/core/google/loops-extract.ts	coordinator	Loop commitments publish throug
 cli	src/core/facts/fence-write.ts	coordinator	Direct fence writes publish through publishManagedEntityFacts.
 cli	src/core/chronicle/extract-events.ts	coordinator	Chronicle events and their depth timeline rows publish through publishMaintenancePage.
 cli	src/core/persistence/purge-deleted.ts	coordinator	Shared purge used by the cycle, the purge job, the operation and the CLI.
+cli	src/commands/sources-refresh.ts	coordinator	gbrain sources refresh drains and fences the worktree, fast-forwards it under the native lock, then imports through the managed --no-pull sync's journaled page requests.

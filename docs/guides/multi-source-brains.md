@@ -223,12 +223,13 @@ gbrain sources federate <id>
 gbrain sources unfederate <id>
 gbrain sources mirror-readonly <id>
 gbrain sources mirror-writable <id>
+gbrain sources refresh <id> [--dry-run] [--resume|--abandon]   Managed brains: fast-forward the checkout and sync.
 ```
 
 ### Read-only mirror sources
 
 A source whose Git remote is the source of truth (a code or docs repository
-you keep current with `git pull --ff-only`) can be marked a read-only mirror:
+you keep current from upstream) can be marked a read-only mirror:
 
 ```bash
 gbrain sources mirror-readonly <id>
@@ -246,13 +247,21 @@ write on, except for pages created while the source was a mirror: those have
 no file in the checkout and stay database-only. Git effects of a mirror's
 writes (for example a `forget`) complete as skipped. The flag is off by default.
 
-A managed brain never pulls inside a cycle, so a mirror is advanced outside
-gbrain and then synced without pulling:
+A managed brain never pulls inside a cycle. Advance a managed checkout with
+one command on its owner host:
 
 ```bash
-git -C <checkout> pull --ff-only
-gbrain sync --source <id> --no-pull
+gbrain sources refresh <id>
 ```
+
+It refuses new writes to every source that shares the checkout until queued
+ones finish, fast-forwards it with `git merge --ff-only`, then syncs each of
+those sources without pulling. Sources bound to one checkout (for example
+`notes/` and `docs/` of the same repository) are refreshed together, because a
+merge rewrites files of all of them. `--dry-run` previews the incoming commit;
+refusals are listed under
+[worktree refresh refusals](write-refusals.md#worktree-refresh-refusals). A
+brain that is not managed keeps pulling inside `gbrain sync --source <id>`.
 
 The autopilot cycle syncs the checkout as it is and reports
 `upstream_refresh: "skipped_managed"`; `gbrain doctor` (`sync_freshness`) says

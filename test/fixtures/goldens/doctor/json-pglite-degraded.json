@@ -364,6 +364,15 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "refreshes": []
+          },
+          "message": "No worktree refresh is stuck.",
+          "name": "worktree_refresh_stuck",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "message": "links_link_source_check has the v114 kebab-case gate",
           "name": "links_link_source_check",
@@ -389,7 +398,7 @@
         },
         {
           "category": "meta",
-          "message": "813 column(s) verified against live schema",
+          "message": "828 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },

@@ -8,6 +8,8 @@ import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from '
 import { containsPath, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { completeWrite, lockCounters } from './journal.ts';
 import { principalKey, requestPrincipal, type WriteRequest } from './model.ts';
+import { catalogueError } from '../error-catalogue.ts';
+import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
 
 export type TopologyBinding=WorktreeBinding & { unbound?:boolean };
 
@@ -55,8 +57,12 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
   } finally { for (const handle of handles.reverse()) await handle.release(); }
 }
 
-/** Keep the complete affected membership locked, including absent target keys. */
-export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindings: TopologyBinding[]): Promise<string[]> {
+/**
+ * Keep the complete affected membership locked, including absent target keys.
+ * An active `gbrain sources refresh` on an affected worktree refuses with
+ * `refresh_in_progress`, except for the refresh named by `refreshId` itself.
+ */
+export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindings: TopologyBinding[], refreshId?: string): Promise<string[]> {
   await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
   const ids = bindings.map(b => b.worktree_id).sort();
   const owners = await tx.executeRaw<{ id: string; owner_host_id: string; state: string; owner_epoch:string;topology_generation:string }>(
@@ -64,6 +70,11 @@ export async function lockTopologyRows(tx: BrainEngine, sourceId: string, bindin
   if (owners.length !== ids.length || owners.some(row => row.owner_host_id !== localHostId() || row.state !== 'active')) {
     throw new OperationError('recovery_required', 'The affected worktree is draining, recovering, or changed ownership.');
   }
+  const [refresh] = await tx.executeRaw<{ id: string; state: string; source_ids: string[] }>(`SELECT id,state,source_ids FROM persistence_worktree_refreshes
+    WHERE worktree_id=ANY($1::uuid[]) AND state IN ${ACTIVE_REFRESH_STATES_SQL} AND ($2::uuid IS NULL OR id<>$2::uuid) LIMIT 1`, [ids, refreshId ?? null]);
+  if (refresh) throw catalogueError('refresh_in_progress',
+    `Refresh ${refresh.id} of the worktree holding source ${refresh.source_ids[0]} is ${refresh.state}; source topology cannot change until it finishes.`,
+    `gbrain sources refresh ${refresh.source_ids[0]} --resume, then retry this source command with the same request_id.`);
   const members = await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=ANY($1::uuid[]) ORDER BY source_id', [ids]);
   const sources = [...new Set([sourceId,...members.map(row => row.source_id)])].sort();
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE', [sources]);
