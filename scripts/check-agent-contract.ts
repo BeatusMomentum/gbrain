@@ -14,7 +14,7 @@
  *   throw-new-error-in-ops          `throw new Error` in src/core/ops/**, src/mcp/** or an op `handler:` body
  *   hand-built-command              a `fix` / `next_action` value written as a 'gbrain …' string (build argv; shellQuote renders)
  *   legacy-advice-key               a legacy advice key (next_action, fix_argv, hint, docs_url, …) outside the alias allowlist
- *   interactive-io                  raw stdin/readline/raw-mode reads outside interaction.ts / consent.ts
+ *   interactive-io                  raw stdin/readline/raw-mode reads outside interaction.ts / consent.ts and INTERACTIVE_IO_ALLOW (streams/TUI, with a reason)
  *   yes-rerun-string                a raw "re-run with --yes" string outside consent.ts
  *   stdio-inherit                   `stdio: 'inherit'` outside spawnCliChild (cli-force-exit.ts)
  *   marker-literal                  [AGENT] / [SHOW USER] / "ACTION FOR THE AGENT:" outside agent-output.ts / agent-markers.ts
@@ -53,6 +53,27 @@ export const BASELINED_RULES: readonly Rule[] = [
 ];
 
 export interface Hit { rule: Rule; file: string; line: number; text: string }
+
+/**
+ * interactive-io reads that are data streams or terminal UI, not prompts:
+ * path → call → one-line reason. A prompt (a question the user answers) never
+ * belongs here; it goes through interaction.ts (readLine / promptYesNo).
+ */
+export const INTERACTIVE_IO_ALLOW: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  'src/commands/hook.ts': {
+    'process.stdin.on': 'harness hook payload: bounded, fail-open stream read with its own hard timeout (a hook never blocks the agent)',
+  },
+  'src/commands/watch.ts': {
+    createInterface: 'stdin IS the data: transcript turns streamed line by line until EOF or SIGINT',
+  },
+  'src/commands/jobs-watch.ts': {
+    'process.stdin.setRawMode': "TTY-only dashboard: raw mode so a single 'q' keypress quits",
+    'process.stdin.on': "TTY-only dashboard: the 'q' / Ctrl-C keypress listener",
+  },
+  'src/mcp/server.ts': {
+    'process.stdin.on': 'stdio MCP transport lifecycle: shut down when the client closes stdin',
+  },
+};
 
 const LEGACY_ADVICE_KEYS = new Set(['next_action', 'fix_argv', 'agent_action', 'recovery_action', 'docs_url', 'hint', 'remediation', 'next_step']);
 const MARKER_RE = /\[\/?AGENT\]|\[\/?SHOW USER\]|ACTION FOR THE AGENT:/;
@@ -241,7 +262,8 @@ export function scan(root: string = ROOT): Hit[] {
       if (!ioExempt) {
         if (ts.isCallExpression(n)) {
           const callee = n.expression.getText(sf);
-          if (/(^|\.)createInterface$/.test(callee) || /^process\.stdin\.(on|once)$/.test(callee) || /\.setRawMode$/.test(callee)) add('interactive-io', n);
+          if ((/(^|\.)createInterface$/.test(callee) || /^process\.stdin\.(on|once)$/.test(callee) || /\.setRawMode$/.test(callee))
+            && !INTERACTIVE_IO_ALLOW[path]?.[callee]) add('interactive-io', n);
           if (/(^|\.)readFileSync$/.test(callee) && n.arguments[0] && stringText(n.arguments[0]) === '/dev/stdin') add('interactive-io', n);
         }
         if (ts.isForOfStatement(n) && n.awaitModifier && n.expression.getText(sf) === 'process.stdin') add('interactive-io', n);

@@ -6,6 +6,7 @@ import { jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { VERSION } from '../version.ts';
+import type { InteractiveProbe } from '../core/interaction.ts';
 import { migrationLedgerSummary } from '../core/migration-ledger.ts';
 import { MIGRATIONS_RUNNING_EXIT_CODE, readMigrationLockHolder } from '../core/migration-orchestration-lock.ts';
 import {
@@ -637,9 +638,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     const { applyMigrations } = await import('./apply-migrations.ts');
     const { exitCode, failure } = await applyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
     report.apply_migrations = { exit_code: exitCode ?? 0 };
-    // Any status apply-migrations returns ends post-upgrade here, as its
-    // in-process process.exit always did.
-    if (exitCode !== undefined) process.exit(finishPostUpgrade(json, report, exitCode, failure));
+    // A failure, a consent refusal (3) or a held migration lock (75) ends
+    // post-upgrade here. 0 ("all migrations up to date", the common case on
+    // an upgrade with no new orchestrator migration) continues: the schema
+    // pass, banners, prompts and recovery checks below still run.
+    if (exitCode !== undefined && exitCode !== 0) process.exit(finishPostUpgrade(json, report, exitCode, failure));
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
     // Users can re-run `gbrain apply-migrations` manually if they want
@@ -753,29 +756,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             console.log('[gbrain] remote MCP callers you have authorized. Source code is NOT exposed.');
             console.log('[gbrain] Following updates, bundle bytes and skill editing require separate approval.');
             console.log('═══════════════════════════════════════════════════════════════');
-            const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+            const { isInteractive } = await import('../core/interaction.ts');
+            const isTty = isInteractive();
             let enabled = false;
             if (isTty) {
-              const { createInterface } = await import('readline');
-              // #4318 residual: rl.close() must not run before the answer's
-              // resolveAns() — the unguarded rl.on('close', ...) below would
-              // otherwise settle the promise `false` first (the close event
-              // fires synchronously during rl.close()), so an operator
-              // pressing Enter to accept this [Y/n]-default-yes prompt would
-              // always land on "declined" regardless of what they typed.
-              enabled = await new Promise<boolean>((resolveAns) => {
-                const rl = createInterface({ input: process.stdin, output: process.stdout });
-                let answered = false;
-                rl.question('[gbrain] Enable skill publishing now? (recommended) [Y/n] ', (answer) => {
-                  answered = true;
-                  const a = answer.trim().toLowerCase();
-                  resolveAns(a === '' || a === 'y' || a === 'yes');
-                  rl.close();
-                });
-                rl.on('close', () => {
-                  if (!answered) resolveAns(false);
-                });
-              });
+              enabled = await promptEnableSkillPublishing();
             } else {
               console.log('[AGENT] Relay this to your operator. Recommended: enable it.');
               console.log('[AGENT] Enable with: gbrain config set mcp.publish_skills true');
@@ -1195,4 +1180,20 @@ function printSquatterRecovery(): void {
   console.warn('');
   console.warn('  See docs/INSTALL_FOR_AGENTS.md for the canonical install paths.');
   console.warn('');
+}
+
+/**
+ * The one-time "Enable skill publishing now? (recommended) [Y/n]" prompt
+ * (#4318 residual). Default yes: an empty line (Enter), `y` or `yes`
+ * accepts; anything else, EOF, the prompt timeout or a non-interactive
+ * caller declines (A5: never hang on a silent stdin). Seams for tests.
+ */
+export async function promptEnableSkillPublishing(
+  opts: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream; probe?: InteractiveProbe; timeoutMs?: number } = {},
+): Promise<boolean> {
+  const { readLine } = await import('../core/interaction.ts');
+  const answer = await readLine({ prompt: '[gbrain] Enable skill publishing now? (recommended) [Y/n] ', ...opts });
+  if (answer.kind !== 'line') return false;
+  const a = answer.text.toLowerCase();
+  return a === '' || a === 'y' || a === 'yes';
 }

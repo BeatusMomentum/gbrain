@@ -8,7 +8,12 @@
  * marker tokens lose their opening bracket, so a page title or model name
  * cannot open or close a block. Field names come from the fixed vocabulary.
  */
-import { inertText, type Decision, type RenderedNotice } from './agent-output.ts';
+import { inertText, shellQuote, type Decision, type DecisionOption, type RenderedNotice } from './agent-output.ts';
+
+/** One decision option line body: `<id>: <label>`, plus the command that applies it. */
+function optionText(o: DecisionOption): string {
+  return `${inertText(o.id, 80)}: ${inertText(o.label, MAX_FIELD)}${o.argv?.length ? ` (run: ${inertText(shellQuote(o.argv), MAX_FIELD)})` : ''}`;
+}
 
 export const AGENT_FIELDS = ['ask', 'why', 'risk', 'consent', 'actor', 'next', 'if_yes', 'if_no', 'verify'] as const;
 export type AgentField = (typeof AGENT_FIELDS)[number];
@@ -24,7 +29,7 @@ export function agentBlock(fields: Partial<Record<AgentField, string>>, opts: { 
   }
   (opts.decisions ?? []).forEach((d, i) => {
     lines.push(`${i + 1}. ${inertText(d.question, MAX_FIELD)} (id: ${inertText(d.id, 80)})`);
-    for (const o of d.options) lines.push(`   - ${inertText(o.id, 80)}: ${inertText(o.label, MAX_FIELD)}`);
+    for (const o of d.options) lines.push(`   - ${optionText(o)}`);
     lines.push(`   default: ${inertText(d.default, 80)} — ${inertText(d.default_reason, MAX_FIELD)}`);
   });
   if (opts.showUser) lines.push('[SHOW USER]', inertText(opts.showUser, MAX_FIELD), '[/SHOW USER]');
@@ -46,6 +51,10 @@ export function renderCliNotices(notices: readonly RenderedNotice[], opts: { jso
     const lines = notices.flatMap(n => [
       `Note [${n.code}]: ${n.why}`,
       ...(n.fix?.command ? [`  Fix: ${n.fix.command}`] : []),
+      ...(n.decisions ?? []).flatMap(d => [
+        `  ${inertText(d.question, MAX_FIELD)} (default: ${inertText(d.default, 80)})`,
+        ...d.options.map(o => `    - ${optionText(o)}`),
+      ]),
     ]);
     return { stderr: `${lines.join('\n')}\n` };
   }

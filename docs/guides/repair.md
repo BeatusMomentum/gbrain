@@ -11,7 +11,7 @@ you pass `--apply`.
 Five explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
 `captured-facts` and `loop-facts`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
-`gbrain doctor --remediate --yes --include-repairs` runs them under a budget
+`gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
 
 **Say to your agent:** *"Doctor says some timeline history is only in the
@@ -72,7 +72,8 @@ gbrain repair --all --apply                    # every automatic kind in order
 `--apply` you must name a kind or pass `--all`; `--yes` is refused, and so is
 any other option the table below does not list, including `--max-usd`: a
 refused run changes nothing. To cap paid embedding work, run the repairs
-through `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`. `--all`
+through `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd <n>`
+(`<plan_hash>` comes from `gbrain doctor --remediation-plan --json`). `--all`
 runs `timeline`, then `visibility`, then `safe-chunks`, then `contextual-mode`, then `connector-checkpoints`, then `request-indexes`, then `connector-fences`, then `orphan-bindings`, then `embedding-effects`, and stops at the
 first kind that stops.
 The explicit-only kinds (`google-file-modes`, `stale-atoms`, `extractor-facts`) never run under
@@ -588,7 +589,7 @@ Repair steps: 2 (requires user agreement; PROTECTED, run on this host only; inde
   R2. safe-chunks — 40 item(s) (~$0.0031 embeddings) [requires user agreement]
      apply: gbrain repair safe-chunks --apply
 
-Apply everything after the user agrees: gbrain doctor --remediate --yes --include-repairs --max-usd 0.01
+Apply everything after the user agrees: gbrain doctor --remediate --yes --include-repairs --max-usd 0.01 --expect ph_3f9c2a1b7d4e5f60a1b2c3d4
 Ask the user before applying any repair step.
 ```
 
@@ -670,8 +671,10 @@ walk me through it before changing anything."*
 2. Preview: `gbrain doctor --remediation-plan`. Show the user the repair steps
    and their estimated cost, and ask before applying.
 3. After the user agrees, apply with a budget:
-   `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`
-   (the plan prints `<n>` filled in).
+   `gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>`
+   (the plan prints `<n>` and `<plan_hash>` filled in; `--remediation-plan --json`
+   reports the hash as `plan_hash`). If the plan changed since the preview, the
+   run refuses with `preview_changed` and changes nothing: preview and ask again.
 4. If it stops as budget-exhausted, ask the user again, then run the printed
    resume command (raise `--max-usd` only with their agreement).
 5. Follow each `operator_required` instruction the run prints, and note the
@@ -682,15 +685,15 @@ walk me through it before changing anything."*
 
 | Symptom or error text | Issue | Preview | Apply | Verify | Who acts | Consent |
 | --- | --- | --- | --- | --- | --- | --- |
-| Sync `BLOCKED` with `checkpoint_validation_timeout` | #5762 | `gbrain doctor` (`persistence_request_indexes`) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <source> --no-pull --retry-failed …` | `gbrain doctor` shows `persistence_request_indexes` ok; `gbrain sources status` shows the new `last_commit` | brain host | none |
-| Doctor `persistence_request_indexes` warns | #5762 | `gbrain repair request-indexes` | `gbrain repair request-indexes --apply` | `gbrain doctor` | brain host | none |
-| Doctor `persistence_request_growth` warns | #5751, #5762 | `gbrain doctor --json` | the printed `gbrain config set persistence.limits.<limit> <value>` | `gbrain doctor --json` (check `persistence_request_growth`) | brain host | none |
+| Sync `BLOCKED` with `checkpoint_validation_timeout` | #5762 | `gbrain doctor` (`persistence_request_indexes`) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <source> --no-pull --retry-failed …` | `gbrain doctor --only persistence_request_indexes --json` reports `ok`; `gbrain sources status` shows the new `last_commit` | brain host | none |
+| Doctor `persistence_request_indexes` warns | #5762 | `gbrain repair request-indexes` | `gbrain repair request-indexes --apply` | `gbrain doctor --only persistence_request_indexes --json` | brain host | none |
+| Doctor `persistence_request_growth` warns | #5751, #5762 | `gbrain doctor --json` | the printed `gbrain config set persistence.limits.<limit> <value>` | `gbrain doctor --only persistence_request_growth --json` | brain host | none |
 | Working-tree sync prints `legacy file(s) skipped … no contextual retrieval mode` | #5751 | `gbrain repair contextual-mode` | `gbrain repair contextual-mode --apply` | the next `gbrain sync --working-tree` no longer prints the line | brain host, after the user agrees | none |
 | Working-tree sync prints `legacy file(s) skipped … not valid UTF-8` | #5751 | `find <checkout> -name '*.md' ! -exec iconv -f UTF-8 -t UTF-8 -o /dev/null {} \; -print` | re-save each listed file as UTF-8 | the next `gbrain sync --working-tree` no longer prints the line | user (re-saves the files) | none |
-| Doctor `google_file_modes` warns, or the upgrade printed `[google] Google source <id> keeps its files in <dir>, outside ~/.gbrain` | #5080 | `gbrain repair google-file-modes --source <id>` | `gbrain repair google-file-modes --source <id> --apply` | `gbrain doctor` (`google_file_modes` ok) | brain host, after the user agrees | none |
-| Recall or hot memory returns facts from gbrain's own claude-cli sessions or from pasted text; doctor `captured_facts_active` warns; the upgrade banner prints `captured_facts_active: N (explicit_kind_required; …)` | #5812, #5820 | `gbrain repair captured-facts` (add `--include-ambiguous` to include paste candidates) | `gbrain repair captured-facts --apply --expect <hash>` with the hash that preview printed | `gbrain doctor` (`captured_facts_active` ok) | brain host, after the user agrees | `destructive` (quarantines facts) |
-| A finished promise still shows on entity cards and in recall after its loop was closed; doctor `loop_facts_drift` warns; the upgrade banner prints `loop_facts_drift: N (explicit_kind_required; …)` | #5869 | `gbrain repair loop-facts` | `gbrain repair loop-facts --apply --expect <hash>` | `gbrain doctor` (`loop_facts_drift` ok) | brain host, after the user agrees | `destructive` (retires facts) |
-| `gbrain upgrade` refuses with `requires Bun >=<floor>` (exit 78), or doctor `self_upgrade_health` says `Auto-upgrade to <target> held` | #5855 | `bun --version` | `bun upgrade`, then `gbrain upgrade` ([Bun floor](upgrades-auto-update.md#bun-floor)) | `gbrain --version` shows the target; `gbrain doctor` (`self_upgrade_health` ok) | user | `persistent_install` |
+| Doctor `google_file_modes` warns, or the upgrade printed `[google] Google source <id> keeps its files in <dir>, outside ~/.gbrain` | #5080 | `gbrain repair google-file-modes --source <id>` | `gbrain repair google-file-modes --source <id> --apply` | `gbrain doctor --only google_file_modes --json` (`google_file_modes` ok) | brain host, after the user agrees | none |
+| Recall or hot memory returns facts from gbrain's own claude-cli sessions or from pasted text; doctor `captured_facts_active` warns; the upgrade banner prints `captured_facts_active: N (explicit_kind_required; …)` | #5812, #5820 | `gbrain repair captured-facts` (add `--include-ambiguous` to include paste candidates) | `gbrain repair captured-facts --apply --expect <hash>` with the hash that preview printed | `gbrain doctor --only captured_facts_active --json` (`captured_facts_active` ok) | brain host, after the user agrees | `destructive` (quarantines facts) |
+| A finished promise still shows on entity cards and in recall after its loop was closed; doctor `loop_facts_drift` warns; the upgrade banner prints `loop_facts_drift: N (explicit_kind_required; …)` | #5869 | `gbrain repair loop-facts` | `gbrain repair loop-facts --apply --expect <hash>` | `gbrain doctor --only loop_facts_drift --json` (`loop_facts_drift` ok) | brain host, after the user agrees | `destructive` (retires facts) |
+| `gbrain upgrade` refuses with `requires Bun >=<floor>` (exit 78), or doctor `self_upgrade_health` says `Auto-upgrade to <target> held` | #5855 | `bun --version` | `bun upgrade`, then `gbrain upgrade` ([Bun floor](upgrades-auto-update.md#bun-floor)) | `gbrain --version` shows the target; `gbrain doctor --only self_upgrade_health --json` (`self_upgrade_health` ok) | user | `persistent_install` |
 
 **Say to your agent:** *"After the upgrade, preview the captured-facts and
 loop-facts repairs and tell me what each would expire before applying
@@ -798,7 +801,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 
 | Symptom or error text | Issue | Preview | Apply | Verify | Who acts | Consent |
 | --- | --- | --- | --- | --- | --- | --- |
-| `gbrain upgrade` said the upgrade failed, or migrations ran twice | #5693 | `gbrain apply-migrations --list` | `gbrain apply-migrations --yes` | `gbrain doctor` (`minions_migration` ok) | agent, after the user agrees | none |
+| `gbrain upgrade` said the upgrade failed, or migrations ran twice | #5693 | `gbrain apply-migrations --list` | `gbrain apply-migrations --yes` | `gbrain doctor --only minions_migration --json` (`minions_migration` ok) | agent, after the user agrees | none |
 | `another apply-migrations is running (host …, pid …)` | #5693 | `gbrain doctor` | wait, then `gbrain apply-migrations --yes` | `gbrain apply-migrations --list` | agent | none |
 | doctor `orphan_persistence_bindings`; a re-added source fails with `writer_coordinator_required` | #5732 | `gbrain repair orphan-bindings` | `gbrain repair orphan-bindings --apply` | `gbrain doctor` | brain host, after the user agrees | none |
 | doctor `stale_embedding_effects`; `writer_not_quiesced` names an embedding effect | #5629, #5734 | `gbrain repair embedding-effects --source <id>` | `gbrain repair embedding-effects --source <id> --apply` | `gbrain doctor` (pending until the owner run commits a `retry_queued` effect) | brain host, after the user agrees | none |
@@ -868,7 +871,7 @@ Each effect ends in exactly one outcome; no obligation is dropped without one:
 
 `retry_queued` is not success: doctor keeps the effect pending until the
 owner's run commits it. The preview marks retries as paid work; through
-`gbrain doctor --remediate --yes --include-repairs --max-usd <n>`, the estimate
+`gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd <n>`, the estimate
 covers the whole retry budget each grant authorizes. A resumed run replays the
 grant it already made instead of granting another cycle. A signature-mismatched
 vector is never reconciled; it is re-embedded.
