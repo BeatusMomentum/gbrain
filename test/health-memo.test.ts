@@ -22,6 +22,7 @@ import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainHealth } from '../src/core/types.ts';
 import { clearHealthMemo, healthScopeKey, memoizedHealth, HEALTH_CACHE_TTL_KEY } from '../src/core/health-memo.ts';
 import { runRepairCommand } from '../src/commands/repair.ts';
+import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { runRemediate } from '../src/commands/doctor/remediate.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -85,6 +86,10 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T> {
     console.error = error;
   }
 }
+
+test('the documented opt-out key is a known config key, so `gbrain config set health.cache_ttl_ms 0` needs no --force', () => {
+  expect(KNOWN_CONFIG_KEYS).toContain(HEALTH_CACHE_TTL_KEY);
+});
 
 describe('get_health memo (O-ENG-13)', () => {
   test('a repeat call inside the TTL is memoized; a page write recomputes', async () => {

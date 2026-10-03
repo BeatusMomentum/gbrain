@@ -1632,6 +1632,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
   // F4b: PGLite row-delta ANALYZE, read by src/core/planner-stats.ts (docs/guides/planner-stats.md).
   'planner.auto_analyze', 'planner.first_read_budget_ms', 'import.analyze_every_pages',
+  // F4a: get_health memo TTL, read by src/core/health-memo.ts (0 disables).
+  'health.cache_ttl_ms',
 ];
 
 /**
