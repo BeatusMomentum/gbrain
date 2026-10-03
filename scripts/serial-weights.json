@@ -145,6 +145,7 @@
   "test/import-signature-stamp.serial.test.ts": 6,
   "test/import-source-cr-mode.serial.test.ts": 4,
   "test/init-picker-pty.serial.test.ts": 14,
+  "test/interaction-stdin.serial.test.ts": 12,
   "test/jobs-autopilot-cycle-braindir.serial.test.ts": 4,
   "test/jobs-embed-background-dryrun.serial.test.ts": 3,
   "test/jobs-embed-background-parity.serial.test.ts": 11,

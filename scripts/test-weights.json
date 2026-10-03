@@ -999,6 +999,7 @@
   "test/integrations.test.ts": 30,
   "test/integrity.test.ts": 2493,
   "test/intent-weights.test.ts": 14,
+  "test/interaction.test.ts": 1,
   "test/job-isolation-allow-shell-jobs.test.ts": 4,
   "test/job-isolation-protocol.test.ts": 100,
   "test/job-pull-policy.test.ts": 21,
