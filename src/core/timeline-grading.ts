@@ -10,14 +10,17 @@
  * brain only changes when its pack says a type is a document.
  */
 import type { BrainEngine } from './engine.ts';
-import { loadActivePackForLocalEngine } from './schema-pack/best-effort.ts';
-import { classifyStoredType } from './schema-pack/type-usage.ts';
 
 const TIMELINE_PRIMITIVES: ReadonlySet<string> = new Set(['entity', 'temporal']);
 
 export async function loadTimelineGradedPredicate(
   engine: Pick<BrainEngine, 'getConfig'>,
 ): Promise<(type: string) => boolean> {
+  // Loaded lazily: both engines import this module, and a static schema-pack import here
+  // puts the pack loader into the engine module graph, which breaks the OpenClaw plugin's
+  // context engine at load time (native-locks OpenClaw startup test).
+  const { loadActivePackForLocalEngine } = await import('./schema-pack/best-effort.ts');
+  const { classifyStoredType } = await import('./schema-pack/type-usage.ts');
   const pack = await loadActivePackForLocalEngine(engine);
   if (!pack) return () => true;
   const primitiveOf = new Map(pack.manifest.page_types.map((t) => [t.name, t.primitive as string]));
