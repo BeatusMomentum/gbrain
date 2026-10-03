@@ -9,5 +9,4 @@ src/commands/report.ts	1
 src/commands/upgrade.ts	1
 src/commands/watch.ts	1
 src/core/post-upgrade-reembed.ts	1
-src/core/skillpack/trust-prompt.ts	1
 src/mcp/server.ts	2
