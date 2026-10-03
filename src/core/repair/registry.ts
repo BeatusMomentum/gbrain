@@ -37,6 +37,7 @@ import { extractorFactsRepair } from './extractor-facts.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { loopFactsRepair } from './loop-facts.ts';
 import { orphanChildrenRepair } from './orphan-children.ts';
+import { attributionBackfillRepair } from './attribution-backfill.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -98,6 +99,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'Settle stale queued or failed embedding effects of committed writes (#5629, #5734), which block receipt compaction and activation. '
       + 'Each effect is reconciled (current vectors pass the effect verifier), superseded (page deleted, or a newer revision owns its own effect), '
       + 'retry_queued for its owner (paid; a consumed retry allowance gets one new bounded cycle per explicit run) or blocked with the reason. Never drops an obligation.',
+  },
+  'attribution-backfill': {
+    handler: attributionBackfillRepair, embeds: 'none', checks: [],
+    summary: 'Fill write attribution (who wrote it) on pages, page versions and facts written before attribution was recorded, only where exactly one '
+      + 'committed request in the write journal proves the writer: the page mutation whose outcome revision is the row\'s revision, or the remember '
+      + 'that inserted the fact. Fills NULLs only, in committed batches of 1,000 that resume after an interruption. Everything else stays NULL and reads '
+      + 'as unrecorded. Bookkeeping only; no journal admission, no content or revision change.',
   },
   'google-file-modes': {
     handler: googleFileModesRepair, embeds: 'none', checks: ['google_file_modes'], explicit_only: true,
