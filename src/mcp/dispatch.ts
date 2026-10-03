@@ -347,6 +347,33 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
 }
 
 /**
+ * Model-visible notices the search/query ops attach to `_meta.retrieval`: the
+ * D8 empty-retrieval diagnosis, a reconciled type filter, other names declared in the evidence, and saved
+ * facts that match the query. Each rides as its own text block after the
+ * results (content[0] stays the bare result array for thin clients).
+ */
+export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): string[] {
+  if (retrieval === null || typeof retrieval !== 'object') return [];
+  const empty = Array.isArray(result) && result.length === 0 ? buildEmptyRetrievalBlock(retrieval) : null;
+  const r = retrieval as {
+    type_filter_notice?: unknown;
+    other_names?: Array<{ name: string; alias: string; slug: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string }>;
+  };
+  const blocks: string[] = empty ? [empty] : [];
+  if (typeof r.type_filter_notice === 'string') blocks.push(r.type_filter_notice);
+  if (r.other_names?.length) {
+    blocks.push(`Other names in these results (documents may use either; search the one you have not tried): ${r.other_names
+      .map(n => `${n.alias} = ${n.name} (declared in ${n.slug})`).join('; ')}.`);
+  }
+  if (r.saved_facts?.length) {
+    blocks.push(`Saved facts (remember) matching this query, newest first; recall returns more:\n${r.saved_facts
+      .map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}]`).join('\n')}`);
+  }
+  return blocks;
+}
+
+/**
  * D8: render the second (model-visible) content block for an empty retrieval
  * result from the handler-emitted `retrieval` meta. Returns null when the
  * meta doesn't carry the expected shape — the block is best-effort loudness,
@@ -797,10 +824,12 @@ export async function dispatchToolCall(
     // array (D3 — deployed thin-clients parse content[0] only); the diagnosis
     // rides the notice channel (its text kept as the `why:` line). Structured
     // consumers read the same facts from _meta.retrieval below.
-    if (Array.isArray(result) && result.length === 0 && responseMeta.retrieval) {
-      const block = buildEmptyRetrievalBlock(responseMeta.retrieval);
-      if (block) notices.push({ code: 'empty_retrieval', kind: block.includes('degraded:') ? 'degraded' : 'info', why: block });
-    }
+    const emptyBlock = Array.isArray(result) && result.length === 0 && responseMeta.retrieval
+      ? buildEmptyRetrievalBlock(responseMeta.retrieval) : null;
+    if (emptyBlock) notices.push({ code: 'empty_retrieval', kind: emptyBlock.includes('degraded:') ? 'degraded' : 'info', why: emptyBlock });
+    // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
+    // data, not advice: they stay plain extra text blocks right after content[0], as measured.
+    const evidenceBlocks = retrievalNoticeBlocks(result, responseMeta.retrieval).slice(emptyBlock ? 1 : 0);
     // WP3/D8: warn-mode unknown-param notices ride the same channel, so the
     // grace period actually corrects clients (old thin-clients read content[0]
     // only — skew-safe). One notice per ignored parameter.
@@ -817,6 +846,7 @@ export async function dispatchToolCall(
     maybeBackupNotice(notices, opts);
     if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
+    if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
     }
