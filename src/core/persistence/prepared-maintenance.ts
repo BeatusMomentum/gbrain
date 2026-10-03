@@ -138,13 +138,14 @@ export async function submitDatabaseMaintenanceIntent(engine: BrainEngine, autho
 }
 
 export async function stampMaintenancePage(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  cycleDate: string, rawSource?: string, rawTraceExemptReason?: string): Promise<void> {
+  cycleDate: string, rawSource?: string, rawTraceExemptReason?: string, seat?: string): Promise<void> {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId });
   if (!snapshot) throw new OperationError('page_not_found', 'A maintenance output page disappeared.');
   const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || cycleDate;
   const page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
     dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, ...(rawSource ? { raw_source: rawSource } : {}),
-    ...(rawTraceExemptReason ? { raw_trace_exempt: true, raw_trace_exempt_reason: rawTraceExemptReason } : {}) } };
+    ...(rawTraceExemptReason ? { raw_trace_exempt: true, raw_trace_exempt_reason: rawTraceExemptReason } : {}),
+    ...(seat ? { seat } : {}) } };
   await publishMaintenancePage(engine, authority, slug, serializePageToMarkdown(page, snapshot.tags), { expectedRevision: snapshot.revision });
 }
 

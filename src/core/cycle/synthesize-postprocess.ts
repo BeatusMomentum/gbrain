@@ -13,7 +13,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
 import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
 
-interface OutputRef { slug: string; source_id: string; raw_source?: string; first_write_at?: Date; }
+interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
 
 export async function postprocessManagedSynthesis(
@@ -76,7 +76,7 @@ export async function postprocessManagedSynthesis(
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
       const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);
       let page = isDreamOwnedPage(snapshot.page, since) ? { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
-        dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path } } : snapshot.page;
+        dream_cycle_date: firstDate, dream_created_cycle_date: firstDate, raw_source: path, ...(transcript.seat ? { seat: transcript.seat } : {}) } } : snapshot.page;
       if (opts.quoteVerify) {
         const prior = since ? await resolveVerifyPrior(engine, snapshot.page, ref.source_id, since) : null;
         if (prior === 'unchanged') stats.skipped_unchanged++;

@@ -82,7 +82,7 @@ import { stampDreamProvenance } from './dream-provenance.ts';
 export { runSubagentsInline, runDrainRenewalTick };
 import { loadAllowedSlugPrefixes } from './filing-rules.ts';
 export { loadAllowedSlugPrefixes };
-import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript, conversationPagesOptedIn, conversationPagesNotConsumed, withConversationPages } from './transcript-discovery.ts';
+import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript, conversationPagesOptedIn, conversationPagesNotConsumed, withConversationPages, withTranscriptSeats } from './transcript-discovery.ts';
 import { loadStorageConfig, isDbOnly } from '../storage-config.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
@@ -1135,7 +1135,7 @@ async function runPhaseSynthesizeInner(
     // rescued/passed transcript whose child declined to write (task D) is
     // distinguishable from a triage miss in the phase telemetry.
     const jobsWithPages = new Set<number>();
-    let writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId, jobRawSource, jobsWithPages);
+    let writtenRefs = withTranscriptSeats(await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId, jobRawSource, jobsWithPages), worthProcessing);
     let finalizedRefs = writtenRefs;
 
     // Grounding gate: verify every page the children wrote (whole page when
