@@ -638,9 +638,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     const { applyMigrations } = await import('./apply-migrations.ts');
     const { exitCode, failure } = await applyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
     report.apply_migrations = { exit_code: exitCode ?? 0 };
-    // Any status apply-migrations returns ends post-upgrade here, as its
-    // in-process process.exit always did.
-    if (exitCode !== undefined) process.exit(finishPostUpgrade(json, report, exitCode, failure));
+    // A failure, a consent refusal (3) or a held migration lock (75) ends
+    // post-upgrade here. 0 ("all migrations up to date", the common case on
+    // an upgrade with no new orchestrator migration) continues: the schema
+    // pass, banners, prompts and recovery checks below still run.
+    if (exitCode !== undefined && exitCode !== 0) process.exit(finishPostUpgrade(json, report, exitCode, failure));
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
     // Users can re-run `gbrain apply-migrations` manually if they want
