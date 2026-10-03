@@ -171,8 +171,12 @@ if (heartbeatMs > 0) {
       w('parent alive ' + elapsed + 's elapsed, past the deadline and still progressing (last progress ' + Math.round((Date.now() - lastProgress) / 1000) + 's ago); stops after ' + Math.round(progressWindowMs / 1000) + 's without progress');
       return;
     }
+    if (progressWindowMs > 0) {
+      w('parent alive ' + elapsed + 's elapsed, deadline in ~' + Math.round((deadlineMs - (Date.now() - t0)) / 1000) + 's (extends while progressing)');
+      return;
+    }
     const killIn = Math.round((deadlineMs + graceMs - (Date.now() - t0)) / 1000);
-    w('parent alive ' + elapsed + 's elapsed, ' + (progressWindowMs > 0 ? 'deadline' : 'hard-kill') + ' in ~' + killIn + 's');
+    w('parent alive ' + elapsed + 's elapsed, hard-kill in ~' + killIn + 's');
   }, heartbeatMs);
   if (typeof hb.unref === 'function') hb.unref();
 }
