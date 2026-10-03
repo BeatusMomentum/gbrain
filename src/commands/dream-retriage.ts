@@ -36,7 +36,7 @@
  */
 
 import { basename } from 'node:path';
-import { createInterface } from 'node:readline';
+import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 import type { BrainEngine, DreamVerdict } from '../core/engine.ts';
 import {
   loadSynthConfig,
@@ -264,14 +264,6 @@ async function retriageS7(engine: BrainEngine, config: Awaited<ReturnType<typeof
   };
 }
 
-async function confirmOnTty(prompt: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const answer = await new Promise<string>(resolve => rl.question(`${prompt} [y/N] `, resolve));
-  rl.close();
-  return /^y(es)?$/i.test(answer.trim());
-}
-
 export async function runDreamRetriage(engine: BrainEngine | null, args: string[]): Promise<void> {
   let parsed: RetriageArgs;
   try {
@@ -323,6 +315,8 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
   // Estimated spend accumulated across the triage sweep AND the reject audit —
   // one budget spans both halves (CX3 + security review).
   let estimatedSpendUsd = 0;
+  // The soft-stop budget: --max-usd, else the derived consent cap (A4).
+  let budgetUsd: number | null = parsed.maxUsd;
 
   if (parsed.dryRun) {
     // Zero judge calls: read cached verdicts only. Files without a valid
@@ -413,18 +407,24 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       ? `[retriage] ${missCount} file(s) to judge with ${triageModel} — estimated ≤ $${estimateUsd.toFixed(2)}${auditSuffix}`
       : `[retriage] ${missCount} file(s) to judge with ${triageModel} — no pricing entry for this model (cannot estimate; the ${UNPRICED_CONFIRM_FILES}-file confirmation gate applies)${auditSuffix}`;
     process.stderr.write(estimateLine + '\n');
-    if (gateTriggered && !parsed.yes) {
-      if (parsed.json || !process.stdin.isTTY) {
-        console.error('dream retriage: spend estimate exceeds the confirmation gate; re-run with --yes (non-interactive)');
-        setCliExitVerdict(2);
-        return;
-      }
-      const ok = await confirmOnTty(`Proceed with ~$${estimateUsd?.toFixed(2) ?? '?'} of triage spend?`);
-      if (!ok) {
-        console.error('dream retriage: aborted at spend confirmation');
-        setCliExitVerdict(2);
-        return;
-      }
+    // A4: above the gate the spend needs consent (--yes, --max-usd, tokenmax or
+    // a preapproval); --json never implies it. Without a user cap the soft-stop
+    // runs at the derived cap. Below the gate small sweeps proceed as before.
+    if (gateTriggered) {
+      const cost = estimateUsd !== null ? `about $${estimateUsd.toFixed(2)}` : 'an amount that cannot be estimated (unpriced model)';
+      const auth = await consentGate({
+        command: 'dream retriage', effects: ['paid'], actor: 'agent',
+        what: `Re-judge ${missCount} transcript file(s) with ${triageModel}`,
+        why: 'Re-runs the dream triage verdicts so transcripts judged under an older model or threshold get current verdicts.',
+        risk: `Spends ${cost} with the model provider${auditSuffix}. Verdicts are cached; nothing is deleted.`,
+        user_message: `Re-judge ${missCount} transcript file(s) for ${cost}?`,
+        argv: ['gbrain', 'dream', 'retriage', ...args.filter(a => a !== '--yes')],
+        preview_argv: ['gbrain', 'dream', 'retriage', ...args.filter(a => a !== '--yes' && a !== '--json'), '--dry-run'],
+        est_usd: estimateUsd,
+        args,
+      }, { json: parsed.json, env: engineConsentEnv(engine) });
+      if (!auth) return;
+      if (budgetUsd === null && auth.cap_usd !== null && perFileUsd !== null) budgetUsd = auth.cap_usd;
     }
 
     // --max-usd soft-stop: estimate-based (usage isn't threaded through the
@@ -432,10 +432,10 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // crosses the budget. runTriagePass ticks shouldStop on EVERY judge
     // attempt (CX3 — unreliable responses are paid calls too); may overshoot
     // by up to the configured concurrency. Remaining files report as deferred.
-    const shouldStop = parsed.maxUsd !== null && perFileUsd !== null
+    const shouldStop = budgetUsd !== null && perFileUsd !== null
       ? (): boolean => {
           estimatedSpendUsd += perFileUsd;
-          return estimatedSpendUsd >= parsed.maxUsd!;
+          return estimatedSpendUsd >= budgetUsd!;
         }
       : undefined;
 
@@ -730,9 +730,9 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
         if (!t) continue;
         // --max-usd spans the audit too (CX3): stop before the next frontier
         // call would cross the budget.
-        if (parsed.maxUsd !== null && auditPerFileUsd !== null
-            && estimatedSpendUsd + auditPerFileUsd > parsed.maxUsd) {
-          process.stderr.write(`[retriage] --audit-rejects stopped at --max-usd $${parsed.maxUsd.toFixed(2)} (audited ${judged})\n`);
+        if (budgetUsd !== null && auditPerFileUsd !== null
+            && estimatedSpendUsd + auditPerFileUsd > budgetUsd) {
+          process.stderr.write(`[retriage] --audit-rejects stopped at the $${budgetUsd.toFixed(2)} budget (audited ${judged})\n`);
           break;
         }
         try {
