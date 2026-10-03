@@ -804,6 +804,7 @@
   "unit:test/brainstorm/model-config.test.ts": 416,
   "unit:test/brainstorm/save.test.ts": 3165,
   "unit:test/budget-meter.test.ts": 338,
+  "unit:test/budget-tracker-cap-source.test.ts": 500,
   "unit:test/budget/free-local-chat-pricing.test.ts": 262,
   "unit:test/budget/pricing-overrides.test.ts": 169,
   "unit:test/build-llms.test.ts": 185,

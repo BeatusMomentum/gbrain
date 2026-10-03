@@ -190,6 +190,7 @@
   "test/brainstorm/save.test.ts": 1598,
   "test/budget-meter-fail-closed.test.ts": 481,
   "test/budget-meter.test.ts": 10,
+  "test/budget-tracker-cap-source.test.ts": 1,
   "test/budget/free-local-chat-pricing.test.ts": 4,
   "test/budget/pricing-overrides.test.ts": 5,
   "test/build-llms.test.ts": 9,
