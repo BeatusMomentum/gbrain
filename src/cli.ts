@@ -3124,7 +3124,7 @@ ADMIN
         [--install] [--json]         Print the paste-ready command, or --install to run it
   auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
   auth --help                        Full subcommand list (register-client,
-                                     rescope-client, rescope-token, revoke-client, permissions, ...)
+                                     rescope, rescope-client, rescope-token, revoke-client, ...)
   watch [--json]                     Push-based context: pipe conversation turns in,
                                      volunteered brain pages stream out (#2095)
   call <tool> '<json>'               Raw tool invocation

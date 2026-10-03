@@ -2,6 +2,7 @@
   "golden": {
     "constraints": {
       "access_tokens.access_tokens_pkey": "p PRIMARY KEY (id)",
+      "access_tokens.access_tokens_source_grant_check": "c CHECK ((source_grant = ANY (ARRAY['default'::text, 'scalar'::text, 'federated'::text, 'none'::text])))",
       "access_tokens.access_tokens_token_hash_key": "u UNIQUE (token_hash)",
       "budget_ledger.budget_ledger_pkey": "p PRIMARY KEY (scope, resolver_id, local_date)",
       "budget_reservations.budget_reservations_pkey": "p PRIMARY KEY (reservation_id)",
@@ -1018,7 +1019,13 @@
           "5 created_at timestamp with time zone/timestamptz NULL DEFAULT now()",
           "6 last_used_at timestamp with time zone/timestamptz NULL",
           "7 revoked_at timestamp with time zone/timestamptz NULL",
-          "8 permissions jsonb/jsonb NOT NULL DEFAULT '{\"takes_holders\": [\"world\"]}'::jsonb"
+          "8 permissions jsonb/jsonb NOT NULL DEFAULT '{\"takes_holders\": [\"world\"]}'::jsonb",
+          "9 source_grant text/text NULL",
+          "10 source_id text/text NULL",
+          "11 federated_read ARRAY/_text NULL",
+          "12 allowed_operations ARRAY/_text NULL",
+          "13 takes_holders ARRAY/_text NULL",
+          "14 grant_revision integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

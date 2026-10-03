@@ -237,6 +237,9 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'global_maintenance_timeouts',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.
   'legacy_job_authority',
+  // F3: legacy tokens on the JSONB-only grant shape (info) and grant drift (warn).
+  'legacy_token_grant_shape',
+  'legacy_token_grant_drift',
   'reranker_health',
   'rls',
   'rls_event_trigger',

@@ -132,7 +132,7 @@ describe('legacy bearer transport serves the shared builder output (parity)', ()
       kind: 'postgres',
       executeRaw: async (sql: string, params?: unknown[]) => {
         const norm = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-        if (norm.startsWith('select id, name')) {
+        if (norm.startsWith('select id, name') || norm.startsWith('select * from access_tokens')) {
           const row = validTokens.get(params?.[0] as string);
           return row ? [{ ...row, permissions: { takes_holders: ['world'] } }] : [];
         }

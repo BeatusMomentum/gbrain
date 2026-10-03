@@ -935,6 +935,27 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "legacy_shape_count": 0,
+            "malformed": []
+          },
+          "message": "Every active legacy token uses the unified grant columns.",
+          "name": "legacy_token_grant_shape",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "drift": []
+          },
+          "message": "No legacy token grant has drifted from its permissions mirror.",
+          "name": "legacy_token_grant_drift",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "message": "No image assets indexed yet",
           "name": "image_assets",

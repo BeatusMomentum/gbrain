@@ -3,7 +3,8 @@ import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { sourceScopeOpts } from '../ops/context.ts';
 import { hasScope } from '../scope.ts';
 import { currentVerifiedLocalWriter, type LocalGrant } from '../persistence/identity.ts';
-import { coerceLegacyPermissions, normalizeTokenScopes, parseLegacyOperationGrant, parseLegacyTokenScope } from '../legacy-token-scope.ts';
+import { normalizeTokenScopes } from '../legacy-token-scope.ts';
+import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import type { SqlEngine, WriteAuthority } from '../persistence/model.ts';
 import { stringList } from './manifest.ts';
 import type { SharedSkillPolicy, SkillFileClass, StoredSkillFile } from './model.ts';
@@ -63,15 +64,15 @@ export async function authorizeSkillRead(ctx: OperationContext, operation: strin
     liveOperations = auth.allowedOperations == null ? row.allowed_operations : row.allowed_operations == null ? auth.allowedOperations : intersect(auth.allowedOperations, row.allowed_operations);
     grantRevision = row.grant_revision;
   } else {
-    const [row] = await ctx.engine.executeRaw<{ scopes: unknown; permissions: unknown }>(
-      'SELECT scopes,permissions FROM access_tokens WHERE id=$1 AND revoked_at IS NULL', [auth.principal.id]);
-    if (!row || !hasScope(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'], 'read')) throw new OperationError('permission_denied', 'The shared skill reader token was revoked.');
-    const permissions = coerceLegacyPermissions(row.permissions);
-    if (row.permissions != null && !permissions) throw new OperationError('permission_denied', 'Invalid reader projection.');
-    const parsed = parseLegacyTokenScope(permissions?.source_id);
-    const currentOperations = parseLegacyOperationGrant(permissions?.allowed_operations);
+    const [row] = await ctx.engine.executeRaw<Record<string, unknown>>(
+      'SELECT * FROM access_tokens WHERE id=$1 AND revoked_at IS NULL', [auth.principal.id]);
+    const tokenGrant = row ? grantFromTokenRow(row) : undefined;
+    if (!tokenGrant || !hasScope(tokenGrant.scopes, 'read')) throw new OperationError('permission_denied', 'The shared skill reader token was revoked.');
+    if (tokenGrant.permissionsMalformed) throw new OperationError('permission_denied', 'Invalid reader projection.');
+    const parsed = authSourcesFromGrant(tokenGrant);
+    const currentOperations = tokenGrant.allowedOperations;
     if (currentOperations != null && !currentOperations.includes(operation)) throw new OperationError('permission_denied', 'The current legacy operation grant excludes this read.');
-    liveScopes = auth.scopes.filter(scope => hasScope(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'], scope));
+    liveScopes = auth.scopes.filter(scope => hasScope(tokenGrant.scopes, scope));
     liveOperations = auth.allowedOperations == null ? currentOperations : currentOperations == null ? auth.allowedOperations : intersect(auth.allowedOperations, currentOperations);
     liveSources = parsed.allowedSources ?? [parsed.sourceId];
   }

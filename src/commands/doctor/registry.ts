@@ -80,6 +80,7 @@ import {
 import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/queue-assets.ts';
 import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-timeouts.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
+import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
@@ -138,6 +139,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   queueHealthEntry,
   globalMaintenanceTimeoutsEntry,
   legacyJobAuthorityEntry,
+  legacyTokenGrantsEntry,
   indexAuditEntry,
   imageAssetsEntry,
   syncFreshnessEntry,

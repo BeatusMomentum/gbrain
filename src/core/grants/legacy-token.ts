@@ -1,39 +1,54 @@
 /**
- * Legacy bearer-token grants (`gbrain auth rescope-token`), the token twin of
- * `auth rescope-client`. Three axes live in `access_tokens.permissions`:
+ * Legacy bearer-token grants (`gbrain auth rescope --token`, alias
+ * `auth rescope-token`), the token twin of `auth rescope --client`. Three axes:
  *
- *   - `source_id`          (`--sources a,b|none`): array, element 0 = write source
- *   - `takes_holders`      (`--takes-holders a,b|none`)
- *   - `allowed_operations` (`--operations a,b|none`, `--refresh-operations`)
+ *   - sources       (`--sources a,b|none`): element 0 = write source
+ *   - takes holders (`--takes-holders a,b|none`)
+ *   - operations    (`--operations a,b|none`, `--refresh-operations`)
  *
  * `none` stores the explicit empty list (deny-all). An omitted flag preserves
  * the stored value. `--reset-default <axes>` restores the `auth create`
  * default for the named axes (no source grant → the historical `default`
- * floor; takes holders `['world']`; no operation snapshot). Every other key in
- * `permissions` is preserved. `--refresh-operations` only previews unless
- * `--add <op,...>` or `--all-new` names the operations to widen by. With no
- * grant flag the command only prints the stored grants.
+ * floor; takes holders `['world']`; no operation snapshot).
+ * `--refresh-operations` only previews unless `--add <op,...>` or `--all-new`
+ * names the operations to widen by. With no grant flag the command only prints
+ * the stored grants.
+ *
+ * F3 storage: every write lands in the unified columns (`source_grant`,
+ * `source_id`, `federated_read`, `allowed_operations`, `takes_holders`), bumps
+ * `grant_revision`, and rewrites `permissions` as a mirror with every other key
+ * preserved, so older binaries enforce the same grant. Rows still on the
+ * JSONB-only shape migrate lazily on their first write, or in bulk with
+ * `--migrate-legacy`. A drifted row (JSONB edited by an older binary) refuses
+ * grant edits until `--adopt-permissions` or `--adopt-columns` resolves it.
  */
 import type { BrainEngine } from '../engine.ts';
-import { coerceLegacyPermissions, normalizeTokenScopes, parseLegacyOperationGrant, parseLegacyTokenScope, parseTakesHoldersAllowList } from '../legacy-token-scope.ts';
-import { NO_SOURCES, isValidSourceId } from '../source-id.ts';
-import { operationScopesAllowed } from '../scope.ts';
+import { assertAllowedScopes, operationScopesAllowed } from '../scope.ts';
+import { isValidSourceId } from '../source-id.ts';
 import { executeRawJsonb } from '../sql-query.ts';
 import { TOKEN_ID_RE } from '../token-mint.ts';
-import { GrantError } from './model.ts';
+import { isUndefinedColumnError } from '../utils.ts';
+import {
+  GrantError, LEGACY_GRANT_AXES, grantFromTokenRow, permissionsMirror, tokenGrantColumnValues, tokenGrantFromColumns,
+  tokenGrantFromPermissions, validatePrincipalGrant, TOKEN_GRANT_COLUMNS, type LegacyGrantAxis, type PrincipalGrant,
+} from './model.ts';
 
-export type LegacyGrantAxis = 'sources' | 'takes-holders' | 'operations';
-const AXES: readonly LegacyGrantAxis[] = ['sources', 'takes-holders', 'operations'];
+export type { LegacyGrantAxis } from './model.ts';
+
+type TokenGrantAxes = Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
 
 export interface RescopeTokenArgs {
   target: { name: string } | { id: string };
   sources?: string[];
   takesHolders?: string[];
   operations?: string[];
+  scopes?: string[];
   reset: LegacyGrantAxis[];
   refreshOperations: boolean;
   add?: string[];
   allNew: boolean;
+  adopt?: 'permissions' | 'columns';
+  expectedRevision?: number;
   dryRun: boolean;
   json: boolean;
 }
@@ -51,6 +66,13 @@ export interface RescopeTokenResult {
   changed: boolean;
   before: LegacyTokenGrantView;
   after: LegacyTokenGrantView;
+  /** Grant shape before this call; `migrated` is true when this call wrote the unified columns for the first time. */
+  shape: PrincipalGrant['shape'];
+  migrated: boolean;
+  written: boolean;
+  revision: { before: number; after: number };
+  /** Axes that were drifted (deny-all) before this call. */
+  drift: LegacyGrantAxis[];
   refresh?: { available: string[]; added: string[]; unregistered: string[] };
 }
 
@@ -60,12 +82,18 @@ const csvOrNone = (value: string): string[] =>
 export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
   let target: RescopeTokenArgs['target'] | undefined;
   const out: Omit<RescopeTokenArgs, 'target'> = { reset: [], refreshOperations: false, allNew: false, dryRun: false, json: false };
+  const adopt = (mode: 'permissions' | 'columns') => {
+    if (out.adopt && out.adopt !== mode) throw new GrantError('invalid_grant', 'Pass either --adopt-permissions or --adopt-columns, not both');
+    out.adopt = mode;
+  };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--dry-run') { out.dryRun = true; continue; }
     if (flag === '--json') { out.json = true; continue; }
     if (flag === '--refresh-operations') { out.refreshOperations = true; continue; }
     if (flag === '--all-new') { out.allNew = true; continue; }
+    if (flag === '--adopt-permissions') { adopt('permissions'); continue; }
+    if (flag === '--adopt-columns') { adopt('columns'); continue; }
     if (!flag.startsWith('--')) {
       if (target) throw new GrantError('invalid_grant', `Unexpected argument: ${flag}`);
       target = { name: flag };
@@ -83,9 +111,18 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
       case '--takes-holders': out.takesHolders = csvOrNone(value); break;
       case '--operations': out.operations = csvOrNone(value); break;
       case '--add': out.add = csvOrNone(value); break;
+      case '--scopes':
+        out.scopes = csvOrNone(value.replaceAll(' ', ','));
+        if (out.scopes.length === 0) throw new GrantError('invalid_grant', '--scopes needs at least one scope (to cut a token off, use --sources none or gbrain auth revoke)');
+        assertAllowedScopes(out.scopes);
+        break;
+      case '--if-version':
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new GrantError('invalid_grant', '--if-version must be a non-negative integer');
+        out.expectedRevision = Number(value);
+        break;
       case '--reset-default':
         for (const axis of csvOrNone(value)) {
-          if (!(AXES as readonly string[]).includes(axis)) throw new GrantError('invalid_grant', `--reset-default takes ${AXES.join(', ')}`);
+          if (!(LEGACY_GRANT_AXES as readonly string[]).includes(axis)) throw new GrantError('invalid_grant', `--reset-default takes ${LEGACY_GRANT_AXES.join(', ')}`);
           out.reset.push(axis as LegacyGrantAxis);
         }
         break;
@@ -105,14 +142,12 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
   return { target, ...out };
 }
 
-function view(permissions: Record<string, unknown>): LegacyTokenGrantView {
-  const scope = parseLegacyTokenScope(permissions.source_id);
-  const operations = parseLegacyOperationGrant(permissions.allowed_operations);
+function grantView(g: TokenGrantAxes): LegacyTokenGrantView {
+  const s = g.sources;
   return {
-    sources: permissions.source_id == null ? 'default'
-      : scope.sourceId === NO_SOURCES ? [] : scope.allowedSources ?? [scope.sourceId],
-    takesHolders: parseTakesHoldersAllowList(permissions.takes_holders) ?? ['world'],
-    operations: operations ?? 'unrestricted',
+    sources: s.kind === 'default' ? 'default' : s.kind === 'none' ? [] : s.kind === 'scalar' ? [s.writeSource] : [...s.readSources],
+    takesHolders: g.takesHolders ?? ['world'],
+    operations: g.allowedOperations ?? 'unrestricted',
   };
 }
 
@@ -138,54 +173,171 @@ async function assertActiveSources(engine: BrainEngine, ids: string[]): Promise<
   if (missing.length) throw new GrantError('invalid_grant', `Unknown or archived source: ${missing.join(', ')} (see gbrain sources list)`);
 }
 
+const SCHEMA_HINT = 'this brain predates the unified token grant columns (access_tokens.source_grant); run `gbrain apply-migrations --yes` (no user decision needed), then retry';
+
+function schemaError(error: unknown): unknown {
+  return ['source_grant', 'grant_revision', ...TOKEN_GRANT_COLUMNS].some(c => isUndefinedColumnError(error, c)) ? new GrantError('grant_schema_required', SCHEMA_HINT) : error;
+}
+
+/** Write the unified columns and the `permissions` mirror in one UPDATE; returns the new revision. */
+async function writeTokenGrant(tx: BrainEngine, row: Record<string, unknown>, grant: TokenGrantAxes, scopes?: string[]): Promise<number> {
+  const [written] = await executeRawJsonb<{ grant_revision: number }>(
+    tx,
+    `UPDATE access_tokens SET source_grant = $2, source_id = $3, federated_read = $4::text[], allowed_operations = $5::text[],
+       takes_holders = $6::text[], scopes = COALESCE($7::text[], scopes), grant_revision = grant_revision + 1, permissions = $8::jsonb
+     WHERE id = $1::uuid RETURNING grant_revision`,
+    [String(row.id), ...tokenGrantColumnValues(grant), scopes === undefined ? null : `{${scopes.join(',')}}`],
+    [permissionsMirror(grant, row.permissions)],
+  );
+  return Number(written.grant_revision);
+}
+
+function driftRefusal(name: string, id: string, axes: readonly LegacyGrantAxis[]): GrantError {
+  return new GrantError('invalid_grant',
+    `Token "${name}" (${id}) has grant drift on ${axes.join(', ')}: its permissions JSON disagrees with the grant columns `
+    + '(an older gbrain edited the JSON after migration), so those axes deny every request. Ask the user which grant is intended, then run '
+    + `gbrain auth rescope --token ${name} --adopt-permissions (keep the JSON edit) or gbrain auth rescope --token ${name} --adopt-columns `
+    + '(restore the columns), and retry.', ['legacy_token_grant_drift']);
+}
+
 export async function rescopeLegacyToken(engine: BrainEngine, args: RescopeTokenArgs): Promise<RescopeTokenResult> {
-  return engine.transaction(async tx => {
-    const rows = 'id' in args.target
-      ? await tx.executeRaw<Record<string, unknown>>('SELECT id, name, scopes, permissions FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE', [args.target.id])
-      : await tx.executeRaw<Record<string, unknown>>('SELECT id, name, scopes, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE', [args.target.name]);
-    const label = 'id' in args.target ? `id ${args.target.id}` : `"${args.target.name}"`;
-    if (rows.length === 0) throw new GrantError('invalid_grant', `No active token ${label} (see gbrain auth list)`);
-    if (rows.length > 1) throw new GrantError('invalid_grant', `${rows.length} active tokens are named ${label}; pass --id <uuid> from gbrain auth list`);
-    const row = rows[0];
-    const current = coerceLegacyPermissions(row.permissions) ?? {};
-    const next: Record<string, unknown> = { ...current };
+  try {
+    return await engine.transaction(tx => rescopeInTransaction(tx, args));
+  } catch (error) {
+    throw schemaError(error);
+  }
+}
 
-    if (args.sources !== undefined) {
-      await assertActiveSources(tx, args.sources);
-      next.source_id = args.sources;
+async function rescopeInTransaction(tx: BrainEngine, args: RescopeTokenArgs): Promise<RescopeTokenResult> {
+  const rows = 'id' in args.target
+    ? await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL FOR UPDATE', [args.target.id])
+    : await tx.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE name = $1 AND revoked_at IS NULL FOR UPDATE', [args.target.name]);
+  const label = 'id' in args.target ? `id ${args.target.id}` : `"${args.target.name}"`;
+  if (rows.length === 0) throw new GrantError('invalid_grant', `No active token ${label} (see gbrain auth list)`);
+  if (rows.length > 1) throw new GrantError('invalid_grant', `${rows.length} active tokens are named ${label}; pass --id <uuid> from gbrain auth list`);
+  const row = rows[0];
+  const id = String(row.id);
+  const name = String(row.name);
+  const current = grantFromTokenRow(row);
+  if (args.expectedRevision !== undefined && current.revision !== args.expectedRevision) {
+    throw new GrantError('grant_conflict', `Token "${name}" is at grant revision ${current.revision}, not ${args.expectedRevision}: someone changed it since you read it. `
+      + `Re-read it with gbrain auth rescope --token ${name} --json, then retry with --if-version ${current.revision}.`);
+  }
+  if (args.adopt === 'columns' && current.shape !== 'unified') {
+    throw new GrantError('invalid_grant', `Token "${name}" has no grant columns yet, so there is nothing to adopt; its permissions JSON is the grant. Migrate it with gbrain auth rescope --migrate-legacy.`);
+  }
+  let base: TokenGrantAxes = current;
+  if (args.adopt === 'permissions') {
+    const { malformed: _, ...parsed } = tokenGrantFromPermissions(row.permissions);
+    base = parsed;
+  } else if (args.adopt === 'columns') {
+    base = tokenGrantFromColumns(row);
+  }
+
+  const next: TokenGrantAxes = { ...base };
+  if (args.sources !== undefined) {
+    await assertActiveSources(tx, args.sources);
+    next.sources = args.sources.length === 0 ? { kind: 'none' } : { kind: 'federated', writeSource: args.sources[0], readSources: args.sources };
+  }
+  if (args.takesHolders !== undefined) next.takesHolders = args.takesHolders;
+  const { all, grantable } = await grantableOperations(args.scopes ?? current.scopes);
+  if (args.operations !== undefined) {
+    const unknown = args.operations.filter(op => !all.has(op));
+    if (unknown.length) throw new GrantError('invalid_grant', `Unknown remote operation: ${unknown.join(', ')}`);
+    next.allowedOperations = args.operations;
+  }
+  for (const axis of args.reset) {
+    if (axis === 'sources') next.sources = { kind: 'default' };
+    if (axis === 'takes-holders') next.takesHolders = ['world'];
+    if (axis === 'operations') next.allowedOperations = null;
+  }
+  let refresh: RescopeTokenResult['refresh'];
+  if (args.refreshOperations) {
+    const granted = base.allowedOperations;
+    if (granted === null) {
+      throw new GrantError('invalid_grant', `Token ${label} has no operation snapshot, so it already reaches every operation its scopes allow; nothing to refresh`);
     }
-    if (args.takesHolders !== undefined) next.takes_holders = args.takesHolders;
-    let refresh: RescopeTokenResult['refresh'];
-    const { all, grantable } = await grantableOperations(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin']);
-    if (args.operations !== undefined) {
-      const unknown = args.operations.filter(op => !all.has(op));
-      if (unknown.length) throw new GrantError('invalid_grant', `Unknown remote operation: ${unknown.join(', ')}`);
-      next.allowed_operations = args.operations;
-    }
-    for (const axis of args.reset) {
-      if (axis === 'sources') delete next.source_id;
-      if (axis === 'takes-holders') next.takes_holders = ['world'];
-      if (axis === 'operations') delete next.allowed_operations;
-    }
-    if (args.refreshOperations) {
-      const granted = parseLegacyOperationGrant(current.allowed_operations);
-      if (granted === undefined) {
-        throw new GrantError('invalid_grant', `Token ${label} has no operation snapshot, so it already reaches every operation its scopes allow; nothing to refresh`);
+    const available = grantable.filter(op => !granted.includes(op));
+    const added = args.allNew ? available : args.add ?? [];
+    const notAvailable = added.filter(op => !available.includes(op));
+    if (notAvailable.length) throw new GrantError('invalid_grant', `Not a new operation for this token: ${notAvailable.join(', ')} (run --refresh-operations alone to preview)`);
+    if (added.length) next.allowedOperations = [...granted, ...added];
+    refresh = { available, added, unregistered: granted.filter(op => !all.has(op)) };
+  }
+  const opsEdited = args.operations !== undefined || Boolean(refresh?.added.length);
+  validatePrincipalGrant({
+    ...current, ...next,
+    sources: args.sources !== undefined ? next.sources : { kind: 'default' },
+    allowedOperations: opsEdited ? next.allowedOperations : null,
+  }, { operationNames: all });
+
+  const edits = args.sources !== undefined || args.takesHolders !== undefined || opsEdited || args.reset.length > 0 || args.scopes !== undefined;
+  if (edits && !args.adopt && current.drift.length) throw driftRefusal(name, id, current.drift);
+  const before = grantView(current);
+  const after = grantView(next);
+  const changed = JSON.stringify(before) !== JSON.stringify(after)
+    || (args.scopes !== undefined && JSON.stringify(args.scopes) !== JSON.stringify(current.scopes));
+  const write = !args.dryRun && (edits || Boolean(args.adopt));
+  const revision = write ? await writeTokenGrant(tx, row, next, args.scopes) : current.revision;
+  return {
+    id, name, dryRun: args.dryRun, changed, before, after,
+    shape: current.shape, migrated: write && current.shape === 'legacy_permissions', written: write,
+    revision: { before: current.revision, after: revision }, drift: current.drift,
+    ...(refresh ? { refresh } : {}),
+  };
+}
+
+export interface MigrateLegacyResult {
+  dryRun: boolean;
+  migrated: Array<{ id: string; name: string; grant: LegacyTokenGrantView }>;
+  skipped: Array<{ id: string; name: string; reason: 'permissions_malformed'; fix: string }>;
+}
+
+/**
+ * `auth rescope --migrate-legacy`: write the unified columns for every active
+ * token still on the JSONB-only shape, without changing any effective grant.
+ * A malformed `permissions` value has no column equivalent (the HTTP paths
+ * read it as no grant while publication denies it), so it is skipped and
+ * reported with the command that gives it an explicit grant.
+ */
+export async function migrateLegacyTokens(engine: BrainEngine, opts: { dryRun: boolean }): Promise<MigrateLegacyResult> {
+  try {
+    return await engine.transaction(async tx => {
+      const rows = await tx.executeRaw<Record<string, unknown>>(
+        'SELECT * FROM access_tokens WHERE revoked_at IS NULL AND source_grant IS NULL ORDER BY created_at, id FOR UPDATE');
+      const result: MigrateLegacyResult = { dryRun: opts.dryRun, migrated: [], skipped: [] };
+      for (const row of rows) {
+        const grant = grantFromTokenRow(row);
+        const entry = { id: String(row.id), name: String(row.name) };
+        if (grant.permissionsMalformed) {
+          result.skipped.push({ ...entry, reason: 'permissions_malformed',
+            fix: `ask the user which grant this token should hold, then run gbrain auth rescope --id ${entry.id} --reset-default sources,takes-holders,operations (or pass explicit --sources/--takes-holders/--operations)` });
+          continue;
+        }
+        if (!opts.dryRun) await writeTokenGrant(tx, row, grant);
+        result.migrated.push({ ...entry, grant: grantView(grant) });
       }
-      const available = grantable.filter(op => !granted.includes(op));
-      const added = args.allNew ? available : args.add ?? [];
-      const notAvailable = added.filter(op => !available.includes(op));
-      if (notAvailable.length) throw new GrantError('invalid_grant', `Not a new operation for this token: ${notAvailable.join(', ')} (run --refresh-operations alone to preview)`);
-      if (added.length) next.allowed_operations = [...granted, ...added];
-      refresh = { available, added, unregistered: granted.filter(op => !all.has(op)) };
-    }
+      return result;
+    });
+  } catch (error) {
+    throw schemaError(error);
+  }
+}
 
-    const changed = JSON.stringify(next) !== JSON.stringify(current);
-    if (changed && !args.dryRun) {
-      await executeRawJsonb(tx, 'UPDATE access_tokens SET permissions = $2::jsonb WHERE id = $1::uuid', [String(row.id)], [next]);
-    }
-    return { id: String(row.id), name: String(row.name), dryRun: args.dryRun, changed, before: view(current), after: view(next), ...(refresh ? { refresh } : {}) };
-  });
+/** A bare `auth rescope <name>`: a token name, an OAuth client id, or a client name. Both kinds matching refuses. */
+export async function resolveRescopeTarget(engine: BrainEngine, name: string): Promise<{ kind: 'token' } | { kind: 'client'; clientId: string }> {
+  const tokens = await engine.executeRaw<{ id: string }>('SELECT id FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+  const clients = await engine.executeRaw<{ client_id: string }>(
+    'SELECT client_id FROM oauth_clients WHERE (client_id = $1 OR client_name = $1) AND deleted_at IS NULL', [name]);
+  if (tokens.length && clients.length) {
+    throw new GrantError('invalid_grant', `"${name}" names both a legacy token and an OAuth client; pass --token ${name} or --client ${clients[0].client_id}`, ['rescope_target_ambiguous']);
+  }
+  if (clients.length > 1) {
+    throw new GrantError('invalid_grant', `"${name}" names ${clients.length} OAuth clients (${clients.map(c => c.client_id).join(', ')}); pass --client <client-id> from gbrain auth clients`, ['rescope_target_ambiguous']);
+  }
+  if (clients.length === 1) return { kind: 'client', clientId: clients[0].client_id };
+  if (tokens.length) return { kind: 'token' };
+  throw new GrantError('invalid_grant', `No active token or OAuth client named "${name}" (see gbrain auth list and gbrain auth clients)`);
 }
 
 export function renderLegacyGrantAxis(value: string[] | 'default' | 'unrestricted'): string {

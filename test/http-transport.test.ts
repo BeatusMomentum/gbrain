@@ -92,7 +92,9 @@ function makeFakeEngine(cfg: FakeEngineConfig = {}): FakeEngine {
     const norm = normalizeSql(query);
 
     // SELECT id, name, permissions FROM access_tokens WHERE token_hash = $1 AND revoked_at IS NULL
-    if (norm.startsWith('select id, name from access_tokens') ||
+    // F3: validateToken reads `SELECT * FROM access_tokens` (every schema generation).
+    if (norm.startsWith('select * from access_tokens') ||
+        norm.startsWith('select id, name from access_tokens') ||
         norm.startsWith('select id, name, permissions from access_tokens') ||
         norm.startsWith('select id, name, permissions, scopes from access_tokens')) {
       const tokenHash = values[0] as string;

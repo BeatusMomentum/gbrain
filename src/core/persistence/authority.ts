@@ -4,7 +4,8 @@ import { OperationError } from '../ops/contract.ts';
 import { slugUnderBoundPrefixes, matchesSlugAllowList, noSourceGrantError } from '../ops/context.ts';
 import { NO_SOURCES } from '../source-id.ts';
 import { hasScope } from '../scope.ts';
-import { coerceLegacyPermissions, normalizeTokenScopes, parseLegacyTokenScope, parseTakesHoldersAllowList, parseLegacyOperationGrant } from '../legacy-token-scope.ts';
+import { normalizeTokenScopes } from '../legacy-token-scope.ts';
+import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, verifyLocalWriter, type LocalGrant } from './identity.ts';
 import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWrites } from './page-visibility.ts';
@@ -79,15 +80,14 @@ export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, opera
     return;
   }
   if (a.principal.kind === 'legacy_token') {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT revoked_at,scopes,permissions FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
+    const [row] = await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM access_tokens WHERE id=$1${suffix}`, [a.principal.id]);
     if (!row || row.revoked_at != null) deny('The owning token is revoked.');
-    const permissions = coerceLegacyPermissions(row.permissions);
-    if (row.permissions != null && !permissions) deny('The current legacy grant is malformed.');
+    const grant = grantFromTokenRow(row);
+    if (grant.permissionsMalformed) deny('The current legacy grant is malformed.');
     assertSkillWriteScopes(normalizeTokenScopes(row.scopes) ?? [], operation, a.remote);
-    const liveOperations = parseLegacyOperationGrant(permissions?.allowed_operations);
+    const liveOperations = grant.allowedOperations;
     if (!operationAllowed(liveOperations, operation) || skillWrite(operation) && !liveOperations?.includes(operation)) deny('The current legacy operation grant excludes this write.');
-    if (!hasScope(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'], 'write') ||
-      parseLegacyTokenScope(permissions?.source_id).sourceId !== a.sourceId) deny('The current token no longer permits this source write.');
+    if (!hasScope(grant.scopes, 'write') || authSourcesFromGrant(grant).sourceId !== a.sourceId) deny('The current token no longer permits this source write.');
     return;
   }
   if (a.principal.kind === 'local_cli' || a.principal.kind === 'local_stdio') {
@@ -169,9 +169,9 @@ export async function authorizeTakeHolder(engine: SqlEngine, authority: WriteAut
   if (!(authority.takesHolders ?? ['world']).includes(holder)) deny('The take holder exceeds the original grant.');
   let current = ['world'];
   if (authority.principal.kind === 'legacy_token') {
-    const [row] = await engine.executeRaw<{ permissions: unknown }>('SELECT permissions FROM access_tokens WHERE id=$1 AND revoked_at IS NULL', [authority.principal.id]);
+    const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE id=$1 AND revoked_at IS NULL', [authority.principal.id]);
     if (!row) deny('The owning token is revoked.');
-    current = parseTakesHoldersAllowList(coerceLegacyPermissions(row.permissions)?.takes_holders) ?? ['world'];
+    current = grantFromTokenRow(row).takesHolders ?? ['world'];
   }
   if (!current.includes(holder)) deny('The current holder grant excludes this write.');
 }
