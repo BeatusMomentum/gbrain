@@ -83,7 +83,8 @@ test.each([
   ['--budget-policy', 'query_first', '--watch', '10', '--json'],
 ].map(args => [args]))('thin CLI rejects invalid policy requests before local or remote work: %j', async args => {
   const result = await thinCall('postgres', args);
-  expect(result.exitCode).toBe(1);
+  // A3: an invalid request is a usage error, exit 2.
+  expect(result.exitCode).toBe(2);
   expect(JSON.parse(result.stdout)).toMatchObject({ error: 'invalid_params' });
   expect(result.calls).toEqual([]);
   expect(result.localStoreCreated).toBe(false);

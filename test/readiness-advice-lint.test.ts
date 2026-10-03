@@ -21,7 +21,7 @@ const EXEMPT = new Set(['src/core/readiness.ts', 'src/core/cli-flag-registry.gen
 /** Shrink-only baseline: file → allowed hit count, with the owner that removes it. */
 const ALLOWLIST: Record<string, { count: number; reason: string }> = {
   'src/commands/doctor/checks/embedding-health.ts': { count: 1, reason: 'Lane E1: doctor fixes become readiness Actions' },
-  'src/commands/init.ts': { count: 2, reason: 'Lane E/G5: init deferred-setup hint renders embeddingEnablement' },
+  'src/commands/init.ts': { count: 1, reason: 'Lane E/G5: init deferred-setup hint renders embeddingEnablement' },
   'src/commands/models.ts': { count: 1, reason: 'Lane E: models dims hint' },
   'src/commands/reindex-code.ts': { count: 2, reason: 'Lane E: reindex-code embedding hint' },
   'src/commands/reinit-pglite.ts': { count: 2, reason: 'usage examples of reinit-pglite\'s own --embedding-model flag' },

@@ -218,7 +218,7 @@ describe('routeThinClientCommand — (b) host-bound forms return false', () => {
   }
 });
 
-describe('routeThinClientCommand — (c) malformed routable forms print usage + exit 1', () => {
+describe('routeThinClientCommand — (c) malformed routable forms print usage and exit non-zero (2 for invalid_params)', () => {
   async function expectUsageExit(command: string, args: string[]): Promise<void> {
     const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`EXIT:${code}`);
@@ -234,7 +234,8 @@ describe('routeThinClientCommand — (c) malformed routable forms print usage + 
     }
     if (command === 'takes' && ['add', 'update', 'resolve', 'supersede'].includes(args[0])) {
       expect(exited).toBeNull();
-      expect(currentExitCode()).toBe(1);
+      // A3: invalid_params is a usage error, exit 2 (the persistence write lane used to return 1).
+      expect(currentExitCode()).toBe(2);
       expect(errs.join('\n')).toContain('Error [invalid_params]');
     } else {
       expect(exited).toBe('EXIT:1');

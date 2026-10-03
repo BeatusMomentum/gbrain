@@ -121,7 +121,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
 export function deferredEmbeddingHint(cfg: GBrainConfig): string {
   const enable = embeddingEnablement(cfg);
   const step = enable.argv ? shellQuote(enable.argv) : 'gbrain doctor --only embeddings --json';
-  return `  --no-embedding: deferred setup — enable later with \`${step}\` (\`config set embedding_model\` is refused by design)`;
+  return `  --no-embedding: deferred setup — enable later with \`${step}\` (setting embedding_model through \`gbrain config set\` is refused by design)`;
 }
 
 /** init's bundle for this brain: reads the writeback gate and the agent workspace's missing skills. */

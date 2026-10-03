@@ -52,9 +52,10 @@ test('unauthorized and --json-only runs change nothing and exit 3 with the conse
     expect(r.exit).toBe(3);
     const payload = JSON.parse(r.stdout);
     expect(payload).toMatchObject({ status: 'confirmation_required', code: 'confirmation_required', effects: ['paid', 'destructive'], actor: 'agent', contract_version: 1 });
-    expect(payload.fix.argv).toEqual(['gbrain', 'doctor', '--remediate', '--include-repairs', '--json', '--yes', '--expect', hash]);
+    // A1 explicit routing: the approved command names the brain it was previewed on.
+    expect(payload.fix.argv).toEqual(['gbrain', 'doctor', '--remediate', '--include-repairs', '--json', '--brain', 'host', '--yes', '--expect', hash]);
     expect(payload.fix.next).toBe('ask_user');
-    expect(payload.preview.argv).toEqual(['gbrain', 'doctor', '--remediation-plan', '--target-score', '90', '--json']);
+    expect(payload.preview.argv).toEqual(['gbrain', 'doctor', '--remediation-plan', '--target-score', '90', '--json', '--brain', 'host']);
     expect(payload.user_message).toContain('Run the brain remediation now');
     expect(payload.user_message).toContain('timeline: 1');
     expect(await timeline(engine)).toEqual(before);
