@@ -4,7 +4,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts } from '../../commands/sync.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delta.ts';
 import { isSyncable, isCodeFilePath, matchesAnyGlob, resolveSlugForPath } from '../sync.ts';
 import { resolveSlugRootMode } from '../sync-anchor.ts';
@@ -92,12 +92,22 @@ export function assertSyncEntryOrigin(context: Pick<SyncDiscovery, 'root' | 'git
     tree = matches[0].object;
   }
 }
+/** A managed-sync `writer_coordinator_required` refusal whose fix is the supported `gbrain sync --no-pull --source <id>` run. */
+function managedSyncRefusal(sourceId: string, message: string, suggestion: string): OperationError {
+  return opError('writer_coordinator_required', message, suggestion, {
+    fix: { argv: ['gbrain', 'sync', '--no-pull', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'A managed brain syncs its registered checkout through the persistence coordinator: it imports local HEAD without git pull and keeps every ignored-file and failed-receipt guard.',
+      verify: { argv: ['gbrain', 'sources', 'status', sourceId] } },
+  });
+}
 /** Validate the current owner and source without enumerating a new manifest. */
 export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncOpts): Promise<ManagedSyncContext> {
   await assertManagedSyncActive(engine);
-  if (!opts.noPull && !opts.dryRun) throw new OperationError('writer_coordinator_required', 'Managed sync requires --no-pull; Git pull/rebase needs an explicit drained maintenance window.', `Fast-forward and sync the checkout with gbrain sources refresh ${opts.sourceId ?? 'default'}`);
-  if (opts.includeGitignored || opts.skipFailed) throw new OperationError('writer_coordinator_required', 'Managed sync cannot bypass ignored-file or failed-receipt guards.');
   const sourceId = opts.sourceId ?? 'default';
+  if (!opts.noPull && !opts.dryRun) throw managedSyncRefusal(sourceId, 'Managed sync requires --no-pull; Git pull/rebase needs an explicit drained maintenance window.',
+    `Run gbrain sync --no-pull --source ${sourceId} to import the checkout as it is; to bring in upstream commits first, run gbrain sources refresh ${sourceId}, which fast-forwards and then syncs.`);
+  if (opts.includeGitignored || opts.skipFailed) throw managedSyncRefusal(sourceId, 'Managed sync cannot bypass ignored-file or failed-receipt guards.',
+    `Run gbrain sync --no-pull --source ${sourceId} without --include-gitignored or --skip-failed; resolve failed files with --retry-failed after fixing them.`);
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; last_commit: string | null; config: Record<string, unknown> }>(
     'SELECT incarnation,archived,local_path,last_commit,config FROM sources WHERE id=$1', [sourceId]);
   const binding = await getWorktreeBinding(engine, sourceId);
