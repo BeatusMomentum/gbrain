@@ -238,6 +238,8 @@ export interface DispatchOpts {
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
+  /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
+  resultRows?: OperationContext['resultRows'];
 }
 
 /**
@@ -535,6 +537,7 @@ export function buildOperationContext(
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
+    ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     auth: opts.auth,
   };
 }
@@ -762,7 +765,10 @@ export async function dispatchToolCall(
         ...(name === 'remember' && typeof r?.status === 'string' ? { remember_status: r.status } : {}),
       });
     }
-    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    // C2: compact JSON. Every result stays in the agent's context and is
+    // re-sent on each later turn; indentation was about a fifth of a search
+    // result. Error envelopes below stay indented (small and rare).
+    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result) }] };
     // D8: model-visible loudness for empty retrievals. The body stays a bare
     // array (D3 — deployed thin-clients parse content[0] only), and a SECOND
     // text block carries the diagnosis the model actually sees. Structured

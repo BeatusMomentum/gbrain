@@ -10,6 +10,7 @@ import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
 import { validateParams, parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, allowedOpNames, clampSurface, isReadOnlyOperation, type McpAccess, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
+import { parseResultRowsMode, resolveResultRowsMode } from './result-rows.ts';
 import type { Operation } from '../core/operations.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
@@ -281,6 +282,13 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // `mcp.strict_params` flip needs a serve restart here (deliberate; the
   // OAuth HTTP path re-reads dual-plane per request).
   const strictParams = parseStrictParamsMode(config?.mcp?.strict_params) === 'reject';
+  // C1: search/query row shape for this pipe, resolved once at boot like
+  // strict_params (restart to flip). Stdio has no thin-client identity: the
+  // thin client only speaks HTTP.
+  // A degraded engine is not touched: the file plane decides.
+  const resultRows = isEngineDegraded(engine)
+    ? parseResultRowsMode(config?.mcp?.result_rows) ?? 'lean'
+    : await resolveResultRowsMode(engine, config);
 
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
@@ -362,6 +370,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // WP4 (D2): stdio has no per-client rows; its surface is the ceiling
       // request_tools bounds its catalog by (persist no-ops without auth).
       surfaceCeiling: surface,
+      resultRows,
     });
   }));
 

@@ -689,6 +689,7 @@
         "  --token-budget             Token budget. Chunk mode, and whenever return_unit is omitted: caps the cumulative chunk payload (results that would overflow are skipped). Explicit non-chunk return_unit: the budget for delivered evidence (default search.return_budget_default = 6000, auto 24000; remote max search.return_budget_max_remote = 32000).",
         "  --expand                   Request multi-query expansion (default: true in every search mode, regardless of search.expansion). Set false to opt out. Requires configured embedding and expansion providers; a cloud expander receives the query and may charge for the call. Response metadata expansion_applied reports whether variants were actually used.",
         "  --detail                   Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)",
+        "  --fields                   Row fields. Remote callers get 'lean' rows by default; 'full' adds every ranking diagnostic.",
         "  --mode                     Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.",
         "  --lang                     Filter to chunks where content_chunks.language matches (e.g., typescript, python, ruby)",
         "  --symbol-kind              Filter to chunks where content_chunks.symbol_type matches (e.g., function, class, method, type, interface)",

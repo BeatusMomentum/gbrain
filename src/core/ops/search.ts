@@ -25,6 +25,7 @@ import type { HybridSearchMeta, SearchResult } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS } from '../search/snippet-cap.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
+import { projectRows, resultRowsFor } from '../search/lean-rows.ts';
 import { assembleEvidenceForHits, capDeliveredSnippets, deliverEvidence, effectivePlan, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
@@ -67,21 +68,37 @@ async function resolveEffectiveLimit(ctx: OperationContext, p: Record<string, un
 
 type SourceScope = { sourceId?: string; sourceIds?: string[] };
 
-function searchOutput(ctx: OperationContext, results: SearchResult[], meta: Record<string, unknown>, snippetCap: number,
+/**
+ * The returned rows: redacted, snippet-capped, then projected to the caller's
+ * row shape (C1: lean for remote callers unless `fields: "full"`, the host's
+ * `mcp.result_rows: full` or gbrain's thin client). Every internal consumer
+ * (capture, response meta, last-retrieved bump) has already read full rows.
+ */
+function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], meta: Record<string, unknown>, snippetCap: number,
   evidence?: { delivery: DeliveryMeta; explicitSnippet: boolean }): SearchResult[] {
+  const rows = resultRowsFor(ctx, p.fields);
+  // The shape is reported where it can vary: remote callers, or an explicit `fields`.
+  const shown = ctx.remote !== false || p.fields !== undefined ? { rows } : {};
   if (!evidence) {
-    const output = redactRetrievalOutput(results, meta);
+    const output = redactRetrievalOutput(results, { ...meta, ...shown });
     ctx.emitResponseMeta?.('retrieval', output.meta);
-    return applySnippetCap(output.results, snippetCap);
+    return projectRows(applySnippetCap(output.results, snippetCap), rows);
   }
   // Evidence delivery: explicit snippet_chars wins over the delivered blocks;
   // otherwise the blocks are returned whole (their budget already bounds
   // them). The cap runs before the meta is emitted so it can report itself.
-  const output = redactRetrievalOutput(results, { ...meta, delivery: evidence.delivery });
+  const output = redactRetrievalOutput(results, { ...meta, delivery: evidence.delivery, ...shown });
   const capped = evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : output.results;
   ctx.emitResponseMeta?.('retrieval', output.meta);
-  return capped;
+  return projectRows(capped, rows);
 }
+
+/** C1: the per-call row-shape escape hatch shared by `search` and `query` (`detail` is query's low/medium/high). */
+const FIELDS_PARAM = {
+  type: 'string' as const,
+  enum: ['lean', 'full'],
+  description: "Row fields. Remote callers get 'lean' rows by default; 'full' adds every ranking diagnostic.",
+};
 
 /** Evidence delivery params shared by `search` and `query`. */
 const RETURN_UNIT_PARAM = {
@@ -137,7 +154,7 @@ async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, r
 async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null, scope: DeliveryScope,
   meta: HybridSearchMeta | null, snippetCap: number, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>): Promise<SearchResult[]> {
   const ev = await withEvidence(ctx, p, results, plan, scope, meta);
-  return searchOutput(ctx, ev.rows, await buildMeta(ev.rows), snippetCap, ev.evidence);
+  return searchOutput(ctx, p, ev.rows, await buildMeta(ev.rows), snippetCap, ev.evidence);
 }
 
 /**
@@ -516,6 +533,7 @@ const search: Operation = {
         "Recency boost (per-prefix age decay, no mattering signal): 'off' | 'on' | 'strong'. " +
         'Omit and gbrain auto-detects. Independent of `salience`. Ignored on the keyword-only opt-out path.',
     },
+    fields: FIELDS_PARAM,
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
@@ -656,6 +674,7 @@ const query: Operation = {
     token_budget: { type: 'number', description: "Token budget. Chunk mode, and whenever return_unit is omitted: caps the cumulative chunk payload (results that would overflow are skipped). Explicit non-chunk return_unit: the budget for delivered evidence (default search.return_budget_default = 6000, auto 24000; remote max search.return_budget_max_remote = 32000)." },
     expand: { type: 'boolean', description: 'Request multi-query expansion (default: true in every search mode, regardless of search.expansion). Set false to opt out. Requires configured embedding and expansion providers; a cloud expander receives the query and may charge for the call. Response metadata expansion_applied reports whether variants were actually used.' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
+    fields: FIELDS_PARAM,
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
     lang: { type: 'string', description: 'Filter to chunks where content_chunks.language matches (e.g., typescript, python, ruby)' },
@@ -816,7 +835,7 @@ const query: Operation = {
       })).map(r => ({ ...r }));
       stampDeepResearchIds(results);
       imageMeta.retrieved_count = results.length;
-      return searchOutput(ctx, results, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), ...(plan && (plan.unit !== 'auto' || plan.explicitUnit) ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap);
+      return searchOutput(ctx, p, results, { ...await buildRetrievalResponseMeta(ctx, querySourceScope, queryText ?? '', results, imageMeta, { types }), ...(plan && (plan.unit !== 'auto' || plan.explicitUnit) ? { delivery: unsupportedDelivery(plan, 'image_query_unsupported') } : {}) }, snippetCap);
     }
 
     if (!queryText) {
