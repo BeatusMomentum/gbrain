@@ -194,6 +194,9 @@
       "persistence_topology_changes.persistence_topology_changes_recovery_bytes_check": "c CHECK ((recovery_bytes >= 0))",
       "persistence_topology_changes.persistence_topology_changes_state_check": "c CHECK ((state = ANY (ARRAY['recovering'::text, 'committed'::text, 'failed'::text])))",
       "persistence_topology_changes.persistence_topology_changes_terminal_bytes_check": "c CHECK ((terminal_bytes >= 0))",
+      "persistence_worktree_refreshes.persistence_worktree_refreshes_pkey": "p PRIMARY KEY (id)",
+      "persistence_worktree_refreshes.persistence_worktree_refreshes_state_check": "c CHECK ((state = ANY (ARRAY['draining'::text, 'fenced'::text, 'merged'::text, 'syncing'::text, 'completed'::text, 'aborted'::text, 'recovery_required'::text])))",
+      "persistence_worktree_refreshes.persistence_worktree_refreshes_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_worktrees.persistence_worktrees_pkey": "p PRIMARY KEY (id)",
       "persistence_worktrees.persistence_worktrees_state_check": "c CHECK ((state = ANY (ARRAY['active'::text, 'draining'::text, 'recovering'::text, 'retired'::text])))",
       "persistence_writer_protocols.persistence_writer_protocols_pkey": "p PRIMARY KEY (worktree_id, host_id)",
@@ -528,6 +531,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "persistence_topology_changes": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "persistence_worktree_refreshes": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "persistence_worktrees": [
@@ -882,6 +888,8 @@
       "persistence_topology_changes_pkey": "CREATE UNIQUE INDEX persistence_topology_changes_pkey ON public.persistence_topology_changes USING btree (id)",
       "persistence_topology_changes_principal_id_request_id_key": "CREATE UNIQUE INDEX persistence_topology_changes_principal_id_request_id_key ON public.persistence_topology_changes USING btree (principal_id, request_id)",
       "persistence_topology_recovering": "CREATE INDEX persistence_topology_recovering ON public.persistence_topology_changes USING btree (created_at) WHERE (state = 'recovering'::text)",
+      "persistence_worktree_refreshes_active": "CREATE UNIQUE INDEX persistence_worktree_refreshes_active ON public.persistence_worktree_refreshes USING btree (worktree_id) WHERE (state = ANY (ARRAY['draining'::text, 'fenced'::text, 'merged'::text, 'syncing'::text, 'recovery_required'::text]))",
+      "persistence_worktree_refreshes_pkey": "CREATE UNIQUE INDEX persistence_worktree_refreshes_pkey ON public.persistence_worktree_refreshes USING btree (id)",
       "persistence_worktrees_pkey": "CREATE UNIQUE INDEX persistence_worktrees_pkey ON public.persistence_worktrees USING btree (id)",
       "persistence_writer_protocols_pkey": "CREATE UNIQUE INDEX persistence_writer_protocols_pkey ON public.persistence_writer_protocols USING btree (worktree_id, host_id)",
       "query_cache_pkey": "CREATE UNIQUE INDEX query_cache_pkey ON public.query_cache USING btree (id)",
@@ -2155,6 +2163,26 @@
           "14 outcome jsonb/jsonb NULL",
           "15 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "16 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "persistence_worktree_refreshes": {
+        "columns": [
+          "1 id uuid/uuid NOT NULL DEFAULT gen_random_uuid()",
+          "2 worktree_id uuid/uuid NOT NULL",
+          "3 source_ids ARRAY/_text NOT NULL",
+          "4 principal_id uuid/uuid NOT NULL",
+          "5 owner_epoch bigint/int8 NOT NULL",
+          "6 topology_generation bigint/int8 NOT NULL",
+          "7 state text/text NOT NULL",
+          "8 old_head text/text NOT NULL",
+          "9 target_head text/text NOT NULL",
+          "10 upstream_ref text/text NOT NULL",
+          "11 preserved_uncommitted ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
+          "12 outcome jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "14 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "15 completed_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
