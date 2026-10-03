@@ -505,6 +505,34 @@ const ROWS: Row[] = [
       error: e.code, code: e.code, message: e.problem, why: e.cause_text, suggestion: e.fix, docs: e.doc_url,
     }),
   },
+  {
+    // A keyless brain (`init --no-embedding`) asked to embed: a capability
+    // disabled by choice, not a server fault.
+    match: named('EmbeddingDisabledError'),
+    map: (e: Error) => ({
+      error: 'embedding_disabled', code: 'embedding_disabled', reason: 'disabled_by_choice', message: e.message.split('\n')[0],
+      suggestion: 'Keyword search keeps working without embeddings. To turn them on, see `gbrain embeddings enable --help`.',
+      fix: { argv: ['gbrain', 'embeddings', 'enable', '--help'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Shows the command that enables embeddings for this brain and what it costs.' },
+    }),
+  },
+  {
+    // embed preflight: no usable embedding credentials (userMessage is the paste-ready diagnosis).
+    match: named('EmbeddingCredentialError'),
+    map: (e: Error & { userMessage?: string }) => {
+      const [first, ...rest] = (e.userMessage ?? e.message).split('\n').filter(l => l.trim());
+      return { error: 'unavailable', code: 'unavailable', reason: 'embedding_credentials', message: first ?? e.message,
+        suggestion: rest.join(' ').trim() || 'Configure an embedding provider key, then retry.' };
+    },
+  },
+  {
+    match: named('EmbeddingDimMismatchError'),
+    map: (e: Error & { recipeMessage?: string }) => {
+      const [first, ...rest] = (e.recipeMessage ?? e.message).split('\n').filter(l => l.trim());
+      return { error: 'embedding_width_mismatch', code: 'embedding_width_mismatch', message: first ?? e.message,
+        suggestion: rest.join(' ').trim() || 'Run `gbrain doctor --json` to see the brain\'s vector width.' };
+    },
+  },
   // ── generic rows: the DB classifier runs before these ──
   {
     match: e => named('AIConfigError')(e) || named('AITransientError')(e),

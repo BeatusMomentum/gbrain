@@ -203,7 +203,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'apply-migrations', phase: 'pre-connect', thinClient: 'refuse', load: () => import('./commands/apply-migrations.ts') },
   { name: 'repair-jsonb', phase: 'pre-connect', thinClient: 'refuse', load: () => import('./commands/repair-jsonb.ts') },
   { name: 'skillpack-check', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/skillpack-check.ts') },
-  { name: 'doctor', phase: 'pre-connect-own-engine', thinClient: 'none', load: () => import('./commands/doctor.ts') },
+  { name: 'doctor', phase: 'pre-connect-own-engine', thinClient: 'none', json: 'document', load: () => import('./commands/doctor.ts') },
   // CLI_ONLY: cathedral-5: deterministic compiled-context views (engine-needing; refused on thin
   // clients; help answers engine-free).
   // selfHelp: cathedral-5: compile-context ships its own detailed usage (targets, check-mode exit
@@ -241,7 +241,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'import', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/import.ts') },
   { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/export.ts') },
   { name: 'files', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/files.ts') },
-  { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/embed.ts') },
+  { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/embed.ts') },
   { name: 'serve', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/serve.ts') },
   // thin client: Agent-bootstrap [CX2-5]: the maintenance sweep runs against the LOCAL engine (the
   // serve-resident sweep's trusted CLI entry). On a thin client it would fabricate a scratch PGLite
@@ -277,7 +277,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was unreachable via help
   // because the dispatcher's generic CLI-only short-circuit fired before runSync could print its own
   // usage block. Adding `sync` here routes `gbrain sync --help` into runSync.
-  { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/sync.ts') },
+  { name: 'sync', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/sync.ts') },
   // selfHelp: #3834: extract ships detailed help for its mode-specific flags. Keep the generic
   // CLI-only stub from hiding that contract.
   { name: 'extract', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/extract.ts') },

@@ -20,6 +20,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { CONTRACT_VERSION, cliRenderContext, renderAction, shellQuote, type Action, type Actor, type CliErrorRender, type Effect, type RenderContext, type RenderedAction } from './agent-output.ts';
 import { agentBlock } from './agent-markers.ts';
+import { writeJsonDocument } from './cli-force-exit.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
 import { gbrainPath } from './config.ts';
 import { PREAPPROVE_PAID_MAX_USD_PER_RUN, PREAPPROVE_PERSISTENT_INSTALL, preapprovalCommand, readConsentPreapprovals, type ConsentPreapprovals } from './consent-preapproval.ts';
@@ -355,7 +356,8 @@ export function renderConsentRefusal(p: ConfirmationPayload, opts: { json: boole
 /** Write a refusal and return its exit code (3). The one way a CLI handler reports `confirmation_required`. */
 export function printConsentRefusal(e: ConsentRefusal, opts: { json: boolean }): number {
   const out = renderConsentRefusal(e.consent, opts);
-  if (out.stdout) process.stdout.write(out.stdout);
+  // D2: under the --json guard only writeStdoutFinal reaches fd 1 (the payload / [AGENT] block is the final document).
+  if (out.stdout) void writeJsonDocument(out.stdout, t => process.stdout.write(t));
   if (out.stderr) process.stderr.write(out.stderr);
   return out.exitCode;
 }

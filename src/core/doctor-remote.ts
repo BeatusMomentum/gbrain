@@ -18,6 +18,7 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult } from './mcp-client.t
 import { isScopeErrorCode } from './error-catalogue.ts';
 import { safeCompare, driftLevel, loadPromptState } from './thin-client-upgrade-prompt.ts';
 import { VERSION } from '../version.ts';
+import { writeJsonDocument } from './cli-force-exit.ts';
 
 export interface RemoteCheck {
   name: string;
@@ -47,7 +48,7 @@ export async function runRemoteDoctor(config: GBrainConfig, args: string[]): Pro
   const report = await collectRemoteDoctorReport(config);
 
   if (jsonOutput) {
-    console.log(JSON.stringify(report));
+    await writeJsonDocument(JSON.stringify(report));
   } else {
     printHumanReport(report);
   }

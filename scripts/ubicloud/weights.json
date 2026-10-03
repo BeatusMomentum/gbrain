@@ -320,7 +320,7 @@
   "serial:test/checkpoint-harvest.serial.test.ts": 4977,
   "serial:test/cli-error-render.serial.test.ts": 3000,
   "serial:test/cli-help-without-brain.serial.test.ts": 9329,
-  "serial:test/cli-json-guard.serial.test.ts": 6000,
+  "serial:test/cli-json-guard.serial.test.ts": 17000,
   "serial:test/cli-util-prompt.serial.test.ts": 2644,
   "serial:test/code-callers-pin.serial.test.ts": 2975,
   "serial:test/code-def-refs-pin.serial.test.ts": 5089,

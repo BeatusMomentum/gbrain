@@ -20,6 +20,7 @@ import {
 import { redactUrlsInText } from '../core/url-redact.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
+import { isConsentRefusal, printConsentRefusal } from '../core/consent.ts';
 import { findCliCommand } from './command-table.ts';
 
 export interface CliErrorWriteOpts {
@@ -43,6 +44,7 @@ export function cliCommandOf(argv: readonly string[] = process.argv.slice(2)): s
 /** Render and write `e`; returns the exit code (the caller exits or sets the verdict). */
 export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOpts = {}): number {
   const json = opts.json ?? jsonRequested(opts.argv ?? process.argv.slice(2));
+  if (isConsentRefusal(e)) return printConsentRefusal(e, { json });
   const r = renderCliError(e, { json, command, tty: process.stderr.isTTY === true });
   let stderr = r.stderr;
   if (r.stdout !== undefined) {

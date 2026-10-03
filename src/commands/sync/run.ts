@@ -33,6 +33,10 @@ import {
   isFailedPartial,
 } from './report.ts';
 import { runSyncTrigger } from './trigger.ts';
+import { writeJsonDocument } from '../../core/cli-force-exit.ts';
+
+/** D2: under the `--json` guard only writeStdoutFinal reaches fd 1 (writeJsonDocument). */
+const emitJson = (text: string): void => { void writeJsonDocument(text); };
 
 type SyncAllSourceRow = { id: string; name: string; local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null };
 
@@ -133,7 +137,7 @@ async function runSyncBreakLock(
     // (no local_path) don't hold sync locks.
     const activeSources = sources.filter((s) => s.local_path);
     if (activeSources.length === 0) {
-      if (jsonOut) console.log(JSON.stringify({ status: 'no_sources' }));
+      if (jsonOut) emitJson(JSON.stringify({ status: 'no_sources' }));
       else console.error('No active sources to break-lock against.');
       process.exit(0);
     }
@@ -234,7 +238,7 @@ async function resolveCliSyncSource(
     catch (error) {
       if (!syncAll) {
         if (!(error instanceof EmbeddingCredentialError)) throw error;
-        if (jsonOut) console.log(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: error.diagnosis }));
+        if (jsonOut) emitJson(JSON.stringify({ status: 'embedding_credentials_missing', diagnosis: error.diagnosis }));
         else console.error(`\n${error.userMessage}\n`);
         process.exit(1);
       }
@@ -344,7 +348,7 @@ async function runSyncAll(
 
   if (runnableSources.length === 0) {
     if (jsonOut) {
-      console.log(JSON.stringify({
+      emitJson(JSON.stringify({
         schema_version: 1,
         sources: skippedMissingPath
           .slice()
@@ -667,7 +671,7 @@ function emitSyncAllEnvelope(input: {
         ? { embed_backfill: embedBackfillBySource.get(r.sourceId) }
         : {}),
     }));
-  console.log(JSON.stringify({
+  emitJson(JSON.stringify({
     schema_version: 1,
     sources: sortedSources,
     parallel: effectiveParallel,
@@ -843,7 +847,7 @@ async function runSingleSourceSync(
       }
     }
     if (jsonOut) {
-      console.log(JSON.stringify({ ...buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate),
+      emitJson(JSON.stringify({ ...buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill, singleCostGate),
         ...(result.managedWrite ? { managed_write: result.managedWrite } : {}) }));
     }
     return;

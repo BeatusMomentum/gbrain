@@ -159,3 +159,59 @@ describe('D2 command migrations: init', () => {
     }
   });
 });
+
+describe('D2 command migrations: doctor, sync, embed on a keyless brain', () => {
+  let home = '';
+  const cli = (args: string[]) => runCli(args, { home, cwd: home, timeoutMs: 120_000 });
+
+  test('setup: keyless PGLite brain + a git-backed source', async () => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-json-cmds-'));
+    expect((await cli(['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    const repo = join(home, 'notes');
+    mkdirSync(repo);
+    writeFileSync(join(repo, 'example.md'), '---\ntitle: Example\n---\nHello world\n');
+    const git = (args: string[]) => Bun.spawnSync(['git', '-c', 'user.email=fixture@example.com', '-c', 'user.name=fixture', ...args], { cwd: repo });
+    git(['init', '-q']); git(['add', '.']); git(['commit', '-qm', 'init']);
+    expect((await cli(['sources', 'add', 'notes', '--path', repo])).exitCode).toBe(0);
+  }, 150_000);
+
+  test('doctor --json --fast: one report document', async () => {
+    const r = await cli(['doctor', '--json', '--fast']);
+    expect(onlyDocument(r.stdout)).toMatchObject({ schema_version: 2 });
+    expect(typeof onlyDocument(r.stdout).health_score).toBe('number');
+  }, 120_000);
+
+  test('sync --json success: one envelope; a failing sync: one v1 error document', async () => {
+    const ok = await cli(['sync', '--source', 'notes', '--no-pull', '--json']);
+    expect(ok.exitCode).toBe(0);
+    expect(onlyDocument(ok.stdout)).toMatchObject({ schema_version: 1, source_id: 'notes', added: 1 });
+    const bad = await cli(['sync', '--source', 'notes', '--json']);
+    expect(bad.exitCode).toBe(1);
+    const doc = onlyDocument(bad.stdout);
+    expect(typeof doc.code).toBe('string');
+    expect(typeof doc.suggestion).toBe('string');
+    expect(doc.contract_version).toBe(1);
+  }, 120_000);
+
+  test('embed --json: keyless --stale is a result document (exit 0); --all is embedding_disabled (exit 1)', async () => {
+    const stale = await cli(['embed', '--stale', '--json']);
+    expect(stale.exitCode).toBe(0);
+    expect(onlyDocument(stale.stdout)).toMatchObject({ failures: 0 });
+    const all = await cli(['embed', '--all', '--json']);
+    expect(all.exitCode).toBe(1);
+    expect(onlyDocument(all.stdout)).toMatchObject({ error: 'embedding_disabled', code: 'embedding_disabled', fix: { argv: ['gbrain', 'embeddings', 'enable', '--help'] } });
+  }, 120_000);
+
+  test('doctor --json with no brain: the no_brain envelope', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'gbrain-json-nobrain-'));
+    try {
+      const r = await runCli(['doctor', '--json'], { home: empty, cwd: empty });
+      expect(r.exitCode).toBe(1);
+      expect(onlyDocument(r.stdout)).toMatchObject({ code: 'no_brain', fix: { argv: ['gbrain', 'init', '--pglite', '--no-embedding'] } });
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  test('teardown', () => { rmSync(home, { recursive: true, force: true }); });
+});

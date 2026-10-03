@@ -825,6 +825,18 @@ export function jsonRequested(argv: readonly string[]): boolean {
   return false;
 }
 
+/**
+ * D2: a command's `--json` document. Under the guard it is THE final document
+ * (writeStdoutFinal); unguarded (an undeclared command, an in-process caller,
+ * a test) it goes through the caller's legacy writer, console.log by default,
+ * so those paths see no change.
+ */
+export function writeJsonDocument(text: string, unguarded: (text: string) => void = t => console.log(t)): Promise<void> {
+  if (jsonGuardMode) return writeStdoutFinal(text.endsWith('\n') ? text : `${text}\n`);
+  unguarded(text);
+  return Promise.resolve();
+}
+
 /** One NDJSON line on fd 1 (the only stdout path for `json: 'ndjson'` commands under the guard). */
 export async function writeNdjsonLine(line: unknown): Promise<void> {
   const status = (line as { status?: unknown } | null)?.status;

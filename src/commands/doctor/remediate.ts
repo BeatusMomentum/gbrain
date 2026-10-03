@@ -23,7 +23,7 @@
  * there is no repair step to run, or a resume is refused.
  */
 import type { BrainEngine } from '../../core/engine.ts';
-import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
+import { setCliExitVerdict, writeJsonDocument } from '../../core/cli-force-exit.ts';
 import { clearHealthMemo } from '../../core/health-memo.ts';
 import type { RemediationPlan, RemediationResult } from '../../core/remediation/types.ts';
 import type { RepairPlanStep } from '../../core/remediation/repairs.ts';
@@ -99,7 +99,7 @@ export async function runRemediationPlan(engine: BrainEngine, args: string[]): P
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
   const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed: args.includes('--no-embed') } });
   if (args.includes('--json')) {
-    console.log(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
+    await writeJsonDocument(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
       combined_command: combinedRemediateCommand(plan, targetScore) }, null, 2));
     return;
   }
@@ -315,7 +315,7 @@ export async function runRemediate(engine: BrainEngine, args: string[]): Promise
   const healthy = !dryRun && after.every(f => f.state === 'ok');
 
   if (jsonOutput) {
-    console.log(JSON.stringify({ ...result, findings, repairs_completed: repairsCompleted, healthy, exit_status: exitStatus }, null, 2));
+    await writeJsonDocument(JSON.stringify({ ...result, findings, repairs_completed: repairsCompleted, healthy, exit_status: exitStatus }, null, 2));
   } else {
     if (dryRun && result.submitted.length > 0) {
       console.log(`[remediate --dry-run] Would run ${result.submitted.length} step(s):`);

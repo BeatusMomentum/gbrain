@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { getIdleBlockers } from '../core/migrate.ts';
 import { parseFlags as parseSkillsDirFlags, resolveSkillsDir } from './check-resolvable.ts';
 import { createProgress } from '../core/progress.ts';
@@ -529,7 +529,7 @@ function outputResults(
   const score = report.health_score;
 
   if (json) {
-    console.log(JSON.stringify(report));
+    void writeJsonDocument(JSON.stringify(report)); // D2: the one --json document
     return hasFail;
   }
 
@@ -607,7 +607,7 @@ function outputResults(
 async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): Promise<void> {
   if (!engine) {
     if (jsonOutput) {
-      console.log(JSON.stringify({ status: 'unavailable', reason: 'no_engine' }));
+      void writeJsonDocument(JSON.stringify({ status: 'unavailable', reason: 'no_engine' }));
     } else {
       console.log('gbrain doctor --locks requires a database connection. Configure a URL and retry.');
     }
@@ -616,7 +616,7 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
 
   if (engine.kind !== 'postgres') {
     if (jsonOutput) {
-      console.log(JSON.stringify({ status: 'not_applicable', engine: engine.kind }));
+      void writeJsonDocument(JSON.stringify({ status: 'not_applicable', engine: engine.kind }));
     } else {
       console.log(`gbrain doctor --locks is Postgres-only. Current engine: ${engine.kind}. No blockers possible (no connection pool).`);
     }
@@ -626,7 +626,7 @@ async function runLocksCheck(engine: BrainEngine | null, jsonOutput: boolean): P
   const blockers = await getIdleBlockers(engine);
 
   if (jsonOutput) {
-    console.log(JSON.stringify({ status: blockers.length === 0 ? 'ok' : 'blockers_found', blockers }, null, 2));
+    void writeJsonDocument(JSON.stringify({ status: blockers.length === 0 ? 'ok' : 'blockers_found', blockers }, null, 2));
     if (blockers.length > 0) process.exit(1);
     return;
   }
