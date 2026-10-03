@@ -1022,6 +1022,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'persistence_requests.consumer_host_id',
   'persistence_requests.published_at',
   'persistence_brain.writer_version_cutoff',
+  // #5974 (migration v197) — structured publication failure detail. Same
+  // posture as v178: persistence_requests is migration-created on PGLite, no
+  // index references the column, and every reader treats NULL as no detail.
+  'persistence_requests.error_detail',
   // #5455 (migration v183) — managed mode epoch. persistence_brain is
   // migration-created on PGLite; no index in either blob references it, and
   // pre-migration readers go through to_jsonb(persistence_brain)->'mode_epoch'.

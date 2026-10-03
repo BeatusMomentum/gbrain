@@ -26,6 +26,7 @@ import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenc
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
+import { databaseRefusal, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -69,8 +70,10 @@ function publishFile(file: PageMutationFile, stagingPath?: string, afterStagingF
 // Effect recovery uses the same confined durable publication primitive, under
 // its own recovery record and native root capability.
 export { fileHash as persistenceFileHash, publishFile as publishPersistenceFile };
-function requestError(error: unknown): { code: string; message: string } {
+function requestError(error: unknown): PublicationFailure {
   if (error instanceof OperationError) return { code: error.code, message: error.message };
+  const refusal = databaseRefusal(error);
+  if (refusal) return refusal;
   const code = (error as { code?: string })?.code;
   if (code === 'revision_conflict') {
     return { code, message: error instanceof Error && error.message ? error.message : 'The page changed after the supplied revision was read.' };
@@ -84,8 +87,9 @@ export function transientDatabaseFailure(error: unknown): boolean {
   return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
     'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code));
 }
-export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown): Promise<WriteRequest> {
-  const failure = requestError(error);
+export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
+  stage: PublicationStage = 'publication'): Promise<WriteRequest> {
+  const failure = withAttempt(requestError(error), stage);
   if (mayReprepare(row, failure) || transientDatabaseFailure(error)) {
     await releaseUnpublishedClaim(engine, row, transientDatabaseFailure(error) ? 'database_contention' : 'revision_changed_repreparing');
     return (await getWriteRequestById(engine, row.id))!;
@@ -265,7 +269,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       // Even a rejected prepare can retain a journal record; do not leave that
       // record unaccounted or let a sibling publication bypass its recovery.
       const failure = !transactionBodyCompleted && !mayReprepare(row, requestError(error)) && !transientDatabaseFailure(error)
-        ? requestError(error) : undefined;
+        ? withAttempt(requestError(error), published ? 'after_file_publication' : 'publication') : undefined;
       try { await markRecovering(engine, row, failure ? 'publication_failed' : published ? 'commit_outcome_uncertain' : 'publication_not_started', failure); }
       catch { /* database outage: durable recovery record remains discoverable */ }
       if (lock) {
@@ -285,7 +289,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
 }
 
 export async function recoverPublication(engine: BrainEngine, id: string, hostId = localHostId(), alreadyLocked = false,
-  terminalError?: { code: string; message: string }, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
+  terminalError?: PublicationFailure, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
   let row = await getWriteRequestById(engine, id);
   if (!row) throw new OperationError('not_found', 'Write request not found.');
   if (!row.recovery) return row;
@@ -359,7 +363,8 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
         assertRecoveryStagingAbsent(record);
       }
       // Withdrawal is authoritative DB state and is never rolled back here.
-      const failure = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.'} : undefined);
+      const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
+        ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
       if (failure) return completeWrite(tx, current, conflictCode(failure.code) ? 'conflict' : 'failed', {}, failure);
       for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(current.recovery_bytes)]);
       const [queued] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
