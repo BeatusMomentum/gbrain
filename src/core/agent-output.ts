@@ -564,6 +564,22 @@ const ROWS: Row[] = [
     },
   },
   {
+    // The local persistence owner's IPC lane: unreachable (not sent) or the acknowledgment was lost (outcome unknown).
+    match: named('PersistenceIpcTransportError'),
+    map: (e: Error & { sent: boolean; requestId?: string; toJSON(): { suggestion: string } }) => {
+      const requestId = e.requestId && UUID_RE.test(e.requestId) ? e.requestId : undefined;
+      return {
+        error: 'owner_unavailable', code: 'owner_unavailable', message: e.message, suggestion: e.toJSON().suggestion,
+        ...(e.sent ? { reason: 'outcome_unknown', retryable: false } : { reason: 'not_sent' }),
+        fix: e.sent && requestId
+          ? { argv: ['gbrain', 'write-request', '--', requestId], consent: [], actor: 'agent', requires_exclusive: false,
+            why: 'The write may have committed before the acknowledgment was lost; its receipt says whether it did. Do not resubmit until it is terminal.' }
+          : { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+            why: 'Shows whether the brain\'s persistence owner is running and reachable before anything is repeated.' },
+      };
+    },
+  },
+  {
     match: named('EmbeddingDisabledError'),
     map: (e: Error & { fix?: Action }) => ({
       error: 'embedding_disabled', code: 'embedding_disabled', reason: 'disabled_by_choice',
