@@ -38,13 +38,6 @@ src/core/harness/native-router.ts	1
 src/core/harness/shared-skills.ts	2
 src/core/minions/submission-authority.ts	1
 src/core/minions/tool-write-identity.ts	1
-src/core/ops/code-intel.ts	1
-src/core/ops/context.ts	20
-src/core/ops/facts.ts	1
-src/core/ops/insights.ts	1
-src/core/ops/orphans.ts	1
-src/core/ops/pages.ts	1
-src/core/ops/search.ts	2
 src/core/page-state/import-guard.ts	1
 src/core/persistence/activation.ts	5
 src/core/persistence/administration.ts	4

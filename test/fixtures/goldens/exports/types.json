@@ -5581,14 +5581,14 @@
         "kind": "function",
         "name": "resolveCodeIntelScope",
         "signature": [
-          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean) => { allSources: boolean; sourceId?: string; }"
+          "(ctx: OperationContext, sourceIdParam: string | undefined, allSourcesParam?: boolean, opName?: string) => { allSources: boolean; sourceId?: string; }"
         ]
       },
       {
         "kind": "function",
         "name": "resolvePerCallMode",
         "signature": [
-          "(ctx: OperationContext, raw: unknown) => string | undefined"
+          "(ctx: OperationContext, raw: unknown, opName?: string) => string | undefined"
         ]
       },
       {
