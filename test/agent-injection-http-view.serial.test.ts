@@ -250,6 +250,8 @@ describe('a real gbrain serve --http session', () => {
         ['unknown tool', await call(admin, 'no_such_tool_x')],
         ['scope denial', await call(reader, 'put_page', { slug: 'notes/x', content: 'x' })],
         ['think keyless notices', noticesOf(await call(admin, 'think', { question: 'what is in the teapot inventory?' }))],
+        // The whole keyless think result, body included: the stub answer names no key or provider posture.
+        ['think keyless body', await call(admin, 'think', { question: 'what is in the teapot inventory?' })],
       ];
       for (const [what, out] of outputs) {
         const text = JSON.stringify(out);
