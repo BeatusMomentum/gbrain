@@ -10,7 +10,7 @@ import type { GBrainConfig } from '../core/config.ts';
 import type { AuthInfo, Operation } from '../core/operations.ts';
 import { opAllowedForBoundClient } from '../core/operations.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
-import { configReadiness, readinessHttpView, readinessTail, type ReadinessCache, type ReadinessEntry } from '../core/readiness.ts';
+import { configReadiness, probedReadiness, readinessHttpView, readinessTail, type ReadinessCache, type ReadinessEntry } from '../core/readiness.ts';
 import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import type { InstructionTools } from './instructions.ts';
@@ -44,4 +44,21 @@ export async function httpInstructionTools(
     isCallable(op, { transport: 'http', surface: opts.surface, scopes: opts.auth.scopes, publishGates, allowedOps: opts.allowedOps })
     && opAllowedForBoundClient(opts.auth, op)).map(op => op.name));
   return { callable: n => names.has(n), readiness: await instructionReadiness(engine, config, 'http', opts.cache) };
+}
+
+/**
+ * F2: `gbrain://capabilities` on stdio — every readiness entry (config plane +
+ * probed tier, 60 s cache) and the real worker status from the worker probe
+ * (it replaces the old constant `unknown`).
+ */
+export async function stdioCapabilityReadiness(engine: BrainEngine, config: GBrainConfig | null | undefined): Promise<{
+  readiness: ReadinessEntry[]; worker: { status: string; reason?: string; why?: string };
+}> {
+  if (!config) return { readiness: [], worker: { status: 'unknown', reason: 'not_configured' } };
+  const readiness = [...configReadiness(config, { transport: 'stdio' }).entries];
+  try {
+    if (!isEngineDegraded(engine)) readiness.push(...await probedReadiness(engine));
+  } catch { /* the probed tier is best-effort */ }
+  const w = readiness.find(e => e.capability === 'worker');
+  return { readiness, worker: w ? { status: w.state, reason: w.reason, why: w.why } : { status: 'unknown', reason: isEngineDegraded(engine) ? 'engine_unreachable' : 'probe_failed' } };
 }

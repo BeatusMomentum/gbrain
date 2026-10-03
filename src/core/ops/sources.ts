@@ -34,14 +34,27 @@ const whoami: Operation = {
     // where code conditionally trusted on `scopes.includes('admin')` instead
     // of `ctx.remote === false`. Empty scopes array forces clients to
     // special-case `transport: 'local'` explicitly.
+    // F2: config-plane readiness (sync, in-memory config) rides every shape.
+    const { configReadiness, readinessHttpView } = await import('../readiness.ts');
+    const readiness = (transport: 'cli' | 'stdio' | 'http') => {
+      const entries = configReadiness(ctx.config, { transport }).entries;
+      return transport === 'http' ? readinessHttpView(entries) : entries;
+    };
     if (ctx.remote === false) {
-      return { transport: 'local', scopes: [] };
+      return { transport: 'local', scopes: [], readiness: readiness('cli') };
     }
     // #1061: stdio MCP is remote/untrusted by design but has no per-token
     // auth (local pipe) — a known transport, not a bug. Report it instead of
-    // throwing. Empty scopes: nothing here may be used to gate anything.
+    // throwing. Scopes are the verified stdio registration's grant (the same
+    // scopes gbrain://capabilities reports and dispatch enforces); [] without one.
     if (!ctx.auth && ctx.transport === 'stdio') {
-      return { transport: 'stdio', scopes: [] };
+      const { readLocalWriter, verifyLocalWriter } = await import('../persistence/identity.ts');
+      let scopes: readonly string[] = [];
+      try {
+        const verified = await verifyLocalWriter(ctx.engine, await readLocalWriter(ctx.engine, 'stdio'));
+        if (verified.remote) scopes = verified.grant.scopes;
+      } catch { /* no registration: no scopes */ }
+      return { transport: 'stdio', scopes, readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
       throw new OperationError(
@@ -66,6 +79,7 @@ const whoami: Operation = {
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
+      readiness: readiness('http'),
     };
   },
   cliHints: { name: 'whoami' },

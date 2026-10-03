@@ -18,7 +18,7 @@ import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
 import { createPersistenceIpcProvider, residentPersistenceConfig } from '../core/persistence/provider.ts';
 import { installInstructionsResolver, resolveMcpInstructions } from './instructions.ts';
-import { instructionReadiness } from './initialize-context.ts';
+import { instructionReadiness, stdioCapabilityReadiness } from './initialize-context.ts';
 import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadline, statusInstructionLine, statusModeErrorResult, statusModeOf, statusPayload, statusToolResult } from './status-mode.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources } from './skill-resources.ts';
@@ -288,7 +288,8 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       administration: mcpAdministrationGuidance(),
       shared_skills: { protocol_version: 2, catalog: available.includes('list_skills') && available.includes('get_skill'),
         can_join: available.includes('join_brain'), can_edit: available.includes('put_skill') && available.includes('delete_skill'), native_activation: 'unverified' },
-      worker: { status: 'unknown' }, note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };
+      ...await stdioCapabilityReadiness(engine, config),
+      note: 'This local MCP pipe has no OAuth profile; agent-facing operation restrictions still apply.' };
   }, createSkillResources(engine, async () => {
     const scope = await resolveMcpStdioSourceScope(engine);
     return { remote: true, transport: 'stdio', sourceId: scope.sourceId,
