@@ -137,8 +137,10 @@ export {
   buildRetrievalReflexCheck,
 } from './doctor/checks/verbs-reflex.ts';
 import type { DoctorContext } from './doctor/context.ts';
-import { runDoctorRegistry } from './doctor/registry.ts';
-export interface Check {
+import { runDoctorRegistry, parseOnlyChecks } from './doctor/registry.ts';
+import { finalizeCheckFixes, fixLine, type CheckAgentFields } from './doctor/check-fix.ts';
+import type { RenderContext } from '../core/agent-output.ts';
+export interface Check extends CheckAgentFields {
   name: string;
   status: 'ok' | 'warn' | 'fail';
   message: string;
@@ -231,6 +233,8 @@ export interface DoctorReport {
    */
   engine?: 'postgres' | 'pglite';
   db_url_source?: DbUrlSource | null;
+  /** E2: capabilities off by choice that bound what this brain can do (e.g. `embeddings_disabled`). Additive. */
+  capped_by?: string[];
 }
 
 function _penaltyScore(checks: Check[]): number {
@@ -258,11 +262,12 @@ function _penaltyScore(checks: Check[]): number {
  */
 export function computeDoctorReport(
   checks: Check[],
-  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null },
+  extras?: { engine?: 'postgres' | 'pglite'; db_url_source?: DbUrlSource | null; render?: RenderContext },
 ): DoctorReport {
-  const tagged = checks.map((c) =>
+  const tagged = finalizeCheckFixes(checks, extras?.render).map((c) =>
     c.category ? c : { ...c, category: categorizeCheck(c.name) },
   );
+  const capped_by = tagged.some((c) => c.name === 'embeddings' && c.readiness_state === 'disabled_by_choice') ? ['embeddings_disabled'] : [];
 
   const hasFail = tagged.some((c) => c.status === 'fail');
   const hasWarn = tagged.some((c) => c.status === 'warn');
@@ -289,6 +294,7 @@ export function computeDoctorReport(
     top_issues: rankIssues(tagged),
     ...(extras?.engine ? { engine: extras.engine } : {}),
     ...(extras?.db_url_source !== undefined ? { db_url_source: extras.db_url_source } : {}),
+    ...(capped_by.length ? { capped_by } : {}),
   };
 }
 
@@ -445,6 +451,7 @@ export async function buildChecks(
     autoFixReport: null,
     schemaVersion: 0,
     connectionFailed: false,
+    only: parseOnlyChecks(args),
   };
 
   return runDoctorRegistry(ctx);
@@ -546,7 +553,7 @@ function outputResults(
     for (const issue of shown) {
       const icon = issue.status === 'fail' ? 'FAIL' : 'WARN';
       const dn = issue.downstream_of ? ` (likely downstream of ${issue.downstream_of})` : '';
-      console.log(`  [${icon}] ${issue.name}${dn} → ${issue.fix}`);
+      console.log(`  [${icon}] ${issue.name}${dn} → ${fixLine(issue.action) ?? issue.fix}`);
     }
     if (topIssues.length > shown.length) {
       console.log(`  +${topIssues.length - shown.length} more — see full list below`);
@@ -555,8 +562,10 @@ function outputResults(
   }
 
   for (const c of report.checks) {
-    const icon = c.status === 'ok' ? 'OK' : c.status === 'warn' ? 'WARN' : 'FAIL';
+    const icon = c.status === 'ok' ? (c.severity === 'info' ? 'INFO' : 'OK') : c.status === 'warn' ? 'WARN' : 'FAIL';
     console.log(`  [${icon}] ${c.name}: ${c.message}`);
+    const fix = c.status === 'ok' ? null : fixLine(c.fix);
+    if (fix) console.log(`    Fix: ${fix}`);
     if (c.issues) {
       for (const issue of c.issues) {
         console.log(`    → ${issue.type.toUpperCase()}: ${issue.skill}`);
