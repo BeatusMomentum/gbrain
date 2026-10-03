@@ -296,11 +296,16 @@ describe('write attribution on a managed brain', () => {
       const remembered = await submitRememberMutation(brain.local, { fact: 'Backfilled claim', provenance: 'test', entity: slug, request_id: randomUUID() }, 30_000);
       const before = (await engine.readPageSnapshot(slug, { sourceId: brain.sourceId }))!;
       const factBefore = await fact(brain, remembered.id);
+      const revisionBefore = await pageRevisionActor(brain, slug);
+      expect(revisionBefore.kind).toBe('local_cli');
       // A journal backfill writes attribution columns only, without the coordinator capability.
       await engine.executeRaw(`UPDATE facts SET write_principal_kind='application',write_principal_id='backfill-example',
         last_write_principal_id=last_write_principal_id WHERE id=$1`, [Number(remembered.id)]);
       await engine.executeRaw('UPDATE takes SET last_write_principal_id=last_write_principal_id,write_request_id=write_request_id WHERE page_id=$1', [before.page.id]);
       await engine.executeRaw('UPDATE pages SET revision_principal_id=revision_principal_id WHERE id=$1', [before.page.id]);
+      // A projection-only page update outside any write scope keeps the live revision's writer.
+      await engine.executeRaw('UPDATE pages SET links_extracted_at=now() WHERE id=$1', [before.page.id]);
+      expect(await pageRevisionActor(brain, slug)).toEqual(revisionBefore);
       // created_by is immutable once recorded.
       expect(await fact(brain, remembered.id)).toEqual(factBefore);
       expect((await engine.readPageSnapshot(slug, { sourceId: brain.sourceId }))!.revision).toBe(before.revision);
