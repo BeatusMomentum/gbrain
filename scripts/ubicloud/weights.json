@@ -960,6 +960,7 @@
   "unit:test/connectors-embed-kickoff.test.ts": 336,
   "unit:test/connectors-pkce.test.ts": 701,
   "unit:test/connectors-providers.test.ts": 258,
+  "unit:test/consent.test.ts": 600,
   "unit:test/console-prefix.test.ts": 188,
   "unit:test/consolidate-valid-until.test.ts": 2544,
   "unit:test/content-hash-parity-3694.test.ts": 1731,
