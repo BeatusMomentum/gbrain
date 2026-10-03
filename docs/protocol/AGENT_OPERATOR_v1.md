@@ -575,6 +575,26 @@ Nested legacy errors keep their nesting and gain sibling `code` and `fix`.
 - Removing a legacy shape needs a written support policy and evidence about
   its consumers first. A breaking change means a new `AGENT_OPERATOR_v2`.
 
+## Behavior changes for scripts and agents
+
+What changed when contract v1 shipped, for scripts and agents that parsed the
+old behaviour. The release's CHANGELOG entry carries the same table.
+
+| Area | Before | Now | What to change |
+|---|---|---|---|
+| `gbrain embed --stale` time-budget stop | exit 3 | exit 11 | treat 11 as "run `resume_command`"; 3 now only means `confirmation_required` |
+| Other exit-3 sites (`agent run --follow` timeout, `providers test`, `sources harden`, `sources pull`, `sources remove/archive default`, `extract-conversation-facts`) | exit 3 | 124, 1 or 2 ([exit codes](../guides/exit-codes.md#changed-in-this-release)) | branch on the new codes |
+| `gbrain doctor --remediate` without a terminal | ran paid and mutating work with no `--yes` and no cap | refuses with exit 3 and the consent payload; nothing runs | relay `user_message`; pass `--yes` (derived cap) or `--max-usd <n>` only after the user agrees |
+| Paid, destructive, credential, egress and install commands without a terminal | "re-run with `--yes`" text | exit 3 with `effects`, `user_message` and an `ask_user` fix | stop and ask; never add `--yes` on your own |
+| `gbrain reindex-frontmatter --json` | `--json` skipped the confirmation | `--json` never implies consent | pass the authorization the payload names |
+| Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged | read `code`, fall back to `error` |
+| Docs pointers in errors | repo-relative paths | absolute URLs pinned to the installed version | open the URL, or run `gbrain errors <code>` offline |
+| MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read notice blocks |
+| MCP error results | could carry several blocks | exactly one block; notices inside the envelope | parse the one block |
+| stdin reads | could wait forever on an open, silent pipe | 30 s to the first byte, 60 s idle; `GBRAIN_STDIN_TIMEOUT_MS` overrides | close stdin or pipe the payload |
+| Prompts under an agent process or `CI` | prompted whenever stdin was a terminal | decline unless `GBRAIN_INTERACTIVE=1` | answer through the consent payload instead |
+| `--json` stdout for commands that declare it | could mix human text into stdout or print nothing on failure | exactly one JSON document; other output goes to stderr; a fallback document on a silent non-zero exit | parse stdout as one document |
+
 ## Tool catalog changes (`tools/list_changed`)
 
 gbrain sends `notifications/tools/list_changed` when its tool catalog changes
