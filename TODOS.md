@@ -1,5 +1,12 @@
 # TODOS
 
+## Agent operator wave B10 follow-ups (filed 2026-10-03, docs/designs/AGENT_OPERATOR_WAVE.md B10)
+
+- [ ] **P2 — Backfill the last 77 suggestion-less `OperationError` sites (32 files).**
+  **What:** B10 took the scanner baseline from 1,116 sites in 143 files to 77 in 32. What remains: `src/commands/` (persistence-admin 11, repair 6, reindex-code-delegate 5, embed-facts-delegate 5, sync-persistence-delegate 4, extract-stale-delegate 4, capture 4, recall 3, and smaller), `src/cli.ts` 3, and 25 single-digit core sites (effect-facts 3, effect-targets 2, company-brain/policy 2, embed-facts 2, shared-skills/adapter 2, source-local-reference-index 2, and 1-site files). The `src/commands` sites wait for Lane D's CLI contract work in the same files. **Fix:** same pattern as B10 (`opError` + filled `fix`, receipts by `request_id` for CLI-principal rows only); `scripts/agent-contract-baselines/suggestionless-operation-error.tsv` lists them. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Module-local `fail(code, message)` helpers carry a generic next step.**
+  **What:** `shared-skills/adapter.ts` and `shared-skills/membership.ts` funnel about 40 refusals through one suggestion-less helper each, and `persistence/administration.ts` gives its ~28 parameter checks a shared default. **Fix:** a per-code suggestion table, so each refusal names its own next step. **Effort:** S. **Priority:** P3.
+
 ## Foundations 1 follow-ups (filed 2026-10-03, follow-up from v0.60.37.0)
 
 - [ ] **P1 — Mutation attribution for the writers still unattributed.**
