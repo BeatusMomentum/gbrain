@@ -24,6 +24,8 @@
 export const PLANNER_HEALTH_ENFORCED = false;
 
 export const RATE_RATIO_MAX = 1.5;
+/** Below this size per-process warmup dominates the per-page cost, so the rate gate is reported but not enforced. */
+export const RATE_MIN_PAGES = 1000;
 export const TOTAL_VS_HALF_MAX = 2.5;
 export const LOOPS_PER_PAGE_MAX = 10;
 export const HOT_TABLES = ['pages', 'links', 'content_chunks', 'timeline_entries', 'facts', 'takes'] as const;
@@ -97,7 +99,7 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
     results.push({ gate, status: ok ? 'pass' : 'fail', enforced, message, ...(explain && !ok ? { explain } : {}) });
 
   const { rate_ratio, total_vs_half, per_page_ms_first10, per_page_ms_last10 } = report.import;
-  add('import_rate', rate_ratio <= RATE_RATIO_MAX && total_vs_half <= TOTAL_VS_HALF_MAX, true,
+  add('import_rate', rate_ratio <= RATE_RATIO_MAX && total_vs_half <= TOTAL_VS_HALF_MAX, report.pages >= RATE_MIN_PAGES,
     `import rate: last 10% per-page cost ${per_page_ms_last10} ms is ${rate_ratio}x the first 10% (${per_page_ms_first10} ms; gate <= ${RATE_RATIO_MAX}); `
     + `total import time is ${total_vs_half}x the time at the halfway mark (gate <= ${TOTAL_VS_HALF_MAX}). `
     + `A rising per-page cost means import slows as the brain grows, usually stale planner statistics during import. Reproduce: ${repro}`);

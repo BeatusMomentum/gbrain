@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import {
-  CEILINGS_MS, evaluateScaleGates, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, resultHits, verdictLines,
+  CEILINGS_MS, evaluateScaleGates, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, resultHits, verdictLines,
   type GatePolicy, type ScaleReport,
 } from '../../scripts/scale/gates.ts';
 
@@ -94,6 +94,8 @@ describe('scale gates under --enforce', () => {
     const slowHalf = passingReport();
     slowHalf.import = { ...slowHalf.import, total_vs_half: 2.6 };
     expect(evaluateScaleGates(slowHalf, ENFORCE).failures.map(f => f.gate)).toEqual(['import_rate']);
+    const tiny = { ...slowHalf, pages: RATE_MIN_PAGES - 1 };
+    expect(evaluateScaleGates(tiny, ENFORCE)).toMatchObject({ exitCode: 0, reportOnlyBreaches: [expect.objectContaining({ gate: 'import_rate' })] });
   });
 
   test('a failed data check (no-op re-import wrote rows) exits 1 naming the check', () => {
