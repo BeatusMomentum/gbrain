@@ -261,7 +261,7 @@ stdout (`--json`):
       "code": "first_run_decisions",
       "kind": "ask",
       "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
-      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; harness_wiring: skip), or tell me what to change.",
+      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.",
       "decisions": [
         {
           "id": "search_mode",
@@ -305,6 +305,47 @@ stdout (`--json`):
           "default_reason": "No expansion-capable API key (Anthropic/OpenAI/Google) — start with a tight result budget; semantic result caching is temporarily disabled."
         },
         {
+          "id": "writeback",
+          "question": "Should agents save important facts the user states (preferences, decisions, commitments) automatically, with provenance? Saved facts are readable by agents connected to this brain; transient facts expire. Off any time with `gbrain config set memory.auto_writeback off`.",
+          "options": [
+            {
+              "id": "salient",
+              "label": "Save durable facts the user states directly (recommended)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "memory.auto_writeback",
+                "salient"
+              ]
+            },
+            {
+              "id": "all",
+              "label": "Every direct factual statement (more low-value facts, more extraction spend)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "memory.auto_writeback",
+                "all"
+              ]
+            },
+            {
+              "id": "off",
+              "label": "Save only what the user explicitly asks to remember (records the answer)",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "memory.auto_writeback",
+                "off"
+              ]
+            }
+          ],
+          "default": "salient",
+          "default_reason": "Recommended for a personal brain: the brain learns what the user tells their agents. It is opt-in, so it applies only when the user accepts the defaults or picks it."
+        },
+        {
           "id": "harness_wiring",
           "question": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
           "options": [
@@ -328,7 +369,7 @@ stdout (`--json`):
 }
 ```
 
-stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; harness_wiring: skip), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `harness_wiring` (default `skip`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
+stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `writeback` (default `salient`), `harness_wiring` (default `skip`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
 
 ### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
 

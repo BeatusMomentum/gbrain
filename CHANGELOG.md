@@ -80,6 +80,13 @@ Scripts that parse exit codes or `--json` output should read the [behavior chang
 | stdin reads | could wait forever on an open, silent pipe | 30 s to the first byte, 60 s idle; `GBRAIN_STDIN_TIMEOUT_MS` overrides | close stdin or pipe the payload |
 | Prompts under an agent process or `CI` | prompted whenever stdin was a terminal | decline unless `GBRAIN_INTERACTIVE=1` | answer through the consent payload instead |
 | `--json` stdout for commands that declare it | could mix human text into stdout or print nothing on failure | exactly one JSON document; other output goes to stderr; a fallback document on a silent non-zero exit | parse stdout as one document |
+| `gbrain list/stats/health/tags/timeline --json` (op commands) | printed the human table | print the result as JSON, like every other op | parse stdout as JSON |
+| `gbrain import --json` | empty stdout on a refusal; a keyless brain refused with human text only | one document; on a keyless brain an `embedding_disabled` envelope whose `fix` is the same import with `--no-embed` | parse the document; run `fix.argv` |
+| A command needing a PGLite brain a live `gbrain serve` holds (`import`, `doctor --remediate`, `apply-migrations`, …) | `pglite_busy`, "wait and retry" (never ends) | the same `pglite_busy` plus a two-step `fix`: the user stops that serve (`kill <pid>`, `tell_user_to_run`), then `fix.then` re-runs the command; `apply-migrations` refuses before running instead of recording a failed attempt | relay the first step, then run `fix.then` |
+| `gbrain doctor` while a stdio serve holds the brain | `connection` FAIL, exit 1, "unhealthy" | `connection` warns with the two-step plan; exit 0 | follow the fix |
+| `gbrain doctor --remediate --yes` job steps with no worker (PGLite, or Postgres with no supervisor) | waited 90 s per step, then failed with a timeout | the steps run in-process, as `jobs submit --follow` does | none |
+| `gbrain advisor --json` on a keyless brain | `embeddings_disabled` and `low_embed_coverage` warnings (exit 1) | one `info` finding with the enable command (exit 0 unless something else warns) | none |
+| `gbrain serve --http` on a port already in use | printed its banner and kept the brain locked while serving nothing | exits non-zero with `serve_port_in_use` and the next free port | pick another `--port` |
 
 `gbrain mcp expose` and `gbrain google` still exit 2 when they need confirmation (documented contract v1 legacy); `mcp expose`'s document now also carries the consent fields (`code`, `effects`, `user_message`, `fix`).
 
@@ -128,9 +135,14 @@ Scripts that parse exit codes or `--json` output should read the [behavior chang
 
 #### Docs and skills
 
-- New [agent operator protocol](docs/protocol/AGENT_OPERATOR_v1.md) with three transcripts, the decision table, marker grammar and this release's behavior table. AGENTS.md carries its quick contract.
+- New [agent operator protocol](docs/protocol/AGENT_OPERATOR_v1.md) with six transcripts (three recorded from the journey tests below), the decision table, marker grammar and this release's behavior table. AGENTS.md carries its quick contract.
 - Troubleshooting and the symptom tables in every guide gain Who acts, Consent and Verify columns; verify steps use `gbrain doctor --only <check> --json`.
 - Every skill gains a "When it fails" section pointing at the protocol.
+
+#### Agent journey tests
+
+- Deterministic end-to-end journeys drive the real CLI and real stdio/HTTP MCP sessions on a keyless brain with stdin closed and as an open silent pipe: init's decision bundle, a clean day-zero doctor, a refused-then-approved remediation (also on a brain with a pending migration), the degraded-recall notice, a caller mistake whose `fix` runs as given, the status-only second serve, every `--json` document, every doctor fix and remediation-plan command, one embedding-enable command on every surface, the `starter` surface, a read-only grant, recovery from another directory with conflicting `GBRAIN_BRAIN_ID` / `GBRAIN_SOURCE`, each exclusive command under a live serve, both shared-HTTP recoveries, the error normaliser across MCP, CLI and the thin client (including a frozen v0.60.37 client), injection inertness, the HTTP view, notice dedupe, Postgres parity and upgrade fixtures for existing scripts, scheduled jobs, harness configs and queued jobs.
+- Fixes they found: an MCP caller mistake on a read tool (wrong type or value) carries a `fix` that re-runs the call with the bad argument corrected; recovery commands name the brain and source they act on (`--brain`, `--source`); doctor warnings for a low brain score and repairable wave findings point at the read-only plan or `gbrain repair <kind>` preview; a skill waiting for content it does not have yet is information, not a warning; init's `--no-embedding` hint prints the same enable command doctor gives; `gbrain call`, `sources refresh --json` and `--brain <unknown>` return the full envelope; notices collected before an error ride in its envelope; hostile page ids land after `--` in fixes; `submit_job` with an unknown outcome points at the job list; usage errors on the persistence lane exit 2; stdio database fixes name the user, not the host admin.
 
 ## [0.60.37.0] - 2026-10-03
 
