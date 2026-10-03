@@ -90,7 +90,7 @@ export const DERIVED_CAP_FLOOR_USD = 0.25;
  * What `--non-interactive` authorizes, per command. It is never a blanket
  * `--yes`: `apply-migrations` (where it historically meant `--yes`) gets the
  * autopilot install its Phase F performs, nothing paid or destructive. The
- * post-upgrade caller (`src/commands/upgrade.ts`, runApplyMigrations) passes
+ * post-upgrade caller (`src/commands/upgrade.ts`, applyMigrations) passes
  * `--yes --non-interactive` to apply-migrations, whose only consent effect
  * is that same install. Every other command: nothing.
  */
