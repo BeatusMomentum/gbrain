@@ -1,2 +1,1 @@
 # shrink-only baseline for scripts/check-agent-contract.ts rule retry-on-mutating: path<TAB>count
-src/core/ops/jobs.ts	1
