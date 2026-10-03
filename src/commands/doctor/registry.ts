@@ -86,6 +86,7 @@ import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
+import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { STOP_DOCTOR, type DoctorContext, type DoctorEntry } from './context.ts';
 import type { Check } from '../doctor.ts';
 
@@ -147,6 +148,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   unlinkedFactsEntry,
   autoChronicleEntry,
   factTakeVectorsEntry,
+  plannerStatsEntry,
   searchModeEntry,
 ];
 

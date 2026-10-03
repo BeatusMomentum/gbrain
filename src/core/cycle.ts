@@ -57,6 +57,7 @@ import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts';
 import { anyAbortSignal } from './abort-signals.ts';
+import { maybeRefreshPlannerStats } from './planner-stats.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 export { anyAbortSignal } from './abort-signals.ts';
@@ -2333,6 +2334,10 @@ export async function runCycle(
       }
       await safeYield(opts.yieldBetweenPhases);
     }
+
+    // F4b: the freshness phases above write links, timeline and facts in bulk; on PGLite (no autovacuum)
+    // refresh the stale planner statistics before the heavier graph phases read them. Best-effort.
+    if (engine && !dryRun) await maybeRefreshPlannerStats(engine, 'cycle').catch(() => undefined);
 
     // ── v0.41 T9: extract_atoms (per-source, pack-gated) ──────────
     // Orchestrator-level pack gate: consults the active pack's `phases:`

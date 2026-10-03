@@ -507,6 +507,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/persistence/coordinator.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
   "src/core/facts/meta-hook.ts": ["test/e2e/capture-dedup-postgres.test.ts", "test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/facts-context-injection-postgres.test.ts", "test/e2e/serve-http-meta.test.ts"],
   "src/mcp/dispatch.ts": ["test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/write-contract-conformance.test.ts"],
+  // Foundations 1 F4b: PGLite-only planner-stats accounting; Postgres must gain no object, doctor/repair read pg_stat_user_tables.
+  "src/core/planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts"],
+  "src/core/planner-stats-schema.ts": ["test/e2e/planner-stats-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
+  "src/core/schema-migrations/v193-f4-planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
+  "src/commands/doctor/checks/planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts"],
+  "src/core/repair/planner-stats.ts": ["test/e2e/planner-stats-postgres.test.ts"],
   // Schema source of truth: any change must pass the cross-engine drift gate.
   "src/schema.sql": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],

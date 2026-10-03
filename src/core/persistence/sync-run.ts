@@ -19,6 +19,7 @@ import { join, resolve } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
+import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../planner-stats.ts';
 import { recordManagedSyncFailure, clearManagedSyncFailureAfterSuccess, formatManagedSyncFailure, type ManagedSyncFailure } from './sync-failures.ts';
 import { writeFailureDiagnostic } from './verb-errors.ts';
 import { extractManagedStaleLinks } from './links-maintenance.ts';
@@ -391,6 +392,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     }
     if (opts.dryRun) return result(cursor, 'dry_run');
     const config = loadConfig() ?? { engine: engine.kind };
+    const analyzeEvery = await importAnalyzeEveryPages(engine);
     let batchStart = performance.now(), batchPages = 0, foregroundWaitStart = 0, foregroundBaseline = 0;
     let creditedPages = 0, creditStarted = 0;
     const sliceStarted = performance.now(), sliceFirstIndex = cursor.index;
@@ -492,6 +494,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       next.counts.chunks += Number(done.outcome?.chunks ?? 0);
       cursor = await saveCursor(engine, key, cursor, next);
       opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+      // F4b: PGLite plans the rest of a large sync against fresh statistics (spec Addendum A item 2).
+      if (analyzeEvery > 0 && cursor.index % analyzeEvery === 0) await maybeRefreshPlannerStats(engine, 'managed_sync', { throttle: false }).catch(() => undefined);
       assertActive();
       if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
       batchPages++;

@@ -184,6 +184,8 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
  * Infrastructure liveness signals. DB, workers, OAuth, RLS, locks, providers.
  */
 export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
+  // F4b: PGLite row-delta planner statistics / Postgres autovacuum ANALYZE lag on the hot tables.
+  'planner_stats_stale',
   'alternative_providers',
   'autopilot_fanout_concurrency',
   'autopilot_lock_scope',
