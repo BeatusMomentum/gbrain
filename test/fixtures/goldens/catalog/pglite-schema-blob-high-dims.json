@@ -2,7 +2,6 @@
   "golden": {
     "constraints": {
       "access_tokens.access_tokens_pkey": "p PRIMARY KEY (id)",
-      "access_tokens.access_tokens_source_grant_check": "c CHECK ((source_grant = ANY (ARRAY['default'::text, 'scalar'::text, 'federated'::text, 'none'::text])))",
       "access_tokens.access_tokens_token_hash_key": "u UNIQUE (token_hash)",
       "calibration_profiles.calibration_profiles_pkey": "p PRIMARY KEY (id)",
       "calibration_profiles.calibration_profiles_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
@@ -757,13 +756,7 @@
           "4 scopes ARRAY/_text NULL",
           "5 created_at timestamp with time zone/timestamptz NULL DEFAULT now()",
           "6 last_used_at timestamp with time zone/timestamptz NULL",
-          "7 revoked_at timestamp with time zone/timestamptz NULL",
-          "8 source_grant text/text NULL",
-          "9 source_id text/text NULL",
-          "10 federated_read ARRAY/_text NULL",
-          "11 allowed_operations ARRAY/_text NULL",
-          "12 takes_holders ARRAY/_text NULL",
-          "13 grant_revision integer/int4 NOT NULL DEFAULT 0"
+          "7 revoked_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

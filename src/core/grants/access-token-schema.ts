@@ -5,6 +5,10 @@
  * parsers until its next write (`auth rescope`, `auth create`, rotation, or
  * `auth rescope --migrate-legacy`). No foreign key on `source_id`: the client
  * FK is ON DELETE RESTRICT, and tokens must not start blocking source removal.
+ *
+ * Migration-only, like `permissions` (v038): the schema blob's access_tokens
+ * has neither, so fresh installs and upgrades both add the columns in the same
+ * order (pinned by test/pglite-upgrade-replay.test.ts).
  */
 export const ACCESS_TOKEN_GRANT_SCHEMA_SQL = `
 ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS source_grant TEXT

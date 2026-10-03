@@ -389,7 +389,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 192 (latest: 192)",
+          "message": "Version 193 (latest: 193)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -938,6 +938,27 @@
           },
           "message": "No queued job predates submission authority.",
           "name": "legacy_job_authority",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "legacy_shape_count": 0,
+            "malformed": []
+          },
+          "message": "Every active legacy token uses the unified grant columns.",
+          "name": "legacy_token_grant_shape",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "drift": []
+          },
+          "message": "No legacy token grant has drifted from its permissions mirror.",
+          "name": "legacy_token_grant_drift",
           "status": "ok"
         },
         {

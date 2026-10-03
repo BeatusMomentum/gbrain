@@ -30,7 +30,6 @@ import { dirname, join, resolve } from 'node:path';
 import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from '../src/core/company-brain/receipt-schema.ts';
 import { FACT_WITHDRAWAL_SCHEMA_STATEMENTS } from '../src/core/facts/withdrawal-schema.ts';
 import { GRANT_AUDIT_SCHEMA_SQL } from '../src/core/grants/schema.ts';
-import { ACCESS_TOKEN_GRANT_SCHEMA_SQL } from '../src/core/grants/access-token-schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from '../src/core/lease-schema.ts';
 import { PAGE_PROJECTION_SCHEMA_SQL } from '../src/core/page-state/projection-schema.ts';
 import { PAGE_STATE_SCHEMA_SQL } from '../src/core/page-state/schema.ts';
@@ -69,7 +68,6 @@ export interface Fragment {
 const persistenceSql = (statements: readonly string[]) => `${statements.join(';\n')};`;
 
 export const FRAGMENTS: readonly Fragment[] = [
-  { source: 'src/core/grants/access-token-schema.ts', expr: 'ACCESS_TOKEN_GRANT_SCHEMA_SQL', postgres: ACCESS_TOKEN_GRANT_SCHEMA_SQL, pglite: ACCESS_TOKEN_GRANT_SCHEMA_SQL },
   { source: 'src/core/grants/schema.ts', expr: 'GRANT_AUDIT_SCHEMA_SQL', postgres: GRANT_AUDIT_SCHEMA_SQL, pglite: GRANT_AUDIT_SCHEMA_SQL },
   {
     source: 'src/core/facts/withdrawal-schema.ts',
