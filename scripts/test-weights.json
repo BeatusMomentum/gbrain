@@ -1450,7 +1450,6 @@
   "test/reindex-code-empty-file.test.ts": 680,
   "test/reindex-code-recovery.test.ts": 230,
   "test/reindex-code.test.ts": 1060,
-  "test/reindex-cost-refusal.test.ts": 6,
   "test/reindex-frontmatter-connect.test.ts": 233,
   "test/reindex-markdown-persistence.slow.test.ts": 144006,
   "test/reindex-preserve-tags.test.ts": 569,

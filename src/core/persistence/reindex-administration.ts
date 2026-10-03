@@ -14,7 +14,10 @@ export async function runAuthenticatedCodeReindex(engine: BrainEngine, params: R
     options.sourceId !== undefined && (typeof options.sourceId !== 'string' || !options.sourceId) ||
     options.workers !== undefined && (!Number.isInteger(options.workers) || Number(options.workers) < 1 || Number(options.workers) > 64) ||
     options.maxCostUsd !== undefined && (typeof options.maxCostUsd !== 'number' || !Number.isFinite(options.maxCostUsd) || options.maxCostUsd <= 0)) throw new OperationError('invalid_params', 'Invalid code reindex options.');
-  if (!options.noEmbed && !options.dryRun && !options.yes) throw new OperationError('confirmation_required', 'Explicit embedding consent is required; use --no-embed for keyless recovery.');
+  if (!options.noEmbed && !options.dryRun && !options.yes) {
+    throw new OperationError('confirmation_required', 'Explicit embedding consent is required; use --no-embed for keyless recovery.',
+      'The CLI asks the user before delegating; run gbrain reindex-code without --yes to get the consent request and relay it to the user.');
+  }
   if (!verified.grant.scopes.includes('write') || verified.grant.operations !== null && !verified.grant.operations.includes('submit_job') ||
     verified.grant.slugPrefixes !== null || !verified.grant.sourceIds.includes('*') &&
       (typeof options.sourceId !== 'string' || !verified.grant.sourceIds.includes(options.sourceId))) {
