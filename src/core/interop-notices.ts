@@ -7,7 +7,9 @@
  * `ctx.emitNotice` (ops) or dispatch's notice list (MCP). Notices interpolate
  * ids and closed-vocabulary stage names only, never page text.
  */
-import type { Action, Notice } from './agent-output.ts';
+import { cliRenderContext, renderNotice, type Action, type Notice } from './agent-output.ts';
+import { renderCliNotices } from './agent-markers.ts';
+import { isInteractive } from './interaction.ts';
 import type { GBrainConfig } from './config.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
 import { configReadiness } from './readiness.ts';
@@ -228,4 +230,25 @@ export function recallInteropNotices(
   } catch {
     return [];
   }
+}
+
+// ── CLI emission for commands without a result document (F7) ──────────────
+
+/**
+ * Write notices from a CLI command's human path: a terminal gets readable
+ * stderr lines, a non-interactive caller (an agent) gets `[AGENT]` blocks on
+ * stdout, and a `--json` invocation keeps stdout for its document (stderr).
+ * Never throws.
+ */
+export function writeCliNotices(notices: readonly Notice[]): void {
+  try {
+    if (notices.length === 0) return;
+    const rendered = notices.map(n => renderNotice(n, cliRenderContext()));
+    const args = process.argv.slice(2);
+    const end = args.indexOf('--');
+    const json = (end < 0 ? args : args.slice(0, end)).some(a => a === '--json' || a === '--json=true');
+    const out = renderCliNotices(rendered, { json: false, tty: isInteractive(), stdoutIsData: json });
+    if (out.stdout) process.stdout.write(out.stdout);
+    if (out.stderr) process.stderr.write(out.stderr);
+  } catch { /* coaching never breaks a command */ }
 }

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 229836,
-    "stdoutSha256": "05879677743f457797f2e950a2dc1b28d33301479253bfcf8e663a4414155457",
+    "stdoutBytes": 229964,
+    "stdoutSha256": "dd329e72404ba7ca00c57ed651b3e48c3ac470a9b160cf1333f6c2b338a14e5e",
     "toolNames": [
       "remember",
       "entity",
@@ -2097,7 +2097,7 @@
         "scope": "read"
       },
       {
-        "description": "Ranked, read-only \"what to do next\" for this brain: version drift, pending migrations, schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).",
+        "description": "Ranked, read-only \"what to do next\" for this brain: version drift, pending migrations, schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask before running any fix. On by default for the local stdio server; remote HTTP callers need mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -6226,7 +6226,9 @@
                 "backup_coverage",
                 "degraded_dedup",
                 "empty_retrieval",
+                "features_auto_fix",
                 "listing_truncated",
+                "onboard_opportunities",
                 "source_binding_narrowed",
                 "synthesis_keyless",
                 "think_not_saved",

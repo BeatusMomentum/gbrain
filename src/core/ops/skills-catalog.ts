@@ -253,21 +253,17 @@ const advisor: Operation = {
     'Ranked, read-only "what to do next" for this brain: version drift, pending migrations, ' +
     'schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a ' +
     'severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask ' +
-    'before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills ' +
-    'because diagnostics are not prose skills).',
+    'before running any fix. On by default for the local stdio server; remote HTTP callers need ' +
+    'mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).',
   publishGateKey: 'mcp.publish_advisor',
   params: {},
   handler: async (ctx) => {
     // Publish gate: a remote caller needs mcp.publish_advisor=true. Local
     // (ctx.remote === false) callers bypass — the trust boundary is the OS.
     if (ctx.remote !== false) {
-      let enabled = false;
-      try {
-        const dbVal = await ctx.engine.getConfig('mcp.publish_advisor');
-        enabled = dbVal != null ? dbVal === 'true' : ctx.config?.mcp?.publish_advisor === true;
-      } catch {
-        enabled = ctx.config?.mcp?.publish_advisor === true;
-      }
+      // F7: on by default for the owner's stdio pipe; opt-in over HTTP.
+      const { readPublishGate } = await import('../../mcp/publish-gates.ts');
+      const enabled = await readPublishGate(ctx.engine, ctx.config, 'mcp.publish_advisor', ctx.transport);
       if (!enabled) {
         // Same k=v detail grammar as assertPublishEnabled (WP1): honest
         // catalogs hide this op at list time; the throw is the backstop.

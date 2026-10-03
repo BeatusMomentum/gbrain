@@ -200,3 +200,44 @@ describe('F6 hidden-tool hint (owner stdio only)', () => {
     expect(opaque.fix?.command).not.toBe('gbrain doctor --json');
   });
 });
+
+describe('F7 coaching reaches agents', () => {
+  test('the advisor is published on stdio by default; HTTP stays opt-in; explicit false and read failures hide it', async () => {
+    const { readPublishGate } = await import('../src/mcp/publish-gates.ts');
+    const unset = { getConfig: async () => null } as any;
+    expect(await readPublishGate(unset, {} as any, 'mcp.publish_advisor', 'stdio')).toBe(true);
+    expect(await readPublishGate(unset, {} as any, 'mcp.publish_advisor', 'http')).toBe(false);
+    expect(await readPublishGate(unset, {} as any, 'mcp.publish_skills', 'stdio')).toBe(false);
+    expect(await readPublishGate({ getConfig: async () => 'false' } as any, {} as any, 'mcp.publish_advisor', 'stdio')).toBe(false);
+    expect(await readPublishGate(unset, { mcp: { publish_advisor: false } } as any, 'mcp.publish_advisor', 'stdio')).toBe(false);
+    expect(await readPublishGate({ getConfig: async () => { throw new Error('down'); } } as any, {} as any, 'mcp.publish_advisor', 'stdio')).toBe(false);
+  });
+
+  test('post-upgrade: one safety notice per upgraded version on stdio, with contract_version and the behavior-table URL', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const { VERSION } = await import('../src/version.ts');
+    const { takePostUpgradeMcpNotice, __resetPostUpgradeNoticeForTests } = await import('../src/core/post-upgrade-notice.ts');
+    const { renderNotice, cliRenderContext } = await import('../src/core/agent-output.ts');
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-postup-'));
+    try {
+      mkdirSync(join(home, '.gbrain'), { recursive: true });
+      writeFileSync(join(home, '.gbrain', 'upgrade-state.json'), JSON.stringify({ last_upgrade: { from: '0.0.1.0', to: VERSION } }));
+      await withEnv({ HOME: home, GBRAIN_HOME: home, GBRAIN_NO_ONBOARD_NUDGE: undefined }, async () => {
+        __resetPostUpgradeNoticeForTests();
+        const n = takePostUpgradeMcpNotice()!;
+        expect(n.code).toBe('post_upgrade');
+        expect(n.kind).toBe('safety');
+        const r = renderNotice(n, cliRenderContext());
+        expect(r.contract_version).toBe(1);
+        expect(r.fix?.docs).toMatch(/^https:\/\/.*CHANGELOG\.md#behavior-changes-for-scripts-and-agents$/);
+        __resetPostUpgradeNoticeForTests();
+        expect(takePostUpgradeMcpNotice()).toBeNull();
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      __resetPostUpgradeNoticeForTests();
+    }
+  });
+});

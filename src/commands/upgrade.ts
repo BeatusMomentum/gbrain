@@ -590,9 +590,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   try {
     const { ensureGitignore } = await import('../core/config.ts');
     ensureGitignore();
-  } catch {
-    // Best-effort hygiene; never block upgrade.
-  }
+  } catch { /* Best-effort hygiene; never block upgrade. */ }
 
   // v0.42 self-upgrade setup: default existing installs to NOTIFY (a nudge, no
   // autonomy), inform once, and rewrite an existing systemd unit to
@@ -625,6 +623,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     // Pitch printing is cosmetic — don't gate migrations on it.
   }
 
+  (await import('../core/post-upgrade-notice.ts')).writePostUpgradeCliNotice(); // F7: safety notice ([AGENT] block for agents)
   // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
   // when nothing is pending. Stays inside the same process so a long Phase F
   // (autopilot install) doesn't hit a subprocess boundary.

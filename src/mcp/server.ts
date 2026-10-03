@@ -163,7 +163,7 @@ export async function stdioVisibleTools(
       gateDisabled = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
     } else {
       try {
-        gateDisabled = await disabledOpsForPublishGates(engine, loadConfig());
+        gateDisabled = await disabledOpsForPublishGates(engine, loadConfig(), { transport: 'stdio' });
       } catch {
         gateDisabled = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
       }

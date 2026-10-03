@@ -293,4 +293,7 @@ export const NOTICE_CODES = {
   degraded_dedup: { kind: 'info', summary: 'remember ran without an embedding provider, so only exact duplicates are detected.' },
   synthesis_keyless: { kind: 'info', summary: 'think returned gathered evidence without synthesis because no chat-model key is configured (by design on a keyless brain).' },
   think_not_saved: { kind: 'info', summary: 'think save/take persist only for the local CLI, so this answer was not saved.' },
+  onboard_opportunities: { kind: 'coaching', summary: 'Onboarding checks found work that would improve this brain (gbrain onboard --check lists it).' },
+  features_auto_fix: { kind: 'coaching', summary: 'gbrain features found auto-fixable gaps; the fix is the auto-fix command (it may spend on embeddings).' },
+  post_upgrade: { kind: 'safety', summary: 'gbrain was upgraded; behavior for scripts and agents changed — read the behavior table once.' },
 } as const satisfies Record<string, NoticeEntry>;

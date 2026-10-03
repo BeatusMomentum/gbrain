@@ -19,6 +19,7 @@ import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTes
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { recallInteropNotices } from '../core/interop-notices.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
+import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
@@ -814,6 +815,7 @@ export async function dispatchToolCall(
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
     // an UNSET marker never probes (fail-closed).
     maybeBackupNotice(notices, opts);
+    if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
