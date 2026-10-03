@@ -163,6 +163,7 @@ export const CODES = {
   no_refresh_token: { class: 'caller', summary: "Google connect credential error: no refresh token.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   no_routing_eval: { class: 'caller', summary: "The skill has no routing-eval rows to bootstrap a benchmark from." },
   no_skill_md: { class: 'caller', summary: "The skill directory has no SKILL.md." },
+  no_worker: { class: 'caller', summary: "No worker is running for this queue, so a queued job would wait until something runs it.", why: "PGLite brains have no background worker (the database is single-writer), and a Postgres queue needs a running `gbrain jobs work` or supervisor. Queuing without one leaves the job waiting with no error." },
   no_worker_surface: { class: 'caller', summary: "No worker surface." },
   not_a_git_repo: { class: 'caller', summary: "The source path must contain committed Git content." },
   not_connected: { class: 'caller', summary: "Google connect credential error: not connected.", docs: 'docs/guides/google-connect.md#troubleshooting' },
@@ -228,6 +229,7 @@ export const CODES = {
   split_unparseable: { class: 'caller', summary: "Split unparseable." },
   state_mismatch: { class: 'caller', summary: "Google connect credential error: state mismatch.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   storage_error: { class: 'server', summary: "Reading or writing durable storage failed." },
+  sync_not_applicable: { class: 'caller', summary: "Sync does not apply to this source: its directory is not a Git checkout.", why: "Sync imports changes between Git commits. A gbrain-owned content directory (created by init) holds files gbrain manages itself and is not a Git repository, so there is nothing to sync; gbrain never initializes Git on its own.", reasons: ['content_directory'] },
   sync_in_progress: { class: 'retryable', summary: "A sync is running on this source." },
   take_row_collision: { class: 'caller', summary: "A takes fence row number is already used by a different take that is not in this page's canonical fence." },
   target_escape: { class: 'caller', summary: "The skill target must remain within its selected root." },
@@ -284,5 +286,6 @@ export interface NoticeEntry {
 export const NOTICE_CODES = {
   backup_coverage: { kind: 'coaching', summary: 'Some knowledge assets have no off-machine backup.' },
   empty_retrieval: { kind: 'info', summary: 'A retrieval returned no results; the notice says whether recall was degraded.' },
+  no_worker: { kind: 'degraded', summary: 'A job was queued but no worker is running to execute it; it waits until a worker runs.' },
   unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
 } as const satisfies Record<string, NoticeEntry>;

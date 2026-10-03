@@ -1054,6 +1054,14 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The skill directory has no SKILL.md. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### no_worker
+
+<a id="no_worker"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No worker is running for this queue, so a queued job would wait until something runs it. | PGLite brains have no background worker (the database is single-writer), and a Postgres queue needs a running `gbrain jobs work` or supervisor. Queuing without one leaves the job waiting with no error. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
 ### no_worker_surface
 
 <a id="no_worker_surface"></a>
@@ -1619,6 +1627,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | A sync is running on this source. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#sync_in_progress](../../docs/guides/write-refusals.md#sync_in_progress)
+
+### sync_not_applicable
+
+<a id="sync_not_applicable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Sync does not apply to this source: its directory is not a Git checkout. | Sync imports changes between Git commits. A gbrain-owned content directory (created by init) holds files gbrain manages itself and is not a Git repository, so there is nothing to sync; gbrain never initializes Git on its own. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `content_directory`.
 
 ### take_row_collision
 
