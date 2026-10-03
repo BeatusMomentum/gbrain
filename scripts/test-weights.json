@@ -570,6 +570,7 @@
   "test/doctor-source-config-shape.test.ts": 2,
   "test/doctor-stale-lock-hints.test.ts": 1240,
   "test/doctor-stale-mentions.test.ts": 1158,
+  "test/doctor-status-set.test.ts": 3000,
   "test/doctor-subagent-capability.test.ts": 6,
   "test/doctor-subagent-health.test.ts": 275,
   "test/doctor-supervisor-singleton-pidfile.test.ts": 1707,

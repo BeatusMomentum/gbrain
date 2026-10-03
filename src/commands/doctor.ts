@@ -139,6 +139,7 @@ export {
 import type { DoctorContext } from './doctor/context.ts';
 import { runDoctorRegistry, parseOnlyChecks } from './doctor/registry.ts';
 import { finalizeCheckFixes, fixLine, type CheckAgentFields } from './doctor/check-fix.ts';
+import { throttleDoctorHeartbeat } from './doctor/heartbeat.ts';
 import type { RenderContext } from '../core/agent-output.ts';
 export interface Check extends CheckAgentFields {
   name: string;
@@ -406,7 +407,7 @@ export async function buildChecks(
   // Progress reporter. `--json` is doctor's machine-readable output, so plain
   // progress must not leak to stderr unless the caller explicitly asks for
   // structured progress with --progress-json.
-  const progress = createProgress(doctorProgressOptions(jsonOutput));
+  const progress = throttleDoctorHeartbeat(createProgress(doctorProgressOptions(jsonOutput)));
 
   // --- Filesystem checks (always run, no DB needed) ---
 
