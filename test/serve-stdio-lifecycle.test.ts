@@ -715,6 +715,23 @@ describe('boot-readiness deadline (#3273)', () => {
     expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
   });
 
+  // The 52k-document serve kept answering tool calls while its boot waited on
+  // the engine behind them; completed requests are progress too.
+  test('a boot phase waiting behind answered tool calls is not killed', async () => {
+    const { trackStdioRpc } = await import('../src/mcp/server.ts');
+    const h = makeHarness();
+    h.opts.startMcpServer = async (_engine, startOpts) => {
+      startOpts?.onBootPhase?.('mcp_connect');
+      startOpts?.onBootPhase?.('persistence_consumer');
+      for (let i = 0; i < 12; i++) await trackStdioRpc(() => new Promise(r => setTimeout(r, 20)));
+    };
+    h.opts.bootTimeoutMs = 60;
+    await runServe(h.engine as unknown as BrainEngine, [], h.opts);
+    await new Promise(r => setTimeout(r, 100));
+    expect(h.engine.disconnectCalls).toBe(0);
+    expect(h.logs.some(l => l.includes('boot did not complete'))).toBe(false);
+  });
+
   test('a boot that stops advancing still exits one window after its last progress, naming the phase', async () => {
     const h = makeHarness();
     h.opts.startMcpServer = async (_engine, startOpts) => {

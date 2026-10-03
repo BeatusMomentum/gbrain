@@ -1,3 +1,4 @@
+import { noteForwardProgress } from '../core/forward-progress.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -193,6 +194,10 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
     return await work();
   } finally {
     _stdioRpcsInFlight--;
+    // A completed request is forward progress: serve's boot deadline must not
+    // stop a server that is answering its client while a boot phase waits on
+    // the engine behind those requests.
+    noteForwardProgress();
   }
 }
 
