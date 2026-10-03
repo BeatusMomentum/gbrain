@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.34.0] - 2026-10-03
+## [0.60.36.0] - 2026-10-03
 
 **Fix wave 8: Postgres stops poisoning its connection pool after one failed statement, managed brains keep ingesting remote sources, Windows can publish skills and run the write queue, scripts can tell a pending write from a failed one, agents can edit one line of a page without resending it, and legacy tokens can be granted (or denied) exactly the sources they should see.**
 
@@ -38,7 +38,7 @@ Version 0.60.28.0 said skill bundles publish on Windows. They did not: the bundl
 
 The release also folds in community PR #5587 (idea-ingest stops creating stub author pages), contributed by @screamingaikitty-ship-it, and GBRA-35's change that turns connector atom extraction back on by default. Thank you.
 
-## To take advantage of v0.60.34.0
+## To take advantage of v0.60.36.0
 
 `gbrain upgrade` installs the binary and runs three schema migrations (v190 upstream-observation columns on `sources`, v191 alias rows that cascade with their source, v192 take-vector identity). Restart every `gbrain serve`, autopilot and worker afterwards.
 

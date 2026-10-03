@@ -1,4 +1,4 @@
-# Fix wave 8 notes (`capy/fix-wave-8`, v0.60.34.0)
+# Fix wave 8 notes (`capy/fix-wave-8`, v0.60.36.0)
 
 One integrated PR. Eight lanes (A-G, with D split into D1 and D2) were built in
 parallel on master v0.60.31.0, merged here, then merged with master v0.60.32.0
