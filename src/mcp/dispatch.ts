@@ -17,6 +17,7 @@ import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices,
 import { isCallable } from '../core/ops/callable.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
+import { recallInteropNotices } from '../core/interop-notices.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
@@ -801,6 +802,9 @@ export async function dispatchToolCall(
     for (const w of unknownParamWarnings) {
       notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
     }
+    // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
+    notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
+      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding }));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or

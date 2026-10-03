@@ -63,6 +63,7 @@ import {
   type CliDispatchContext,
 } from './cli/command-table.ts';
 import { formatRememberResult } from './cli/remember-format.ts';
+import { applyCliOpNotices, captureOpNotice } from './cli/op-notices.ts';
 
 // db-availability loop: best-effort brain-id for the GBRAIN_DB_ACCESS marker,
 // so a MOUNT's DB failure reads as `brain=<id>` instead of masquerading as a
@@ -684,12 +685,13 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const result = normalizeLocalResult(rawResult);
+    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true);
     const output = formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.
     if (output) await writeStdoutFinal(output);
+    if (noticeText) process.stderr.write(noticeText);
     // #4488: an op that reports failure IN-BAND (`{status: 'error'}` — e.g.
     // put_page over unparseable frontmatter) used to print the envelope and
     // exit 0, so scripts read a never-written page as success. Echo the error
@@ -1513,6 +1515,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // T15/FOV-1: capture the retrieval meta for formatResult's empty-result
     // render (the local-engine twin of the MCP _meta.retrieval channel).
     emitResponseMeta: captureRetrievalMeta,
+    emitNotice: captureOpNotice, // A6/F8: rendered after the result by applyCliOpNotices
   };
 }
 

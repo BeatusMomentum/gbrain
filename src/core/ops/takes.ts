@@ -283,6 +283,10 @@ const think: Operation = {
       }
     }
 
+    // F8: the explanations the CLI formatter prints, as model-visible notices.
+    const { keylessThinkNotice, thinkNotSavedNotice } = await import('../interop-notices.ts');
+    if (result.synthesis_status === 'no_llm') ctx.emitNotice?.(keylessThinkNotice());
+    if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     return {
       ...result,
       // #1698 (#10): the persist-skip signal returns slug '' — map it (and any

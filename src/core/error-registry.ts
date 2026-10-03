@@ -286,4 +286,9 @@ export const NOTICE_CODES = {
   empty_retrieval: { kind: 'info', summary: 'A retrieval returned no results; the notice says whether recall was degraded.' },
   unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
   listing_truncated: { kind: 'info', summary: 'A listing returned a full page and more rows match; the fix is the next-page call.' },
+  degraded_recall: { kind: 'degraded', summary: 'A retrieval stage that affects recall did not run; an empty or thin result is not proof of absence.' },
+  source_binding_narrowed: { kind: 'info', summary: "A GBRAIN_SOURCE / .gbrain-source binding narrowed an unqualified read that came back empty; the fix reads another source explicitly." },
+  degraded_dedup: { kind: 'info', summary: 'remember ran without an embedding provider, so only exact duplicates are detected.' },
+  synthesis_keyless: { kind: 'info', summary: 'think returned gathered evidence without synthesis because no chat-model key is configured (by design on a keyless brain).' },
+  think_not_saved: { kind: 'info', summary: 'think save/take persist only for the local CLI, so this answer was not saved.' },
 } as const satisfies Record<string, NoticeEntry>;
