@@ -28,6 +28,8 @@ import { runConnectorSync } from '../connectors/sync.ts';
 
 const connectors_status: Operation = {
   name: 'connectors_status',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Per-provider chat-connector status: strategies, whether a credential is ' +
@@ -72,6 +74,7 @@ const connectors_status: Operation = {
 
 const connector_sync: Operation = {
   name: 'connector_sync',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
     'Sync a chat provider\'s conversation history into the brain: list new ' +

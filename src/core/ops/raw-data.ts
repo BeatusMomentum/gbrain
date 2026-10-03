@@ -13,6 +13,7 @@ import { enforceClientSlugFence } from './context.ts';
 
 const put_raw_data: Operation = {
   name: 'put_raw_data',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Store raw API response data for a page',
   params: {
@@ -34,6 +35,8 @@ const put_raw_data: Operation = {
 
 const get_raw_data: Operation = {
   name: 'get_raw_data',
+  mutating: false,
+  idempotent: true,
   outputRedaction: { exempt: 'explicit raw sidecar read by slug; governed by page visibility (CEO-17 raw-read exception)' },
   description: 'Retrieve raw data for a page. Raw data follows the page\'s soft-delete: a tombstoned (soft-deleted) page returns [] exactly like a missing page; restore_page brings the rows back, and get_page include_deleted: true verifies the tombstone.',
   params: {

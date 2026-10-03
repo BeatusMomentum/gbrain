@@ -35,6 +35,8 @@ import {
 
 const code_callers: Operation = {
   name: 'code_callers',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: CODE_CALLERS_DESCRIPTION,
   params: {
@@ -75,6 +77,8 @@ const code_callers: Operation = {
 
 const code_callees: Operation = {
   name: 'code_callees',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: CODE_CALLEES_DESCRIPTION,
   params: {
@@ -113,6 +117,8 @@ const code_callees: Operation = {
 
 const code_def: Operation = {
   name: 'code_def',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: CODE_DEF_DESCRIPTION,
   params: {
@@ -138,6 +144,8 @@ const code_def: Operation = {
 
 const code_refs: Operation = {
   name: 'code_refs',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: CODE_REFS_DESCRIPTION,
   params: {
@@ -193,6 +201,8 @@ async function attachWalkReadiness(ctx: OperationContext, walk: WalkResult, sour
 
 const code_blast: Operation = {
   name: 'code_blast',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'BEFORE editing any function, run code_blast with the symbol name to surface every transitive caller grouped by depth (direct → 2-hop → 3-hop). Use this during plan-mode to size the change. Returns up to 200 nodes. Trust an empty/not_found result only when ready=true; ready=false means impact is unknown and requires a safe fallback. Returns: {result, status, ready, depth_groups?, truncation?, cycles_detected?, did_you_mean?, candidates?}. Example ok: {result:"ok", status:"ready", ready:true, depth_groups:[{depth:1, nodes:[{symbol,chunk_id}], confidence:0.77}], truncation:"none"}.',
   params: {
@@ -229,6 +239,8 @@ const code_blast: Operation = {
 
 const code_flow: Operation = {
   name: 'code_flow',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'When tracing how a request flows through the codebase from entry point to side effect (DB write, HTTP call, file I/O), run code_flow from the entry point. Returns ordered execution chain with terminal-node tags. Returns: same envelope as code_blast plus terminal_nodes: [{symbol, sink_kind}] where sink_kind ∈ "db_call"|"http_call"|"file_io"|"process_exec"|"unknown".',
   params: {
@@ -264,6 +276,7 @@ const code_flow: Operation = {
 
 const code_traversal_cache_clear: Operation = {
   name: 'code_traversal_cache_clear',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Clear cached code_blast / code_flow traversal results. Source-scoped by default; pass all_sources=true to wipe everything (D8 destructive-guard).',
   params: {

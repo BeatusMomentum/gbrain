@@ -38,6 +38,7 @@ import { OperationError } from './contract.ts';
 // what they would have gotten with the right grants.
 const run_onboard: Operation = {
   name: 'run_onboard',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Probe brain health + optionally submit onboard remediations. Admin scope required. Protected handlers (LLM-bearing) require run_protected_onboard scope ADDITIONALLY.',
   params: {
@@ -126,6 +127,7 @@ const run_onboard: Operation = {
 // bundled-skill guard). NOT localOnly so admin HTTP MCP clients can invoke.
 const run_skillopt: Operation = {
   name: 'run_skillopt',
+  idempotent: true,
   outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
   description: 'Run SkillOpt against a single skill. Admin scope and remote skill allowlist required. shared_skill stages an exact catalog revision privately and requires explicit skill_editor and put_skill grants; only accepted body changes publish through the original revision CAS. Rate-limited per-skill via DB lock.',
   params: {

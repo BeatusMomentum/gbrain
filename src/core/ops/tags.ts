@@ -14,6 +14,7 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 
 const add_tag: Operation = {
   name: 'add_tag',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Add tag to page',
   params: {
@@ -34,6 +35,7 @@ const add_tag: Operation = {
 
 const remove_tag: Operation = {
   name: 'remove_tag',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Remove tag from page',
   params: {
@@ -53,6 +55,8 @@ const remove_tag: Operation = {
 
 const get_tags: Operation = {
   name: 'get_tags',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'List tags for a page',
   params: {

@@ -18,6 +18,8 @@ const FILE_LIST_LIMIT = 100;
 
 const file_list: Operation = {
   name: 'file_list',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'List stored files',
   params: {
@@ -44,6 +46,7 @@ const file_list: Operation = {
 
 const file_upload: Operation = {
   name: 'file_upload',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Upload a file to storage',
   params: {
@@ -153,6 +156,8 @@ const file_upload: Operation = {
 
 const file_url: Operation = {
   name: 'file_url',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Get a URL for a stored file',
   params: {

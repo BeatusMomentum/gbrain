@@ -297,6 +297,8 @@ function renderText(groups: CounterpartyGroup[], stale: boolean, noGoogleSources
 
 const open_loops: Operation = {
   name: 'open_loops',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'The open-loop engine\'s killer output: who is waiting on you, what you promised, and the context ' +
@@ -480,6 +482,7 @@ const open_loops: Operation = {
 
 const loops_close: Operation = {
   name: 'loops_close',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     "Close an open loop by id: status 'done' (handled) or 'dropped' (not going to). Closing is a state " +
@@ -553,6 +556,7 @@ const loops_close: Operation = {
 
 const loops_mute: Operation = {
   name: 'loops_mute',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Suppress a sender (email address) or thread id from opening NEW loops — the detector feedback ' +
@@ -599,6 +603,7 @@ const loops_mute: Operation = {
 
 const loops_unmute: Operation = {
   name: 'loops_unmute',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Remove a sender/thread suppression added by loops_mute, so the detector can open NEW loops for ' +

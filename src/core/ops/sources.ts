@@ -15,6 +15,8 @@ import { resolveAuthCapabilities } from '../harness/capabilities.ts';
 
 const whoami: Operation = {
   name: 'whoami',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Introspect the calling identity. Returns one of three transport shapes: ' +
@@ -71,6 +73,7 @@ const whoami: Operation = {
 
 const sources_add: Operation = {
   name: 'sources_add',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
     'Register a new source. Supports either --path (existing v0.17 behavior) ' +
@@ -154,6 +157,8 @@ const sources_add: Operation = {
 
 const sources_list: Operation = {
   name: 'sources_list',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'List registered sources with page counts and remote_url. v0.28 surfaces ' +
@@ -194,6 +199,7 @@ const sources_list: Operation = {
 
 const sources_remove: Operation = {
   name: 'sources_remove',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
     'Hard-remove a source (cascades pages/chunks/embeddings). Refuses to ' +
@@ -243,6 +249,8 @@ const sources_remove: Operation = {
 
 const sources_status: Operation = {
   name: 'sources_status',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Per-source diagnostic. Returns clone_state ("healthy" | "missing" | ' +
@@ -272,6 +280,7 @@ const sources_status: Operation = {
 
 const sources_inspect: Operation = {
   name: 'sources_inspect',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Inspect committed company Markdown on the trusted local host without importing, registering a source, changing access, or invoking providers.',
   params: {

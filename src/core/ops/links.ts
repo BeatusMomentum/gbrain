@@ -51,6 +51,7 @@ export const MANAGED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wik
 
 const add_link: Operation = {
   name: 'add_link',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Create link between pages',
   params: {
@@ -128,6 +129,7 @@ const add_link: Operation = {
 
 const remove_link: Operation = {
   name: 'remove_link',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Remove link between pages',
   params: {
@@ -304,6 +306,8 @@ async function hintScopedLinkMiss(
 
 const get_links: Operation = {
   name: 'get_links',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'List outgoing links from a page',
   params: {
@@ -318,6 +322,8 @@ const get_links: Operation = {
 
 const get_backlinks: Operation = {
   name: 'get_backlinks',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'List incoming links to a page',
   params: {
@@ -332,6 +338,8 @@ const get_backlinks: Operation = {
 
 const list_link_sources: Operation = {
   name: 'list_link_sources',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   // v114 (#1941): the read-side counterpart to link-add/link-rm. Since
   // link_source is now an open kebab provenance (no allowlist), this is how an
@@ -371,6 +379,8 @@ const DEFAULT_TRAVERSE_DEPTH = 5;
 
 const traverse_graph: Operation = {
   name: 'traverse_graph',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: `Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (pass depth explicitly for deeper walks); trusted local no-filter callers keep the legacy node shape at depth ${DEFAULT_TRAVERSE_DEPTH}.`,
   params: {

@@ -320,6 +320,7 @@ async function resolveSnippetCap(ctx: OperationContext, p: Record<string, unknow
 
 const search: Operation = {
   name: 'search',
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: SEARCH_DESCRIPTION,
   params: {
@@ -455,6 +456,7 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: QUERY_DESCRIPTION,
   params: {
@@ -913,6 +915,7 @@ const query: Operation = {
  */
 const assemble_evidence: Operation = {
   name: 'assemble_evidence',
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): ' +
@@ -962,6 +965,8 @@ const assemble_evidence: Operation = {
 
 const search_stats: Operation = {
   name: 'search_stats',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Search observability over a window: cache hit rate, intent/mode mix, budget drops, ' +
@@ -1003,6 +1008,7 @@ const search_stats: Operation = {
 
 const search_modes: Operation = {
   name: 'search_modes',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with ' +
@@ -1026,6 +1032,8 @@ const search_modes: Operation = {
 
 const search_tune: Operation = {
   name: 'search_tune',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Read-only tuning recommendations derived from the last 7 days of search telemetry: ' +
@@ -1045,6 +1053,8 @@ const search_tune: Operation = {
 
 const cache_stats: Operation = {
   name: 'cache_stats',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) ' +

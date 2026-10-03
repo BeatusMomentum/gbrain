@@ -22,6 +22,8 @@ import {
 
 const volunteer_context: Operation = {
   name: 'volunteer_context',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'Push-based context: volunteer brain pages relevant to a rolling conversation window ' +
@@ -123,6 +125,8 @@ const volunteer_context: Operation = {
 // v0.33: expertise + relationship-proximity routing. CLI: gbrain whoknows.
 const find_experts: Operation = {
   name: 'find_experts',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: FIND_EXPERTS_DESCRIPTION,
   scope: 'read',
@@ -178,6 +182,8 @@ const find_experts: Operation = {
 // v0.32.6: contradiction probe MCP surface (M3)
 const find_contradictions: Operation = {
   name: 'find_contradictions',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: FIND_CONTRADICTIONS_DESCRIPTION,
   scope: 'read',
@@ -258,6 +264,8 @@ const find_contradictions: Operation = {
 
 const find_trajectory: Operation = {
   name: 'find_trajectory',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: FIND_TRAJECTORY_DESCRIPTION,
   scope: 'read',

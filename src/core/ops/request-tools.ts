@@ -112,6 +112,7 @@ async function visibleOpsForCaller(
 
 const request_tools: Operation = {
   name: 'request_tools',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
     'Discover this brain\'s tool catalog and optionally unlock a wider tool surface for your client. ' +

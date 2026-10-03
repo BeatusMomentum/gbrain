@@ -60,6 +60,7 @@ const PROVENANCE_MAX = 500;
 
 const remember: Operation = {
   name: 'remember',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'MEMORY VERB (v1): save one fact to durable agent memory — the protocol write verb. ' +
@@ -171,6 +172,8 @@ const remember: Operation = {
 
 const entity: Operation = {
   name: 'entity',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'MEMORY VERB (v1): inspect ONE known person/company/project card — zero LLM calls, sub-100ms. ' +
@@ -226,6 +229,8 @@ const SYNTHESIS_FAILURE_CODES: Record<string, string> = {
 
 const synthesize: Operation = {
   name: 'synthesize',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     '[EXPENSIVE / SLOW — makes LLM calls, seconds-to-minutes latency, costs money] ' +
@@ -349,6 +354,7 @@ const synthesize: Operation = {
 
 const forget: Operation = {
   name: 'forget',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'MEMORY VERB (v1): expire a remembered fact by id — the protocol delete verb. ' +

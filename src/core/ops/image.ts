@@ -17,6 +17,8 @@ import { resolveRequestedScope } from './context.ts';
 
 const search_by_image: Operation = {
   name: 'search_by_image',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'v0.36 cross-modal Phase 2: image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL ' +

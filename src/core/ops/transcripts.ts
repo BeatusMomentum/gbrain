@@ -12,6 +12,8 @@ import { GET_RECENT_TRANSCRIPTS_DESCRIPTION } from '../operations-descriptions.t
 
 const get_recent_transcripts: Operation = {
   name: 'get_recent_transcripts',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: GET_RECENT_TRANSCRIPTS_DESCRIPTION,
   scope: 'read',

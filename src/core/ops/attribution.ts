@@ -99,6 +99,8 @@ type RowTarget = { kind: 'fact' | 'take' | 'timeline_entry'; label: string; sql:
 
 const get_write_attribution: Operation = {
   name: 'get_write_attribution',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'Admin read: who created and who last changed a page, or one of its facts, takes or timeline entries. '
     + 'Each attribution names the request id, operation, principal (kind, id, current name), time and origin '

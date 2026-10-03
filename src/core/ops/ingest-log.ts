@@ -14,6 +14,7 @@ import { linkReadScopeOpts } from './context.ts';
 
 const log_ingest: Operation = {
   name: 'log_ingest',
+  idempotent: false,
   outputRedaction: 'no_stored_text',
   description: 'Log an ingestion event',
   params: {
@@ -43,6 +44,8 @@ const log_ingest: Operation = {
 
 const get_ingest_log: Operation = {
   name: 'get_ingest_log',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'Get recent ingestion log entries',
   params: {

@@ -79,6 +79,7 @@ async function assertJobOwned(ctx: OperationContext, id: number, owner: string):
 
 const submit_job: Operation = {
   name: 'submit_job',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.',
   params: {
@@ -236,6 +237,7 @@ async function probeQueueStateSafe(
 //      (agent.use_gateway_loop is auto-on for submit_agent jobs).
 const submit_agent: Operation = {
   name: 'submit_agent',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Submit an LLM agent job that the worker dispatches via the gateway-native tool loop. Requires the `agent` OAuth scope. Tools, source, slug prefixes, max concurrency, and daily budget are bound at OAuth client registration time.',
   params: {
@@ -392,6 +394,8 @@ const submit_agent: Operation = {
  */
 const get_agent_job: Operation = {
   name: 'get_agent_job',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'Poll an agent job submitted via submit_agent. Returns a trimmed status view (id, status, timestamps, error_text, result) plus queue_position (waiting jobs ahead in claim order; 0 = next) while the job is still waiting. Requires the `agent` OAuth scope; only jobs owned by the calling client are visible.',
   params: {
@@ -475,6 +479,8 @@ const get_agent_job: Operation = {
 
 const get_job: Operation = {
   name: 'get_job',
+  mutating: false,
+  idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.',
   params: {
@@ -497,6 +503,8 @@ const get_job: Operation = {
 
 const list_jobs: Operation = {
   name: 'list_jobs',
+  mutating: false,
+  idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'List jobs with optional filters. Agent-scoped tokens (no admin) see only jobs they own.',
   params: {
@@ -527,6 +535,7 @@ const list_jobs: Operation = {
 
 const cancel_job: Operation = {
   name: 'cancel_job',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Cancel a waiting, active, or delayed job. Agent-scoped tokens (no admin) can cancel only jobs they own.',
   params: {
@@ -553,6 +562,7 @@ const cancel_job: Operation = {
 
 const retry_job: Operation = {
   name: 'retry_job',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Re-queue a failed or dead job for retry',
   params: {
@@ -577,6 +587,8 @@ const retry_job: Operation = {
 
 const get_job_progress: Operation = {
   name: 'get_job_progress',
+  mutating: false,
+  idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.',
   params: {
@@ -597,6 +609,7 @@ const get_job_progress: Operation = {
 
 const pause_job: Operation = {
   name: 'pause_job',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Pause a waiting, active, or delayed job',
   params: {
@@ -616,6 +629,7 @@ const pause_job: Operation = {
 
 const resume_job: Operation = {
   name: 'resume_job',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Resume a paused job back to waiting',
   params: {
@@ -638,6 +652,7 @@ const resume_job: Operation = {
 
 const replay_job: Operation = {
   name: 'replay_job',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Replay a completed/failed/dead job, optionally with modified data',
   params: {
@@ -661,6 +676,7 @@ const replay_job: Operation = {
 
 const send_job_message: Operation = {
   name: 'send_job_message',
+  idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
   description: 'Send a sidechannel message to a running job\'s inbox',
   params: {
@@ -723,6 +739,8 @@ const send_job_message: Operation = {
  */
 const get_job_stats: Operation = {
   name: 'get_job_stats',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Job queue statistics. PER-BLOCK scoping: by_status and queue_health are GLOBAL ' +

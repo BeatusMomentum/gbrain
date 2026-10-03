@@ -16,6 +16,8 @@ const ORPHANS_MAX_LIMIT = 1000;
 
 const find_orphans: Operation = {
   name: 'find_orphans',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'Find disconnected pages. Default mode "islanded" (no live inbound AND no outbound link) matches get_health.orphan_pages; mode "inbound" is the legacy no-inbound-only view. Essential for content enrichment cycles.',
   params: {
