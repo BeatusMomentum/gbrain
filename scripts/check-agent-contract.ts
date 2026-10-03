@@ -19,6 +19,13 @@
  *   stdio-inherit                   `stdio: 'inherit'` outside spawnCliChild (cli-force-exit.ts)
  *   marker-literal                  [AGENT] / [SHOW USER] / "ACTION FOR THE AGENT:" outside agent-output.ts / agent-markers.ts
  *   verify-not-read-only            a fix `verify.argv` naming a command not declared read_only
+ *   flag-in-mcp-text                a bare `--flag` in MCP-visible error text or an op description (src/core/ops, src/mcp)
+ *                                   outside a full `gbrain …` command; render per surface with paramUse()/invalidParam()
+ *   in-scope-placeholder            a `<placeholder>` in a fix argv without declared `inputs`, or in an error suggestion
+ *                                   (fill the value from scope; only genuinely unknown values are `inputs`;
+ *                                   an op's `cliOnly.argv` template is exempt: cliOnlyRefusal declares its inputs)
+ *   retry-on-mutating               "retry" advice in an error raised by a mutating, non-idempotent op handler
+ *                                   (say "inspect state before resubmitting"; retry only with the same request identity)
  *   unregistered-code               a literal error code thrown in src/ missing from src/core/error-registry.ts (never baselined)
  *   code-naming                     a registry code that is not snake_case or carries a transport prefix (never baselined)
  *
@@ -36,11 +43,13 @@ const DOCS = 'docs/designs/AGENT_OPERATOR_WAVE.md (B9)';
 export type Rule =
   | 'suggestionless-operation-error' | 'throw-new-error-in-ops' | 'hand-built-command' | 'legacy-advice-key'
   | 'interactive-io' | 'yes-rerun-string' | 'stdio-inherit' | 'marker-literal' | 'verify-not-read-only'
+  | 'flag-in-mcp-text' | 'in-scope-placeholder' | 'retry-on-mutating'
   | 'unregistered-code' | 'code-naming';
 
 export const BASELINED_RULES: readonly Rule[] = [
   'suggestionless-operation-error', 'throw-new-error-in-ops', 'hand-built-command', 'legacy-advice-key',
   'interactive-io', 'yes-rerun-string', 'stdio-inherit', 'marker-literal', 'verify-not-read-only',
+  'flag-in-mcp-text', 'in-scope-placeholder', 'retry-on-mutating',
 ];
 
 export interface Hit { rule: Rule; file: string; line: number; text: string }
@@ -49,6 +58,33 @@ const LEGACY_ADVICE_KEYS = new Set(['next_action', 'fix_argv', 'agent_action', '
 const MARKER_RE = /\[\/?AGENT\]|\[\/?SHOW USER\]|ACTION FOR THE AGENT:/;
 const YES_RERUN_RE = /re-?run\b[^.\n]{0,40}--yes/i;
 const TRANSPORT_PREFIX = /^(mcp|http|cli|stdio)_/;
+const ERROR_CALLEE = /^(OperationError|verbError|opError|OperationError\.bare|hostOnlyError)$/;
+const FLAG_RE = /(?:^|[\s(`'"])--[a-z][a-z0-9-]*/;
+const PLACEHOLDER_RE = /<(?:source|source[-_]id|slug|id|request[-_]id|client[-_]id|page|uuid|brain|name)>/;
+const RETRY_RE = /\bretry\b/i;
+const SAFE_RETRY_RE = /(?:do not|don't|never) retry|same request_id|same request identity/i;
+
+/** Text args of an error constructor call: message (1) and suggestion (2); hostOnlyError's message is arg 2. */
+function errorTextArgs(n: ts.CallExpression | ts.NewExpression, sf: ts.SourceFile): ts.Expression[] {
+  const callee = n.expression.getText(sf);
+  const args = n.arguments ?? [];
+  return callee === 'hostOnlyError' ? args.slice(2, 3) : args.slice(1, 3);
+}
+
+/** The op object literal (has `mutating:` and `handler:`) whose handler encloses `n`, if any. */
+function enclosingOp(n: ts.Node): ts.ObjectLiteralExpression | undefined {
+  for (let p = n.parent; p; p = p.parent) {
+    if (ts.isPropertyAssignment(p) && propName(p) === 'handler' && ts.isObjectLiteralExpression(p.parent)) return p.parent;
+  }
+  return undefined;
+}
+
+function literalProp(obj: ts.ObjectLiteralExpression, name: string): string | undefined {
+  for (const p of obj.properties) {
+    if (ts.isPropertyAssignment(p) && propName(p) === name) return p.initializer.getText();
+  }
+  return undefined;
+}
 /** Read-only invocations a verify step may always name (doctor --only is the canonical one). */
 const STATIC_READ_ONLY = new Set(['doctor', 'errors', 'status', 'get', 'search', 'query', 'list', 'write-request', 'write-requests', 'whoami', 'stats']);
 /** Read-only subcommands of otherwise-mutating commands. */
@@ -71,6 +107,16 @@ function stringText(n: ts.Node): string | undefined {
   if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
   if (ts.isTemplateExpression(n)) return n.head.text + n.templateSpans.map(s => s.literal.text).join('');
   return undefined;
+}
+
+/** String text of a literal or a `'a' + 'b'` concatenation of literals. */
+function flatText(n: ts.Node, sf: ts.SourceFile): string | undefined {
+  if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const l = flatText(n.left, sf); const r = flatText(n.right, sf);
+    return l !== undefined && r !== undefined ? l + r : undefined;
+  }
+  if (ts.isParenthesizedExpression(n)) return flatText(n.expression, sf);
+  return stringText(n);
 }
 
 function literalCodes(n: ts.Node): string[] {
@@ -151,6 +197,28 @@ export function scan(root: string = ROOT): Hit[] {
       if (ts.isNewExpression(n) && n.expression.getText(sf) === 'OperationError' && path !== 'src/core/ops/contract.ts') {
         const args = n.arguments ?? [];
         if (args.length < 3 || args[2]!.getText(sf) === 'undefined') add('suggestionless-operation-error', n);
+      }
+      if ((ts.isCallExpression(n) || ts.isNewExpression(n)) && ERROR_CALLEE.test(n.expression.getText(sf))) {
+        const texts = errorTextArgs(n, sf);
+        for (const arg of texts) {
+          const t = stringText(arg);
+          if (t === undefined) continue;
+          if (isOpsOrMcp && FLAG_RE.test(t) && !t.includes('gbrain ')) add('flag-in-mcp-text', arg);
+        }
+        const suggestion = n.expression.getText(sf) === 'hostOnlyError' ? undefined : stringText((n.arguments ?? [])[2] ?? n);
+        if (suggestion !== undefined && (n.arguments ?? [])[2] && PLACEHOLDER_RE.test(suggestion)) add('in-scope-placeholder', n.arguments![2]!);
+        const op = enclosingOp(n);
+        if (op && suggestion !== undefined && (n.arguments ?? [])[2] && literalProp(op, 'mutating') === 'true' && literalProp(op, 'idempotent') !== 'true'
+          && RETRY_RE.test(suggestion) && !SAFE_RETRY_RE.test(suggestion)) add('retry-on-mutating', n.arguments![2]!);
+      }
+      if (ts.isArrayLiteralExpression(n) && ts.isPropertyAssignment(n.parent) && propName(n.parent) === 'argv'
+        && ts.isObjectLiteralExpression(n.parent.parent) && literalProp(n.parent.parent, 'inputs') === undefined
+        && !(ts.isPropertyAssignment(n.parent.parent.parent) && propName(n.parent.parent.parent) === 'cliOnly')
+        && n.elements.some(e => /^<[^>]+>$/.test(stringText(e) ?? ''))) add('in-scope-placeholder', n);
+      if (isOpsOrMcp && path.startsWith('src/core/ops/') && ts.isPropertyAssignment(n) && propName(n) === 'description'
+        && ts.isObjectLiteralExpression(n.parent) && literalProp(n.parent, 'handler') !== undefined) {
+        const t = flatText(n.initializer, sf);
+        if (t !== undefined && FLAG_RE.test(t) && !t.includes('gbrain ')) add('flag-in-mcp-text', n);
       }
       if (ts.isThrowStatement(n) && n.expression && ts.isNewExpression(n.expression) && n.expression.expression.getText(sf) === 'Error'
         && (isOpsOrMcp || insideHandler(n))) add('throw-new-error-in-ops', n);

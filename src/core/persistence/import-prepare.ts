@@ -8,7 +8,8 @@ import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { applyInference } from '../frontmatter-inference.ts';
 import { getCompanyBrainProfile } from '../company-brain/profile.ts';
 import { hasMalformedPathSegment, isCodeFilePath, slugifyCodePath, slugifyPath } from '../sync.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
+import { yamlLocator } from './page-identity.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
@@ -21,6 +22,7 @@ import { prepareCanonicalProjections } from './canonical-projections.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
 export interface ManagedImportIntent extends Record<string, unknown> {
@@ -51,7 +53,10 @@ export function managedImportContent(sourcePath: string, bytes: Buffer, activePa
   if (!/\.mdx?$/i.test(sourcePath)) throw new OperationError('invalid_params', 'Managed import supports Markdown, code and supported image files.');
   const original = parseMarkdown(content, sourcePath, { validate: true });
   const invalid = original.errors?.find(error => error.code === 'YAML_PARSE');
-  if (invalid) throw new OperationError('invalid_params', `Invalid YAML frontmatter: ${invalid.message}`);
+  if (invalid) {
+    throw opError('invalid_params', `Invalid YAML frontmatter${yamlLocator(invalid.message)} in ${sourcePath}.`,
+      `Quote frontmatter values that contain ": " or start with a special character in ${sourcePath}, then run the import again.`);
+  }
   content = applyInference(sourcePath, content).content;
   const parsed = parseMarkdown(content, sourcePath, { validate: true, ...(activePack ? { activePack } : {}) });
   const expected = slugifyPath(sourcePath);
@@ -88,7 +93,7 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
 
 export async function prepareManagedImportMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
   const p = row.intent as ManagedImportIntent | null;
-  if (row.authority.remote || row.principal_kind !== 'local_cli') throw new OperationError('permission_denied', 'Filesystem import requires a trusted local CLI writer.');
+  if (row.authority.remote || row.principal_kind !== 'local_cli') throw trustedCliRequired('Filesystem import requires a trusted local CLI writer.');
   if (!p || p.kind !== 'managed_file_import' || typeof p.content !== 'string' || typeof p.inputPath !== 'string' || typeof p.sourcePath !== 'string') {
     throw new OperationError('invalid_params', 'The durable file import intent is incomplete.');
   }

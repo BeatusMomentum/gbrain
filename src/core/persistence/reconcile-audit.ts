@@ -11,6 +11,7 @@ import { submissionAuthority } from './authority.ts';
 import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter, verifyLocalWriter } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { prepareFileTarget } from './page-prepare.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 export interface ReconcileAuditReport extends Record<string, unknown> {
   source_id: string;
@@ -83,7 +84,7 @@ export async function runReconcileAudit(engine: BrainEngine, params: Record<stri
   }
   const writer = currentVerifiedLocalWriter() ?? await verifyLocalWriter(engine, await readLocalWriter(engine, 'cli'));
   if (writer.remote || writer.principal.kind !== 'local_cli' || writer.grant.slugPrefixes !== null) {
-    throw new OperationError('permission_denied', 'A whole-source audit requires the existing trusted CLI grant without a slug-prefix restriction.');
+    throw trustedCliRequired('A whole-source audit requires the existing trusted CLI grant without a slug-prefix restriction.');
   }
   if (!writer.grant.sourceIds.includes('*') && !writer.grant.sourceIds.includes(params.source_id)) {
     throw new OperationError('permission_denied', 'The current CLI grant excludes this source.');

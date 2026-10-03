@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 234048,
-    "stdoutSha256": "8e3d89827ff4164242aa14101563639a97110a9fd51ee02caf44214acb82fd58",
+    "stdoutBytes": 234057,
+    "stdoutSha256": "96c55f2b28e4c83dfd7f5131e199c51f0a9b5175e3c44c6ab6901184831b29ad",
     "toolNames": [
       "remember",
       "entity",
@@ -4338,7 +4338,7 @@
         "scope": "read"
       },
       {
-        "description": "Sync a chat provider's conversation history into the brain: list new conversations since the watermark, fetch them, and ingest as pages under conversations/<provider>/. Incremental by default; --full re-scans. Local-only (uses on-disk credentials).",
+        "description": "Sync a chat provider's conversation history into the brain: list new conversations since the watermark, fetch them, and ingest as pages under conversations/<provider>/. Incremental by default; `full: true` re-scans. Local-only (uses on-disk credentials).",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
@@ -4768,7 +4768,7 @@
         "scope": "read"
       },
       {
-        "description": "Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI AND --trusted-extraction.",
+        "description": "Extract entity names (people, companies) from text and create/update their brain stub pages. Stubs from untrusted input land in the quarantine lane (frontmatter `provenance: auto-extracted` + `status: unverified`) — excluded from authoritative retrieval boosts until reviewed. Direct authoritative writes require the trusted local CLI with trusted_extraction set.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,

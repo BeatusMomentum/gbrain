@@ -7,7 +7,7 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { hostOnlyError } from './op-fix.ts';
 import { GET_RECENT_TRANSCRIPTS_DESCRIPTION } from '../operations-descriptions.ts';
 
 const get_recent_transcripts: Operation = {
@@ -36,10 +36,13 @@ const get_recent_transcripts: Operation = {
     // allow-list (subagents always run with remote=true; they would always be
     // rejected, which is a footgun if the op is visible).
     if (ctx.remote === true) {
-      throw new OperationError(
-        'permission_denied',
-        'get_recent_transcripts is local-only — call via the gbrain CLI.',
-      );
+      const n = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? String(v) : undefined);
+      const days = n(p.days);
+      const limit = n(p.limit);
+      throw hostOnlyError(ctx, 'permission_denied', 'get_recent_transcripts is local-only — call via the gbrain CLI.',
+        ['gbrain', 'transcripts', 'recent', ...(days ? ['--days', days] : []), ...(limit ? ['--limit', limit] : []),
+          ...(p.summary === false ? ['--full'] : []), '--json'],
+        'Raw transcripts are private host files; only the trusted local CLI reads them.');
     }
     const { listRecentTranscripts } = await import('../transcripts.ts');
     return listRecentTranscripts(ctx.engine, {

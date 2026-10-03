@@ -24,7 +24,7 @@ import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
 import { toAgentError } from '../core/agent-output.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
-import { opError } from '../core/ops/contract.ts';
+import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
@@ -487,8 +487,7 @@ async function rejectInsufficientMcpScope(
     error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
     timestamp: new Date().toISOString(),
   });
-  const denial = opError('insufficient_scope', `Operation ${name} requires '${requiredScope}' scope`,
-    `Ask the brain host's operator to grant the '${requiredScope}' scope to this client, then reconnect.`);
+  const denial = scopeDeniedError({ op: name, required: [requiredScope], auth: authInfo, transport: 'http' });
   const envelope = toAgentError(denial, { transport: 'http', op: name, render: dispatchRenderContext({ remote: true, transport: 'http', auth: authInfo }) });
   return { content: [{ type: 'text', text: JSON.stringify({ ...envelope, your_scopes: authInfo.scopes }) }], isError: true };
 }

@@ -6,12 +6,27 @@
  * '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
-import { OperationError, authTransport } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
+import { authTransport, opError } from './contract.ts';
+import { hostFix, hostOnlyError, paramUse } from './op-fix.ts';
+import { isValidSourceId } from '../source-id.ts';
 import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts } from './context.ts';
 import { resolveAuthCapabilities } from '../harness/capabilities.ts';
 
 // --- v0.28: whoami + sources management ---
+
+/** A source id from params, validated for argv; an unsafe id is left out rather than interpolated. */
+function sourceIdArg(id: unknown): string[] {
+  return isValidSourceId(id) ? [id] : [];
+}
+
+/** B6: managed source lifecycle runs only on the verified owner CLI; the refusal names the exact host command. */
+function managedLifecycleRefusal(ctx: OperationContext, args: string[]) {
+  return hostOnlyError(ctx, 'writer_coordinator_required',
+    'Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.',
+    ['gbrain', ...args],
+    'With managed persistence on, adding or removing a source changes the brain\'s writer topology, which only its owner CLI may do.');
+}
 
 const whoami: Operation = {
   name: 'whoami',
@@ -57,11 +72,12 @@ const whoami: Operation = {
       return { transport: 'stdio', scopes, readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
-      throw new OperationError(
+      throw opError(
         'unknown_transport',
         'whoami called over a remote transport that did not thread ctx.auth. ' +
           'This is a transport bug — every remote call site must populate ctx.auth ' +
           'or set ctx.remote === false.',
+        'This is a gbrain server bug, not a caller mistake: tell the user, and have `gbrain doctor --json` run on the brain host.',
       );
     }
     // Legacy access_tokens reuse `name` as both clientId and clientName, so the
@@ -123,7 +139,7 @@ const sources_add: Operation = {
   handler: async (ctx, p) => {
     const { addSource } = await import('../sources-ops.ts');
     if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
-      throw new OperationError('writer_coordinator_required','Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.');
+      throw managedLifecycleRefusal(ctx, ['sources', 'add', ...sourceIdArg(p.id), ...(typeof p.url === 'string' && /^https:\/\/\S+$/.test(p.url) ? ['--url', p.url] : [])]);
 
     // v0.28.1 codex finding (CRITICAL + HIGH): a `sources_admin` token over
     // HTTP MCP must not be able to plant content at arbitrary host paths.
@@ -145,11 +161,13 @@ const sources_add: Operation = {
     const remotePath = isLocal ? (p.path as string | undefined) ?? null : null;
     const remoteCloneDir = isLocal ? (p.clone_dir as string | undefined) : undefined;
     if (!isLocal && p.path !== undefined) {
-      throw new OperationError(
+      throw opError(
         'invalid_params',
         'sources_add: path is not honored over MCP (security confinement). ' +
-          'Register with --url instead, or run `gbrain sources add --path ...` on the host CLI.',
-        'Use --url to register a remote source, or run the command locally with --path.',
+          'Register with `url` instead, or run `gbrain sources add <id> --path <dir>` on the host CLI.',
+        `Pass ${paramUse(ctx, 'url', 'https://github.com/owner/repo')} to register a remote Git source, or have the host run the command in fix to register this local directory.`,
+        { fix: hostFix(ctx, ['gbrain', 'sources', 'add', ...sourceIdArg(p.id), '--path', String(p.path)],
+          'Local directories can only be registered by the trusted CLI on the brain host (MCP callers cannot plant host paths).') },
       );
     }
 
@@ -250,7 +268,7 @@ const sources_remove: Operation = {
     assertSourceInCallerWriteScope(ctx, p.id as string);
     const { removeSource } = await import('../sources-ops.ts');
     if(ctx.remote!==false&&await (await import('../persistence/ownership.ts')).managedPersistenceEnabled(ctx.engine))
-      throw new OperationError('writer_coordinator_required','Managed source lifecycle requires the verified owner CLI. An ordinary MCP grant does not confer owner administration authority.');
+      throw managedLifecycleRefusal(ctx, ['sources', 'remove', ...sourceIdArg(p.id), '--dry-run']);
     return removeSource(ctx.engine, {
       id: p.id as string,
       confirmDestructive: (p.confirm_destructive as boolean) === true,
@@ -307,7 +325,11 @@ const sources_inspect: Operation = {
   localOnly: true, cliOnly: { argv: ['gbrain', 'sources', 'inspect', '<path>'] },
   mutating: false,
   handler: async (ctx, params) => {
-    if (ctx.remote !== false) throw new OperationError('permission_denied', 'Repository inspection requires the trusted local CLI.');
+    if (ctx.remote !== false) {
+      throw hostOnlyError(ctx, 'permission_denied', 'Repository inspection requires the trusted local CLI.',
+        ['gbrain', 'sources', 'inspect', String(params.path), '--json'],
+        'Inspection reads a local Git checkout, which only the trusted CLI on that machine may do.');
+    }
     const { inspectCompanyBrain } = await import('../company-brain/inspection.ts');
     return inspectCompanyBrain({ path: params.path as string,
       profile: params.profile as 'company-brain' | undefined,

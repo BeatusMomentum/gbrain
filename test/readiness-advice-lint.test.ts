@@ -26,9 +26,7 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
   'src/commands/reindex-code.ts': { count: 2, reason: 'Lane E: reindex-code embedding hint' },
   'src/commands/reinit-pglite.ts': { count: 2, reason: 'usage examples of reinit-pglite\'s own --embedding-model flag' },
   'src/core/advisor/collect-setup-smells.ts': { count: 2, reason: 'Lane E: advisor setup smells read readiness' },
-  'src/core/ai/dims.ts': { count: 2, reason: 'Lane B: dims validation error hints' },
   'src/core/embed-preflight.ts': { count: 5, reason: 'Lane E: embed preflight refusals carry the readiness fix' },
-  'src/core/embedding-dim-check.ts': { count: 2, reason: 'Lane E: keyless embed/import refusal (advises a refused config set)' },
 };
 
 const WIPE = /\bmv\s+\S+\s+\S+\.bak\b|\bmv\s+\S*brain\.pglite/;

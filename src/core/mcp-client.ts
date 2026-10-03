@@ -64,6 +64,10 @@ export type RemoteMcpErrorReason =
   | 'discovery'
   | 'auth'
   | 'auth_after_refresh'
+  /** OAuth /token answered 429; `detail.retry_after_s` carries its Retry-After. */
+  | 'rate_limited'
+  /** OAuth /token failed after discovery succeeded (non-auth HTTP status or bad body). */
+  | 'token'
   | 'network'
   | 'tool_error'
   | 'parse';
@@ -75,6 +79,8 @@ export interface RemoteMcpErrorDetail {
   kind?: 'timeout' | 'aborted' | 'unreachable';
   /** v0.31.1: server-supplied error code on tool_error (e.g. 'missing_scope'). */
   code?: string;
+  /** Seconds the server asked us to wait before minting again (rate_limited). */
+  retry_after_s?: number;
   /** An accepted mutation's receipt survives the transport's tool-error wrapper. */
   write_request?: WriteReceipt;
   write_error?: WriteErrorCode;
@@ -133,6 +139,24 @@ export class RemoteMcpError extends Error {
       ...(detail?.contract_version === 1 ? { contract_version: 1 } : {}),
     };
   }
+}
+
+/**
+ * B5 (#5949): a 429 on the /token mint is the host's mint budget, not a
+ * connectivity fault: code `rate_limited`, a provider-side wait, and the
+ * read-only check to run once the wait is over.
+ */
+function rateLimitedMintDetail(retryAfterS: number | undefined): RemoteMcpErrorDetail {
+  const wait = retryAfterS !== undefined ? `${retryAfterS}s` : 'a few minutes';
+  return {
+    code: 'rate_limited',
+    why: `The brain host's OAuth /token mint budget is spent (HTTP 429); it clears by itself in ${wait}.`,
+    suggestion: `Wait ${wait}, then re-run the same command. If this repeats, the host operator can raise GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX.`,
+    fix: {
+      argv: ['gbrain', 'remote', 'doctor', '--json'], consent: [], actor: 'provider',
+      why: `Retry after ${wait}; remote doctor confirms the token mint works again.`, requires_exclusive: false,
+    },
+  };
 }
 
 /**
@@ -287,10 +311,15 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
   const tokenRes = await mintClientCredentialsToken(disco.metadata.token_endpoint, remote.oauth_client_id, secret, { signal });
   signal?.throwIfAborted();
   if (!tokenRes.ok) {
+    // Discovery already succeeded, so a /token failure is never 'discovery'.
     throw new RemoteMcpError(
-      tokenRes.reason === 'auth' ? 'auth' : tokenRes.reason === 'network' ? 'network' : 'discovery',
+      tokenRes.reason === 'http' || tokenRes.reason === 'parse' ? 'token' : tokenRes.reason,
       `OAuth /token failed: ${tokenRes.message}`,
-      { ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}), mcp_url: remote.mcp_url },
+      {
+        ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}),
+        ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}), mcp_url: remote.mcp_url,
+        ...(tokenRes.reason === 'rate_limited' ? rateLimitedMintDetail(tokenRes.retry_after_s) : {}),
+      },
     );
   }
 

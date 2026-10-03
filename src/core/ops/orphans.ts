@@ -5,9 +5,9 @@
  * in ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
 import { assertSourceInCallerScope, readPolicyOpts } from './context.ts';
-import { OperationError } from './contract.ts';
+import type { Operation } from './contract.ts';
+import { invalidParam } from './op-fix.ts';
 
 // --- Orphans ---
 
@@ -47,7 +47,7 @@ const find_orphans: Operation = {
     // quietly fall back to the default and misreport the orphan set.
     const mode = p.mode === undefined ? undefined : (p.mode as string);
     if (mode !== undefined && mode !== 'inbound' && mode !== 'islanded') {
-      throw new Error(`find_orphans: invalid mode "${mode}" — use 'inbound' or 'islanded'`);
+      throw invalidParam(ctx, 'find_orphans', 'mode', 'find_orphans: invalid mode — use \'inbound\' or \'islanded\'', { choices: ['islanded', 'inbound'] });
     }
     // v0.41.29.0 (Codex F8): scope by the caller's source (ctx.sourceId /
     // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.
@@ -61,8 +61,11 @@ const find_orphans: Operation = {
     const scope = named !== undefined ? await readPolicyOpts(ctx, { sourceId: named }) : await readPolicyOpts(ctx);
     const limit = p.limit === undefined ? ORPHANS_DEFAULT_LIMIT : Number(p.limit);
     const offset = p.offset === undefined ? 0 : Number(p.offset);
-    if (!Number.isInteger(limit) || limit < 1 || limit > ORPHANS_MAX_LIMIT || !Number.isInteger(offset) || offset < 0) {
-      throw new OperationError('invalid_params', `find_orphans: limit must be 1-${ORPHANS_MAX_LIMIT} and offset a non-negative integer`);
+    const limitOk = Number.isInteger(limit) && limit >= 1 && limit <= ORPHANS_MAX_LIMIT;
+    if (!limitOk || !Number.isInteger(offset) || offset < 0) {
+      throw invalidParam(ctx, 'find_orphans', limitOk ? 'offset' : 'limit',
+        `find_orphans: limit must be 1-${ORPHANS_MAX_LIMIT} and offset a non-negative integer`,
+        limitOk ? { def: find_orphans.params.offset, example: 0 } : { def: find_orphans.params.limit, example: ORPHANS_DEFAULT_LIMIT });
     }
     const result = await findOrphans(ctx.engine, {
       includePseudo: (p.include_pseudo as boolean) || false,

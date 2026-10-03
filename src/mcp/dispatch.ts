@@ -15,6 +15,7 @@ import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
+import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { recallInteropNotices } from '../core/interop-notices.ts';
@@ -24,7 +25,8 @@ import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
   normalizeOptionalParams,
-  validateParams,
+  findInvalidParam,
+  schemaInvalidParams,
   findUnknownParams,
   buildUnknownParamWarnBlock,
   resolveStrictParamsMode,
@@ -697,13 +699,12 @@ export async function dispatchToolCall(
   }
 
   const safeParams = normalizeOptionalParams(op, params || {});
-  const validationError = validateParams(op, safeParams);
-  if (validationError) {
+  const validationFailure = findInvalidParam(op, safeParams);
+  if (validationFailure) {
     logVerb(false);
-    // [c7] verb validation errors speak the protocol envelope (suggestion +
-    // protocol_version); non-verb ops keep the pre-existing shape untouched.
-    const invalid = new OperationError('invalid_params', validationError,
-      isVerb ? 'Check the tool schema — required params and types are declared there.' : undefined);
+    // [c7] verb validation errors speak the protocol envelope (protocol_version);
+    // B3: every op's suggestion names the param's type, choices and an example.
+    const invalid = schemaInvalidParams(op, validationFailure, { remote: opts.remote, transport: dispatchRenderContext(opts).transport === 'http' ? 'http' : 'stdio' });
     if (isVerb) invalid.protocolVersion = MEMORY_VERBS_VERSION;
     return errorResult(invalid, opts, { op: name });
   }
@@ -746,8 +747,16 @@ export async function dispatchToolCall(
   // #1924 / #1371. Trusted local callers (remote === false) keep the
   // historical fallback via buildOperationContext.
   if ((opts.remote ?? true) && !opts.sourceId) {
-    return errorResult(new OperationError('missing_source_scope',
-      `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.`), opts, { op: name });
+    const viaClient = opts.transport !== 'stdio' && !!opts.auth?.clientId;
+    return errorResult(opError('missing_source_scope',
+      `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.`,
+      viaClient
+        ? `This connection has no source grant. The brain host operator binds one to this client (gbrain auth rescope-client ${opts.auth!.clientId} --source <source-id>), then the call works.`
+        : 'This MCP server resolved no source. Set GBRAIN_SOURCE to a registered source id in the environment that launches it, then restart it.',
+      { fix: hostFix({ remote: true, transport: viaClient ? 'http' : 'stdio' },
+        viaClient ? ['gbrain', 'auth', 'clients', '--json'] : ['gbrain', 'sources', 'list'],
+        viaClient ? 'Shows each OAuth client\'s write source; the operator binds this client to one with `gbrain auth rescope-client`.'
+          : 'Lists the source ids GBRAIN_SOURCE can name.') }), opts, { op: name });
   }
 
   const ctx = buildOperationContext(engine, safeParams, opts);
@@ -782,8 +791,8 @@ export async function dispatchToolCall(
         scopes = verified.remote ? verified.grant.scopes : [];
       }
       if (!operationScopesAllowed(scopes ?? [], op)) {
-        throw new OperationError('permission_denied', 'This operation requires an explicit shared-skills grant.',
-          `Ask the brain owner to grant ${op.requiredScopes.join(', ')} for this connection.`);
+        throw scopeDeniedError({ op: name, required: op.requiredScopes, auth: ctx.auth ? { ...ctx.auth, scopes: scopes ?? [] } : { clientId: '', scopes: scopes ?? [] },
+          transport: ctx.transport === 'stdio' ? 'stdio' : 'http', message: 'This operation requires an explicit shared-skills grant.', legacy_error: 'permission_denied' });
       }
     }
     // Fail-closed gate for slug-bound OAuth clients, applied here because

@@ -13,7 +13,7 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { hostOnlyError, invalidParam } from './op-fix.ts';
 import { connectorProviders } from '../connectors/registry.ts';
 import { credentialMode, resolveCredential } from '../connectors/credentials.ts';
 import {
@@ -46,7 +46,9 @@ const connectors_status: Operation = {
   },
   handler: async (ctx, p) => {
     if (ctx.remote === true) {
-      throw new OperationError('permission_denied', 'connectors_status is local-only — call via the gbrain CLI.');
+      throw hostOnlyError(ctx, 'permission_denied', 'connectors_status is local-only — call via the gbrain CLI.',
+        ['gbrain', 'connectors', 'status', ...(p.provider === 'chatgpt' || p.provider === 'claude' ? [p.provider] : [])],
+        'Connector credentials live on the brain host, so only its CLI reads their status.');
     }
     const only = typeof p.provider === 'string' ? p.provider : undefined;
     const providers = connectorProviders.filter((prov) => !only || prov.name === only);
@@ -79,7 +81,7 @@ const connector_sync: Operation = {
   description:
     'Sync a chat provider\'s conversation history into the brain: list new ' +
     'conversations since the watermark, fetch them, and ingest as pages under ' +
-    'conversations/<provider>/. Incremental by default; --full re-scans. ' +
+    'conversations/<provider>/. Incremental by default; `full: true` re-scans. ' +
     'Local-only (uses on-disk credentials).',
   scope: 'write',
   mutating: true,
@@ -92,11 +94,13 @@ const connector_sync: Operation = {
   },
   handler: async (ctx, p) => {
     if (ctx.remote === true) {
-      throw new OperationError('permission_denied', 'connector_sync is local-only — call via the gbrain CLI.');
+      throw hostOnlyError(ctx, 'permission_denied', 'connector_sync is local-only — call via the gbrain CLI.',
+        ['gbrain', 'connectors', 'sync', ...(p.provider === 'chatgpt' || p.provider === 'claude' ? [p.provider] : []), '--dry-run'],
+        'Connector syncs use credentials stored on the brain host; the dry run previews how many conversations would import.');
     }
     const provider = typeof p.provider === 'string' ? p.provider : '';
     if (!isConnectorProviderName(provider)) {
-      throw new OperationError('invalid_params', `unknown connector provider '${provider}' (expected chatgpt|claude)`);
+      throw invalidParam(ctx, 'connector_sync', 'provider', 'unknown connector provider (expected chatgpt|claude)', { choices: ['chatgpt', 'claude'] });
     }
     return runConnectorSync(ctx.engine, {
       provider,

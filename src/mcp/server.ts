@@ -8,7 +8,7 @@ import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
-import { validateParams, parseStrictParamsMode } from './validate-params.ts';
+import { findInvalidParam, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, allowedOpNames, clampSurface, isReadOnlyOperation, type McpAccess, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import type { Operation } from '../core/operations.ts';
@@ -516,8 +516,8 @@ export async function handleToolCall(
   const op = operations.find(o => o.name === tool);
   if (!op) throw opError('unknown_tool', `Unknown tool: ${tool}`, 'Run `gbrain --tools-json` to list the tool names.');
 
-  const validationError = validateParams(op, params);
-  if (validationError) throw new OperationError('invalid_params', validationError, `Read the ${tool} schema in \`gbrain --tools-json\` (required params and types).`);
+  const validationFailure = findInvalidParam(op, params);
+  if (validationFailure) throw schemaInvalidParams(op, validationFailure, {});
 
   const ctx = buildOperationContext(engine, params, {
     remote: false,

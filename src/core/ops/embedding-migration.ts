@@ -11,6 +11,7 @@
  */
 
 import type { Operation } from './contract.ts';
+import { hostOnlyError } from './op-fix.ts';
 
 // --- #3390: provider-agnostic embedding migration ---
 
@@ -37,7 +38,12 @@ const migrate_embeddings: Operation = {
     // reachable from a remote transport even if a future dispatch path
     // forgets the localOnly filter.
     if (ctx.remote !== false) {
-      throw new Error('migrate_embeddings is local-only. Run `gbrain migrate embeddings` on the host.');
+      const to = typeof p.to === 'string' && /^[a-z0-9_-]+:[A-Za-z0-9._/-]+$/.test(p.to) ? ['--to', p.to] : [];
+      const brain = ctx.brainId && ctx.brainId !== 'host' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(ctx.brainId) ? ['--brain', ctx.brainId] : [];
+      throw hostOnlyError(ctx, 'permission_denied', 'migrate_embeddings is local-only. Run `gbrain migrate embeddings` on the host.',
+        ['gbrain', ...brain, 'migrate', 'embeddings', ...to, '--dry-run'],
+        'Re-embedding rebuilds the vector schema and spends provider money, so only the trusted CLI on the brain host runs it; the dry run prints the plan and cost first.',
+        { consent: [] });
     }
     // ONE shared orchestrator with the CLI (round-2 #11): locks, retarget
     // gate, DB-verified skip, heartbeat, and completion bookkeeping are

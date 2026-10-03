@@ -7,7 +7,8 @@ import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
  * in ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import { OperationError, type Operation, type OperationContext } from './contract.ts';
+import { opError, type Operation, type OperationContext } from './contract.ts';
+import { opTransport, paramUse } from './op-fix.ts';
 import {
   readPolicyOpts,
   readHolders,
@@ -15,14 +16,6 @@ import {
   enforceClientSlugFence,
   validatePageSlug,
 } from './context.ts';
-import {
-  addTakeToPage,
-  updateTakeOnPage,
-  supersedeTakeOnPage,
-  resolveTakeOnPage,
-  resolveTakesRepoDir,
-  TakesWriteError,
-} from '../takes-write.ts';
 import { embedQuery } from '../embedding.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
@@ -196,6 +189,15 @@ async function countMcpResolved(ctx: OperationContext): Promise<number> {
   }
 }
 
+/** runThink names the CLI flag; op callers get the param on their own surface and a caller-class code. */
+function thinkModelError(ctx: OperationContext, e: unknown): unknown {
+  if (!(e instanceof Error) || !e.message.startsWith('think: --model ')) return e;
+  const name = opTransport(ctx) === 'cli' ? paramUse(ctx, 'model') : '`model`';
+  return opError('invalid_params',
+    e.message.replace('think: --model ', 'think: model ').replace(' or omit --model.', ' or omit it.'),
+    `Nothing was synthesized. Omit ${name} to use the configured think model (models.think, then models.default), or pass a model id this brain can reach.`);
+}
+
 const think: Operation = {
   name: 'think',
   idempotent: false,
@@ -247,7 +249,8 @@ const think: Operation = {
       ...thinkScope,
       excludePrivate: (await readPolicyOpts(ctx)).excludePrivate,
       remote: ctx.remote !== false, // fail-closed: anything not strictly false is untrusted (CLAUDE.md invariant)
-    });
+    }).catch((e: unknown) => { throw thinkModelError(ctx, e); });
+    result.answer = result.answer.replace(' or pass `client`', ' on the brain host');
 
     // Persist if --save was passed locally
     let savedSlug: string | undefined;
@@ -336,76 +339,6 @@ const think: Operation = {
 // ---------------------------------------------------------------------------
 
 const TAKE_KINDS = ['fact', 'take', 'bet', 'hunch'] as const;
-/** Ops hold the MCP request at most this long waiting for the page lock. */
-const OP_LOCK_TIMEOUT_MS = 2000;
-
-/** Remote callers get the read allow-list as the WRITE fence; local CLI is unfenced. */
-function takesWriteAllowList(ctx: OperationContext): readonly string[] | null {
-  return ctx.remote !== false ? (ctx.takesHoldersAllowList ?? ['world']) : null;
-}
-
-async function opBrainDir(ctx: OperationContext): Promise<string> {
-  const dir = await resolveTakesRepoDir(ctx.engine);
-  if (!dir) {
-    const err = new OperationError(
-      'unavailable',
-      'Takes are markdown-canonical and this brain has no writable markdown repo configured.',
-      'Configure sync.repo_path on the brain host, then retry.',
-    );
-    err.detail = 'takes_mirror_unavailable';
-    throw err;
-  }
-  return dir;
-}
-
-function mapTakesWriteError(err: unknown): never {
-  if (err instanceof TakesWriteError) {
-    switch (err.code) {
-      case 'page_not_found':
-        throw new OperationError('page_not_found', err.message, 'Sync the brain first, or check the slug/source.');
-      case 'row_not_found':
-        // Fenced rows deliberately share this shape (no-existence-leak of
-        // content/holder — see the trust-model comment above).
-        throw new OperationError('not_found', err.message);
-      case 'holder_denied': {
-        const e = new OperationError('permission_denied', err.message,
-          "Ask the brain owner to widen this caller's takes-holder allow-list.");
-        e.detail = 'holder_not_in_allowlist';
-        throw e;
-      }
-      case 'mirror_unavailable': {
-        const e = new OperationError('unavailable', err.message,
-          'Configure sync.repo_path on the brain host, then retry.');
-        e.detail = 'takes_mirror_unavailable';
-        throw e;
-      }
-      case 'page_locked': {
-        const e = new OperationError('unavailable', err.message, 'Retry shortly.');
-        e.detail = 'retryable';
-        throw e;
-      }
-      case 'already_resolved':
-        throw new OperationError('invalid_params', err.message, err.hint ?? 'Resolved takes are immutable; supersede instead.');
-      case 'fence_unparsed':
-      case 'row_inactive':
-      case 'no_fields':
-      case 'invalid_input':
-        throw new OperationError('invalid_params', err.message, err.hint);
-    }
-  }
-  throw err;
-}
-
-/**
- * P1-4/F4: the markdown write already succeeded; a non-empty `mirror_warning`
- * means only the DB mirror deferred to the next reconcile. Surface it so the
- * agent knows the durable row is on disk and MUST NOT retry.
- */
-function mirrorWarnFields(mirror: { mirror_warning?: string }): Record<string, string> {
-  return mirror.mirror_warning
-    ? { mirror_warning: `row written to markdown; DB mirror deferred to reconcile: ${mirror.mirror_warning}` }
-    : {};
-}
 
 const takes_add: Operation = {
   name: 'takes_add',
