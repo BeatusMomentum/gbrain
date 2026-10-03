@@ -170,11 +170,20 @@ export async function readAliases(query: ReadQuery, aliases: string[], scope?: P
   const out = new Map<string, PageRef[]>();
   if (!aliases.length) return out;
   const params: unknown[] = [aliases];
+  const aliasScope = pageReadFilter('m', scope && { sourceId: scope.sourceId, sourceIds: scope.sourceIds }, params);
   const filter = pageReadFilter('p', scope, params, true);
+  // Alias matches first, then one unique-key page lookup each (OFFSET 0 keeps the
+  // read filter out of that lookup): without planner statistics (PGLite has no
+  // autovacuum) the page_aliases -> sources foreign key otherwise makes the planner
+  // walk every readable page and probe aliases per page.
   const rows = await query<PageRef & { alias_norm: string }>(`
-    SELECT a.alias_norm, a.slug, a.source_id FROM page_aliases a
-    JOIN pages p ON p.source_id = a.source_id AND p.slug = a.slug
-    WHERE a.alias_norm = ANY($1::text[]) AND ${filter}
+    WITH a AS MATERIALIZED (
+      SELECT m.alias_norm, m.slug, m.source_id FROM page_aliases m
+      WHERE m.alias_norm = ANY($1::text[]) AND ${aliasScope}
+    )
+    SELECT a.alias_norm, a.slug, a.source_id FROM a
+    CROSS JOIN LATERAL (SELECT * FROM pages WHERE source_id = a.source_id AND slug = a.slug OFFSET 0) p
+    WHERE ${filter}
     ORDER BY a.alias_norm, a.source_id, a.slug`, params);
   for (const row of rows) {
     const refs = out.get(row.alias_norm) ?? [];
