@@ -62,6 +62,7 @@ import {
   multiSourceDriftCheck,
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
+import { checkError } from './check-fix.ts';
 
 // Same alias the local doctor keeps for its own freshness checks; the alias
 // is a private one-liner in doctor.ts's check-fn library, so this module
@@ -123,7 +124,7 @@ export async function doctorReportRemote(
       ...schemaVersionHealth(version, LATEST_VERSION, { remote: true }),
     });
   } catch {
-    checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
+    checks.push(checkError('schema_version', 'check schema version'));
   }
 
   // 2b. #2038: idx_timeline_dedup shape. A renumbered-during-merge migration
@@ -152,7 +153,7 @@ export async function doctorReportRemote(
       });
     }
   } catch {
-    checks.push({ name: 'timeline_dedup_index', status: 'warn', message: 'Could not check idx_timeline_dedup shape' });
+    checks.push(checkError('timeline_dedup_index', 'check idx_timeline_dedup shape'));
   }
 
   // 2c. #550: pages(source_id, slug) upsert arbiter — same drift class as 2b.
@@ -205,11 +206,7 @@ export async function doctorReportRemote(
       message: `Brain score ${score}/100`,
     });
   } catch (e) {
-    checks.push({
-      name: 'brain_score',
-      status: 'warn',
-      message: `Could not compute: ${e instanceof Error ? e.message : String(e)}`,
-    });
+    checks.push(checkError('brain_score', 'compute', e));
   }
 
   // 3b. Migration wedge hint (v0.31.8 — D14 + D19). The brain server's

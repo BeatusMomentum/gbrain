@@ -15,6 +15,7 @@ import { buildMemoryWritebackCheck } from './memory-writeback.ts';
 import { checkBunRuntime, checkSelfUpgradeHealth, checkUpgradeErrors } from './upgrade-health.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { checkError } from '../check-fix.ts';
 
 async function runBootstrapChecks(ctx: DoctorContext): Promise<Check[]> {
   const { engine } = ctx;
@@ -91,7 +92,7 @@ async function runConnectors(ctx: DoctorContext): Promise<Check[]> {
       const { dreamPaidLoopCheck } = await import('./dream-breaker.ts');
       checks.push(await dreamPaidLoopCheck(engine));
     } catch (e) {
-      checks.push({ name: 'dream_paid_loop', status: 'warn', message: `Could not count dead dream submissions: ${e instanceof Error ? e.message : String(e)}` });
+      checks.push(checkError('dream_paid_loop', 'count dead dream submissions', e));
     }
   }
   return checks;

@@ -16,7 +16,7 @@ import { credentialEnvName, keyShadowWarning } from '../../../core/ai/key-warnin
 import { getRecipe } from '../../../core/ai/recipes/index.ts';
 import type { Check } from '../../doctor.ts';
 import { embeddingsDisabled } from '../../../core/embedding-disabled.ts';
-import { infoCheck, keylessEnablementFix } from '../check-fix.ts';
+import { checkError, infoCheck, keylessEnablementFix } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
@@ -410,11 +410,7 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
   } catch (err) {
     // Pre-config brains, registry-validation throws, etc. Surfaces the
     // error message but doesn't fail the doctor run.
-    checks.push({
-      name: 'embedding_column_registry',
-      status: 'warn',
-      message: `Could not check embedding column registry: ${(err as Error).message}`,
-    });
+    checks.push(checkError('embedding_column_registry', 'check embedding column registry', err));
   }
   return checks;
 }

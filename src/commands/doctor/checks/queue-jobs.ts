@@ -7,6 +7,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import { resolveEnvNumber } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
+import { checkError } from '../check-fix.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
@@ -806,10 +807,6 @@ export async function checkBatchRetryHealth(_engine: BrainEngine): Promise<Check
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return {
-      name: 'batch_retry_health',
-      status: 'warn',
-      message: `Could not check batch_retry audit: ${msg}`,
-    };
+    return checkError('batch_retry_health', 'check batch_retry audit', msg);
   }
 }

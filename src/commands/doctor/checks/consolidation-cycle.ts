@@ -60,11 +60,7 @@ export async function checkSyncConsolidation(engine: BrainEngine): Promise<Check
         'future sources auto-pick-up without a crontab edit.',
     };
   } catch (err) {
-    return {
-      name: 'sync_consolidation',
-      status: 'warn',
-      message: `Could not check sync consolidation: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    return checkError('sync_consolidation', 'check sync consolidation', err);
   }
 }
 

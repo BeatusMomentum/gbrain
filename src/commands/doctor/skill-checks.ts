@@ -29,7 +29,7 @@ import {
   appendAuditEventsForTransitions,
 } from '../../core/audit-skill-brain-first.ts';
 import type { Check } from '../doctor.ts';
-import { infoCheck } from './check-fix.ts';
+import { checkError, infoCheck } from './check-fix.ts';
 
 /** Quick skill conformance check — frontmatter + required sections */
 export function skillConformanceCheck(skillsDir: string): Check {
@@ -67,7 +67,7 @@ export function skillConformanceCheck(skillsDir: string): Check {
       message: `${passing}/${skills.length} pass. Failing: ${failing.join(', ')}`,
     };
   } catch {
-    return { name: 'skill_conformance', status: 'warn', message: 'Could not load or derive skills manifest' };
+    return checkError('skill_conformance', 'load or derive skills manifest');
   }
 }
 
