@@ -1,4 +1,5 @@
 {
+  "e2e:test/e2e/agent-journey-postgres.test.ts": 18000,
   "e2e:test/e2e/anomalies-pglite.test.ts": 2886,
   "e2e:test/e2e/attendance-repair-postgres.test.ts": 21285,
   "e2e:test/e2e/attendance-retrieval-postgres.test.ts": 27079,
@@ -274,6 +275,7 @@
   "serial:test/agent-install-backup.serial.test.ts": 81187,
   "serial:test/agent-install-follow-setup.serial.test.ts": 44197,
   "serial:test/agent-install-shared-skills.serial.test.ts": 2732,
+  "serial:test/agent-journey-upgrade.serial.test.ts": 70000,
   "serial:test/agent-register-guards.serial.test.ts": 11667,
   "serial:test/agent-scheduler-contract.serial.test.ts": 25493,
   "serial:test/agent-voice-cors.serial.test.ts": 1530,

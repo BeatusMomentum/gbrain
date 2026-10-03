@@ -633,7 +633,7 @@ function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined 
       error: 'unavailable', code: 'unavailable', reason: 'schema_missing', message: d.message,
       suggestion: 'Run gbrain apply-migrations on the brain host, then retry.',
       fix: {
-        argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: ctx.transport === 'cli' ? 'agent' : 'host_admin',
+        argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent',
         why: 'The code expects a table or column this brain does not have yet.', requires_exclusive: true,
         verify: { argv: ['gbrain', 'doctor', '--json'] },
       },
@@ -644,7 +644,7 @@ function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined 
     error: verb ? 'unavailable' : 'database_error', code: verb ? 'unavailable' : 'database_error', reason: d.reason,
     message: d.message, suggestion: `${formatDbAccessMarker(d)}. ${d.remediation} Run: gbrain db-repair`,
     fix: {
-      argv: ['gbrain', 'db-repair'], consent: [], actor: ctx.transport === 'cli' ? 'agent' : 'host_admin',
+      argv: ['gbrain', 'db-repair'], consent: [], actor: 'agent',
       why: 'db-repair diagnoses the database connection without changing anything.', requires_exclusive: false,
     },
     ...(verb ? { detail: d.reason, protocol_version: 1 as const } : {}),
