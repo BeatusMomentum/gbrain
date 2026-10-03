@@ -52,6 +52,16 @@ export function agentFix(argv: string[], why: string, verifyCheck: string, extra
 }
 
 /**
+ * A low brain score's next step: the read-only remediation plan, which names
+ * the job and repair steps that raise each score component, their cost, and
+ * the highest score this brain can reach (a keyless brain's embed share stays 0).
+ */
+export function brainScorePlanFix(): Action {
+  return agentFix(['gbrain', 'doctor', '--remediation-plan', '--json'],
+    'The plan lists which steps raise each score component, what they cost and the reachable maximum; it changes nothing.', 'brain_score');
+}
+
+/**
  * Information, not a problem: status `ok`, `severity: 'info'`. Use for a
  * capability that is `disabled_by_choice` or `not_applicable` (keyless brain,
  * empty brain, no serve running). `fix` is the enable command, if any.

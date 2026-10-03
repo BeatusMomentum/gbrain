@@ -117,6 +117,8 @@ const JSON_ROWS: Record<string, JsonRow> = {
     ok: ['eval', 'gate', '--qrels', QRELS, '--embedder', 'deterministic', '--threshold-recall-at-k', '0', '--threshold-first-relevant-hit', '0', '--threshold-expected-top1', '0', '--json'],
     fail: ['eval', 'gate', '--qrels', QRELS, '--embedder', 'deterministic', '--json'], failOnBrain: true,
   },
+  // Lane H journey: import declares json (one document; a keyless brain's refusal is an embedding_disabled envelope).
+  import: { ok: ['import', join(brainHome, 'loose'), '--no-embed', '--json'], fail: ['import', join(brainHome, 'loose'), '--json'], failOnBrain: true },
   'apply-migrations': { ok: ['apply-migrations', '--dry-run', '--json'], fail: ['apply-migrations', '--json', '--migration', '9.9.9'], failOnBrain: true },
 };
 
@@ -151,6 +153,8 @@ describe('D5 json contract: one success and one failure per json-declared comman
     writeFileSync(join(repo, 'example.md'), '---\ntitle: Example\n---\nHello world\n');
     const git = (args: string[]) => Bun.spawnSync(['git', '-c', 'user.email=fixture@example.com', '-c', 'user.name=fixture', ...args], { cwd: repo });
     git(['init', '-q']); git(['add', '.']); git(['commit', '-qm', 'init']);
+    mkdirSync(join(brainHome, 'loose'));
+    writeFileSync(join(brainHome, 'loose', 'loose-page.md'), '---\ntitle: Loose\n---\nA page outside any source repo\n');
     const add = await runCli(['sources', 'add', 'notes', '--path', repo], { home: brainHome, cwd: brainHome, timeoutMs: 60_000 });
     if (add.exitCode !== 0) throw new Error(`fixture sources add failed: ${add.stderr}`);
   }, 240_000);

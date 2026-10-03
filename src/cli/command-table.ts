@@ -245,7 +245,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
 
   // Post-connect: dispatched by dispatchConnectedCommand after connectEngine(), in master switch order.
   { name: 'mcp', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/mcp.ts') },
-  { name: 'import', phase: 'post-connect', thinClient: 'none', help: () => import('./help/import.ts'), load: () => import('./commands/import.ts') },
+  { name: 'import', phase: 'post-connect', thinClient: 'none', json: 'document', help: () => import('./help/import.ts'), load: () => import('./commands/import.ts') },
   { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/export.ts') },
   { name: 'files', phase: 'post-connect', thinClient: 'refuse', load: () => import('./commands/files.ts') },
   { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', load: () => import('./commands/embed.ts') },

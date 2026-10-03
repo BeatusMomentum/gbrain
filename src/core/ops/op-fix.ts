@@ -105,7 +105,7 @@ export function invalidParam(
   tool: string,
   param: string,
   message: string,
-  opts: { choices?: readonly string[]; example?: unknown; def?: ParamDef; legacy_error?: string } = {},
+  opts: { choices?: readonly string[]; example?: unknown; def?: ParamDef; legacy_error?: string; fix?: Action } = {},
 ): OperationError {
   const example = opts.example ?? exampleValue(opts.def, opts.choices ?? opts.def?.enum);
   const choices = opts.choices ?? opts.def?.enum;
@@ -115,8 +115,10 @@ export function invalidParam(
     ? `one of: ${choices.join(', ')}`
     : `a ${opts.def?.type ?? 'value'}${opts.def?.description ? ` (${opts.def.description.replace(/\.$/, '')})` : ''}`;
   const call = cli ? paramUse(ctx, param, example) : `${tool} {"${param}": ${JSON.stringify(example)}}`;
-  return opError('invalid_params', message, `Pass ${name} as ${what}. Example: ${call}.`,
-    opts.legacy_error ? { legacy_error: opts.legacy_error } : {});
+  return opError('invalid_params', message, `Pass ${name} as ${what}. Example: ${call}.`, {
+    ...(opts.legacy_error ? { legacy_error: opts.legacy_error } : {}),
+    ...(opts.fix ? { fix: opts.fix } : {}),
+  });
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;

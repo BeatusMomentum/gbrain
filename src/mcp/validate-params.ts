@@ -18,6 +18,7 @@ import type { GBrainConfig } from '../core/config.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import type { OperationError } from '../core/ops/contract.ts';
 import { invalidParam } from '../core/ops/op-fix.ts';
+import type { Action } from '../core/agent-output.ts';
 
 /** One validation failure: the message (never echoes the caller's value) and the param it names. */
 export interface ParamValidationFailure { message: string; param: string }
@@ -57,15 +58,51 @@ export function validateParams(op: Operation, params: Record<string, unknown>): 
 /**
  * B3: the `invalid_params` error for a schema failure — the param's type,
  * description, valid choices and one example call on the caller's surface
- * (from the op's ParamDef), never the caller's raw value.
+ * (from the op's ParamDef), never the caller's raw value in `message`.
+ * Over MCP, a read op's wrong-typed or out-of-enum param also gets a `fix`:
+ * the same call with the caller's other arguments and a valid value for the
+ * param (H1a: a caller mistake returns a fix the agent can run).
  */
 export function schemaInvalidParams(
   op: Operation,
   failure: ParamValidationFailure,
   ctx: { remote?: boolean; transport?: 'stdio' | 'http' },
+  params?: Record<string, unknown>,
 ): OperationError {
+  const fix = params && ctx.remote !== false ? retryWithValidParam(op, failure, params) : undefined;
   return invalidParam({ remote: ctx.remote ?? true, transport: ctx.transport }, op.cliHints?.name && ctx.remote === false ? op.cliHints.name : op.name,
-    failure.param, failure.message, { def: op.params[failure.param] });
+    failure.param, failure.message, { def: op.params[failure.param], ...(fix ? { fix } : {}) });
+}
+
+/**
+ * The corrected call, or undefined when no safe one exists: never for a
+ * mutating op (an example value could change what gets written), a missing
+ * required param (only the caller knows its value), or a param whose valid
+ * value is not a closed choice, number or boolean. Arguments that are not
+ * short scalars are dropped; if a required one would be dropped, no fix.
+ */
+function retryWithValidParam(op: Operation, failure: ParamValidationFailure, params: Record<string, unknown>): Action | undefined {
+  if (op.mutating !== false) return undefined;
+  const def = op.params[failure.param];
+  if (!def || params[failure.param] === undefined || params[failure.param] === null) return undefined;
+  const value = def.enum?.length ? (def.default !== undefined && def.enum.includes(String(def.default)) ? def.default : def.enum[0])
+    : def.type === 'number' ? (typeof def.default === 'number' ? def.default : 10)
+      : def.type === 'boolean' ? (typeof def.default === 'boolean' ? def.default : true)
+        : undefined;
+  if (value === undefined) return undefined;
+  const args: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(params)) {
+    if (key === failure.param || !(key in op.params)) continue;
+    const scalar = typeof val === 'number' || typeof val === 'boolean' || (typeof val === 'string' && val.length <= 200);
+    if (scalar) args[key] = val;
+    else if (op.params[key]?.required) return undefined;
+  }
+  args[failure.param] = value;
+  return {
+    mcp: { tool: op.name, arguments: args },
+    consent: [], actor: 'agent', requires_exclusive: false,
+    why: `The call failed validation before it ran, so nothing changed. This is the same call with your other arguments kept and \`${failure.param}\` set to ${JSON.stringify(value)}.`,
+  };
 }
 
 /**

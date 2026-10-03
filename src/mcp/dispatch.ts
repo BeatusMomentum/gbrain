@@ -704,7 +704,7 @@ export async function dispatchToolCall(
     logVerb(false);
     // [c7] verb validation errors speak the protocol envelope (protocol_version);
     // B3: every op's suggestion names the param's type, choices and an example.
-    const invalid = schemaInvalidParams(op, validationFailure, { remote: opts.remote, transport: dispatchRenderContext(opts).transport === 'http' ? 'http' : 'stdio' });
+    const invalid = schemaInvalidParams(op, validationFailure, { remote: opts.remote, transport: dispatchRenderContext(opts).transport === 'http' ? 'http' : 'stdio' }, safeParams);
     if (isVerb) invalid.protocolVersion = MEMORY_VERBS_VERSION;
     return errorResult(invalid, opts, { op: name });
   }

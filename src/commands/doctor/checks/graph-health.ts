@@ -11,7 +11,7 @@ import { startHeartbeat } from '../../../core/progress.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { checkError } from '../check-fix.ts';
+import { brainScorePlanFix, checkError } from '../check-fix.ts';
 
 async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
   const { progress } = ctx;
@@ -111,6 +111,7 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
         name: 'brain_score',
         status: health.brain_score >= 70 ? 'ok' : 'warn',
         message: `Brain score ${health.brain_score}/100 (${parts.join(', ')})`,
+        ...(health.brain_score >= 70 ? {} : { fix: brainScorePlanFix() }),
       });
     } else {
       checks.push({ name: 'brain_score', status: 'ok', message: `Brain score 100/100` });

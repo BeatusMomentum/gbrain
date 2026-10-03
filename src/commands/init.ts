@@ -18,7 +18,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
 import { buildInitFirstRunNotices } from './init-first-run.ts';
-import { renderNotice, cliRenderContext } from '../core/agent-output.ts';
+import { renderNotice, cliRenderContext, shellQuote } from '../core/agent-output.ts';
+import { embeddingEnablement } from '../core/readiness.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
 import type { SearchMode as SearchModeName } from '../core/search/mode.ts';
@@ -1091,7 +1092,7 @@ export async function initPGLite(opts: {
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
     // D9 deferred-setup mode: skip preflight, no model/dim resolved.
-    console.log(`  --no-embedding: deferred setup — enable later with \`gbrain init --force --embedding-model voyage:voyage-4\` (\`config set embedding_model\` is refused by design)`);
+    console.log(deferredEmbeddingHint({ engine: 'pglite', database_path: dbPath, embedding_disabled: true }));
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({
@@ -1361,6 +1362,17 @@ export class InitPostgresFailure extends Error {
   }
 }
 
+/**
+ * The deferred-setup line init prints for `--no-embedding`: the same enable
+ * command readiness gives doctor, embed and MCP (A7 `embeddingEnablement`:
+ * resolved datastore, a provider that fits, pages and facts kept).
+ */
+function deferredEmbeddingHint(cfg: GBrainConfig): string {
+  const enable = embeddingEnablement(cfg);
+  const step = enable.argv ? shellQuote(enable.argv) : 'gbrain doctor --only embeddings --json';
+  return `  --no-embedding: deferred setup — enable later with \`${step}\` (\`config set embedding_model\` is refused by design)`;
+}
+
 /** Exit-preserving wrapper — direct invocations keep their contract. */
 async function initPostgres(opts: Parameters<typeof initPostgresCore>[0]) {
   try {
@@ -1395,7 +1407,7 @@ export async function initPostgresCore(opts: {
   let resolvedDim: number | undefined;
   let resolvedModel: string | undefined;
   if (opts.aiOpts?.noEmbedding) {
-    console.log(`  --no-embedding: deferred setup — enable later with \`gbrain init --force --embedding-model voyage:voyage-4\` (\`config set embedding_model\` is refused by design)`);
+    console.log(deferredEmbeddingHint({ engine: 'postgres', database_url: databaseUrl, embedding_disabled: true }));
   } else if (opts.aiOpts?.embedding_model) {
     const { resolveSchemaEmbeddingDim } = await import('../core/embedding-dim-check.ts');
     const pre = resolveSchemaEmbeddingDim({

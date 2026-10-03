@@ -64,7 +64,7 @@ import {
   multiSourceDriftCheck,
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
-import { checkError } from './check-fix.ts';
+import { brainScorePlanFix, checkError } from './check-fix.ts';
 import type { RenderContext } from '../../core/agent-output.ts';
 
 // Same alias the local doctor keeps for its own freshness checks; the alias
@@ -207,6 +207,7 @@ export async function doctorReportRemote(
       name: 'brain_score',
       status: score >= 70 ? 'ok' : score >= 50 ? 'warn' : 'fail',
       message: `Brain score ${score}/100`,
+      ...(score >= 70 ? {} : { fix: brainScorePlanFix() }),
     });
   } catch (e) {
     checks.push(checkError('brain_score', 'compute', e));

@@ -283,10 +283,13 @@ export async function skillPreconditionsCheck(
   };
 
   const unmet: string[] = [];
+  let waitsForContent = true;
   for (const skill of installed) {
     const results = await checkPreconditions(skill.requires, ctx);
     for (const r of results) {
-      if (!r.met) unmet.push(`${skill.slug}: ${r.req.raw} — ${r.hint}`);
+      if (r.met) continue;
+      unmet.push(`${skill.slug}: ${r.req.raw} — ${r.hint}`);
+      if (!(r.req.kind === 'dir' || r.req.kind === 'pages' || (r.req.kind === 'source' && !r.req.arg))) waitsForContent = false;
     }
   }
   if (unmet.length === 0) {
@@ -296,6 +299,13 @@ export async function skillPreconditionsCheck(
     return infoCheck(name,
       `${unmet.length} skill precondition(s) wait for content: the brain has no pages yet, so skills that need a corpus stay idle until the first import or sync.`,
       'not_applicable', undefined, { unmet: unmet.slice(0, 8) });
+  }
+  // A skill whose corpus (a page directory, a page count) does not exist yet is idle, not broken:
+  // nothing to fix until the user brings that content, so this is information (E2 keyless/day-zero honesty).
+  if (waitsForContent) {
+    return infoCheck(name,
+      `${unmet.length} skill precondition(s) wait for content this brain does not hold yet; those skills stay idle until it is imported:\n  ${unmet.slice(0, 8).join('\n  ')}`,
+      'not_applicable', undefined, { unmet });
   }
   return {
     name,
