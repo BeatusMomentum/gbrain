@@ -5,6 +5,7 @@ import { assertEmbedBackfillQueueAdmission } from '../../core/minions/embed-back
 import { clampLockDurationMs } from '../../core/minions/handler-timeouts.ts';
 import { MinionWorker } from '../../core/minions/worker.ts';
 import { reportInlineWorkerConfiguration } from '../jobs-readiness.ts';
+import { intFlagValue, numberFlagValue } from '../../cli/flag-values.ts';
 
 export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext): Promise<void> {
   // Lazy: jobs.ts imports this module statically, so a static import back would be a cycle.
@@ -22,11 +23,15 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     catch { console.error('Error: --params must be valid JSON'); process.exit(1); }
   }
 
-  const priority = parseInt(parseFlag(args, '--priority') ?? '0', 10);
-  const delay = parseInt(parseFlag(args, '--delay') ?? '0', 10);
-  const maxAttempts = parseInt(parseFlag(args, '--max-attempts') ?? '3', 10);
-  const maxStalledRaw = parseFlag(args, '--max-stalled');
-  const maxStalled = maxStalledRaw !== undefined ? parseInt(maxStalledRaw, 10) : undefined;
+  // #5936 (D4): numeric flags are validated strictly (usage error, exit 2) before anything is enqueued.
+  const optionalInt = (flag: string, rule: Parameters<typeof intFlagValue>[2]) => {
+    const raw = parseFlag(args, flag);
+    return raw === undefined ? undefined : intFlagValue(raw, flag, rule);
+  };
+  const priority = optionalInt('--priority', { example: 0 }) ?? 0;
+  const delay = optionalInt('--delay', { min: 0, example: 0 }) ?? 0;
+  const maxAttempts = optionalInt('--max-attempts', { min: 1, example: 3 }) ?? 3;
+  const maxStalled = optionalInt('--max-stalled', { min: 0, example: 1 });
   // --max-waiting N: submission-time backpressure cap. Mirrors --max-stalled
   // clamp [1, 100]. Feature is usable from CLI as of v0.19.1; pre-v0.19.1
   // only programmatic callers reached it.
@@ -39,25 +44,14 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
   const backoffType = backoffTypeRaw === 'fixed' || backoffTypeRaw === 'exponential'
     ? backoffTypeRaw
     : undefined;
-  const backoffDelayRaw = parseFlag(args, '--backoff-delay');
-  const backoffDelay = backoffDelayRaw !== undefined ? parseInt(backoffDelayRaw, 10) : undefined;
+  const backoffDelay = optionalInt('--backoff-delay', { min: 0, example: 1000 });
   const backoffJitterRaw = parseFlag(args, '--backoff-jitter');
-  const backoffJitter = backoffJitterRaw !== undefined ? parseFloat(backoffJitterRaw) : undefined;
-  const timeoutMsRaw = parseFlag(args, '--timeout-ms');
-  const timeoutMs = timeoutMsRaw !== undefined ? parseInt(timeoutMsRaw, 10) : undefined;
-  if (timeoutMsRaw !== undefined && (isNaN(timeoutMs!) || timeoutMs! <= 0)) {
-    console.error('Error: --timeout-ms must be a positive integer (milliseconds)');
-    process.exit(1);
-  }
+  const backoffJitter = backoffJitterRaw === undefined ? undefined : numberFlagValue(backoffJitterRaw, '--backoff-jitter', { min: 0, max: 1, example: 0.2 });
+  const timeoutMs = optionalInt('--timeout-ms', { min: 1, example: 60000 });
   // #4145: per-job lock lease. Clamped to [5s,1h] in queue.add via
   // clampLockDurationMs (shared with the MCP op); NULL falls to the
   // handler map, then the worker default.
-  const lockDurationMsRaw = parseFlag(args, '--lock-duration-ms');
-  const lockDurationMs = lockDurationMsRaw !== undefined ? parseInt(lockDurationMsRaw, 10) : undefined;
-  if (lockDurationMsRaw !== undefined && (isNaN(lockDurationMs!) || lockDurationMs! <= 0)) {
-    console.error('Error: --lock-duration-ms must be a positive integer (milliseconds)');
-    process.exit(1);
-  }
+  const lockDurationMs = optionalInt('--lock-duration-ms', { min: 1, example: 300000 });
   const idempotencyKey = parseFlag(args, '--idempotency-key');
   const queueName = parseFlag(args, '--queue') ?? 'default';
   const dryRun = hasFlag(args, '--dry-run');

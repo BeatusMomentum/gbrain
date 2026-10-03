@@ -1576,6 +1576,7 @@
   "unit:test/jobs-ops-token-redaction.test.ts": 2750,
   "unit:test/jobs-sidechannel-fence.test.ts": 1190,
   "unit:test/jobs-submit-identity-stamp.test.ts": 1625,
+  "unit:test/jobs-submit-numeric-flags.test.ts": 1000,
   "unit:test/jobs-thin-client-date-rehydration.test.ts": 372,
   "unit:test/jobs-unify-types-default-dryrun.test.ts": 1915,
   "unit:test/jobs-watch-mode.test.ts": 157,
