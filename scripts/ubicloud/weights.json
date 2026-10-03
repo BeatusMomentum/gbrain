@@ -2433,6 +2433,7 @@
   "unit:test/sync-trigger-cli.test.ts": 1438,
   "unit:test/sync-walker-submodule.test.ts": 479,
   "unit:test/sync-walker-symlink.test.ts": 263,
+  "unit:test/sync-watch-interval.test.ts": 1000,
   "unit:test/sync-working-tree-cli.test.ts": 3734,
   "unit:test/sync-working-tree.test.ts": 3829,
   "unit:test/sync.test.ts": 8892,

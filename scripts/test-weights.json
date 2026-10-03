@@ -1921,6 +1921,7 @@
   "test/sync-trigger-cli.test.ts": 419,
   "test/sync-walker-submodule.test.ts": 2,
   "test/sync-walker-symlink.test.ts": 24,
+  "test/sync-watch-interval.test.ts": 1000,
   "test/sync-working-tree-cli.test.ts": 712,
   "test/sync-working-tree.test.ts": 1451,
   "test/sync.test.ts": 7676,
