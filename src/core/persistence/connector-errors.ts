@@ -70,6 +70,12 @@ export const DATABASE_REFUSAL_HINT = 'This is not a content conflict: a gbrain p
   + '(serve, autopilot, sync jobs), then retry with a new request ID. If the builds match, report error_detail (it contains no page text) on the gbrain issue tracker. '
   + 'Do not force-write, edit SQL, or disable the guard; ask the user before changing which hosts own the brain.';
 
+/** #5974: another database trigger (named in write_error_detail.raiser) refused the write. */
+export const DATABASE_TRIGGER_HINT = 'A database trigger refused this write and nothing was committed; write_error_detail.raiser names it. '
+  + 'On the brain host run gbrain sources writer status --probe --json and compare recent_failures[].error_detail.attempt.consumer_version with gbrain --version '
+  + 'on every gbrain process sharing this database; upgrade or restart the older one, run gbrain apply-migrations --yes, then retry with a new request ID. '
+  + 'If versions match, report error_detail on the gbrain issue tracker. Do not edit SQL or disable triggers.';
+
 export function receiptDeliveredHint(receipt: { error_code?: string | null; error_message?: string | null; source_id?: string; slug?: string | null; intent?: Record<string, unknown> | null;
   error_detail?: Record<string, unknown> | null }):
   { suggestion: string; detail?: string; docs: string } | null {
@@ -101,7 +107,8 @@ export function receiptDeliveredHint(receipt: { error_code?: string | null; erro
       // #5974: a database trigger refused the publication (see publication-failure.ts).
       const origin = receipt.error_detail?.origin;
       if (origin !== 'database_guard' && origin !== 'database_trigger') return null;
-      return { detail: String(origin), docs: docsAnchor('writer_coordinator_required'), suggestion: DATABASE_REFUSAL_HINT };
+      return { detail: String(origin), docs: docsAnchor('writer_coordinator_required'),
+        suggestion: origin === 'database_guard' ? DATABASE_REFUSAL_HINT : DATABASE_TRIGGER_HINT };
     }
     case 'connector_fence_below_timeline':
       return { docs: docsAnchor('connector_fence_below_timeline'), detail: 'fence_not_carried', suggestion: connectorFenceHint(source) };

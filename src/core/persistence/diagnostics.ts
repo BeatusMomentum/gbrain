@@ -5,7 +5,7 @@ import { publicationConcurrency } from './pool-capacity.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writeHealth } from './health.ts';
 import type { WriteRequestState } from './types.ts';
-import { DATABASE_REFUSAL_HINT } from './connector-errors.ts';
+import { DATABASE_REFUSAL_HINT, DATABASE_TRIGGER_HINT } from './connector-errors.ts';
 
 export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   unexpected_staging_bytes: 'Keep the worktree blocked and retain its staging files and recovery capacity. Compare the recorded staging size and hash, then reconcile unexpected bytes explicitly before retrying; never discard unverified staging files.',
@@ -82,7 +82,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const ingress = persistenceConsumerStatus(engine);
   return { ...brain, sampled_at: new Date().toISOString(), publication_concurrency: publicationConcurrency(engine),
     ingress, worktrees, counters, queue, effects, limits, capacity: capacityDiagnostics(counters, limits),
-    recent_failures: failures.map(row => ({ ...row, next_action: writerNextAction(row.error_code === 'storage_error' ? 'writer_coordinator_required' : row.error_code) })),
+    recent_failures: failures.map(row => ({ ...row, next_action: row.error_detail?.origin === 'database_guard' ? DATABASE_REFUSAL_HINT : DATABASE_TRIGGER_HINT })),
     blockers: blockers.map(row => {
       const health = writeHealth(row);
       const advice = writerNextAction(row.blocked_reason ?? row.error_code);
