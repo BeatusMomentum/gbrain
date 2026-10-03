@@ -1,4 +1,6 @@
 import { ROW_ATTRIBUTION_COLUMNS } from './attribution-schema.ts';
+export const PAGE_CHILD_TABLES = ['tags', 'timeline_entries', 'takes'];
+export const GUARDED_TABLES = ['pages', 'tags', 'slug_aliases', 'page_aliases', 'facts', 'takes', 'timeline_entries', 'sources'];
 const ROW_ATTRIBUTION_KEYS = `ARRAY[${ROW_ATTRIBUTION_COLUMNS.map(column => `'${column}'`).join(',')}]`;
 /** Defense in depth for inventoried legacy writers. Manual SQL is outside the protocol. */
 export const MANAGED_WRITER_GUARD_SQL = `

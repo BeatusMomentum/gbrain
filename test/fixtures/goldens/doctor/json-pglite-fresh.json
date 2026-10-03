@@ -373,6 +373,30 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "extra_columns": [],
+            "page_child_source_columns": [],
+            "runbook": "docs/guides/write-refusals.md#managed-guard-page-children"
+          },
+          "message": "Guarded tables carry only the columns gbrain creates.",
+          "name": "managed_guard_schema_drift",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "guard_refusals": 0,
+            "runbook": "docs/guides/write-refusals.md#managed-guard-page-children",
+            "trigger_refusals": 0,
+            "unclassified_p0001": 0,
+            "window_days": 7
+          },
+          "message": "No write was refused by a database guard in the last 7 days.",
+          "name": "publication_refusals",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "message": "links_link_source_check has the v114 kebab-case gate",
           "name": "links_link_source_check",
