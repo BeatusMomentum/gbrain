@@ -6,6 +6,7 @@ import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { hostFix, readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
+import { catalogFix, policyFix, skillHeadFix } from './fixes.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence } from '../ops/context.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from '../persistence/authority.ts';
 import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from '../persistence/journal.ts';
@@ -43,24 +44,6 @@ interface HostAdoption {
 }
 type SkillAuthority = WriteAuthority & { skillSlugsUsed?: string[]; skillAdoptionPreconditions?: Record<string, string | null>; skillAdoptionInventory?: Record<string, string | null> };
 const DOCTOR_FIX = readFix('Shows the brain host\'s storage and catalog health so the inconsistency can be reported with evidence.', { argv: ['gbrain', 'doctor', '--json'] });
-function skillHeadFix(sourceId: string, packId: string, name: string): Action {
-  return readFix(`Reads the current head revision of ${packId}/${name} on source ${sourceId}; resubmit against it with a new request_id.`, {
-    argv: ['gbrain', 'skill', '--schema-version', '2', '--source-id', sourceId, '--pack-id', packId, '--name', name],
-    mcp: { tool: 'get_skill', arguments: { schema_version: 2, source_id: sourceId, pack_id: packId, name } },
-  });
-}
-function catalogFix(sourceId: string): Action {
-  return readFix(`Lists source ${sourceId}'s current shared skills with their source_incarnation, pack_id and head revisions.`, {
-    argv: ['gbrain', 'skills', '--schema-version', '2', '--source-id', sourceId],
-    mcp: { tool: 'list_skills', arguments: { schema_version: 2, source_id: sourceId } },
-  });
-}
-function policyFix(sourceId: string): Action {
-  return readFix(`Shows source ${sourceId}'s owner-approved publication policy and its epoch; widening it is the publisher's decision (set_skill_policy), never the editor's.`, {
-    argv: ['gbrain', 'skill-policy', '--source-id', sourceId],
-    mcp: { tool: 'get_skill_policy', arguments: { source_id: sourceId } },
-  });
-}
 function ownerStatusFix(sourceId: string, ctx?: OperationContext): Action {
   const argv = ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'];
   const why = `Shows source ${sourceId}'s designated canonical owner, its binding and any pending recovery; claiming, moving or rebinding ownership is a deliberate operator decision.`;
