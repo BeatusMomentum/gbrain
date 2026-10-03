@@ -318,6 +318,7 @@
   "serial:test/brainstorm/checkpoint.serial.test.ts": 395,
   "serial:test/check-update-refresh.serial.test.ts": 356,
   "serial:test/checkpoint-harvest.serial.test.ts": 4977,
+  "serial:test/cli-contract.serial.test.ts": 40000,
   "serial:test/cli-error-render.serial.test.ts": 3000,
   "serial:test/cli-help-curated.serial.test.ts": 5000,
   "serial:test/cli-help-without-brain.serial.test.ts": 21000,

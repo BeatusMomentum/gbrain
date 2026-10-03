@@ -648,19 +648,21 @@
     },
     {
       "argv": "definitely-not-a-command",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "Unknown command: definitely-not-a-command",
-        "Run gbrain --help for available commands."
+        "Error [unknown_command]: Unknown command: definitely-not-a-command",
+        "Fix: Run `gbrain --help` for available commands.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
       ],
       "stdout": []
     },
     {
       "argv": "definitely-not-a-command --help",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "Unknown command: definitely-not-a-command",
-        "Run gbrain --help for available commands."
+        "Error [unknown_command]: Unknown command: definitely-not-a-command",
+        "Fix: Run `gbrain --help` for available commands.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_command"
       ],
       "stdout": []
     },
@@ -756,18 +758,21 @@
     },
     {
       "argv": "lint --definitely-not-a-flag",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "gbrain lint: unknown flag --definitely-not-a-flag for 'gbrain lint'",
-        "Run: gbrain lint --help"
+        "Error [unknown_flag]: unknown flag --definitely-not-a-flag for 'gbrain lint'",
+        "Fix: gbrain lint --help",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unknown_flag"
       ],
       "stdout": []
     },
     {
       "argv": "get",
-      "exitCode": 1,
+      "exitCode": 2,
       "stderr": [
-        "Usage: gbrain get <slug>"
+        "Error [invalid_params]: Missing required parameter 'slug' for 'gbrain get'.",
+        "Fix: Usage: gbrain get <slug> (see `gbrain get --help`).",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params"
       ],
       "stdout": []
     }

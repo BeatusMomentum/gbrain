@@ -8,7 +8,8 @@
  * idle and the patched `process.exit` drains anything queued, so callers may
  * exit right after.
  */
-import { renderCliError, type AgentEnvelope } from '../core/agent-output.ts';
+import { cliRenderContext, renderCliError, renderNotice, type AgentEnvelope, type Notice } from '../core/agent-output.ts';
+import { renderCliNotices } from '../core/agent-markers.ts';
 import { jsonRequested, noteRenderedErrorCode, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { opError, type OpErrorOpts, type OperationError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
@@ -28,6 +29,8 @@ export interface CliErrorWriteOpts {
   argv?: readonly string[];
   /** Overrides the argv `--json` probe (in-process callers that parsed their own flags). */
   json?: boolean;
+  /** false: the caller prints its own human lines (stdout document only). */
+  stderr?: boolean;
   /**
    * A pre-v1 JSON shape this site printed: its keys lead and keep their
    * values, the envelope adds the rest, and the document stays one line
@@ -56,7 +59,7 @@ export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOp
     stderr = [`Error [${env.code}]: ${env.message}`, `Fix: ${env.fix?.command ?? env.suggestion}`,
       ...(env.why ? [`Why: ${env.why}`] : [])].join('\n') + '\n';
   }
-  try { process.stderr.write(stderr ?? ''); } catch { /* stderr gone */ }
+  if (opts.stderr !== false) try { process.stderr.write(stderr ?? ''); } catch { /* stderr gone */ }
   return r.exitCode;
 }
 
@@ -67,6 +70,15 @@ function withoutUndefined(o: object): Record<string, unknown> {
 /** Render, write and exit with the error's contract exit code. */
 export function exitCliError(e: unknown, command: string, opts: CliErrorWriteOpts = {}): never {
   process.exit(writeCliError(e, command, opts));
+}
+
+/**
+ * A warning-class notice from the CLI's own plumbing (not a command result):
+ * stderr, as `Note [code]` lines on a TTY or an `[AGENT]` block otherwise.
+ */
+export function writeCliNotice(n: Notice): void {
+  const out = renderCliNotices([renderNotice(n, cliRenderContext())], { json: false, tty: process.stderr.isTTY === true, stdoutIsData: true });
+  try { if (out.stderr) process.stderr.write(out.stderr); } catch { /* stderr gone */ }
 }
 
 /**

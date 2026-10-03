@@ -1,6 +1,5 @@
 # shrink-only baseline for scripts/check-agent-contract.ts rule interactive-io: path<TAB>count
 src/commands/hook.ts	3
-src/commands/init.ts	4
 src/commands/jobs-watch.ts	2
 src/commands/upgrade.ts	1
 src/commands/watch.ts	1

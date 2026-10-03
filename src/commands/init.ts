@@ -20,6 +20,7 @@ import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResu
 import { buildInitFirstRunNotices } from './init-first-run.ts';
 import { renderNotice, cliRenderContext } from '../core/agent-output.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
+import { promptLineStderr } from '../core/interaction.ts';
 import type { SearchMode as SearchModeName } from '../core/search/mode.ts';
 
 /** D2: `--json` writes exactly one document, after whichever branch ran (see init-json.ts). */
@@ -1687,7 +1688,7 @@ async function supabaseWizard(): Promise<string> {
   console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres'); /* allow-pg-url-literal */
   console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler\n');
 
-  const url = await readLine('Connection URL: ');
+  const url = (await promptLineStderr('Connection URL: ')) ?? '';
   if (!url) {
     console.error('No URL provided.');
     process.exit(1);
@@ -1695,28 +1696,6 @@ async function supabaseWizard(): Promise<string> {
   return url;
 }
 
-function readLine(prompt: string): Promise<string> {
-  return new Promise((resolve) => {
-    process.stdout.write(prompt);
-    let data = '';
-    let settled = false;
-    const settle = (value: string) => {
-      if (settled) return;
-      settled = true;
-      process.stdin.pause();
-      resolve(value);
-    };
-    process.stdin.setEncoding('utf-8');
-    process.stdin.once('data', (chunk) => {
-      data = chunk.toString().trim();
-      settle(data);
-    });
-    // EOF (Ctrl-D mid-prompt) resolves empty instead of hanging — the caller's
-    // "No URL provided." guard then fails loud.
-    process.stdin.once('end', () => settle(''));
-    process.stdin.resume();
-  });
-}
 
 /**
  * v0.32.3 [CDX-9]: readLine + EOF detection + default fallback + timeout.
@@ -1737,47 +1716,17 @@ function readLine(prompt: string): Promise<string> {
  * Non-TTY stdin (pipe, scripted init) returns defaultValue immediately
  * without printing the prompt, so e2e tests don't hang.
  */
-export function readLineSafe(
+export async function readLineSafe(
   prompt: string,
   defaultValue: string,
   timeoutMs: number = 60_000,
 ): Promise<string> {
-  return new Promise((resolve) => {
-    // Non-TTY (pipe, redirect, scripted init) → no prompt, no wait.
-    if (!process.stdin.isTTY) {
-      resolve(defaultValue);
-      return;
-    }
-
-    process.stdout.write(prompt);
-    process.stdin.setEncoding('utf-8');
-
-    let settled = false;
-    const finish = (value: string) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      process.stdin.removeListener('data', onData);
-      process.stdin.removeListener('end', onEnd);
-      try { process.stdin.pause(); } catch { /* swallow */ }
-      resolve(value);
-    };
-
-    const onData = (chunk: Buffer | string) => {
-      const raw = chunk.toString().trim();
-      finish(raw.length === 0 ? defaultValue : raw);
-    };
-    const onEnd = () => finish(defaultValue);
-
-    const timer = setTimeout(() => {
-      process.stdout.write(`\n[timeout after ${Math.round(timeoutMs / 1000)}s, using default: ${defaultValue}]\n`);
-      finish(defaultValue);
-    }, timeoutMs);
-
-    process.stdin.once('data', onData);
-    process.stdin.once('end', onEnd);
-    process.stdin.resume();
-  });
+  // Non-TTY (pipe, redirect, scripted init) → no prompt, no wait.
+  if (!process.stdin.isTTY) return defaultValue;
+  // A5: the shared bounded reader (EOF / timeout → null → the default).
+  const answer = await promptLineStderr(prompt, { timeoutMs });
+  if (answer === null) process.stderr.write(`\n[no answer, using default: ${defaultValue}]\n`);
+  return answer ? answer : defaultValue;
 }
 
 /**
