@@ -1630,10 +1630,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
-  // F4b: PGLite row-delta ANALYZE, read by src/core/planner-stats.ts (docs/guides/planner-stats.md).
-  'planner.auto_analyze', 'planner.first_read_budget_ms', 'import.analyze_every_pages',
-  // F4a: get_health memo TTL, read by src/core/health-memo.ts (0 disables).
-  'health.cache_ttl_ms',
+  // F4b: PGLite row-delta ANALYZE (src/core/planner-stats.ts); F4a: get_health memo TTL (src/core/health-memo.ts, 0 disables).
+  'planner.auto_analyze', 'planner.first_read_budget_ms', 'import.analyze_every_pages', 'health.cache_ttl_ms',
 ];
 
 /**
