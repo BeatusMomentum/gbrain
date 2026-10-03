@@ -508,7 +508,6 @@ describe('reinit-pglite — backup + reinit', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (process.stdout as any).write = origWrite;
       if (prev === undefined) delete process.env.GBRAIN_NON_INTERACTIVE; else process.env.GBRAIN_NON_INTERACTIVE = prev;
-      process.exitCode = 0;
     }
   });
 

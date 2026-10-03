@@ -33,9 +33,12 @@ export async function consentGate(req: ConsentRequest, opts: ConsentGateOpts): P
 }
 
 export async function consentGateOrExit(req: ConsentRequest, opts: ConsentGateOpts): Promise<Authorization> {
-  const auth = await consentGate(req, opts);
-  if (auth) return auth;
-  process.exit(3);
+  try {
+    return await requireConsent(req, opts.env ?? {});
+  } catch (e) {
+    if (!isConsentRefusal(e)) throw e;
+    process.exit(printConsentRefusal(e, { json: opts.json }));
+  }
 }
 
 /** The DB-plane `spend.posture` read requireConsent needs to honour `tokenmax`. */
