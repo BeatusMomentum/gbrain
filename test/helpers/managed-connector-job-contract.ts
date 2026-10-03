@@ -541,6 +541,10 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
   async cycle_extract(state) {
     await gmailSweep(state);
     const { engine } = state.brain;
+    // Settle the jobs the sweep queued (loops_extract) first: the cycle's worker would
+    // otherwise run them beside the extract phase and leave a page rewritten after it.
+    const queued = await engine.executeRaw<{ id: number }>("SELECT id FROM minion_jobs WHERE status IN ('waiting','delayed')");
+    if (queued.length) await drainQueue(engine, queued.map(row => Number(row.id)));
     await submitPageMutation(state.ctx, { operation: 'put_page', params: { slug: 'notes/plan-review', request_id: randomUUID(),
       content: '---\ntitle: Plan review\ntype: note\n---\nReviewed with [[people/alice-example]].\n' } });
     await engine.executeRaw("DELETE FROM links WHERE from_page_id IN (SELECT id FROM pages WHERE source_id=$1 AND slug='notes/plan-review')", [state.sourceId]);
