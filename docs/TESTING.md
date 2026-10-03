@@ -269,24 +269,48 @@ including setup, queueing and retries; never count skip-only output as coverage.
 
 ### Scale tier
 
-`bun run test:scale -- --pages 2000 [--seed 1] [--out <file.json>]` is the
-contributor scale loop (`scripts/scale/run.ts`). It generates a deterministic
-two-source brain from the seed (`scripts/scale/fixture.ts`; links, timeline
-bullets, partly overlapping bodies, island pages; no embeddings), imports it
-into a fresh in-memory PGLite brain under a temporary `GBRAIN_HOME`, runs
-`extract all --source db`, and writes a JSON report plus a summary: import
-rate (last 10% vs first 10% per-page cost), planner health (hot tables with
-statistics, the worst Nested Loop count in the backlink plan), and p50 over
-five runs after a warmup for `get_health`, `list_pages`, local and MCP-path
-`search`, `traverse_graph` depth 3, `get_backlinks` and `find_orphans`, each
-with a known-answer check. It is report-only: it exits 0 whatever the numbers
-say (a harness crash exits 1) and no CI job runs it yet. The gate shape,
-cadence and enforcement are defined once, by O-CEO-16 and O-ENG-16 in the
-fix-wave-8 plan: rate, planner-health and known-answer checks become enforced
-in the F4 scale tier, and interactive ceilings stay report-only until five
-consecutive nightly runs are stable. Reproduce a report with its printed seed
-and page count. The fixture's determinism is pinned by
-`test/scripts/scale-fixture.test.ts`.
+The gate shape and cadence are defined once, by O-CEO-16 (with O-ENG-16 and
+O-CEO-9) in the Foundations 1 plan; `scripts/scale/gates.ts` and
+`.github/workflows/scale-tier.yml` implement it. This section says how to run it.
+
+`bun run test:scale -- --pages 10000 [--engine pglite|postgres] [--seed 1]
+[--corpus-dir <dir>] [--import-mode cli|content] [--enforce] [--out <file.json>]`
+(`scripts/scale/run.ts`) generates a deterministic two-source brain from the
+seed (`scripts/scale/fixture.ts`: links, timeline bullets, `## Facts` and
+`## Takes` fences, partly overlapping bodies, island pages, a two-hot vector
+per page), and imports it into a fresh brain under a temporary `GBRAIN_HOME`:
+PGLite in a fresh data dir, or Postgres in a fresh database created from
+`DATABASE_URL` and dropped afterwards. The default `--import-mode cli` writes
+the Markdown corpus once into `--corpus-dir` (reused while its manifest
+matches) and runs the real `gbrain import` per source, timing each file from
+its progress events; `--import-mode content` keeps the per-page
+`importFromContent` loop. It then extracts links, timeline, facts and takes,
+writes the vectors onto every chunk so the vector arm runs keylessly through
+`queryEmbedFn`, and measures p50 over five runs after a warmup for each op,
+each with a known-answer check: `get_health`, `list_pages`, local and MCP-path
+`search`, a source-scoped grant search, hybrid `query` with an injected
+vector, `traverse_graph`, `get_backlinks` and `find_orphans`, plus a
+cold-process first query and two concurrent receipt-bearing `put_page`s. It
+captures every statement each op sends and replays the reads under
+`EXPLAIN ANALYZE` for the planner check. The report leads with the headline
+metric, MCP search p50 at the run's size as shipped (no manual ANALYZE).
+
+Exit codes: 0 when every enforced gate passes, or always without `--enforce`;
+1 when an enforced gate fails (each failure names the gate and op and prints
+its EXPLAIN; the JSON report and a `.explain.txt` land next to `--out`);
+2 on a usage error; 3 when the harness itself crashed (not a verdict).
+Enforced under `--enforce`: import rate, known answers, no-op re-import,
+no duplicates across sources, phase timers. Planner health is report-only
+until F4b lands (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`).
+Interactive ceilings and calibrated budgets (`scripts/scale/budgets.json`,
+written by `--calibrate`) stay report-only until
+`bun scripts/scale/trend.ts` prints "ceilings stable" over the last five
+nightly runs; a reviewer then sets the repo variable
+`GBRAIN_SCALE_ENFORCE_CEILINGS=1`. The same script picks the nightly sizes.
+Reproduce any report with the command it prints. The fixture's determinism
+is pinned by `test/scripts/scale-fixture.test.ts`, the gate policy by
+`test/scripts/scale-gates.test.ts` and `scale-trend.test.ts`, and a 40-page
+enforced run by `test/scripts/scale-harness.slow.test.ts`.
 
 ### Authoring gate
 
