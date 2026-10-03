@@ -29,9 +29,11 @@ import type { RemediationPlan, RemediationResult } from '../../core/remediation/
 import type { RepairPlanStep } from '../../core/remediation/repairs.ts';
 import { repairPreviewCommand, repairSpec, type ExplicitRepairNotice } from '../../core/repair/registry.ts';
 import { runWaveChecks, waveRepairKind, type WaveFinding } from './wave-checks.ts';
+import { derivedCapExhaustedError, type CapSource } from '../../core/consent.ts';
+import { previewRemediationPlan, remediateConsent, remediateFlags, remediationPlanHash, type RemediateFlags } from './remediate-consent.ts';
 
 export const REMEDIATE_HELP = `Usage: gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
-       gbrain doctor --remediate [--yes] [--include-repairs] [--max-usd <n>] [--target-score <n>]
+       gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]
                      [--max-jobs <n>] [--no-embed] [--dry-run] [--resume [<plan_hash>]] [--json]
 
 --remediation-plan previews job steps (driven by the brain score target) and,
@@ -41,7 +43,14 @@ plus one combined command. Read-only.
 
 --remediate runs job steps; with --include-repairs it also runs the repair
 steps (the user's agreement; local brain host only). Without it, repair steps
-are listed as skipped.
+are listed as skipped. It asks before any work (and before schema migrations):
+  --yes              Authorizes the paid job steps. Without --max-usd the run is
+                     capped at the estimate x1.5 (floor $0.25; $5 with no estimate).
+  --expect <hash>    With --include-repairs, --yes must name the plan the user
+                     approved (plan_hash from --remediation-plan or the refusal);
+                     a changed plan re-asks.
+                     Without authorization a non-interactive run changes nothing
+                     and exits 3 (--json prints the consent payload).
   --max-usd <n>      Cumulative USD cap across the run and every --resume. A paid
                      step that would exceed it is not started; free steps still
                      run, then the run stops as budget-exhausted with a resume
@@ -55,7 +64,7 @@ are listed as skipped.
 Exit status: 0 when no automatically repairable finding remains and no step
 failed (operator-required and unsupported findings are listed but do not fail
 the run); 1 otherwise and on budget exhaustion; 2 when the target is unreachable
-and no repair step runs, or a resume is refused.
+and no repair step runs, or a resume is refused; 3 when consent is required.
 Recipe: docs/guides/repair.md#recover-after-upgrading-to-this-release`;
 
 function parseIntFlag(args: string[], flag: string): number | null {
@@ -79,13 +88,18 @@ export function jobStepCommand(step: { job: string; params?: Record<string, unkn
   return `gbrain jobs submit ${step.job}${step.params && Object.keys(step.params).length ? ` --params ${shellQuote(JSON.stringify(step.params))}` : ''} --follow`;
 }
 
-/** `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`, filled from the plan's estimates. */
-export function combinedRemediateCommand(plan: Pick<RemediationPlanShape, 'est_total_usd_cost' | 'repair_steps'>, targetScore = 90): string {
+/**
+ * `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`, filled from the plan's estimates.
+ * With repair steps, `--expect <plan_hash>` binds the approval to this plan (C1).
+ */
+export function combinedRemediateCommand(plan: Pick<RemediationPlanShape, 'est_total_usd_cost' | 'repair_steps'>, targetScore = 90,
+  opts: { noEmbed?: boolean; planHash?: string } = {}): string {
   const repairs = plan.repair_steps ?? [];
   const unknown = repairs.some(step => step.paid && step.est_usd_cost === null);
   const total = plan.est_total_usd_cost + repairs.reduce((sum, step) => sum + (step.est_usd_cost ?? 0), 0);
   const cap = unknown ? '<n>' : String(Math.ceil(total * 100) / 100);
-  return `gbrain doctor --remediate --yes${repairs.length ? ' --include-repairs' : ''} --max-usd ${cap}${targetScore !== 90 ? ` --target-score ${targetScore}` : ''}`;
+  return `gbrain doctor --remediate --yes${repairs.length ? ' --include-repairs' : ''} --max-usd ${cap}${targetScore !== 90 ? ` --target-score ${targetScore}` : ''}`
+    + `${opts.noEmbed ? ' --no-embed' : ''}${repairs.length && opts.planHash ? ` --expect ${opts.planHash}` : ''}`;
 }
 
 /**
@@ -97,13 +111,15 @@ export async function runRemediationPlan(engine: BrainEngine, args: string[]): P
   if (args.includes('--help') || args.includes('-h')) { console.log(REMEDIATE_HELP); return; }
   const { computeRemediationPlan } = await import('../../core/remediation/index.ts');
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
-  const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed: args.includes('--no-embed') } });
+  const noEmbed = args.includes('--no-embed');
+  const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed } });
+  const planHash = plan.repair_steps?.length ? await remediationPlanHash(engine, args, plan) : undefined;
   if (args.includes('--json')) {
     await writeJsonDocument(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
-      combined_command: combinedRemediateCommand(plan, targetScore) }, null, 2));
+      combined_command: combinedRemediateCommand(plan, targetScore, { noEmbed, planHash }), ...(planHash ? { plan_hash: planHash } : {}) }, null, 2));
     return;
   }
-  for (const line of renderRemediationPlanLines(plan, targetScore)) console.log(line);
+  for (const line of renderRemediationPlanLines(plan, targetScore, { noEmbed, planHash })) console.log(line);
 }
 
 interface RemediationPlanShape {
@@ -131,7 +147,7 @@ interface RemediationPlanShape {
  * the score is at target AND no repair step is pending, so an unreachable
  * target never reads as "nothing to do".
  */
-export function renderRemediationPlanLines(plan: RemediationPlanShape, targetScore: number): string[] {
+export function renderRemediationPlanLines(plan: RemediationPlanShape, targetScore: number, opts: { noEmbed?: boolean; planHash?: string } = {}): string[] {
   const lines: string[] = [];
   const repairs = plan.repair_steps ?? [];
   lines.push(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
@@ -164,7 +180,7 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
     for (const notice of plan.explicit_repairs) lines.push(`  ${notice.kind}: ${notice.preview_command}`);
   }
   if (plan.plan.length > 0 || repairs.length > 0) {
-    lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, targetScore)}`);
+    lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, targetScore, opts)}`);
     if (repairs.length) lines.push('Ask the user before applying any repair step.');
   }
   if (plan.blocked.length > 0) {
@@ -235,14 +251,14 @@ export function remediationExitStatus(result: RemediationResult, findings: Remed
  * CLI wrapper around runRemediation. Default: submit-and-wait per job step,
  * in-process repair steps with --include-repairs. --dry-run skips submission.
  */
-export async function runRemediate(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runRemediate(engine: BrainEngine, args: string[], completeStartup?: (engine: BrainEngine) => Promise<void>): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REMEDIATE_HELP); return; }
   const targetScore = parseIntFlag(args, '--target-score') ?? 90;
   const maxJobs = parseIntFlag(args, '--max-jobs') ?? Infinity;
   // --max-cost is an alias for --max-usd; both feed the pre-flight refusal
   // and, via withBudgetTracker, the mid-run BudgetExhausted hard stop.
   const maxUsdRaw = parseFloatFlag(args, '--max-usd') ?? parseFloatFlag(args, '--max-cost');
-  const maxUsd = maxUsdRaw === null ? undefined : maxUsdRaw;
+  let maxUsd = maxUsdRaw === null ? undefined : maxUsdRaw;
   const dryRun = args.includes('--dry-run');
   const skipConfirm = args.includes('--yes');
   const jsonOutput = args.includes('--json');
@@ -254,32 +270,38 @@ export async function runRemediate(engine: BrainEngine, args: string[]): Promise
   const resumePlanHash = resumeArg && !resumeArg.startsWith('--') ? resumeArg : undefined;
   const log = (line: string) => (jsonOutput ? console.error : console.log)(line);
 
-  const { runRemediation, computeRemediationPlan } = await import('../../core/remediation/index.ts');
+  const { runRemediation } = await import('../../core/remediation/index.ts');
 
-  // TTY confirmation gate (stays in CLI; library doesn't render).
-  if (!skipConfirm && !dryRun && process.stdout.isTTY && !resumeMode) {
-    const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed } });
-    const repairs = plan.repair_steps ?? [];
-    if (plan.target_unreachable && !(includeRepairs && repairs.length)) {
-      console.error(`[remediate] target ${targetScore} unreachable; max autonomous = ${plan.max_reachable_score}/100. `
-        + `Configure missing prereqs (see --remediation-plan blocked output) or lower --target-score.`);
-      process.exit(2);
+  // C1: consent before any work. The engine is observational (probe-only:
+  // no migrations) until consent is granted.
+  let capSource: CapSource | undefined = maxUsd === undefined ? undefined : 'user';
+  if (!dryRun) {
+    const flags: RemediateFlags = { ...remediateFlags(args), targetScore };
+    const plan = await previewRemediationPlan(engine, flags);
+    const repairs = includeRepairs ? plan?.repair_steps ?? [] : [];
+    // Nothing would run (no job step, or the target is out of reach, and no included repair):
+    // the run below only reports, so it needs no consent and no startup completion.
+    const nothingRuns = plan !== null && !resumeMode && repairs.length === 0 && (plan.target_unreachable || plan.plan.length === 0);
+    if (plan && !nothingRuns && !skipConfirm) {
+      log(`About to submit ${plan.plan.length} job(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`
+        + ((plan.repair_steps ?? []).length ? `, and ${includeRepairs ? 'run' : 'skip (no --include-repairs)'} ${(plan.repair_steps ?? []).length} repair step(s)` : ''));
     }
-    if (plan.plan.length === 0 && repairs.length === 0) {
-      console.log(`Brain at score ${plan.brain_score_current}/100, target ${targetScore}. Nothing to do.`);
-      return;
+    if (!nothingRuns) {
+      const auth = await remediateConsent(engine, args, flags, plan);
+      if (!auth) return;
+      if (maxUsd === undefined && auth.cap_usd !== null && !resumeMode) {
+        maxUsd = auth.cap_usd;
+        capSource = auth.cap_source ?? undefined;
+      }
+      await completeStartup?.(engine);
     }
-    console.log(`About to submit ${plan.plan.length} job(s), est ${plan.est_total_seconds}s, est $${plan.est_total_usd_cost.toFixed(2)}`
-      + (repairs.length ? `, and ${includeRepairs ? 'run' : 'skip (no --include-repairs)'} ${repairs.length} repair step(s)` : ''));
-    console.log('Pass --yes to proceed (cron-friendly).');
-    process.exit(1);
   }
 
   if (engine.kind === 'pglite') console.error('[remediate] PGLite engine: running inline (no durable queue).');
   const before = dryRun ? [] : await runWaveChecks(engine);
 
   const result = await runRemediation(engine,
-    { targetScore, maxJobs, maxUsd, dryRun, resume: resumeMode, resumePlanHash, repairs: { include: includeRepairs, remote: false, noEmbed } },
+    { targetScore, maxJobs, maxUsd, capSource, dryRun, resume: resumeMode, resumePlanHash, repairs: { include: includeRepairs, remote: false, noEmbed } },
     {
       onTargetUnreachable: (target, ceiling) => {
         console.error(`[remediate] target ${target} unreachable; max autonomous = ${ceiling}/100. `
@@ -301,7 +323,13 @@ export async function runRemediate(engine: BrainEngine, args: string[]): Promise
 
   if (!dryRun) clearHealthMemo(engine);
 
-  if (result.budget_exhausted) {
+  if (result.budget_exhausted && capSource !== 'user') {
+    const cap = result.budget?.max_usd ?? result.budget_exhausted.cap;
+    const e = derivedCapExhaustedError({ command: 'doctor --remediate', capUsd: cap, spentUsd: result.budget_exhausted.spent,
+      checkpoint: `plan_hash ${result.budget_exhausted.plan_hash}`,
+      argv: ['gbrain', 'doctor', '--remediate', '--yes', ...(result.budget?.include_repairs ? ['--include-repairs'] : []), '--resume', result.budget_exhausted.plan_hash] });
+    console.error(`${e.message}\n${e.suggestion}`);
+  } else if (result.budget_exhausted) {
     const cap = result.budget?.max_usd ?? result.budget_exhausted.cap;
     console.error(`Resume with:\n  gbrain doctor --remediate --yes${result.budget?.include_repairs ? ' --include-repairs' : ''}`
       + `${cap !== null && cap !== undefined ? ` --max-usd ${cap}` : ''} --resume ${result.budget_exhausted.plan_hash}\n`

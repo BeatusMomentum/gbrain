@@ -170,7 +170,8 @@ export async function promptYesNo(question: string, streams: ConfirmStreams = {}
 }
 
 export type StdinRead =
-  | { kind: 'data'; text: string }
+  /** `raw` (only with `StdinReadOptions.raw`): the undecoded bytes, for callers that inspect binary input before decoding. */
+  | { kind: 'data'; text: string; raw?: Buffer }
   | { kind: 'empty' }
   | { kind: 'timeout'; phase: 'first_byte' | 'inactivity'; bytes: number }
   | { kind: 'cancelled'; bytes: number }
@@ -184,6 +185,8 @@ export interface StdinReadOptions {
   /** Byte cap; more input is an error, never a truncated success. Default 5 MB. */
   maxBytes?: number;
   signal?: AbortSignal;
+  /** Also return the undecoded bytes as `raw` on a `data` result. */
+  raw?: boolean;
   /** Injection seam (tests, embedders). Default: process.stdin, with a direct read for files and /dev/null. */
   stream?: NodeJS.ReadableStream;
 }
@@ -206,15 +209,14 @@ const tooLarge = (maxBytes: number, bytes: number): StdinRead =>
  * fd 0 as a regular file or a non-TTY character device (`< file`, `< /dev/null`)
  * never blocks, so read it directly. Returns null when fd 0 needs the stream path.
  */
-function readStdinFd(maxBytes: number): StdinRead | null {
+function readStdinFd(maxBytes: number, withRaw: boolean): StdinRead | null {
   try {
     const st = fstatSync(0);
     if (st.isFIFO() || st.isSocket() || process.stdin.isTTY) return null;
     if (st.isFile() && st.size > maxBytes) return tooLarge(maxBytes, 0);
-    const text = readFileSync(0, 'utf-8');
-    const bytes = Buffer.byteLength(text, 'utf-8');
-    if (bytes > maxBytes) return tooLarge(maxBytes, bytes);
-    return bytes ? { kind: 'data', text } : { kind: 'empty' };
+    const raw = readFileSync(0, { encoding: null });
+    if (raw.length > maxBytes) return tooLarge(maxBytes, raw.length);
+    return raw.length ? { kind: 'data', text: raw.toString('utf-8'), ...(withRaw ? { raw } : {}) } : { kind: 'empty' };
   } catch (e) {
     return { kind: 'error', error: e instanceof Error ? e : new Error(String(e)), bytes: 0 };
   }
@@ -228,7 +230,7 @@ export async function readStdinBounded(opts: StdinReadOptions = {}): Promise<Std
   const maxBytes = opts.maxBytes ?? DEFAULT_STDIN_MAX_BYTES;
   if (opts.signal?.aborted) return { kind: 'cancelled', bytes: 0 };
   if (!opts.stream) {
-    const direct = readStdinFd(maxBytes);
+    const direct = readStdinFd(maxBytes, opts.raw === true);
     if (direct) return direct;
   }
   const ownsStdin = !opts.stream;
@@ -273,7 +275,10 @@ export async function readStdinBounded(opts: StdinReadOptions = {}): Promise<Std
       chunks.push(b);
       arm('inactivity', inactivityMs);
     };
-    const onEnd = () => finish(bytes ? { kind: 'data', text: Buffer.concat(chunks).toString('utf8') } : { kind: 'empty' });
+    const onEnd = () => {
+      const raw = Buffer.concat(chunks);
+      finish(bytes ? { kind: 'data', text: raw.toString('utf8'), ...(opts.raw ? { raw } : {}) } : { kind: 'empty' });
+    };
     const onError = (e: unknown) => finish({ kind: 'error', error: e instanceof Error ? e : new Error(String(e)), bytes });
     const onClose = () => finish({ kind: 'error', error: new Error('stdin closed before end of input'), bytes });
     const onAbort = () => finish({ kind: 'cancelled', bytes });

@@ -525,11 +525,10 @@ export function buildPgliteInitErrorMessage(
         '  https://github.com/garrytan/gbrain/issues/223.\n' +
         repairContextLine(ctx ?? { repair: 'not-attempted' }) + '\n' +
         '  Recovery ladder:\n' +
-        '    1. gbrain pglite-repair --dry-run   (diagnose, mutates nothing)\n' +
-        '       gbrain pglite-repair --yes       (in-place WAL repair, data preserved)\n' +
-        '    2. Rebuild from your brain repo: `gbrain reinit-pglite` (or manually:\n' +
-        '       back up ~/.gbrain, move brain.pglite aside, `gbrain init --pglite`,\n' +
-        '       re-add sources + `gbrain sync` + `gbrain embed`).\n' +
+        '    1. gbrain pglite-repair --dry-run   (diagnose, mutates nothing; prints the\n' +
+        '       in-place WAL repair command to run once the user agrees, data preserved)\n' +
+        '    2. Last resort, only with the user\'s agreement: `gbrain reinit-pglite`\n' +
+        '       (rebuilds from the brain repo; DB-only pages and facts are not carried over).\n' +
         '    3. Switch engines (docs/ENGINES.md): `gbrain init --supabase` or\n' +
         '       native Postgres.\n' +
         '  Run `gbrain doctor` for a full diagnosis.';

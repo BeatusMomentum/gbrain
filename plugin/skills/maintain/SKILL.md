@@ -486,6 +486,15 @@ This creates an audit trail for brain health over time.
 - Log all changes via timeline entries
 - Check gbrain health before and after to show improvement
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain doctor --remediate` steps marked "requires user agreement" (PROTECTED repairs, paid steps): show the plan and cost, and run with `--yes --include-repairs --max-usd <n>` only after the user agrees. A step that would exceed the cap is not started.
+- A finding classified `operator_required`: follow its instruction or relay it to the brain host's operator. `consent_required`: ask the user.
+- A writer-coordination refusal (`writer_coordinator_required`, `writer_not_quiesced`, `recovery_required`): inspect `gbrain sources writer status` and hand the blocked recovery to the operator; never claim a checkout or delete a lock.
+- `gbrain dream` stops on a budget (exit 11): run the printed `resume_command` within the agreed budget.
+
 ## Anti-Patterns
 
 - Fixing pages without reading them first -- you must understand context before editing

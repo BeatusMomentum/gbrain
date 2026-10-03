@@ -1,6 +1,7 @@
 import { constants, closeSync, fstatSync, openSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { createInterface } from 'node:readline/promises';
+import { isInteractive, readLine } from '../core/interaction.ts';
+import { CONFIRMATION_REQUIRED_EXIT_CODE } from '../core/exit-codes.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { isThinClient, loadConfig } from '../core/config.ts';
@@ -21,7 +22,8 @@ export const COMPANY_BRAIN_CONNECT_HELP = `Connect a reviewed company repository
 
 Both destination flags are required. A saved plan and a repository path are mutually exclusive.
 Connect previews the destination and asks before registering/indexing a new source.
-Non-interactive use requires --yes; it never bypasses validation or access checks.
+Non-interactive use needs the user's approval (--yes); without it the command exits 3.
+--yes never bypasses validation or access checks.
 No embeddings, Git pull/push, source edits, grants, skills, or schedules are enabled.
 Use sources inspect to create a private review plan before connecting.
 Resume incomplete work with: gbrain sync --brain <id> --source <id> --no-embed --no-pull
@@ -128,16 +130,17 @@ export async function runCompanyBrainConnect(args: string[], connectEngine: () =
     const preview = delegated.handled ? delegated.result : await (await import('../core/company-brain/runtime.ts')).previewCompanyBrain(engine = await connectEngine(), local);
     console.error(`Company source preview: ${JSON.stringify(preview, (_key, item) => typeof item === 'bigint' ? item.toString() : item)}`);
     console.error('This indexes the reviewed committed files. It does not change source files, access grants, or enable paid/background capabilities.');
-    if (!options.yes && !process.stdin.isTTY) {
-      if (json) await emit({ schema_version: 1, status: 'blocked', code: 'confirmation_required', brain_id: options.brainId, source_id: options.sourceId, request_id: options.requestId, preview, plan });
-      else console.error('Connect requires confirmation. Review this preview, then rerun with --yes for non-interactive use.');
-      setCliExitVerdict(2);
+    if (!options.yes && !isInteractive()) {
+      // Exit 3 is confirmation_required's only meaning (agent operator contract v1).
+      const userMessage = `Connect the reviewed repository as source ${options.sourceId} in brain ${options.brainId}? It indexes its committed files; nothing else is enabled.`;
+      if (json) await emit({ schema_version: 1, status: 'blocked', code: 'confirmation_required', brain_id: options.brainId, source_id: options.sourceId, request_id: options.requestId, preview, plan, user_message: userMessage });
+      else console.error(`Connect needs the user's approval. Ask the user: ${userMessage} If they agree, run the same command with --yes and --request-id ${options.requestId}.`);
+      setCliExitVerdict(CONFIRMATION_REQUIRED_EXIT_CODE);
       return;
     }
     if (!options.yes) {
-      const input = createInterface({ input: process.stdin, output: process.stderr });
-      let answer: string;
-      try { answer = await input.question('Connect this source? [y/N] '); } finally { input.close(); }
+      const read = await readLine({ prompt: 'Connect this source? [y/N] ' });
+      const answer = read.kind === 'line' ? read.text : '';
       if (!/^y(?:es)?$/i.test(answer.trim())) {
         if (json) await emit({ schema_version: 1, status: 'cancelled', code: 'declined', brain_id: options.brainId, source_id: options.sourceId });
         else await writeStdoutFinal('Cancelled. No source was connected.\n');

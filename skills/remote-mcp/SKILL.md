@@ -344,6 +344,14 @@ delegate into the live serve automatically. Always provision through
 `--admin-token-file`; if the user needs concurrent local commands, route to
 [postgres-adopt](../postgres-adopt/SKILL.md) rather than stopping the server.
 
+## When it fails
+
+Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain mcp expose --status` reports `not_exposed` (exit 2) or `pending`: wait for the certificate or service as the status says; `leftovers_without_receipt` (exit 1) means an interrupted run, so follow its `fix`.
+- Installing Tailscale or a service needs the user's agreement before `--yes`; `gbrain mcp expose` still exits 2 when it needs confirmation (documented legacy), so read the block, not just the exit code.
+- A client gets `invalid_token` / `insufficient_scope`: issue a scoped grant for that client; never hand out an admin credential to make it connect.
+
 ## Anti-Patterns
 
 - NEVER recommend ngrok or a cloud host first; Tailscale is the default and

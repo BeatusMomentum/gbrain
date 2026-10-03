@@ -207,7 +207,7 @@ export async function runRemediation(
   // the throw propagates; the caller hook surfaces the actionable --resume hint.
   // Repairs run first under their own tracker; job steps then get a tracker capped at what the repairs left,
   // so in-process spend, reserved effect estimates and job spend all draw on one cumulative cap.
-  const repairTracker = new BudgetTracker({ label: 'remediation.repairs', maxCostUsd: remainingCap });
+  const repairTracker = new BudgetTracker({ label: 'remediation.repairs', maxCostUsd: remainingCap, capSource: opts.capSource });
   let jobTracker: InstanceType<typeof BudgetTracker> | undefined;
   // Effect kinds embed in the persistence consumer, outside any tracker, so their estimate is reserved up front.
   let reservedUsd = 0;
@@ -279,7 +279,7 @@ export async function runRemediation(
     const results = await runRepairSteps(engine, repairSteps, { remote: repairs.remote, noEmbed: repairs.noEmbed, remainingUsd,
       charge: (usd) => { reservedUsd += usd; }, exhausted: () => trackerExhausted,
       stepBudget: async (run) => {
-        const tracker = new BudgetTracker({ label: 'remediation.repair-step', maxCostUsd: remainingUsd() });
+        const tracker = new BudgetTracker({ label: 'remediation.repair-step', maxCostUsd: remainingUsd(), capSource: opts.capSource });
         stepTrackers.push(tracker);
         watch(tracker);
         return withBudgetTracker(tracker, run);
@@ -419,7 +419,7 @@ export async function runRemediation(
       jobsBudgetRefused = true;
       recs = [];
     }
-    jobTracker = new BudgetTracker({ label: 'remediation.run', maxCostUsd: afterRepairs });
+    jobTracker = new BudgetTracker({ label: 'remediation.run', maxCostUsd: afterRepairs, capSource: opts.capSource });
     watch(jobTracker);
     await withBudgetTracker(jobTracker, runLoop);
   } catch (err) {

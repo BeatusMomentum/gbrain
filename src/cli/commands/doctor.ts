@@ -37,8 +37,9 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
   }
   if (args.includes('--remediate')) {
     const { runRemediate } = await import('../../commands/doctor.ts');
-    const eng = await connectEngine();
-    try { await runRemediate(eng, args); } finally { await finishCliTeardown({ engine: eng }); }
+    // A4/C1: observational startup; migrations run only after consent (ctx.completeStartup).
+    const eng = await connectEngine({ probeOnly: !args.includes('--dry-run') });
+    try { await runRemediate(eng, args, ctx.completeStartup); } finally { await finishCliTeardown({ engine: eng }); }
     return;
   }
 
