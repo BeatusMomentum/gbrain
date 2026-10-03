@@ -38,8 +38,10 @@ on:
 permissions:
   contents: read
 
+# A label other than scale-tier gets its own group, so labelling a pull
+# request never cancels a scale run already in progress.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'schedule' && '-nightly' || '' }}${{ github.event.action == 'labeled' && github.event.label.name != 'scale-tier' && format('-label-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:

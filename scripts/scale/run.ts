@@ -151,7 +151,7 @@ async function explainText(engine: Engine, sql: string, params: unknown[]): Prom
 /** Replay each captured read statement under EXPLAIN ANALYZE; keep the slowest and the worst Nested Loop with their plan text. */
 async function planOf(engine: Engine, statements: Array<{ sql: string; params: unknown[] }>): Promise<OpPlan> {
   const reads = statements.filter(s => /^\s*(select|with)\b/i.test(s.sql) && !/^\s*select b\.oid/i.test(s.sql)
-    && !/\b(insert|update|delete)\b/i.test(s.sql) && !/\bset_config\b/i.test(s.sql));
+    && !/\b(insert|update|delete)\b/i.test(s.sql) && !/\b(set_config|nextval|setval|pg_notify|pg_(try_)?advisory\w*)\b/i.test(s.sql));
   const measured: Array<PlanStatement & { params: unknown[] }> = [];
   for (const s of reads) {
     try {
@@ -192,7 +192,11 @@ async function cliImport(sourceId: string): Promise<CliImport> {
     const event = JSON.parse(line) as { event?: string; phase?: string; done?: number; elapsed_ms?: number };
     if (event.event === 'tick' && event.phase === 'import.files' && typeof event.done === 'number') elapsed[event.done - 1] = event.elapsed_ms ?? 0;
   }
-  const perFileMs = elapsed.map((ms, i) => ms - (i > 0 ? elapsed[i - 1] ?? ms : 0));
+  const perFileMs = Array.from(elapsed, (ms, i) => ms - (i > 0 ? elapsed[i - 1] ?? Number.NaN : 0));
+  if (perFileMs.length !== Number(JSON.parse(lastJson).total_files) || perFileMs.some(ms => !Number.isFinite(ms))) {
+    throw new Error(`gbrain import of source ${sourceId} emitted ${perFileMs.filter(Number.isFinite).length} usable per-file progress ticks for `
+      + `${String(JSON.parse(lastJson).total_files)} files; the rate gate needs one tick per file (--progress-json --progress-interval 0).`);
+  }
   return { perFileMs, result: JSON.parse(lastJson) as Record<string, unknown>, wallMs };
 }
 
