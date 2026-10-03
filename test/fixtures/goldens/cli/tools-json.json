@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 234057,
-    "stdoutSha256": "96c55f2b28e4c83dfd7f5131e199c51f0a9b5175e3c44c6ab6901184831b29ad",
+    "stdoutBytes": 234360,
+    "stdoutSha256": "e9b7650c896d76d66c78c577e47ff8d2d72f2ac1cda7f69cf6fc7df821df2747",
     "toolNames": [
       "remember",
       "entity",
@@ -1788,7 +1788,7 @@
         "scope": "admin"
       },
       {
-        "description": "Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host. `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.",
+        "description": "Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, pending_fresh_install, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host (pending_fresh_install = setup a new brain has not run yet, not a broken upgrade). `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -3399,7 +3399,7 @@
         "scope": "agent"
       },
       {
-        "description": "Job queue statistics. PER-BLOCK scoping: by_status and queue_health are GLOBAL (unfiltered); by_type is windowed by since_hours; only the wedge block is scoped to the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming nothing while work waits) — suggest restarting the jobs supervisor on the brain host. private_queue: true means the queue is a parent-owned dream-inline queue: wedged is NEVER true for it and a worker restart cannot help — recovery runs automatically at worker spawn / dream-cycle start; suggest gbrain doctor for the per-queue verdict. Host-process diagnostics (renice, backpressure hints) stay on the gbrain jobs stats CLI.",
+        "description": "Job queue statistics. PER-BLOCK scoping: by_status and queue_health are GLOBAL (unfiltered); by_type is windowed by since_hours; only the wedge block is scoped to the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming nothing while work waits) — suggest restarting the jobs supervisor on the brain host. no_worker: true means work is waiting and NO worker is running for the queue (always on PGLite unless a gbrain jobs work drain is live); wedged is then false and the no_worker notice names the fix. private_queue: true means the queue is a parent-owned dream-inline queue: wedged is NEVER true for it and a worker restart cannot help — recovery runs automatically at worker spawn / dream-cycle start; suggest gbrain doctor for the per-queue verdict. Host-process diagnostics (renice, backpressure hints) stay on the gbrain jobs stats CLI.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

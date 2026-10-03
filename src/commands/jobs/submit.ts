@@ -102,6 +102,11 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
   try { await queue.ensureSchema(); }
   catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
+  if (engine.kind === 'pglite' && !follow && !hasFlag(args, '--queue-only')) {
+    await refuseNoWorker(args, name, queueName);
+    return;
+  }
+
   // v0.35.8.0: pre-enqueue shell-job validation. Validates `inherit:`
   // closed enum, rejects secret env-keys, fail-fasts on missing config.
   // Throws UnrecoverableError BEFORE `queue.add` so a bad payload never
@@ -220,4 +225,26 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
   } else {
     console.log(JSON.stringify(job, null, 2));
   }
+}
+
+/**
+ * Queue honesty (agent-first operator wave E5): PGLite has no background
+ * worker, so a plain submit would leave the job waiting with no error. Refuse
+ * with `no_worker` and the exact `--follow` command; `--queue-only` queues it
+ * deliberately for a later `gbrain jobs work` drain.
+ */
+async function refuseNoWorker(args: string[], name: string, queueName: string): Promise<void> {
+  const { opError } = await import('../../core/ops/contract.ts');
+  const { renderCliError } = await import('../../core/agent-output.ts');
+  const { setCliExitVerdict, writeStdoutFinal } = await import('../../core/cli-force-exit.ts');
+  const err = opError('no_worker',
+    `PGLite has no background worker, so job '${name}' would wait in queue '${queueName}' until something runs it. Nothing was queued.`,
+    'Run it now with --follow, or pass --queue-only to queue it for a later `gbrain jobs work` drain.',
+    { why: 'PGLite brains have no background worker (the database is single-writer), so a queued job waits with no error until a `gbrain jobs work` drain runs it.',
+      fix: { argv: ['gbrain', 'jobs', ...args, '--follow'], consent: [], actor: 'agent', requires_exclusive: true,
+      why: '--follow runs the job in this process and waits for its result; it needs the brain to itself, so any running `gbrain serve` must stop first.' } });
+  const out = renderCliError(err, { json: hasFlag(args, '--json'), command: 'jobs submit', tty: !!process.stderr.isTTY });
+  if (out.stdout) await writeStdoutFinal(out.stdout);
+  if (out.stderr) process.stderr.write(out.stderr);
+  setCliExitVerdict(out.exitCode);
 }

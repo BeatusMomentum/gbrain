@@ -257,9 +257,35 @@ const submit_job: Operation = {
     // Amendments 24/25: post-enqueue queue-state probe (time-bounded,
     // fail-open). The job is already persisted; a probe failure degrades to
     // {probe_failed: true}, never an error on a successful submission.
+    await emitNoWorkerNotice(ctx, job.queue);
     return { ...publicJob(job), queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
   },
 };
+
+/**
+ * Queue honesty (agent-first operator wave E5): an accepted job on a queue no
+ * worker serves (always on PGLite unless a `gbrain jobs work` drain is live)
+ * gets a model-visible `no_worker` notice with the drain/supervisor fix; a
+ * PGLite fix behind a running serve becomes the stop-serve-then-run plan.
+ * Best-effort: advice never fails a committed submission.
+ */
+async function emitNoWorkerNotice(ctx: OperationContext, queueName: string): Promise<void> {
+  if (!ctx.emitNotice) return;
+  try {
+    const { queueWorkerAlive, noWorkerNotice, runWaitingJobsFix } = await import('../minions/no-worker.ts');
+    const alive = queueWorkerAlive(queueName);
+    if (alive !== false) return;
+    const [row] = await ctx.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE queue = $1 AND status = 'waiting'", [queueName]);
+    const waiting = Number(row?.n ?? 0);
+    if (waiting === 0) return;
+    let fix = runWaitingJobsFix(ctx.engine.kind, queueName);
+    if (ctx.config) {
+      const { configReadiness, exclusiveFix } = await import('../readiness.ts');
+      fix = exclusiveFix(fix, configReadiness(ctx.config, { transport: ctx.transport ?? 'stdio' }).lock_owner);
+    }
+    ctx.emitNotice(noWorkerNotice(ctx.engine.kind, queueName, waiting, fix));
+  } catch { /* advice is best-effort */ }
+}
 
 /**
  * Wrapper around `probeQueueState` that also swallows module-load failures,
@@ -848,6 +874,8 @@ const get_job_stats: Operation = {
     '(unfiltered); by_type is windowed by since_hours; only the wedge block is scoped to ' +
     'the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming ' +
     'nothing while work waits) — suggest restarting the jobs supervisor on the brain host. ' +
+    'no_worker: true means work is waiting and NO worker is running for the queue (always on PGLite ' +
+    'unless a gbrain jobs work drain is live); wedged is then false and the no_worker notice names the fix. ' +
     'private_queue: true means the queue is a parent-owned dream-inline queue: wedged is ' +
     'NEVER true for it and a worker restart cannot help — recovery runs automatically at ' +
     'worker spawn / dream-cycle start; suggest gbrain doctor for the per-queue verdict. ' +
@@ -869,10 +897,12 @@ const get_job_stats: Operation = {
         since: new Date(Date.now() - hours * 3_600_000),
         queue: typeof p.queue === 'string' && p.queue.length > 0 ? p.queue : 'default',
       });
-      const { wedged, wedge_threshold_minutes, private_queue } = deriveWedgeSignal(stats.wedge);
+      const { queueWorkerAlive } = await import('../minions/no-worker.ts');
+      const { wedged, no_worker, wedge_threshold_minutes, private_queue } = deriveWedgeSignal(stats.wedge, { workerAlive: queueWorkerAlive(stats.wedge.queue) });
+      if (no_worker) await emitNoWorkerNotice(ctx, stats.wedge.queue);
       // private_queue tells the MCP consumer "restart the worker" is dead-end
       // advice for this queue — it is parent-owned and needs reconciliation.
-      return { schema_version: 1, window_hours: hours, ...stats, wedged, wedge_threshold_minutes, private_queue };
+      return { schema_version: 1, window_hours: hours, ...stats, wedged, no_worker, wedge_threshold_minutes, private_queue };
     }, 'Job queue statistics (minions schema)');
   },
 };

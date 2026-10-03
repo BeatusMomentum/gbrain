@@ -27,8 +27,12 @@ import { migrations, compareVersions, type Migration, type OrchestratorOpts } fr
 import {
   indexCompletedEntries,
   statusForVersion as ledgerStatusForVersion,
+  freshInstallVersion,
+  isFreshInstallStamp,
+  isPendingFreshInstall,
   MAX_CONSECUTIVE_PARTIALS,
 } from '../core/migration-ledger.ts';
+import { shellQuote } from '../core/agent-output.ts';
 
 interface ApplyMigrationsArgs {
   list: boolean;
@@ -113,7 +117,11 @@ Usage:
     --confirm-quiesced                   Attest old writers and skill servers are stopped.
     --backup-confirmed                   Attest an operational backup was verified by you.
     --acknowledge-no-backup               Explicitly proceed without a verified backup.
-  gbrain apply-migrations --list         Show applied + pending migrations.
+  gbrain apply-migrations --list [--json]
+                                         Show applied + pending migrations.
+                                         pending_fresh_install = setup work a
+                                         brain created by gbrain init has not
+                                         run yet (expected; apply with --yes).
   gbrain apply-migrations --migration vX.Y.Z
                                          Force-run a specific migration by version.
   gbrain apply-migrations --force-retry vX.Y.Z
@@ -151,13 +159,15 @@ Exit codes:
 
 interface CompletedIndex {
   byVersion: Map<string, CompletedMigrationEntry[]>;
+  /** The version whose `gbrain init` created this brain (fresh-install stamps), or null. */
+  freshVersion: string | null;
 }
 
 // Ledger status logic moved to src/core/migration-ledger.ts (shared with the
 // get_health op's migrations block, TODOS:4063) — same semantics, same Bug 3
 // "complete wins / trailing retry overrides / consecutive-partial cap" rules.
 function indexCompleted(entries: CompletedMigrationEntry[]): CompletedIndex {
-  return { byVersion: indexCompletedEntries(entries) };
+  return { byVersion: indexCompletedEntries(entries), freshVersion: freshInstallVersion(entries) };
 }
 
 function statusForVersion(
@@ -171,6 +181,8 @@ interface Plan {
   applied: Migration[];
   partial: Migration[];
   pending: Migration[];
+  /** Never run on a brain gbrain init created at or after its version: expected setup work, not an interrupted upgrade. */
+  pending_fresh_install: Migration[];
   skippedFuture: Migration[];
   wedged: Migration[];
 }
@@ -182,6 +194,8 @@ interface Plan {
  * - partial:  has only `status: "partial"` entries (stopgap wrote one) →
  *             orchestrator runs to finish missing phases.
  * - pending:  has no entries at all and migration.version ≤ installed VERSION.
+ * - pending_fresh_install: pending, on a brain `gbrain init` created at or
+ *             after this version (fresh-install stamps). Runs like pending.
  * - skippedFuture: migration.version > installed VERSION (binary is older
  *                  than the migration; wait for a newer install).
  *
@@ -189,7 +203,7 @@ interface Plan {
  * skip v0.11.0 when running v0.11.1. Compare against completed.jsonl.
  */
 function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: string): Plan {
-  const plan: Plan = { applied: [], partial: [], pending: [], skippedFuture: [], wedged: [] };
+  const plan: Plan = { applied: [], partial: [], pending: [], pending_fresh_install: [], skippedFuture: [], wedged: [] };
   for (const m of migrations) {
     if (filterVersion && m.version !== filterVersion) continue;
     if (compareVersions(m.version, installed) > 0) {
@@ -200,6 +214,7 @@ function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: strin
     if (status === 'complete') plan.applied.push(m);
     else if (status === 'partial') plan.partial.push(m);
     else if (status === 'wedged') plan.wedged.push(m);
+    else if (isPendingFreshInstall(m.version, idx.freshVersion)) plan.pending_fresh_install.push(m);
     else plan.pending.push(m);
   }
   return plan;
@@ -225,31 +240,62 @@ function formatDbProbeLine(probe: DbProbeOutcome): string {
   return `Database: not probed (${probe.reason})`;
 }
 
-function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
-  console.log(`Installed gbrain version: ${installed}`);
-  console.log(`${formatDbProbeLine(dbProbe)}\n`);
-  console.log('  Status   Version   Headline');
-  console.log('  -------  --------  -----------------------------------------');
-  const rows: Array<{ status: string; m: Migration }> = [
+const FINISH_SETUP_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'];
+
+function listRows(plan: Plan): Array<{ status: string; m: Migration }> {
+  return [
     ...plan.applied.map(m => ({ status: 'applied', m })),
     ...plan.partial.map(m => ({ status: 'partial', m })),
     ...plan.wedged.map(m => ({ status: 'wedged', m })),
     ...plan.pending.map(m => ({ status: 'pending', m })),
+    ...plan.pending_fresh_install.map(m => ({ status: 'pending_fresh_install', m })),
     ...plan.skippedFuture.map(m => ({ status: 'future', m })),
   ];
+}
+
+function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
+  console.log(`Installed gbrain version: ${installed}`);
+  console.log(`${formatDbProbeLine(dbProbe)}\n`);
+  console.log('  Status                 Version   Headline');
+  console.log('  ---------------------  --------  -----------------------------------------');
+  const rows = listRows(plan);
   for (const r of rows) {
     const ver = r.m.version.padEnd(8);
-    const status = r.status.padEnd(7);
+    const status = r.status.padEnd(21);
     console.log(`  ${status}  ${ver}  ${r.m.featurePitch.headline}`);
   }
   if (rows.length === 0) console.log('  (no migrations registered)');
   console.log('');
   const needsWork = plan.pending.length + plan.partial.length;
-  if (needsWork === 0) {
+  const setup = plan.pending_fresh_install.length;
+  if (needsWork === 0 && setup === 0) {
     console.log('All migrations up to date.');
-  } else {
-    console.log(`${needsWork} migration(s) need action. Run \`gbrain apply-migrations --yes\` to apply.`);
+    return;
   }
+  if (needsWork > 0) console.log(`${needsWork} migration(s) need action. Run \`gbrain apply-migrations --yes\` to apply.`);
+  if (setup > 0) {
+    console.log(`${setup} setup migration(s) are pending_fresh_install: this brain was created by gbrain init and has not run them yet. `
+      + `This is expected setup work, not a failed upgrade. Finish setup: ${shellQuote(FINISH_SETUP_ARGV)}`);
+  }
+}
+
+/** `--list --json`: one row per registered migration plus the command that completes outstanding work. */
+function printListJson(plan: Plan, idx: CompletedIndex, installed: string, dbProbe: DbProbeOutcome): void {
+  const outstanding = plan.pending.length + plan.partial.length + plan.pending_fresh_install.length;
+  console.log(JSON.stringify({
+    installed,
+    database: dbProbe,
+    fresh_install_version: idx.freshVersion,
+    migrations: listRows(plan).map(r => ({
+      version: r.m.version,
+      status: r.status,
+      headline: r.m.featurePitch.headline,
+      ...(r.status === 'applied' && (idx.byVersion.get(r.m.version) ?? []).some(isFreshInstallStamp) ? { fresh_install: true } : {}),
+    })),
+    needs_action: plan.pending.length + plan.partial.length,
+    pending_fresh_install: plan.pending_fresh_install.length,
+    ...(outstanding > 0 ? { next: { argv: FINISH_SETUP_ARGV, command: shellQuote(FINISH_SETUP_ARGV) } } : {}),
+  }));
 }
 
 function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
@@ -271,12 +317,17 @@ function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): vo
     for (const m of plan.pending) console.log(`  → v${m.version} — ${m.featurePitch.headline}`);
     console.log('');
   }
+  if (plan.pending_fresh_install.length) {
+    console.log('Would APPLY (pending_fresh_install — setup a brain created by gbrain init has not run yet; expected, not a failed upgrade):');
+    for (const m of plan.pending_fresh_install) console.log(`  → v${m.version} — ${m.featurePitch.headline}`);
+    console.log('');
+  }
   if (plan.skippedFuture.length) {
     console.log('Skipped (newer than installed binary):');
     for (const m of plan.skippedFuture) console.log(`  ⧗ v${m.version}`);
     console.log('');
   }
-  if (plan.pending.length + plan.partial.length === 0) {
+  if (plan.pending.length + plan.partial.length + plan.pending_fresh_install.length === 0) {
     console.log('Nothing to do.');
   } else {
     console.log('Re-run without --dry-run to apply. Use --yes to skip prompts.');
@@ -546,7 +597,7 @@ async function runLockedMigrations(
     // Don't exit — applied/partial/pending are still worth reporting and running.
   }
 
-  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.skippedFuture.length === 0) {
+  if (cli.specificMigration && plan.applied.length + plan.partial.length + plan.pending.length + plan.pending_fresh_install.length + plan.skippedFuture.length === 0) {
     console.error(`No migration registered with version "${cli.specificMigration}". Run \`gbrain apply-migrations --list\` to see registered versions.`);
     return 2;
   }
@@ -554,10 +605,11 @@ async function runLockedMigrations(
   // #4364: --require-db turns an unreachable DB into a hard failure instead
   // of a filesystem-only plan that renders identically to a clean database.
   const listExit = cli.requireDb && dbProbe.status === 'unreachable' ? 1 : 0;
+  if (cli.list && cli.json) { printListJson(plan, idx, installed, dbProbe); return listExit; }
   if (cli.list) { printList(plan, installed, dbProbe); return listExit; }
   if (cli.dryRun) {
     const previews: Array<{ version: string; preview?: unknown; error?: string }> = [];
-    for (const migration of [...plan.applied, ...plan.partial, ...plan.pending, ...plan.wedged]) {
+    for (const migration of [...plan.applied, ...plan.partial, ...plan.pending, ...plan.pending_fresh_install, ...plan.wedged]) {
       if (!migration.preview) continue;
       try { previews.push({ version: migration.version, preview: await migration.preview(orchestratorOptsFrom(cli)) }); }
       catch (error) { previews.push({ version: migration.version, error: error instanceof Error ? error.message : 'Inventory unavailable.' }); }
@@ -579,7 +631,7 @@ async function runLockedMigrations(
   // preflight above created the table, so take the lease before orchestrating.
   await holdLock();
 
-  const toRun: Migration[] = [...plan.partial, ...plan.pending, ...plan.applied.filter(migration => migration.reconcile)]
+  const toRun: Migration[] = [...plan.partial, ...plan.pending, ...plan.pending_fresh_install, ...plan.applied.filter(migration => migration.reconcile)]
     .sort((left, right) => compareVersions(left.version, right.version));
   if (toRun.length === 0) {
     if (schemaBehind) {
@@ -592,7 +644,7 @@ async function runLockedMigrations(
     console.log('All migrations up to date.');
     return 0;
   }
-  if (!schemaBehind && plan.pending.length === 0 && plan.partial.length === 0) {
+  if (!schemaBehind && plan.pending.length === 0 && plan.pending_fresh_install.length === 0 && plan.partial.length === 0) {
     console.log('All migrations up to date. This covers orchestrator checkpoints only; host publication and client activation are being rechecked.');
   }
 
@@ -612,6 +664,7 @@ async function runLockedMigrations(
     console.log(`\n=== Applying migration v${m.version}: ${m.featurePitch.headline} ===`);
     try {
       const result = await m.orchestrator(orchestratorOptsFrom(cli, heldLock()?.leaseToken));
+      for (const p of result.phases) if (p.argv) console.log(`  ${p.name} — next step: ${shellQuote(p.argv)}`);
       if (result.status === 'failed' || result.phases.some(p => p.status === 'failed')) {
         console.error(result.status === 'failed'
           ? `Migration v${m.version} reported status=failed.`

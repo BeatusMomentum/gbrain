@@ -103,7 +103,7 @@ src/core/persistence/source-lifecycle.ts	25
 src/core/persistence/staging.ts	2
 src/core/persistence/sync-administration.ts	1
 src/core/persistence/sync-authority.ts	7
-src/core/persistence/sync-discovery.ts	20
+src/core/persistence/sync-discovery.ts	19
 src/core/persistence/sync-origin.ts	3
 src/core/persistence/sync-prepare.ts	31
 src/core/persistence/sync-run.ts	8

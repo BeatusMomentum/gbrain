@@ -12,6 +12,7 @@ import { heartbeatPath } from './integrations.ts';
 import { VERSION } from '../version.ts';
 import { cliRenderContext, renderNotice, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
+import { embeddingsDisabled } from '../core/embedding-disabled.ts';
 
 // --- Types ---
 
@@ -118,9 +119,10 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
   const stats = await engine.getStats();
   const health = await engine.getHealth();
   const recommendations: FeatureRecommendation[] = [];
+  const keyless = await embeddingsDisabled(engine);
 
-  // P1: Missing embeddings
-  if (health.missing_embeddings > 0) {
+  // P1: Missing embeddings (never on a keyless-by-choice brain: E2)
+  if (health.missing_embeddings > 0 && !keyless) {
     recommendations.push({
       id: 'missing-embeddings', priority: 1,
       title: 'Fix Missing Embeddings',
@@ -166,7 +168,7 @@ export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResu
     }
 
     // Low embed coverage
-    if (health.embed_coverage < 0.9 && health.embed_coverage > 0) {
+    if (health.embed_coverage < 0.9 && health.embed_coverage > 0 && !keyless) {
       const pct = (health.embed_coverage * 100).toFixed(0);
       recommendations.push({
         id: 'low-coverage', priority: 2,
@@ -366,7 +368,7 @@ export async function featuresTeaserForDoctor(engine: BrainEngine): Promise<stri
   try {
     const health = await engine.getHealth();
     const parts: string[] = [];
-    if (health.missing_embeddings > 0) parts.push(`${health.missing_embeddings} missing embeddings`);
+    if (health.missing_embeddings > 0 && !await embeddingsDisabled(engine)) parts.push(`${health.missing_embeddings} missing embeddings`);
     if (health.dead_links > 0) parts.push(`${health.dead_links} dead links`);
     if (parts.length === 0) return null;
     return `Tip: ${parts.join(', ')}. Run 'gbrain features' to fix.`;

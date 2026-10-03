@@ -116,7 +116,7 @@ export async function runRemediationPlan(engine: BrainEngine, args: string[]): P
   const planHash = plan.repair_steps?.length ? await remediationPlanHash(engine, args, plan) : undefined;
   if (args.includes('--json')) {
     console.log(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
-      combined_command: combinedRemediateCommand(plan, targetScore, { noEmbed, planHash }), ...(planHash ? { plan_hash: planHash } : {}) }, null, 2));
+      combined_command: combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, { noEmbed, planHash }), ...(planHash ? { plan_hash: planHash } : {}) }, null, 2));
     return;
   }
   for (const line of renderRemediationPlanLines(plan, targetScore, { noEmbed, planHash })) console.log(line);
@@ -180,7 +180,7 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
     for (const notice of plan.explicit_repairs) lines.push(`  ${notice.kind}: ${notice.preview_command}`);
   }
   if (plan.plan.length > 0 || repairs.length > 0) {
-    lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, targetScore, opts)}`);
+    lines.push(`\nApply everything${repairs.length ? ' after the user agrees' : ''}: ${combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, opts)}`);
     if (repairs.length) lines.push('Ask the user before applying any repair step.');
   }
   if (plan.blocked.length > 0) {

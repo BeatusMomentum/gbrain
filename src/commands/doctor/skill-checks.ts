@@ -29,6 +29,7 @@ import {
   appendAuditEventsForTransitions,
 } from '../../core/audit-skill-brain-first.ts';
 import type { Check } from '../doctor.ts';
+import { checkError, infoCheck } from './check-fix.ts';
 
 /** Quick skill conformance check — frontmatter + required sections */
 export function skillConformanceCheck(skillsDir: string): Check {
@@ -66,7 +67,7 @@ export function skillConformanceCheck(skillsDir: string): Check {
       message: `${passing}/${skills.length} pass. Failing: ${failing.join(', ')}`,
     };
   } catch {
-    return { name: 'skill_conformance', status: 'warn', message: 'Could not load or derive skills manifest' };
+    return checkError('skill_conformance', 'load or derive skills manifest');
   }
 }
 
@@ -291,9 +292,15 @@ export async function skillPreconditionsCheck(
   if (unmet.length === 0) {
     return { name, status: 'ok', message: `${installed.length} skill(s) with preconditions, all met` };
   }
+  if (await ctx.countPages() === 0) {
+    return infoCheck(name,
+      `${unmet.length} skill precondition(s) wait for content: the brain has no pages yet, so skills that need a corpus stay idle until the first import or sync.`,
+      'not_applicable', undefined, { unmet: unmet.slice(0, 8) });
+  }
   return {
     name,
     status: 'warn',
+    fix_unavailable_reason: 'operator_judgement',
     message:
       `${unmet.length} unmet skill precondition(s):\n  ` +
       unmet.slice(0, 8).join('\n  ') +

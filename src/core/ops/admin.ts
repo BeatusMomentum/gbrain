@@ -52,7 +52,7 @@ const get_health: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host. `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.',
+  description: 'Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, pending_fresh_install, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host (pending_fresh_install = setup a new brain has not run yet, not a broken upgrade). `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.',
   params: {},
   handler: async (ctx) => {
     // The `migrations` block below stays GLOBAL for scoped callers by
@@ -178,7 +178,9 @@ const run_doctor: Operation = {
     // unscoped ctx = brain-wide.
     const scope = sourceScopeOpts(ctx);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);
-    return doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote });
+    const transport = ctx.remote === false ? 'cli' : ctx.transport ?? 'http';
+    return doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote,
+      render: { transport, isCallable: (op) => op === 'run_doctor', preapproved: () => false } });
   },
   scope: 'admin',
   localOnly: false,
