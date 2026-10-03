@@ -20,7 +20,6 @@
  * column, so it needs no coordinator and bumps no revision.
  */
 import type { BrainEngine } from '../engine.ts';
-import { lockPageKeys } from '../page-state/guards.ts';
 import { validateSlug } from '../utils.ts';
 import type { RepairHandler, RepairItem, RepairScope } from './core.ts';
 
@@ -87,7 +86,7 @@ async function fillBatch(engine: BrainEngine, range: BatchRange): Promise<number
     const rows = await tx.executeRaw<{ source_id: string; slug: string }>(provenSql(phase, true), params);
     if (!rows.length) return 0;
     const keys = rows.flatMap(row => { try { validateSlug(row.slug); return [{ sourceId: row.source_id, slug: row.slug }]; } catch { return []; } });
-    await lockPageKeys(tx, keys);
+    await tx.lockPageKeys(keys);
     const [requestCol, kindCol, idCol] = phase.columns;
     const updated = await tx.executeRaw<{ id: number }>(
       `UPDATE ${phase.table} t SET ${requestCol} = c.request_id::uuid, ${kindCol} = c.principal_kind, ${idCol} = c.principal_id
