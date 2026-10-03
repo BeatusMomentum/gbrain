@@ -31,3 +31,16 @@ export function isCallable(op: Operation, ctx: CallableContext): boolean {
   if (ctx.transport === 'http') return operationScopesAllowed(ctx.scopes, op);
   return !op.requiredScopes?.length || operationScopesAllowed(ctx.scopes, op);
 }
+
+/**
+ * Publish gates keyed by gate key from the resolver's disabled-op set
+ * (`disabledOpsForPublishGates`): a gate is on when none of its ops is disabled.
+ */
+export function publishGatesFromDisabled(ops: readonly Operation[], disabled: ReadonlySet<string>): Record<string, boolean> {
+  const gates: Record<string, boolean> = {};
+  for (const op of ops) {
+    if (!op.publishGateKey) continue;
+    gates[op.publishGateKey] = (gates[op.publishGateKey] ?? true) && !disabled.has(op.name);
+  }
+  return gates;
+}

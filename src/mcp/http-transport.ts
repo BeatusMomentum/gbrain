@@ -34,10 +34,11 @@ import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { resolveMcpInstructions } from './instructions.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
-import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
+import { operations, operationsByName, opAllowedForBoundClient, opError } from '../core/operations.ts';
+import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
-import { dispatchToolCall, requestLogStatusForResult } from './dispatch.ts';
+import { dispatchToolCall, requestLogStatusForResult, errorResult } from './dispatch.ts';
 import { parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, clampSurface, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
@@ -485,9 +486,12 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         // unconditionally, so gates-off served the exact listed-but-denied
         // catalog lie E5 (test/truthful-catalog.e2e-lite.test.ts) pins out.
         const gateDisabled = await disabledOpsForPublishGates(engine, fileConfig);
+        // Agent contract v1 (A2): the one callability predicate + the bound-client fence.
+        const publishGates = publishGatesFromDisabled(surfacedOps, gateDisabled);
         const visibleTools = tools.filter(t => {
           const op = operationsByName[t.name];
-          return op && !gateDisabled.has(t.name) && operationScopesAllowed(auth.auth!.scopes, op) && opAllowedForBoundClient(auth.auth!, op);
+          return op && isCallable(op, { transport: 'http', surface, scopes: auth.auth!.scopes, publishGates, allowedOps: surfaceAllowedOps })
+            && opAllowedForBoundClient(auth.auth!, op);
         });
         logRequest(auth.tokenName!, 'tools/list', 'success', Date.now() - startedMs);
         return Response.json(
@@ -503,8 +507,10 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         const op = operationsByName[toolName];
         if (op && !op.localOnly && !operationScopesAllowed(auth.auth!.scopes, op)) {
           logRequest(auth.tokenName!, `tools/call:${toolName}`, 'denied_after_list', Date.now() - startedMs);
-          return Response.json({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text',
-            text: JSON.stringify({ error: 'permission_denied', message: `Tool requires ${op.scope ?? 'read'} scope` }) }] } },
+          // Frozen v1 pair: `error: permission_denied` stays; `code: insufficient_scope`.
+          const denial = opError('insufficient_scope', `Tool requires ${op.scope ?? 'read'} scope`,
+            `Ask the brain host's operator to grant the '${op.scope ?? 'read'}' scope to this token.`, { legacy_error: 'permission_denied' });
+          return Response.json({ jsonrpc: '2.0', id, result: errorResult(denial, { remote: true, transport: 'http', auth: auth.auth }, { op: toolName }) },
             { headers: corsHeaders(origin) });
         }
         // v0.28: thread per-token takes-holder allow-list so takes_list /

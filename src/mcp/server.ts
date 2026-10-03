@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, opError, OperationError } from '../core/operations.ts';
+import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
@@ -142,34 +143,34 @@ export async function stdioVisibleTools(
   engine: BrainEngine,
   surfacedOps: Operation[],
 ): Promise<Operation[]> {
-  if (surfacedOps.some(op => op.requiredScopes?.length)) {
-    let scopes: readonly string[] = [];
-    if (!isEngineDegraded(engine)) {
-      try {
-        const verified = await verifyLocalWriter(engine, await readLocalWriter(engine, 'stdio'));
-        if (verified.remote) scopes = verified.grant.scopes;
-      } catch {}
-    }
-    surfacedOps = surfacedOps.filter(op => !op.requiredScopes?.length || operationScopesAllowed(scopes, op));
+  let scopes: readonly string[] = [];
+  if (surfacedOps.some(op => op.requiredScopes?.length) && !isEngineDegraded(engine)) {
+    try {
+      const verified = await verifyLocalWriter(engine, await readLocalWriter(engine, 'stdio'));
+      if (verified.remote) scopes = verified.grant.scopes;
+    } catch {}
   }
-  if (!surfacedOps.some(op => op.publishGateKey)) return surfacedOps;
   // Degraded serve (db-availability 4c): fail-closed WITHOUT touching the
-  // engine. The gate read below can hit engine.getConfig, which on the
-  // degraded wrapper would burn the one lazy reconnect attempt — and stall
-  // the client's INITIAL tools/list handshake behind the reconnect's wait
-  // cap. Recovery re-sends tools/list_changed, so the full catalog returns.
-  if (isEngineDegraded(engine)) {
-    const hidden = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
-    return surfacedOps.filter(op => !hidden.has(op.name));
+  // engine. The gate read can hit engine.getConfig, which on the degraded
+  // wrapper would burn the one lazy reconnect attempt — and stall the
+  // client's INITIAL tools/list handshake behind the reconnect's wait cap.
+  // Recovery re-sends tools/list_changed, so the full catalog returns.
+  let gateDisabled: ReadonlySet<string> = new Set();
+  if (surfacedOps.some(op => op.publishGateKey)) {
+    if (isEngineDegraded(engine)) {
+      gateDisabled = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
+    } else {
+      try {
+        gateDisabled = await disabledOpsForPublishGates(engine, loadConfig());
+      } catch {
+        gateDisabled = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
+      }
+    }
   }
-  let gateDisabled: ReadonlySet<string>;
-  try {
-    gateDisabled = await disabledOpsForPublishGates(engine, loadConfig());
-  } catch {
-    gateDisabled = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
-  }
-  if (gateDisabled.size === 0) return surfacedOps;
-  return surfacedOps.filter(op => !gateDisabled.has(op.name));
+  // Agent contract v1 (A2): the one callability predicate. The surface was
+  // applied by the caller (surfacedOps), so 'full' here adds no filter.
+  const publishGates = publishGatesFromDisabled(surfacedOps, gateDisabled);
+  return surfacedOps.filter(op => isCallable(op, { transport: 'stdio', surface: 'full', scopes, publishGates }));
 }
 
 // ─── #4409: in-flight stdio RPC tracking ────────────────────────────────

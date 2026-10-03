@@ -22,6 +22,7 @@ import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, type ToolResult } from '../mcp/dispatch.ts';
 import { toAgentError } from '../core/agent-output.ts';
+import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { opError } from '../core/ops/contract.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
@@ -201,7 +202,7 @@ function createMcpRequestServer(
 
 async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   const { engine, config, broadcastEvent } = ctx;
-  const { authInfo, agentName, startTime, mcpOperations } = state;
+  const { authInfo, agentName, startTime, mcpOperations, surface, surfaceAllowedOps } = state;
   // WP1 honest catalog: the advertised list is exactly what THIS token
   // can call. Three per-request filters, cheapest first:
   //   1. token scope — a read-only token never sees admin/write tools;
@@ -223,10 +224,12 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   // agent-only tokens with ZERO discovery — ops flagged `agentCallable`
   // (request_tools) are visible to (and callable by, below) agent scope
   // in addition to their declared scope.
+  // Agent contract v1 (A2): the one callability predicate (isCallable) plus
+  // the bound-client op fence.
+  const publishGates = publishGatesFromDisabled(mcpOperations, gateDisabled);
   const visibleOps = mcpOperations.filter(op =>
-    operationScopesAllowed(authInfo.scopes, op)
-    && opAllowedForBoundClient(authInfo, op)
-    && !gateDisabled.has(op.name),
+    isCallable(op, { transport: 'http', surface, scopes: authInfo.scopes, publishGates, allowedOps: surfaceAllowedOps })
+    && opAllowedForBoundClient(authInfo, op),
   );
   // WP3 (amendment 14): ONE schema mapper — the inline map this handler
   // carried is unified onto buildToolDefs so the byte-pin test covers the
