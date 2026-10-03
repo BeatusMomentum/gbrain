@@ -30,6 +30,11 @@ test('a 40-page enforced PGLite run passes every enforced gate and writes a head
     expect(report.headline.metric).toBe('MCP search p50 at 40 brain pages, as shipped (no manual ANALYZE)');
     expect(report.ops.filter((o: { known_answer: string }) => o.known_answer !== 'pass')).toEqual([]);
     expect(report.data.every((d: { status: string }) => d.status === 'pass')).toBe(true);
+    // Planner health is probed after the first timed op (F4b analyzes on the first planner-sensitive read), with each table's row count.
+    expect(report.planner.probed_after).toBe(report.ops[0].op);
+    expect(Object.keys(report.planner.hot_table_rows).sort()).toEqual(Object.keys(report.planner.hot_table_stat_rows).sort());
+    expect(report.planner.hot_table_rows.pages).toBeGreaterThan(0);
+    expect(report.policy.planner_health).toBe('enforced');
     expect(report.ops.map((o: { op: string }) => o.op)).toEqual(expect.arrayContaining([
       'query (hybrid, injected vector)', 'search (MCP path, source-scoped grant)', 'cold-process first query (MCP path)', 'concurrent put_page x2 (receipts)']));
   } finally {

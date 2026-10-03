@@ -15,8 +15,8 @@
  * per source, timing each file from its progress events; `--import-mode
  * content` keeps the per-page `importFromContent` loop. Then it extracts
  * links, timeline, facts and takes, writes deterministic vectors onto every
- * chunk, and measures: import rate, planner health (pg_stats on hot tables,
- * Nested Loop inner loops in the captured plans of the key ops), p50 over
+ * chunk, and measures: import rate, planner health (pg_stats on hot tables
+ * above 500 rows, read after the first timed op; Nested Loop inner loops in the captured plans of the key ops), p50 over
  * five runs after a warmup for each op with a known-answer check, a
  * cold-process first query, two concurrent receipt-bearing writers, a no-op
  * re-import and cross-source duplicates. scripts/scale/gates.ts decides.
@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { generateScaleFixture, SCALE_SOURCES, scaleVector, writeScaleCorpus, type ScaleFixture } from './fixture.ts';
 import {
-  BUDGET_MULTIPLIER, evaluateScaleGates, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, reproduceCommand, resultHits, verdictLines,
+  BUDGET_MULTIPLIER, evaluateScaleGates, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, reproduceCommand, resultHits, verdictLines,
   type DataCheck, type GatePolicy, type OpPlan, type OpResult, type PlanStatement, type ScaleReport,
 } from './gates.ts';
 
@@ -280,11 +280,6 @@ async function main(): Promise<FullReport> {
   });
 
   console.log(`[scale] extracted links/timeline, ${extract.factsInserted} facts, ${extract.takesUpserted} takes in ${phases.extract} ms`);
-  // Planner health is read here: after import and extraction, before anything else touches statistics.
-  const statRows: Record<string, number> = {};
-  for (const table of HOT_TABLES) {
-    statRows[table] = Number((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pg_stats WHERE tablename = $1', [table]))[0]?.n ?? 0);
-  }
 
   // Deterministic vectors on every chunk, so the vector arm runs keylessly through queryEmbedFn.
   const dim = await timed('vectors', async () => {
@@ -358,6 +353,9 @@ async function main(): Promise<FullReport> {
       verify: r => fixture.islands.every(slug => resultHits(r).some(h => h.slug === slug)) ? null : 'an island page is missing from find_orphans' },
   ];
   const ops: OpResult[] = [];
+  const statRows: Record<string, number> = {};
+  const tableRows: Record<string, number> = {};
+  let probedAfter = '';
   await timed('ops', async () => {
     for (const check of checks) {
       let result: unknown;
@@ -379,6 +377,16 @@ async function main(): Promise<FullReport> {
       }
       const detail = error ?? check.verify(result) ?? undefined;
       ops.push({ op: check.op, p50_ms: round1(median(runs)), runs_ms: runs.map(r => Math.round(r)), known_answer: detail ? 'fail' : 'pass', ...(detail ? { detail } : {}), ...(plan ? { plan } : {}) });
+      // Planner health is read after the first timed op, not right after import: F4b analyzes on the first planner-sensitive read by design.
+      if (!probedAfter) {
+        probedAfter = check.op;
+        for (const table of HOT_TABLES) {
+          const [row] = await engine.executeRaw<{ stats: number; n: number }>(
+            `SELECT (SELECT count(*) FROM pg_stats WHERE tablename = $1)::int AS stats, (SELECT count(*) FROM ${table})::int AS n`, [table]);
+          statRows[table] = Number(row?.stats ?? 0);
+          tableRows[table] = Number(row?.n ?? 0);
+        }
+      }
     }
   });
 
@@ -459,14 +467,15 @@ async function main(): Promise<FullReport> {
     harness: 'gbrain-scale', mode: enforce ? 'enforce' : 'report-only', engine: engineKind, seed, pages: fixture.pages.length,
     import_mode: importMode, sources: SCALE_SOURCES,
     runtime: { bun: Bun.version, platform: process.platform, arch: process.arch, cpus: navigator.hardwareConcurrency },
-    policy: { planner_health: policy.enforcePlanner ? 'enforced' : 'report-only (F4b pending)', ceilings: policy.enforceCeilings ? 'enforced' : 'report-only' },
+    policy: { planner_health: policy.enforcePlanner ? 'enforced' : 'report-only (PLANNER_HEALTH_ENFORCED=false)', ceilings: policy.enforceCeilings ? 'enforced' : 'report-only' },
     import: {
       files_ms: Math.round(filesMs), per_page_ms_first10: round1(avg(perPage.slice(0, tenth))), per_page_ms_last10: round1(avg(perPage.slice(-tenth))),
       rate_ratio: Math.round((avg(perPage.slice(-tenth)) / avg(perPage.slice(0, tenth))) * 100) / 100,
       ms_at_half: Math.round(half), total_vs_half: Math.round((filesMs / half) * 100) / 100,
     },
     extract,
-    planner: { hot_table_stat_rows: statRows, tables_without_stats: HOT_TABLES.filter(t => statRows[t] === 0) },
+    planner: { hot_table_stat_rows: statRows, hot_table_rows: tableRows, probed_after: probedAfter,
+      tables_without_stats: HOT_TABLES.filter(t => tableRows[t]! > PLANNER_STATS_MIN_ROWS && statRows[t] === 0) },
     ops, data, cold_query: cold, vector_dim: dim, phases_ms: phases,
     ...(budgets[budgetKey] ? { budgets_ms: budgets[budgetKey] } : {}),
   };
@@ -491,7 +500,7 @@ try {
   console.log(`[scale] HEADLINE ${report.headline.metric}: ${report.headline.p50_ms} ms`);
   const imp = report.import;
   console.log(`[scale] import (${report.import_mode}) files ${imp.files_ms} ms; per-page first10 ${imp.per_page_ms_first10} ms, last10 ${imp.per_page_ms_last10} ms, ratio ${imp.rate_ratio} (gate <= 1.5); total/half ${imp.total_vs_half} (gate <= 2.5)`);
-  console.log(`[scale] planner: tables without stats: ${report.planner.tables_without_stats.join(', ') || 'none'}`);
+  console.log(`[scale] planner (after ${report.planner.probed_after}): tables above ${PLANNER_STATS_MIN_ROWS} rows without stats: ${report.planner.tables_without_stats.join(', ') || 'none'}`);
   for (const r of report.ops) {
     console.log(`[scale] ${r.known_answer === 'pass' ? 'PASS' : 'FAIL'} ${r.op}: p50 ${r.p50_ms} ms${r.plan?.worst_loops ? `, worst nested-loop inner loops ${r.plan.worst_loops.inner_loops}` : ''}${r.detail ? ` (${r.detail})` : ''}`);
   }

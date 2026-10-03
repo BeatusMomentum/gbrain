@@ -300,9 +300,12 @@ Exit codes: 0 when every enforced gate passes, or always without `--enforce`;
 its EXPLAIN; the JSON report and a `.explain.txt` land next to `--out`);
 2 on a usage error; 3 when the harness itself crashed (not a verdict).
 Enforced under `--enforce`: import rate, known answers, no-op re-import,
-no duplicates across sources, the import phase timer. The stats-dependent
-gates, planner health and the budgets phase timer, are report-only until F4b
-lands (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`).
+no duplicates across sources, the import phase timer, and the stats-dependent
+gates (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`): the Nested Loop
+inner-loop gate on the key plans, the budgets phase timer, and planner stats.
+Planner stats are probed after the first timed op, because F4b analyzes on the
+first planner-sensitive read, and only hot tables above 500 rows must have
+`pg_stats` rows.
 Interactive ceilings and calibrated budgets (`scripts/scale/budgets.json`,
 written by `--calibrate`) stay report-only until
 `bun scripts/scale/trend.ts` prints "ceilings stable" over the last five

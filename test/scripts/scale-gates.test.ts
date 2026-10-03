@@ -7,7 +7,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import {
-  CEILINGS_MS, evaluateScaleGates, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, resultHits, verdictLines,
+  CEILINGS_MS, evaluateScaleGates, RATE_MIN_PAGES, HEADLINE_OP, HOT_TABLES, KEY_PLAN_OPS, phaseLimitsMs, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, resultHits, verdictLines,
   type GatePolicy, type ScaleReport,
 } from '../../scripts/scale/gates.ts';
 
@@ -20,7 +20,7 @@ function passingReport(): ScaleReport {
   return {
     engine: 'pglite', pages: 10_000, seed: 1, import_mode: 'cli',
     import: { rate_ratio: 1.1, total_vs_half: 2.1, per_page_ms_first10: 10, per_page_ms_last10: 11 },
-    planner: { hot_table_stat_rows: Object.fromEntries(HOT_TABLES.map(t => [t, 3])) },
+    planner: { hot_table_stat_rows: Object.fromEntries(HOT_TABLES.map(t => [t, 3])), hot_table_rows: Object.fromEntries(HOT_TABLES.map(t => [t, 10_000])), probed_after: 'get_health' },
     ops,
     data: [{ check: 'noop_reimport_writes_nothing', status: 'pass' }],
     phases_ms: { import: 60_000, budgets: 30_000 },
@@ -131,9 +131,22 @@ describe('scale gates under --enforce', () => {
     const on = evaluateScaleGates(report, { ...ENFORCE, enforcePlanner: true });
     expect(on.exitCode).toBe(1);
     expect(on.failures.map(f => f.gate)).toEqual(['planner_stats', 'planner_loops:get_health']);
-    expect(on.failures[0]!.message).toContain('no pg_stats rows after import for links');
+    expect(on.failures[0]!.message).toContain('no pg_stats rows after get_health for links (10000 rows)');
     expect(on.failures[1]!.explain).toContain('Seq Scan on links (loops=100001)');
     expect(KEY_PLAN_OPS).toContain('get_health');
+  });
+
+  test('planner health is enforced since F4b and checks only hot tables above the row threshold', () => {
+    expect(PLANNER_HEALTH_ENFORCED).toBe(true);
+    const small = passingReport();
+    small.planner.hot_table_stat_rows.takes = 0;
+    small.planner.hot_table_rows.takes = PLANNER_STATS_MIN_ROWS;
+    expect(evaluateScaleGates(small, ENFORCE)).toMatchObject({ exitCode: 0, failures: [] });
+    small.planner.hot_table_rows.takes = PLANNER_STATS_MIN_ROWS + 1;
+    const verdict = evaluateScaleGates(small, ENFORCE);
+    expect(verdict.failures.map(f => f.gate)).toEqual(['planner_stats']);
+    expect(verdict.failures[0]!.message).toContain(`no pg_stats rows after get_health for takes (${PLANNER_STATS_MIN_ROWS + 1} rows)`);
+    expect(verdict.failures[0]!.message).toContain('gbrain repair planner-stats --apply');
   });
 
   test('without --enforce every run exits 0 and says how many gates would fail', () => {

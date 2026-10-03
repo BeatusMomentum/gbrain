@@ -15,16 +15,18 @@
  * variable GBRAIN_SCALE_ENFORCE_CEILINGS=1.
  */
 
+import { PLANNER_STATS_MIN_PENDING } from '../../src/core/planner-stats.ts';
+
 /**
  * The one switch for the stats-dependent gates: planner health (hot-table
- * statistics after import, Nested Loop inner loops in the key plans) and the
- * budgets phase timer, whose time un-analyzed plans dominate (12 s get_health,
- * 40 s source-scoped search at 10k PGLite pages). Report-only until F4b
- * (planner-stats ANALYZE during import, after GBRA-39's ad7252a) lands:
- * before it, PGLite has no statistics after an import and this gate would
- * fail every run. Flip to true in the commit that merges F4b.
+ * statistics after the first read, Nested Loop inner loops in the key plans)
+ * and the budgets phase timer, whose time un-analyzed plans dominate. On since
+ * F4b (row-delta ANALYZE during import and on the first planner-sensitive
+ * read): at 10k PGLite pages its key plans run 42-52 inner loops against a
+ * 100k gate and the budgets phase 25 s against 300 s. Set false to make them
+ * report-only again.
  */
-export const PLANNER_HEALTH_ENFORCED = false;
+export const PLANNER_HEALTH_ENFORCED = true;
 
 export const RATE_RATIO_MAX = 1.5;
 /** Below this size per-process warmup dominates the per-page cost, so the rate gate is reported but not enforced. */
@@ -32,6 +34,12 @@ export const RATE_MIN_PAGES = 1000;
 export const TOTAL_VS_HALF_MAX = 2.5;
 export const LOOPS_PER_PAGE_MAX = 10;
 export const HOT_TABLES = ['pages', 'links', 'content_chunks', 'timeline_entries', 'facts', 'takes'] as const;
+/**
+ * The planner-stats gate checks only hot tables holding more than this many rows: F4b analyzes a
+ * table once its pending row count passes max(500, 10% of its rows), so a smaller table may
+ * correctly have no statistics yet.
+ */
+export const PLANNER_STATS_MIN_ROWS = PLANNER_STATS_MIN_PENDING;
 /** The plans the planner-health gate inspects (every captured read statement of these ops). */
 export const KEY_PLAN_OPS = ['get_backlinks', 'search (MCP path, remote)', 'get_health', 'find_orphans'] as const;
 export const HEADLINE_OP = 'search (MCP path, remote)';
@@ -68,7 +76,11 @@ export interface ScaleReport {
   seed: number;
   import_mode: 'cli' | 'content';
   import: { rate_ratio: number; total_vs_half: number; per_page_ms_first10: number; per_page_ms_last10: number };
-  planner: { hot_table_stat_rows: Record<string, number> };
+  /**
+   * Read after the first timed op (`probed_after`), not right after import: F4b analyzes on the
+   * first planner-sensitive read by design. `hot_table_rows` is each table's row count.
+   */
+  planner: { hot_table_stat_rows: Record<string, number>; hot_table_rows: Record<string, number>; probed_after: string };
   ops: OpResult[];
   data: DataCheck[];
   phases_ms: Record<string, number>;
@@ -107,11 +119,13 @@ export function evaluateScaleGates(report: ScaleReport, policy: GatePolicy): Gat
     + `total import time is ${total_vs_half}x the time at the halfway mark (gate <= ${TOTAL_VS_HALF_MAX}). `
     + `A rising per-page cost means import slows as the brain grows, usually stale planner statistics during import. Reproduce: ${repro}`);
 
-  const missing = HOT_TABLES.filter(t => !(report.planner.hot_table_stat_rows[t]! > 0));
+  const { hot_table_stat_rows: statRows, hot_table_rows: tableRows, probed_after: probedAfter } = report.planner;
+  const missing = HOT_TABLES.filter(t => tableRows[t]! > PLANNER_STATS_MIN_ROWS && !(statRows[t]! > 0));
   add('planner_stats', missing.length === 0, policy.enforcePlanner,
-    missing.length === 0 ? 'planner stats: every hot table has pg_stats rows after import'
-      : `planner stats: no pg_stats rows after import for ${missing.join(', ')}; the planner is guessing row counts on these tables. `
-        + `Shipped import must leave statistics behind (F4b). Reproduce: ${repro}`);
+    missing.length === 0 ? `planner stats: every hot table above ${PLANNER_STATS_MIN_ROWS} rows has pg_stats rows after ${probedAfter}`
+      : `planner stats: no pg_stats rows after ${probedAfter} for ${missing.map(t => `${t} (${tableRows[t]} rows)`).join(', ')}; `
+        + 'the planner is guessing row counts on these tables. Import and the first planner-sensitive read must leave statistics behind (F4b); '
+        + `check \`gbrain doctor\` planner_stats_stale and run \`gbrain repair planner-stats --apply\` to confirm. Reproduce: ${repro}`);
 
   const loopsLimit = LOOPS_PER_PAGE_MAX * report.pages;
   for (const name of KEY_PLAN_OPS) {
@@ -174,7 +188,7 @@ export function verdictLines(report: ScaleReport, verdict: GateVerdict, policy: 
   } else if (verdict.failures.length > 0) {
     lines.push(`[scale] ${verdict.failures.length} enforced gate(s) failed; exit 1. Fix the named op or phase, then rerun: ${reproduceCommand(report)}`);
   } else {
-    lines.push(`[scale] all enforced gates passed (planner health and the budgets phase timer ${policy.enforcePlanner ? 'enforced' : 'report-only until F4b'}, `
+    lines.push(`[scale] all enforced gates passed (planner health and the budgets phase timer ${policy.enforcePlanner ? 'enforced' : 'report-only (PLANNER_HEALTH_ENFORCED=false)'}, `
       + `ceilings ${policy.enforceCeilings ? 'enforced' : 'report-only until GBRAIN_SCALE_ENFORCE_CEILINGS=1'}).`);
   }
   return lines;
