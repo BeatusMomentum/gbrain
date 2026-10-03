@@ -1,5 +1,4 @@
 # shrink-only baseline for scripts/check-agent-contract.ts rule interactive-io: path<TAB>count
-src/commands/book-mirror.ts	1
 src/commands/capture.ts	1
 src/commands/connectors/auth.ts	1
 src/commands/hook.ts	3
