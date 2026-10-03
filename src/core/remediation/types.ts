@@ -11,6 +11,7 @@
 import type { RemediationStep } from '../remediation-step.ts';
 import type { RepairPlanStep, RepairStepResult } from './repairs.ts';
 import type { ExplicitRepairNotice } from '../repair/registry.ts';
+import type { CapSource } from '../consent.ts';
 
 /**
  * Options for computeRemediationPlan. All fields are optional with
@@ -69,6 +70,8 @@ export interface RemediationOpts {
   maxJobs?: number;
   /** USD cap for total plan cost. Pre-flight refuse + mid-run BudgetExhausted gate. */
   maxUsd?: number;
+  /** A4: where `maxUsd` came from (default `user`); a `derived` cap warns-and-runs an unpriced model and logs its exhaustion. */
+  capSource?: CapSource;
   /** Read-only dry-run; submits no jobs; returns plan in result. */
   dryRun?: boolean;
   /** Resume from checkpoint matching this plan_hash, OR newest if undefined+resume=true. */

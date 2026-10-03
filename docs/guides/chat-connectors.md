@@ -159,12 +159,14 @@ the export-file lane (`conversation-archive`) — it always works.
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` |
-| `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` |
-| `partial` | some fetches failed | Watermark not advanced; just re-run |
-| receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works |
+<a id="chat-connectors-troubleshooting"></a>
+
+| Symptom | Cause | Fix | Who acts | Consent | Verify |
+|---|---|---|---|---|---|
+| `forbidden` | Cloudflare/bot challenge on server-side fetch | Use the official export + `gbrain transcripts ingest` | user (downloads the export); agent ingests it | none | `gbrain connectors status --json` |
+| `auth_required` | cookie expired/invalid | Re-copy a fresh Cookie header, `gbrain connectors auth` | user (copies a fresh Cookie header) | `credentials` | `gbrain connectors status --json` |
+| `partial` | some fetches failed | Watermark not advanced; just re-run | agent | `egress` (fetches from the provider again) | `gbrain connectors status --json` |
+| receipt shows drift | provider API shape changed | Affected threads skipped (not lost); export lane still works | agent (reports it) | none | `gbrain connectors status --json` |
 
 ## v2 roadmap
 

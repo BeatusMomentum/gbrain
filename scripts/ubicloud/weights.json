@@ -1992,7 +1992,6 @@
   "unit:test/reindex-code-empty-file.test.ts": 1733,
   "unit:test/reindex-code-recovery.test.ts": 1253,
   "unit:test/reindex-code.test.ts": 2342,
-  "unit:test/reindex-cost-refusal.test.ts": 284,
   "unit:test/reindex-frontmatter-connect.test.ts": 1357,
   "unit:test/reindex-preserve-tags.test.ts": 3154,
   "unit:test/reindex.test.ts": 7577,

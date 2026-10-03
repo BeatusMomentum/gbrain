@@ -10,7 +10,7 @@ src/commands/extract-timeline-db.ts	2
 src/commands/google-attachments.ts	11
 src/commands/persistence-admin.ts	11
 src/commands/recall.ts	3
-src/commands/reindex-code-delegate.ts	6
+src/commands/reindex-code-delegate.ts	5
 src/commands/repair.ts	6
 src/commands/source-reconcile.ts	29
 src/commands/sources-lifecycle-args.ts	1
@@ -116,7 +116,7 @@ src/core/persistence/reconcile-merge.ts	13
 src/core/persistence/reconcile-prepare.ts	7
 src/core/persistence/reconcile-state.ts	11
 src/core/persistence/reconcile.ts	11
-src/core/persistence/reindex-administration.ts	5
+src/core/persistence/reindex-administration.ts	4
 src/core/persistence/root-registry.ts	2
 src/core/persistence/semantic-pages.ts	4
 src/core/persistence/service.ts	5

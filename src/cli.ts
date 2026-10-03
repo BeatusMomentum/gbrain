@@ -2581,6 +2581,11 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         return null;
       }
     })();
+    // C10: a supervisor asked for fail-fast — exit non-zero with the classified envelope on stderr.
+    if (command === 'serve') {
+      const failFast = await import('./core/serve-fail-fast.ts');
+      if (failFast.serveFailFastRequested(args)) process.exit(failFast.writeServeFailFastEnvelope(serveConnectError));
+    }
     if (command === 'serve' &&
       process.env.GBRAIN_SERVE_DEGRADED !== '0' &&
       process.env.GBRAIN_SERVE_DEGRADED !== 'false' &&
