@@ -376,6 +376,15 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "refreshes": []
+          },
+          "message": "No worktree refresh is stuck.",
+          "name": "worktree_refresh_stuck",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "message": "links_link_source_check has the v114 kebab-case gate",
           "name": "links_link_source_check",
@@ -383,19 +392,19 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 100/100 public tables",
+          "message": "RLS enabled on 101/101 public tables",
           "name": "rls",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "Version 192 (latest: 192)",
+          "message": "Version 193 (latest: 193)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "819 column(s) verified against live schema",
+          "message": "834 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
