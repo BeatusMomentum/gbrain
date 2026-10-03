@@ -1,0 +1,17 @@
+/**
+ * F3 (O-CEO-8, O-ENG-7): legacy bearer tokens get the OAuth client grant
+ * columns. `source_grant` names the source state explicitly; NULL means the
+ * row still uses the `permissions` JSONB shape and is read through the lane F
+ * parsers until its next write (`auth rescope`, `auth create`, rotation, or
+ * `auth rescope --migrate-legacy`). No foreign key on `source_id`: the client
+ * FK is ON DELETE RESTRICT, and tokens must not start blocking source removal.
+ */
+export const ACCESS_TOKEN_GRANT_SCHEMA_SQL = `
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS source_grant TEXT
+  CHECK (source_grant IN ('default', 'scalar', 'federated', 'none'));
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS source_id TEXT;
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS federated_read TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS allowed_operations TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS takes_holders TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS grant_revision INTEGER NOT NULL DEFAULT 0;
+`;

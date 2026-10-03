@@ -284,6 +284,14 @@ CREATE TABLE IF NOT EXISTS access_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) WHERE revoked_at IS NULL;
 
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS source_grant TEXT
+  CHECK (source_grant IN ('default', 'scalar', 'federated', 'none'));
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS source_id TEXT;
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS federated_read TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS allowed_operations TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS takes_holders TEXT[];
+ALTER TABLE access_tokens ADD COLUMN IF NOT EXISTS grant_revision INTEGER NOT NULL DEFAULT 0;
+
 CREATE TABLE IF NOT EXISTS mcp_request_log (
   id            SERIAL PRIMARY KEY,
   token_name    TEXT,
