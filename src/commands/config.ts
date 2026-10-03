@@ -11,6 +11,7 @@ import {
 } from '../core/search/embedding-column.ts';
 
 import { redactPgUrl } from '../core/url-redact.ts';
+import { isConsentConfigKey, setConsentPreapproval, unsetConsentPreapproval } from '../core/consent-preapproval.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
 import {
   SELF_UPGRADE_CONFIG_LEAVES,
@@ -72,7 +73,7 @@ const SELF_UPGRADE_KEY_PREFIX = 'self_upgrade.';
 
 /** The single membership test the get/set/unset lanes share. */
 function isFilePlaneDottedKey(key: string): boolean {
-  return FILE_PLANE_DOTTED_KEYS.has(key) || key.startsWith(SELF_UPGRADE_KEY_PREFIX);
+  return FILE_PLANE_DOTTED_KEYS.has(key) || key.startsWith(SELF_UPGRADE_KEY_PREFIX) || isConsentConfigKey(key);
 }
 
 /** Delete the DB-plane row of a file-plane key: a `config set` from before
@@ -99,6 +100,7 @@ function warnSelfUpgradeModeEnvOverride(): void {
  * file held it. Splits at the FIRST dot, so `self_upgrade.quiet_hours.start`
  * never deletes `quiet_hours`. */
 async function unsetFilePlaneKey(key: string): Promise<boolean> {
+  if (isConsentConfigKey(key)) return unsetConsentPreapproval(key);
   const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
   const cfg = loadConfigFileOnly();
   const dot = key.indexOf('.');
@@ -346,7 +348,7 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
           // egresses), and advertising the non-interactive bypass here
           // hands a prompt-injected agent the exact string that flips the
           // gate. Operators find --yes in the docs.
-          console.error('[AGENT] Relay this to your operator: run `gbrain config set integrations.memorable.enabled true` in a terminal and answer the prompt.');
+          console.error('[AGENT] Relay this to your operator: run `gbrain config set integrations.memorable.enabled true` in a terminal and answer the prompt. If the user has no terminal on this machine, this can\'t be enabled from this session.');
           process.exit(1);
         }
         const { promptYesNo } = await import('../core/confirm-prompt.ts');
@@ -367,6 +369,15 @@ async function setFilePlaneKey(key: string, value: string, tail: string[]): Prom
         'which sends redacted tool calls off-machine to its extraction API. ' +
         'Turn off: gbrain config set integrations.memorable.enabled false (or GBRAIN_MEMORABLE=0)',
     );
+  } else if (isConsentConfigKey(key)) {
+    // A4 user preapprovals: host file plane only, written by this trusted local CLI.
+    try {
+      console.log(setConsentPreapproval(key, value, { remote: false }));
+    } catch (e) {
+      const { message, suggestion } = e as { message: string; suggestion?: string };
+      console.error(`[config] ${message}${suggestion ? ` ${suggestion}` : ''}`);
+      process.exit(1);
+    }
   } else if (key === 'push.allow_unverified_remote') {
     const on = isConfigTruthy(value);
     cfg.push = { ...(cfg.push ?? {}), allow_unverified_remote: on };

@@ -178,6 +178,7 @@
   "test/models-per-task-extract-atoms.serial.test.ts": 1,
   "test/models-probe-max-output-tokens.serial.test.ts": 17,
   "test/native-base-url-fold.serial.test.ts": 1,
+  "test/observational-startup.serial.test.ts": 5,
   "test/openai-latest.serial.test.ts": 0,
   "test/ops-run-onboard-scope-gate.serial.test.ts": 0,
   "test/page-summary-length.serial.test.ts": 0,

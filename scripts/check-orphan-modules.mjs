@@ -80,7 +80,6 @@ const PERMITTED_TEST_ONLY = [
   { path: 'src/core/ingestion/sources/file-watcher.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision' },
   { path: 'src/core/ingestion/sources/gstack-learnings.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision' },
   { path: 'src/core/ingestion/sources/inbox-folder.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision (docs/guides/data-ingestion.md promises the inbox folder)' },
-  { path: 'src/core/consent.ts', reason: 'held: agent operator wave A0 freeze; runtime consumers (C1/C2 command handlers) land on the collector' },
   { path: 'src/core/ops/callable.ts', reason: 'held: agent operator wave A0 freeze; tools/list + dispatch wiring lands in A2 on the collector' },
   { path: 'src/core/readiness.ts', reason: 'held: agent operator wave A0 freeze; runtime consumers (E/F readiness producers) land on the collector' },
   { path: 'src/core/ingestion/sources/markdown-greenfield.ts', reason: 'held: ingestion cluster awaits a wire-up vs delete product decision (docs/migrations/v0.41.2-markdown-greenfield.md)' },
