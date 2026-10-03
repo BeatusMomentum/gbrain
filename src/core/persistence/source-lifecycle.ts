@@ -130,7 +130,6 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         throw missingCheckoutError(input.sourceId,path);
       }
       const manifest=worktreeManifest(path,{progress:humanManifestProgress()});
-      if(Buffer.byteLength(JSON.stringify(manifest))>1_048_576) throw new OperationError('request_too_large','The verified source manifest exceeds the 1 MiB administration metadata bound.');
       manifests.set(path,manifest);
     }
     return topologyTransaction(engine,async tx=>{

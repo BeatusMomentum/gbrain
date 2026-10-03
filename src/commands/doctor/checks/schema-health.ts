@@ -8,6 +8,7 @@
  */
 
 import * as db from '../../../core/db.ts';
+import { loadConfig } from '../../../core/config.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
 import { schemaVersionHealth } from '../../../core/schema-version-health.ts';
 import { pgvectorCheck, pagesUpsertArbiterCheck, linkSourceCheckConstraintCheck } from './core-health.ts';
@@ -328,6 +329,12 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
   // 8. Embedding health
   progress.heartbeat('embeddings');
   try {
+    // A keyless brain has no embedding backlog to drain: recommending a paid
+    // catch-up there would send the agent into a refusal.
+    if (loadConfig()?.embedding_disabled === true || await engine.getConfig('embedding_disabled') === 'true') {
+      checks.push({ name: 'embeddings', status: 'ok', message: 'Not applicable: embeddings are disabled on this brain (keyword search keeps working).' });
+      return checks;
+    }
     const health = await engine.getHealth();
     const pct = (health.embed_coverage * 100).toFixed(0);
     // Coverage + missing now share one source (the stored vector over
@@ -344,12 +351,23 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
     } catch {
       // Config read is best-effort; the coverage numbers stand alone.
     }
+    // The backlog's fix is the catch-up drain: a plain `embed --stale` stops
+    // at its 30-minute budget, which on a large brain leaves most of the
+    // backlog behind (52k documents: 51,910 chunks after one run).
+    const backlog = health.missing_embeddings;
+    const fix = 'gbrain embed --stale --catch-up';
+    const backlogDetails = { code: 'embedding_backlog', backlog, fix, requires_user_approval: 'paid embedding calls',
+      docs: 'docs/operations/backfill-pacing.md#large-brain-deadlines' };
+    const fixText = `Fix: ${fix} (runs until the backlog is empty; a plain gbrain embed --stale stops after its 30-minute budget). ` +
+      'It makes paid embedding calls: confirm with the user unless embedding spend is already approved.';
     if (health.embed_coverage >= 0.9) {
-      checks.push({ name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${health.missing_embeddings} missing${carveOut}` });
+      checks.push(backlog > 0
+        ? { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails }
+        : { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}` });
     } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${health.missing_embeddings} missing. Run: gbrain embed --stale${carveOut}` });
+      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet. Run: gbrain embed --stale${carveOut}` });
+      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails });
     }
   } catch {
     checks.push({ name: 'embeddings', status: 'warn', message: 'Could not check embedding health' });

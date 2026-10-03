@@ -4255,8 +4255,11 @@ or raise the pooler's limit. Do not lower a long-running process below 6.
 [serve boot timeout](#serve-boot-timeout) print this guidance.
 
 <a id="serve-boot-timeout"></a>**`serve_boot_timeout`** (stderr, exit 1).
-`gbrain serve` did not finish booting within `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
-(default 60; 0 disables), so it released the database and exited. The line
+`gbrain serve` made no boot progress for `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS`
+(default 60; 0 disables), so it released the database and exited. The window
+restarts at every boot phase, progress note and answered request, so a large
+brain whose boot is slow but advancing is never stopped; the line also says how long the
+boot had been running. The line
 names the boot phase that never finished (`source_preflight`,
 `writeback_config`, `mcp_connect`, `source_scope`, `persistence_consumer`,
 `resolve_ipc_bind`, `startup_sweep`) and the pool pressure

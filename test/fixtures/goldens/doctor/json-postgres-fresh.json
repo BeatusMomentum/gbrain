@@ -416,7 +416,7 @@
         },
         {
           "category": "brain",
-          "message": "100% coverage, 0 missing",
+          "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
           "name": "embeddings",
           "status": "ok"
         },

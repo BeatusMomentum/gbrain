@@ -13,3 +13,10 @@ export const MIGRATIONS_RUNNING_EXIT_CODE = 75;
  * `--accept-pending` (or GBRAIN_ACCEPT_PENDING=1) to map pending to 0.
  */
 export const PENDING_WRITE_EXIT_CODE = 10;
+
+/**
+ * A bounded run stopped at its time budget with work left (`gbrain embed
+ * --stale`). Partial and resumable: stdout names the remaining count and the
+ * exact resume command. Distinct from 1, which means something failed.
+ */
+export const BUDGET_STOP_EXIT_CODE = 3;
