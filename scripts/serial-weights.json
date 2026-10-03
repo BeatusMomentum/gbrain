@@ -45,7 +45,7 @@
   "test/checkpoint-harvest.serial.test.ts": 9,
   "test/cli-error-render.serial.test.ts": 3,
   "test/cli-help-without-brain.serial.test.ts": 16,
-  "test/cli-json-guard.serial.test.ts": 4,
+  "test/cli-json-guard.serial.test.ts": 6,
   "test/cli-util-prompt.serial.test.ts": 3,
   "test/code-callers-pin.serial.test.ts": 11,
   "test/code-def-refs-pin.serial.test.ts": 12,

@@ -16,8 +16,19 @@ import { isNewContentDatabase, setupSharedBrainContent, type SharedContentOption
 import { resolveSourceId } from '../core/source-resolver.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
+import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
+import { buildInitFirstRunNotices } from './init-first-run.ts';
+import { renderNotice, cliRenderContext } from '../core/agent-output.ts';
+import { exitCodeForCode } from '../core/error-catalogue.ts';
+import type { SearchMode as SearchModeName } from '../core/search/mode.ts';
 
+/** D2: `--json` writes exactly one document, after whichever branch ran (see init-json.ts). */
 export async function runInit(args: string[]) {
+  await runInitBranches(args);
+  if (args.includes('--json')) await flushInitJsonResult();
+}
+
+async function runInitBranches(args: string[]) {
   // Help guard: cli.ts only routes --help to printOpHelp() for shared-op
   // commands; CLI_ONLY commands (init, embed, etc.) fall through to their
   // handler with --help in argv. Without this guard, `gbrain init --help`
@@ -41,7 +52,8 @@ export async function runInit(args: string[]) {
   const isNonInteractive = args.includes('--non-interactive');
   const isMigrateOnly = args.includes('--migrate-only');
   const jsonOutput = args.includes('--json');
-  const fileState = readInitConfigState(jsonOutput);
+  const fileState = readInitConfigState(jsonOutput, jsonOutput ? message => process.exit(initJsonError({ status: 'error', reason: 'invalid_existing_config', message },
+    'config_error', message, `Repair or move ${configPath()} aside, then re-run gbrain init.`)) : undefined);
   const urlIndex = args.indexOf('--url');
   const manualUrl = urlIndex !== -1 ? args[urlIndex + 1] : null;
   const keyIndex = args.indexOf('--key');
@@ -81,11 +93,9 @@ export async function runInit(args: string[]) {
     const msg = `Thin-client config already present at ${configPath()} (remote_mcp.mcp_url=${url}).\n` +
       `Re-init would create a local engine and conflict with the remote MCP setup.\n` +
       `Use --force to overwrite, or \`gbrain init --mcp-only --force\` to refresh thin-client config.`;
-    if (jsonOutput) {
-      console.log(JSON.stringify({ status: 'error', reason: 'thin_client_config_present', mcp_url: url, message: msg }));
-    } else {
-      console.error(msg);
-    }
+    if (jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'thin_client_config_present', mcp_url: url, message: msg }, 'config_error', msg,
+      'Pass --force to overwrite, or run `gbrain init --mcp-only --force` to refresh the thin-client config.'));
+    console.error(msg);
     process.exit(1);
   }
 
@@ -270,13 +280,10 @@ function validateInitFlags(args: string[]) {
 }
 
 function failInitFlag(message: string, jsonOutput: boolean): never {
-  if (jsonOutput) {
-    console.log(JSON.stringify({ status: 'error', reason: 'invalid_flag', message }));
-  } else {
-    console.error(message);
-    console.error('Run `gbrain init --help` for supported flags.');
-  }
-  process.exit(1);
+  if (jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'invalid_flag', message }, 'invalid_params', message, 'Run `gbrain init --help` for supported flags.'));
+  console.error(message);
+  console.error('Run `gbrain init --help` for supported flags.');
+  process.exit(exitCodeForCode('invalid_params'));
 }
 
 interface ResolveAIOptionsArgs {
@@ -837,7 +844,7 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
   try {
     const result = await runMigrateOnlyCore();
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: result.engine, mode: 'migrate-only' }));
+      setInitJsonResult({ status: 'success', engine: result.engine, mode: 'migrate-only' });
     } else {
       console.log(`Schema up to date (engine: ${result.engine}).`);
     }
@@ -846,11 +853,9 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
     if (e instanceof PgliteBusyError) throw e;
     const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
     const msg = e instanceof Error ? e.message : String(e);
-    if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg }));
-    } else {
-      console.error(msg);
-    }
+    if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg },
+      isNoConfig ? 'no_brain' : 'database_error', msg, isNoConfig ? 'Run `gbrain init --pglite --no-embedding` first.' : 'Run `gbrain doctor --json` to see what blocks the schema bring-up.'));
+    console.error(msg);
     process.exit(1);
   }
 }
@@ -886,12 +891,12 @@ async function initRemoteMcp(opts: {
   const clientSecret = (arg('--oauth-client-secret') ?? process.env.GBRAIN_REMOTE_CLIENT_SECRET ?? '').trim();
 
   function fail(reason: string, message: string, extra: Record<string, unknown> = {}): never {
-    if (jsonOutput) {
-      console.log(JSON.stringify({ status: 'error', reason, message, ...extra }));
-    } else {
-      console.error(message);
-    }
-    process.exit(1);
+    const code = reason.startsWith('missing_') ? 'invalid_params' : reason.startsWith('token_') ? 'invalid_token'
+      : reason.startsWith('discovery_') || reason.startsWith('mcp_smoke_') ? 'unavailable' : 'config_error';
+    if (jsonOutput) process.exit(initJsonError({ status: 'error', reason, message, ...extra }, code, message.split('\n')[0],
+      message.split('\n').slice(1).join(' ') || 'Run `gbrain init --help` for the thin-client flags.'));
+    console.error(message);
+    process.exit(code === 'invalid_params' ? exitCodeForCode(code) : 1);
   }
 
   if (!issuerUrl) fail('missing_issuer_url', '--issuer-url is required (or set GBRAIN_REMOTE_ISSUER_URL). Example: --issuer-url https://brain-host.local:3001');
@@ -977,14 +982,14 @@ async function initRemoteMcp(opts: {
   saveConfig(config);
 
   if (jsonOutput) {
-    console.log(JSON.stringify({
+    setInitJsonResult({
       status: 'success',
       mode: 'thin-client',
       issuer_url: config.remote_mcp!.issuer_url,
       mcp_url: config.remote_mcp!.mcp_url,
       oauth_client_id: config.remote_mcp!.oauth_client_id,
       oauth_secret_in_config: 'oauth_client_secret' in config.remote_mcp!,
-    }));
+    });
   } else {
     console.log('');
     console.log('Thin-client mode configured. No local DB.');
@@ -1093,9 +1098,7 @@ export async function initPGLite(opts: {
     });
     if (!pre.ok) {
       console.error(`\nRefusing to init: ${pre.error}\n`);
-      if (opts.jsonOutput) {
-        console.log(JSON.stringify({ status: 'error', reason: 'preflight_failed', error: pre.error }));
-      }
+      if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'preflight_failed', error: pre.error }, 'config_error', pre.error, INIT_EMBEDDING_HINT));
       process.exit(1);
     }
     resolvedDim = pre.dim;
@@ -1161,14 +1164,8 @@ export async function initPGLite(opts: {
           engineKind: 'pglite',
           databasePath: dbPath,
         }) + '\n');
-        if (opts.jsonOutput) {
-          console.log(JSON.stringify({
-            status: 'error',
-            reason: 'embedding_dim_mismatch',
-            current_dims: existing.dims,
-            requested_dims: resolvedDim,
-          }));
-        }
+        if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: 'embedding_dim_mismatch', current_dims: existing.dims, requested_dims: resolvedDim },
+          'embedding_width_mismatch', `The brain's vectors are ${existing.dims}d; the requested model produces ${resolvedDim}d.`, INIT_EMBEDDING_HINT));
         process.exit(1);
       }
     }
@@ -1262,12 +1259,13 @@ export async function initPGLite(opts: {
     // DB config writes are valid. Idempotent: skipped on re-init if already set.
     // Non-TTY auto-selects; --json emits a structured event.
     const { runModePicker } = await import('./init-mode-picker.ts');
-    await runModePicker(engine, { jsonOutput: opts.jsonOutput });
+    let searchMode: { mode: SearchModeName; reason: string } | undefined;
+    await runModePicker(engine, { jsonOutput: opts.jsonOutput, onDecision: d => { searchMode = d; } });
 
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt }));
+      setInitJsonResult({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunNotices(searchMode) });
     } else if (process.env.GBRAIN_IN_AGENT_SETUP === '1') {
       printInAgentReady(dbPath);
     } else {
@@ -1305,6 +1303,14 @@ export async function initPGLite(opts: {
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
   }
+}
+
+const INIT_EMBEDDING_HINT = 'Pick an embedding model whose dimensions match (`gbrain init --help`), or pass --no-embedding for a keyless brain.';
+
+/** D2/G5: the first-run decision bundle rendered into init's --json document (`notices`, empty → omitted). */
+function firstRunNotices(searchMode: { mode: SearchModeName; reason: string } | undefined): { notices?: unknown[]; contract_version: 1 } {
+  const notices = buildInitFirstRunNotices({ searchMode, config: loadConfig() }).map(n => renderNotice(n, cliRenderContext()));
+  return { ...(notices.length ? { notices } : {}), contract_version: 1 };
 }
 
 /**
@@ -1357,7 +1363,7 @@ async function initPostgres(opts: Parameters<typeof initPostgresCore>[0]) {
   try {
     await initPostgresCore(opts);
   } catch (e) {
-    if (e instanceof InitPostgresFailure) process.exit(1);
+    if (e instanceof InitPostgresFailure) process.exit((opts.jsonOutput ? writeDeferredInitJsonError() : null) ?? 1);
     throw e;
   }
 }
@@ -1395,9 +1401,7 @@ export async function initPostgresCore(opts: {
     });
     if (!pre.ok) {
       console.error(`\nRefusing to init: ${pre.error}\n`);
-      if (opts.jsonOutput) {
-        console.log(JSON.stringify({ status: 'error', reason: 'preflight_failed', error: pre.error }));
-      }
+      if (opts.jsonOutput) deferInitJsonError({ status: 'error', reason: 'preflight_failed', error: pre.error }, 'config_error', pre.error, INIT_EMBEDDING_HINT);
       throw new InitPostgresFailure('preflight_failed', pre.error);
     }
     resolvedDim = pre.dim;
@@ -1506,14 +1510,8 @@ export async function initPostgresCore(opts: {
           source: 'init',
           engineKind: 'postgres',
         }) + '\n');
-        if (opts.jsonOutput) {
-          console.log(JSON.stringify({
-            status: 'error',
-            reason: 'embedding_dim_mismatch',
-            current_dims: existing.dims,
-            requested_dims: resolvedDim,
-          }));
-        }
+        if (opts.jsonOutput) deferInitJsonError({ status: 'error', reason: 'embedding_dim_mismatch', current_dims: existing.dims, requested_dims: resolvedDim },
+          'embedding_width_mismatch', `The brain's vectors are ${existing.dims}d; the requested model produces ${resolvedDim}d.`, INIT_EMBEDDING_HINT);
         throw new InitPostgresFailure('embedding_dim_mismatch');
       }
     }
@@ -1600,12 +1598,13 @@ export async function initPostgresCore(opts: {
     // v0.32.3 search-lite install-time mode picker. Same shape as the
     // PGLite path above — runs AFTER initSchema, idempotent on re-init.
     const { runModePicker: runPostgresModePicker } = await import('./init-mode-picker.ts');
-    await runPostgresModePicker(engine, { jsonOutput: opts.jsonOutput });
+    let searchMode: { mode: SearchModeName; reason: string } | undefined;
+    await runPostgresModePicker(engine, { jsonOutput: opts.jsonOutput, onDecision: d => { searchMode = d; } });
 
     const stats = await engine.getStats();
 
     if (opts.jsonOutput) {
-      console.log(JSON.stringify({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt }));
+      setInitJsonResult({ status: 'success', engine: 'postgres', pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunNotices(searchMode) });
     } else {
       console.log(`\nBrain ready. ${stats.page_count} pages. Engine: Postgres (Supabase).`);
       if (stats.page_count > 0) {

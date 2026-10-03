@@ -128,7 +128,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // one-line short-circuit (matches `connect`). Without this, `init` is in CLI_ONLY but not
   // CLI_ONLY_SELF_HELP, so the dispatcher's generic short-circuit fires and the printInitHelp()
   // guard in init.ts is dead code.
-  { name: 'init', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/init.ts') },
+  { name: 'init', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/init.ts') },
   { name: 'bench', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/bench.ts') },
   // selfHelp: v0.37 fix wave (deferred TODO, shipped): reinit-pglite has its own --help in
   // runReinitPglite. Routing through SELF_HELP avoids the generic short-circuit so the

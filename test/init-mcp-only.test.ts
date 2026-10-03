@@ -184,50 +184,50 @@ describe('gbrain init --mcp-only — happy path', () => {
 });
 
 describe('gbrain init --mcp-only — required-flag errors', () => {
-  test('missing --issuer-url exits 1 with clear error', async () => {
+  test('missing --issuer-url exits 2 (usage) with clear error', async () => {
     const r = await run([
       'init', '--mcp-only', '--json',
       '--mcp-url', `http://127.0.0.1:${port}/mcp`,
       '--oauth-client-id', 'cid',
       '--oauth-client-secret', 'csecret',
     ]);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(2); // usage error (agent contract v1 A3)
     const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
     expect(parsed.reason).toBe('missing_issuer_url');
   });
 
-  test('missing --mcp-url exits 1', async () => {
+  test('missing --mcp-url exits 2 (usage)', async () => {
     const r = await run([
       'init', '--mcp-only', '--json',
       '--issuer-url', `http://127.0.0.1:${port}`,
       '--oauth-client-id', 'cid',
       '--oauth-client-secret', 'csecret',
     ]);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(2); // usage error (agent contract v1 A3)
     const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
     expect(parsed.reason).toBe('missing_mcp_url');
   });
 
-  test('missing --oauth-client-id exits 1', async () => {
+  test('missing --oauth-client-id exits 2 (usage)', async () => {
     const r = await run([
       'init', '--mcp-only', '--json',
       '--issuer-url', `http://127.0.0.1:${port}`,
       '--mcp-url', `http://127.0.0.1:${port}/mcp`,
       '--oauth-client-secret', 'csecret',
     ]);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(2); // usage error (agent contract v1 A3)
     const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
     expect(parsed.reason).toBe('missing_client_id');
   });
 
-  test('missing --oauth-client-secret exits 1', async () => {
+  test('missing --oauth-client-secret exits 2 (usage)', async () => {
     const r = await run([
       'init', '--mcp-only', '--json',
       '--issuer-url', `http://127.0.0.1:${port}`,
       '--mcp-url', `http://127.0.0.1:${port}/mcp`,
       '--oauth-client-id', 'cid',
     ]);
-    expect(r.exitCode).toBe(1);
+    expect(r.exitCode).toBe(2); // usage error (agent contract v1 A3)
     const parsed = JSON.parse(r.stdout.trim().split('\n').pop()!);
     expect(parsed.reason).toBe('missing_client_secret');
   });

@@ -25,6 +25,8 @@ import { findCliCommand } from './command-table.ts';
 export interface CliErrorWriteOpts {
   /** Raw argv (defaults to process.argv.slice(2)); decides `--json`. */
   argv?: readonly string[];
+  /** Overrides the argv `--json` probe (in-process callers that parsed their own flags). */
+  json?: boolean;
   /**
    * A pre-v1 JSON shape this site printed: its keys lead and keep their
    * values, the envelope adds the rest, and the document stays one line
@@ -40,7 +42,7 @@ export function cliCommandOf(argv: readonly string[] = process.argv.slice(2)): s
 
 /** Render and write `e`; returns the exit code (the caller exits or sets the verdict). */
 export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOpts = {}): number {
-  const json = jsonRequested(opts.argv ?? process.argv.slice(2));
+  const json = opts.json ?? jsonRequested(opts.argv ?? process.argv.slice(2));
   const r = renderCliError(e, { json, command, tty: process.stderr.isTTY === true });
   let stderr = r.stderr;
   if (r.stdout !== undefined) {

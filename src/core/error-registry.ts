@@ -288,5 +288,6 @@ export interface NoticeEntry {
 export const NOTICE_CODES = {
   backup_coverage: { kind: 'coaching', summary: 'Some knowledge assets have no off-machine backup.' },
   empty_retrieval: { kind: 'info', summary: 'A retrieval returned no results; the notice says whether recall was degraded.' },
+  first_run_decisions: { kind: 'ask', summary: 'init finished; the first-run decisions (search mode, harness wiring, …) carry defaults the user may change.' },
   unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
 } as const satisfies Record<string, NoticeEntry>;

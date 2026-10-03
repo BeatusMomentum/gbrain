@@ -99,3 +99,63 @@ g.flushThenExit(0);`);
     expect(r.out).toBe('plain\n');
   }, 20_000);
 });
+
+// ── D2: command migrations (real CLI subprocesses, isolated GBRAIN_HOME) ──
+import { runCli } from './helpers/cli-spawn.ts';
+import { mkdirSync } from 'node:fs';
+
+function onlyDocument(stdout: string): Record<string, unknown> {
+  const doc = JSON.parse(stdout);
+  expect(typeof doc).toBe('object');
+  return doc;
+}
+
+describe('D2 command migrations: init', () => {
+  test('init --pglite --no-embedding --json: one document carrying the first-run decision bundle', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-json-init-'));
+    try {
+      const r = await runCli(['init', '--pglite', '--no-embedding', '--json'], { home, cwd: home, timeoutMs: 120_000 });
+      expect(r.exitCode).toBe(0);
+      const doc = onlyDocument(r.stdout);
+      expect(doc).toMatchObject({ status: 'success', engine: 'pglite', contract_version: 1 });
+      const bundle = (doc.notices as Array<Record<string, any>>).find(n => n.code === 'first_run_decisions')!;
+      expect(bundle).toMatchObject({ kind: 'ask', contract_version: 1 });
+      expect(bundle.user_message).toContain("Reply 'defaults'");
+      const searchMode = bundle.decisions.find((d: { id: string }) => d.id === 'search_mode');
+      expect(searchMode.options.map((o: { id: string }) => o.id)).toEqual(['conservative', 'balanced', 'tokenmax']);
+      expect(searchMode.options[0].argv).toEqual(['gbrain', 'config', 'set', 'search.mode', 'conservative']);
+      // Progress lines and the picker's event went to stderr.
+      expect(r.stderr).toContain('Setting up local brain with PGLite');
+      expect(r.stdout).not.toContain('search_mode_picker');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 150_000);
+
+  test('init --json usage failure: legacy one-line keys plus the v1 envelope, exit 2', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-json-init-'));
+    try {
+      const r = await runCli(['init', '--mcp-only', '--json', '--mcp-url', 'http://127.0.0.1:1/mcp', '--oauth-client-id', 'cid', '--oauth-client-secret', 'cs'], { home, cwd: home });
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout.trim().split('\n')).toHaveLength(1);
+      expect(onlyDocument(r.stdout)).toMatchObject({ status: 'error', reason: 'missing_issuer_url', error: 'invalid_params', code: 'invalid_params', contract_version: 1 });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('init --json on a malformed config: config_error document, config untouched', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-json-init-'));
+    try {
+      mkdirSync(join(home, '.gbrain'));
+      writeFileSync(join(home, '.gbrain', 'config.json'), '{broken');
+      const r = await runCli(['init', '--pglite', '--json'], { home, cwd: home });
+      expect(r.exitCode).toBe(1);
+      const doc = onlyDocument(r.stdout);
+      expect(doc).toMatchObject({ status: 'error', reason: 'invalid_existing_config', code: 'config_error' });
+      expect(typeof doc.suggestion).toBe('string');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
