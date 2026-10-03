@@ -13,6 +13,7 @@
 import { loadConfig, gbrainPath, configPath, getDbUrlSource, type DbUrlSource } from '../../../core/config.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { agentFix, doctorVerify } from '../check-fix.ts';
+import { exclusiveFix, liveServeOwner } from '../../../core/exclusive-fix.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { checkPgliteScratchProbe } from './core-health.ts';
 import { computePgliteDataDirCheck } from './pglite-worker.ts';
@@ -137,6 +138,18 @@ async function pgbouncerPrepareCheck(): Promise<Check | null> {
  * the very DB that's down (db-repair is the engine-free applier here).
  */
 function classifiedConnectionCheck(e: unknown, dbSource?: DbUrlSource): Check {
+  // A7: a live `gbrain serve` owns this PGLite brain (usually an agent session's stdio serve).
+  // The brain is not broken; doctor needs it to itself: stop that serve, then re-run doctor.
+  const owner = liveServeOwner(e);
+  if (owner) {
+    return {
+      name: 'connection', status: 'warn', readiness_state: 'unknown',
+      message: `${e instanceof Error ? e.message : String(e)} The database checks did not run.`,
+      details: { reason: 'live_serve', lock_owner_pid: owner.pid, lock_owner_transport: owner.transport },
+      fix: exclusiveFix(agentFix(['gbrain', 'doctor', '--json'], 'Runs the database checks once doctor has the brain to itself.', 'connection',
+        { requires_exclusive: true }), owner),
+    };
+  }
   const d = classifyPgAccessError(e, { url: loadConfig()?.database_url ?? null });
   const source = describeUrlSource(dbSource ?? getDbUrlSource());
   return {

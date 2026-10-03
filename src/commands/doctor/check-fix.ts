@@ -13,6 +13,7 @@ import { cliRenderContext, redactForTransport, renderAction, type Action, type R
 import { embeddingEnablement, type ReadinessEntry, type ReadinessState } from '../../core/readiness.ts';
 import { loadConfig } from '../../core/config.ts';
 import { classifyPgAccessError } from '../../core/pg-access-classify.ts';
+import { brainRoutingArgs } from '../../core/brain-resolver.ts';
 import type { Check } from '../doctor.ts';
 
 /**
@@ -57,7 +58,7 @@ export function agentFix(argv: string[], why: string, verifyCheck: string, extra
  * the highest score this brain can reach (a keyless brain's embed share stays 0).
  */
 export function brainScorePlanFix(): Action {
-  return agentFix(['gbrain', 'doctor', '--remediation-plan', '--json'],
+  return agentFix(['gbrain', 'doctor', '--remediation-plan', '--json', ...brainRoutingArgs()],
     'The plan lists which steps raise each score component, what they cost and the reachable maximum; it changes nothing.', 'brain_score');
 }
 

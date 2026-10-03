@@ -1584,6 +1584,12 @@ export function formatResult(
   result: unknown,
   params: Record<string, unknown> = {},
 ): string {
+  // D2: `--json` on the op lane is the result document for every op. Only
+  // search/query render it themselves (retrieval redaction + stderr notice);
+  // list/stats/health/tags/timeline used to print their human table instead.
+  if (params.json === true && opName !== 'search' && opName !== 'query') {
+    return JSON.stringify(result, bigintToStringReplacer, 2) + '\n';
+  }
   switch (opName) {
     case 'volunteer_context': {
       const r = result as any;

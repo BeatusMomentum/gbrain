@@ -22,6 +22,7 @@ import { redactUrlsInText } from '../core/url-redact.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import { isConsentRefusal, printConsentRefusal } from '../core/consent.ts';
+import { exclusiveFix, liveServeOwner } from '../core/exclusive-fix.ts';
 
 export interface CliErrorWriteOpts {
   /** Raw argv (defaults to process.argv.slice(2)); decides `--json`. */
@@ -135,8 +136,17 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
   const busy = e as { code?: unknown; reason?: unknown; message?: unknown } | null;
   if (busy?.code === 'pglite_busy') {
     const next = 'Wait for the current command or server to close, then retry. Do not remove a live lock.';
-    const err = opError('pglite_busy', String(busy.message ?? 'The brain is busy.'), next, {
+    // A7: a live serve owns the brain (usually an agent session's stdio serve), so
+    // waiting never ends; the fix is the two-step plan: stop that serve, then re-run this command.
+    const owner = liveServeOwner(e);
+    const fix = owner ? exclusiveFix({ argv: ['gbrain', ...argv], consent: [], actor: 'agent', requires_exclusive: true,
+      why: 'Re-runs this command once it has the brain to itself.' }, owner) : undefined;
+    const suggestion = fix
+      ? 'A live gbrain serve owns this brain, so waiting does not end. Ask the user to stop it (fix), then re-run this command (fix.then). Do not remove a live lock.'
+      : next;
+    const err = opError('pglite_busy', String(busy.message ?? 'The brain is busy.'), suggestion, {
       ...(typeof busy.reason === 'string' ? { reason: busy.reason } : {}),
+      ...(fix ? { fix } : {}),
     });
     return writeCliError(err, command, { argv, legacy: { error: 'pglite_busy', retryable: true, reason: busy.reason, next_action: next } });
   }

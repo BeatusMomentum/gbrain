@@ -21,6 +21,7 @@ import type { Authorization, PlanSelection } from '../../core/consent.ts';
 import { computePlanHash } from '../../core/consent.ts';
 import { consentGate, engineConsentEnv } from '../../core/consent-cli.ts';
 import type { Effect } from '../../core/agent-output.ts';
+import { brainRoutingArgs } from '../../core/brain-resolver.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import type { RemediationPlan } from '../../core/remediation/types.ts';
 
@@ -84,11 +85,11 @@ export function remediateArgv(args: readonly string[]): string[] {
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === '--yes') continue;
-    if (a === '--expect') { i++; continue; }
-    if (a.startsWith('--expect=')) continue;
+    if (a === '--expect' || a === '--brain') { i++; continue; }
+    if (a.startsWith('--expect=') || a.startsWith('--brain=')) continue;
     out.push(a);
   }
-  return out;
+  return [...out, ...brainRoutingArgs()];
 }
 
 function planSummary(plan: RemediationPlan | null, flags: RemediateFlags, estUsd: number | null): string {
@@ -124,7 +125,7 @@ export async function remediateConsent(engine: BrainEngine, args: readonly strin
   const selection = flags.includeRepairs && !flags.resumeMode ? await boundSelection(engine, plan, flags) : undefined;
   const planHash = selection ? computePlanHash(selection) : undefined;
   const summary = planSummary(plan, flags, estUsd);
-  const preview = ['gbrain', 'doctor', '--remediation-plan', '--target-score', String(flags.targetScore), ...(flags.noEmbed ? ['--no-embed'] : []), '--json'];
+  const preview = ['gbrain', 'doctor', '--remediation-plan', '--target-score', String(flags.targetScore), ...(flags.noEmbed ? ['--no-embed'] : []), '--json', ...brainRoutingArgs()];
   return consentGate({
     command: 'doctor --remediate',
     effects,

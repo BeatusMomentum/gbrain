@@ -8,6 +8,8 @@ import * as db from '../../../core/db.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
+import { exclusiveFix } from '../../../core/exclusive-fix.ts';
+import { peekLock } from '../../../core/pglite-lock.ts';
 
 /** Read-only diagnosis; it prints the plan-bound repair command the user approves. */
 function pgliteRepairPreview() {
@@ -60,6 +62,9 @@ export function computePgliteDataDirCheck(
           `Could not connect, and the PGLite data-dir lock is held by live PID ${diagnosis.lockHolderPid} — ` +
           `another gbrain process (often \`gbrain serve\`) has the brain open. Stop it and re-run.${backupNote}`,
         remediation_status: 'human_only',
+        ...(diagnosis.lockHolderPid ? { fix: exclusiveFix(agentFix(['gbrain', 'doctor', '--json'],
+          'Re-runs doctor once it has the brain to itself.', 'pglite_data_dir', { requires_exclusive: true }),
+        { pid: diagnosis.lockHolderPid, transport: peekLock(dataDir).http ? 'http' : 'stdio', is_self: false }) } : {}),
       };
     case 'missing':
       return {

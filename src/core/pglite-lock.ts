@@ -21,7 +21,14 @@ export class PgliteBusyError extends Error {
   }
 }
 export class LiveServeLockError extends PgliteBusyError {
-  constructor(message: string) { super(message, 'live_serve'); this.name = 'LiveServeLockError'; }
+  /** The live serve holding the lock, for the two-step recovery plan (A7 `exclusiveFix`). */
+  readonly ownerPid?: number;
+  readonly ownerTransport?: 'stdio' | 'http';
+  constructor(message: string, owner: { pid?: number; transport?: 'stdio' | 'http' } = {}) {
+    super(message, 'live_serve'); this.name = 'LiveServeLockError';
+    this.ownerPid = owner.pid;
+    this.ownerTransport = owner.transport;
+  }
 }
 
 export interface LockHandle {
@@ -242,7 +249,9 @@ function startHeartbeat(path: string, ownerToken: string): ReturnType<typeof set
 function busy(lockDir: string): PgliteBusyError {
   const metadata = readMetadata(lockDir);
   if (metadata && isServeCommand(metadata) && isProcessAlive(metadata.pid!)) {
-    return new LiveServeLockError(`GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${metadata.pid ?? 'unknown'}). Use the live serve's IPC/MCP tools or stop it before opening this PGLite datastore. Never remove a live holder's lock.`);
+    const args = Array.isArray(metadata.argv) ? metadata.argv : (metadata.command ?? '').split(/\s+/);
+    return new LiveServeLockError(`GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${metadata.pid ?? 'unknown'}). Use the live serve's IPC/MCP tools or stop it before opening this PGLite datastore. Never remove a live holder's lock.`,
+      { pid: metadata.pid, transport: args.includes('--http') ? 'http' : 'stdio' });
   }
   return new PgliteBusyError(`GBrain: Timed out waiting for PGLite data-dir lock at ${lockDir}. Retry after the holder finishes. Stop all older GBrain processes before upgrading this datastore's lock protocol; unreadable legacy ownership is never stolen. Never remove a live holder's lock. This lock is separate from \`gbrain sync --break-lock\`.`);
 }
