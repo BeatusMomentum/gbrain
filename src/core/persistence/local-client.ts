@@ -8,7 +8,7 @@ import { getCliOptions } from '../cli-options.ts';
 import { loadMounts, type MountEntry } from '../brain-registry.ts';
 import { inspectLockHolder } from '../pglite-lock.ts';
 import { resolveSourceIdEngineFree } from '../source-resolver.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { parseWriteRequestId } from './preconditions.ts';
 import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
@@ -27,7 +27,11 @@ export function persistenceConfigForBrain(
 ): GBrainConfig | null {
   if (brainId === 'host') return hostConfig;
   const mount = mounts.find(candidate => candidate.id === brainId || candidate.alias === brainId);
-  if (!mount || mount.enabled === false) throw new OperationError('invalid_params', `Brain '${brainId}' is not an enabled mount.`);
+  if (!mount || mount.enabled === false) {
+    throw opError('invalid_params', `Brain '${brainId}' is not an enabled mount.`,
+      'Pass a mounted brain id to --brain (or omit it for the host brain); `gbrain mounts list` shows them.',
+      { fix: { argv: ['gbrain', 'mounts', 'list'], consent: [], actor: 'agent', why: 'Lists the mounted brains --brain can name.', requires_exclusive: false } });
+  }
   return { engine: mount.engine, database_path: mount.database_path, database_url: mount.database_url } as GBrainConfig;
 }
 

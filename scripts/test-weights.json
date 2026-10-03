@@ -1118,6 +1118,7 @@
   "test/mcp-dispatch-db-error.test.ts": 9,
   "test/mcp-dispatch-optional-params.test.ts": 239,
   "test/mcp-dispatch-summarize.test.ts": 4,
+  "test/mcp-error-single-block.test.ts": 3000,
   "test/mcp-eval-capture.test.ts": 679,
   "test/mcp-expose.test.ts": 307,
   "test/mcp-initialize-instructions.test.ts": 400,
