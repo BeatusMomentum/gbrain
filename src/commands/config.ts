@@ -941,32 +941,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     //
     // No `--force` escape hatch (CDX2-13): keeping a known-no-op DB-only
     // write preserves the split-brain footgun the wave exists to close.
-    // Switching providers requires wipe-and-reinit; the recipe below is
-    // paste-ready and uses the actual command path that works after Lane B.
-    if (key === 'embedding_model' || key === 'embedding_dimensions') {
-      const { gbrainPath } = await import('../core/config.ts');
-      const isPgliteEngine = (await import('../core/config.ts')).loadConfig()?.engine === 'pglite';
-      const dbPath = gbrainPath('brain.pglite');
-      console.error(`[config] ${key} is a file-plane field that sizes the schema.`);
-      console.error(`[config] Setting it in the DB has no effect on the embed pipeline (silent no-op).`);
-      console.error(`[config]`);
-      if (isPgliteEngine) {
-        console.error(`[config] To switch embedding models/dimensions on PGLite, wipe and re-init:`);
-        console.error(`[config]   mv ${dbPath} ${dbPath}.bak`);
-        if (key === 'embedding_model') {
-          console.error(`[config]   gbrain init --pglite --embedding-model ${value}`);
-        } else {
-          console.error(`[config]   gbrain init --pglite --embedding-dimensions ${value}`);
-        }
-        console.error(`[config]   gbrain sync   # re-imports your brain repo`);
-      } else {
-        console.error(`[config] To switch embedding models/dimensions on Postgres, see:`);
-        console.error(`[config]   docs/embedding-migrations.md`);
-      }
-      console.error(`[config]`);
-      console.error(`[config] No --force escape: silently writing a no-op preserves the bug class this rejection closes.`);
-      process.exit(1);
-    }
+    if (key === 'embedding_model' || key === 'embedding_dimensions') await refuseSchemaSizingKey(key, value);
 
     // v0.37.10.0 (D6): strict unknown-key rejection with --force escape hatch.
     // Catches the silent-no-op class for namespaced typos like `embedding.provider`,
@@ -1245,4 +1220,37 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     console.error('       gbrain config unset --pattern <prefix>');
     process.exit(1);
   }
+}
+
+/**
+ * `config set embedding_model|embedding_dimensions` is refused (a DB-plane
+ * write is a silent no-op). The recipe comes from readiness (A7): enabling is
+ * in place and keeps pages and DB-only facts; switching an active model is a
+ * previewed migration. Never a wipe.
+ */
+async function refuseSchemaSizingKey(key: 'embedding_model' | 'embedding_dimensions', value: string): Promise<never> {
+  const { loadConfig } = await import('../core/config.ts');
+  const { embeddingEnablement } = await import('../core/readiness.ts');
+  const { shellQuote } = await import('../core/agent-output.ts');
+  const cfg = loadConfig() ?? ({ engine: 'pglite' } as GBrainConfig);
+  const requested = key === 'embedding_model' ? { embedding_model: value } : { embedding_dimensions: Number(value) };
+  const active = !cfg.embedding_disabled ? cfg.embedding_model?.trim() : undefined;
+  console.error(`[config] ${key} is a file-plane field that sizes the schema.`);
+  console.error(`[config] Setting it in the DB has no effect on the embed pipeline (silent no-op).`);
+  console.error(`[config]`);
+  if (active) {
+    const to = key === 'embedding_model' ? value : active;
+    const dim = key === 'embedding_dimensions' ? ['--dim', value] : [];
+    console.error(`[config] This brain already embeds with ${active}. Switching is a re-embed migration (pages and facts are kept); preview it first:`);
+    console.error(`[config]   ${shellQuote(['gbrain', 'migrate', 'embeddings', '--to', to, ...dim, '--dry-run'])}`);
+  } else {
+    const fix = embeddingEnablement({ ...cfg, ...requested } as GBrainConfig);
+    console.error(`[config] To turn embeddings on in place:`);
+    if (fix.argv) console.error(`[config]   ${shellQuote(fix.argv)}`);
+    console.error(`[config] ${fix.why}`);
+    for (const input of fix.inputs ?? []) console.error(`[config] Needs ${input.name}: ${input.how}`);
+  }
+  console.error(`[config]`);
+  console.error(`[config] No --force escape: silently writing a no-op preserves the bug class this rejection closes.`);
+  process.exit(1);
 }

@@ -133,6 +133,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // runReinitPglite. Routing through SELF_HELP avoids the generic short-circuit so the
   // destructive-action warning text reaches the user.
   { name: 'reinit-pglite', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/reinit-pglite.ts') },
+  // selfHelp: A7 readiness: `embeddings enable` prints its own usage; it opens the selected brain's
+  // datastore itself (a mount via --brain), so it runs before the connectEngine terminator.
+  { name: 'embeddings', phase: 'pre-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/embeddings.ts') },
   // selfHelp: WAL-repair wave: pglite-repair ships its own --help with the dry-run/repair semantics
   // + the un-checkpointed-tail caveat.
   { name: 'pglite-repair', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/pglite-repair.ts') },

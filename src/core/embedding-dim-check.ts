@@ -152,10 +152,11 @@ export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promis
  * are fundamentally different:
  *
  * - **PGLite** has no native pgvector extension (the WASM build can't
- *   `ALTER COLUMN TYPE vector(N)`), so the only path is wipe-and-reinit
- *   via `gbrain init --pglite --embedding-model X --embedding-dimensions N`.
- *   The recipe derives the active database path so users don't paste a
- *   stale literal that ignores `GBRAIN_HOME` / `--path` / their config.
+ *   `ALTER COLUMN TYPE vector(N)`). The recipe offers, in order: keeping the
+ *   existing width when the model supports it (in-place `init --force` on
+ *   the active database path), a previewed `gbrain migrate embeddings` that
+ *   keeps pages and DB-only facts, and `gbrain reinit-pglite` as the labelled
+ *   last resort. It never prints a hand-run wipe.
  * - **Postgres** keeps the existing four-step SQL recipe.
  *
  * The old recipe pointed at `gbrain config set embedding_model X` which
@@ -193,26 +194,29 @@ export function embeddingMismatchMessage(opts: EmbeddingMismatchOpts): string {
   if (engineKind === 'pglite') {
     const activePath = databasePath ?? gbrainPath('brain.pglite');
     const modelArg = requestedModel ? ` --embedding-model ${requestedModel}` : '';
+    const keepWidth = requestedModel && resolveSchemaEmbeddingDim({ embedding_model: requestedModel, embedding_dimensions: currentDims }).ok;
     const lines = [
       header,
       ``,
       `  Existing column: vector(${currentDims})`,
       `  Requested:       vector(${requestedDims})${requestedModel ? `  (${requestedModel})` : ''}`,
       ``,
-      `Switching dims is destructive: it drops every embedding in your brain.`,
-      `PGLite cannot ALTER vector column types (pgvector ships as embedded WASM,`,
-      `not a native extension). Wipe-and-reinit is the only path.`,
+      `${source === 'doctor' ? '' : 'Nothing was changed. '}Switching dims re-embeds every chunk and fact;`,
+      `PGLite cannot ALTER vector column types in place (pgvector ships as WASM).`,
       ``,
-      `Recommended (one command):`,
+      ...(keepWidth ? [
+        `Keep this brain's width (no rebuild; pages and facts kept):`,
+        ``,
+        `  gbrain init --force${modelArg} --embedding-dimensions ${currentDims} --path ${activePath}`,
+        ``,
+      ] : []),
+      `Change the width (re-embeds; pages and DB-only facts kept; preview first):`,
+      ``,
+      `  gbrain migrate embeddings --to ${requestedModel ?? '<provider:model>'} --dim ${requestedDims} --dry-run`,
+      ``,
+      `Last resort (moves the datastore aside; DB-only pages and facts are NOT carried over):`,
       ``,
       `  gbrain reinit-pglite${modelArg} --embedding-dimensions ${requestedDims}`,
-      ``,
-      `Or by hand:`,
-      ``,
-      `  mv ${activePath} ${activePath}.bak`,
-      `  gbrain init --pglite${modelArg} --embedding-dimensions ${requestedDims}`,
-      `  gbrain sync   # re-imports your brain repo from disk`,
-      `  gbrain embed --stale`,
       ``,
       `Full guide: docs/embedding-migrations.md`,
     ];

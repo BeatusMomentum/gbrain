@@ -640,6 +640,14 @@ More: [docs/guides/write-refusals.md#embedding_auth_failed](../../docs/guides/wr
 |---|---|---|---|---|---|---|
 | The selected brain has no verifiable text embedding model and dimensions. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### embedding_width_mismatch
+
+<a id="embedding_width_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
 ### export_limit
 
 <a id="export_limit"></a>
