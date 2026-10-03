@@ -71,6 +71,7 @@ import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
@@ -967,15 +968,14 @@ export async function runPhaseExtractAtoms(
     console.error(
       `[extract_atoms] ${costGate.unpricedKind} model "${costGate.unpricedModel}" is not in the pricing maps; ` +
         `running without a cost gate (a cap cannot be enforced on an unpriced model). ` +
-        `Declare an operator rate to restore the cap: ` +
-        `gbrain config set pricing.overrides '{"${costGate.unpricedModel}": <usd-per-1M-tokens>}' (0 for local inference).`,
+        `Look up its per-token price and register it to restore the cap: ` +
+        `${pricingSetCommand(costGate.unpricedModel!, costGate.unpricedKind === 'embed' ? 'embed' : 'chat')} (--rate 0 for local inference).`,
     );
   } else if (costGate.zeroPricedEmbedModel) {
     console.error(
       `[extract_atoms] embed model "${costGate.zeroPricedEmbedModel}" is not in the pricing maps; ` +
         `cycle.extract_atoms.budget_usd is set, so the $${budgetCap.toFixed(2)} cap stays enforced and embeds bill at $0 under it. ` +
-        `Declare its real rate to meter them: ` +
-        `gbrain config set pricing.overrides '{"${costGate.zeroPricedEmbedModel}": <usd-per-1M-tokens>}'.`,
+        `Look up its real price and register it to meter them: ${pricingSetCommand(costGate.zeroPricedEmbedModel, 'embed')}.`,
     );
   }
   const budgetTracker = opts.attempt?.budgetTracker ?? new BudgetTracker({

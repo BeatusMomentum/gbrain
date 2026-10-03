@@ -75,7 +75,8 @@ import {
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { managedDerivedFactsPreflight, replaceDerivedFactsForPage, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason } from '../core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
+import { noPricingMessage } from '../core/budget/no-pricing.ts';
 import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
@@ -353,6 +354,8 @@ export interface ExtractConversationFactsResult {
   budget_exhausted?: boolean;
   budget_reason?: BudgetReason;
   budget_model?: string;
+  /** no_pricing halt: the lookup-and-register guidance (model, provider, kind, units, command, docs). */
+  budget_pricing?: NoPricingGuidance;
   spent_usd?: number;
 }
 
@@ -1601,9 +1604,8 @@ export async function runExtractConversationFactsCore(
     }
   } catch (err) {
     if (err instanceof BudgetExhausted) {
-      result.budget_exhausted = true;
-      result.budget_reason = err.reason;
-      result.budget_model = err.modelId;
+      Object.assign(result, { budget_exhausted: true, budget_reason: err.reason, budget_model: err.modelId });
+      if (err.pricing) result.budget_pricing = err.pricing;
       if (opts.budgetTracker) {
         result.spent_usd = opts.budgetTracker.totalSpent;
       }
@@ -1883,7 +1885,7 @@ sources from gbrain sources list. Per-source budget cap defaults to
 --max-cost-usd; the brain-wide cap when running via the autopilot cycle
 phase is cycle.conversation_facts_backfill.max_total_cost_usd.
 Default USD caps are not enforced for unpriced chat models (a warning is emitted).
-Explicit caps remain fail-closed; configure pricing.overrides to supply missing prices.
+Explicit caps remain fail-closed; register a missing price with gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>.
 
 Resumability: per-page completion is durable via a terminal audit row
 in the facts table (source='${TERMINAL_AUDIT_SOURCE}'). gbrain doctor's
@@ -1981,6 +1983,7 @@ export async function runExtractConversationFacts(
   let totalSpent = 0;
   let anyBudgetExhausted = false;
   const unpricedModels = new Set<string>();
+  const pricingGuidance = new Map<string, NoPricingGuidance>();
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
@@ -2032,6 +2035,7 @@ export async function runExtractConversationFacts(
       aggregate.resolution_errors += perSource.resolution_errors;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
       if (perSource.budget_reason === 'no_pricing') unpricedModels.add(perSource.budget_model ?? 'unknown model');
+      if (perSource.budget_pricing) pricingGuidance.set(perSource.budget_pricing.model, perSource.budget_pricing);
       if (perSource.spent_usd) totalSpent += perSource.spent_usd;
 
       progress.tick(1, `${sourceId}: ${perSource.facts_inserted} facts inserted`);
@@ -2055,6 +2059,7 @@ export async function runExtractConversationFacts(
       spent_usd: totalSpent,
       budget_exhausted: anyBudgetExhausted,
       no_pricing_models: [...unpricedModels],
+      no_pricing: [...pricingGuidance.values()],
     }, null, 2));
   } else {
     console.log(
@@ -2105,8 +2110,9 @@ export async function runExtractConversationFacts(
     }
     if (anyBudgetExhausted) {
       console.log(unpricedModels.size > 0
-        ? `  no_pricing: ${[...unpricedModels].join(', ')}. Configure pricing.overrides; raising --max-cost-usd cannot resolve missing pricing.`
+        ? `  no_pricing: ${[...unpricedModels].join(', ')}. Raising --max-cost-usd cannot resolve missing pricing.`
         : `  Budget cap reached. Re-run with a higher --max-cost-usd to continue.`);
+      for (const g of pricingGuidance.values()) console.log(`  ${noPricingMessage(g)}`);
     }
   }
 
