@@ -50,7 +50,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       writeFileSync(driver, `import { mock } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 mock.module(${JSON.stringify(join(REPO, 'src/commands/apply-migrations.ts'))}, () => ({
-  runApplyMigrations: async (args) => writeFileSync(${JSON.stringify(join(home, 'args.json'))}, JSON.stringify(args)),
+  applyMigrations: async (args) => { writeFileSync(${JSON.stringify(join(home, 'args.json'))}, JSON.stringify(args)); return { exitCode: undefined }; },
 }));
 const { runPostUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});
 await runPostUpgrade(['--no-autopilot-install']);

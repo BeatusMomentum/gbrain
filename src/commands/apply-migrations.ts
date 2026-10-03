@@ -361,7 +361,8 @@ function unknownMigrationError(version: string): OperationError {
 
 /** The same invocation again once the underlying failure is fixed; any approval it needs is asked by the run itself. */
 function rerunFix(args: readonly string[], why: string, yes = false) {
-  const argv = ['gbrain', COMMAND, ...args, ...(yes && !args.includes('--yes') ? ['--yes'] : [])];
+  // Approval flags are dropped: the rerun asks for any consent effect itself.
+  const argv = ['gbrain', COMMAND, ...args.filter(a => a !== '--yes' && a !== '--non-interactive'), ...(yes ? ['--yes'] : [])];
   return { argv, consent: [] as Effect[], actor: 'agent' as const, requires_exclusive: true, why };
 }
 

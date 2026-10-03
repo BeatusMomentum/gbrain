@@ -87,6 +87,7 @@ const JSON_ROWS: Record<string, JsonRow> = {
   doctor: { ok: ['doctor', '--json', '--fast'], fail: ['doctor', '--json'] },
   sync: { ok: ['sync', '--source', 'notes', '--no-pull', '--json'], fail: ['sync', '--source', 'notes', '--json'], failOnBrain: true },
   embed: { ok: ['embed', '--stale', '--json'], fail: ['embed', '--all', '--json'], failOnBrain: true },
+  'post-upgrade': { ok: ['post-upgrade', '--json', '--no-autopilot-install'], fail: ['post-upgrade', '--bogus', '--json'], okOnEmpty: true },
   'apply-migrations': { ok: ['apply-migrations', '--dry-run', '--json'], fail: ['apply-migrations', '--json', '--migration', '9.9.9'], failOnBrain: true },
 };
 

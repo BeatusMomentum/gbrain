@@ -2,7 +2,9 @@ import { execSync, execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { parseSemver, semverGt } from '../core/semver.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
+import { opError, type OperationError } from '../core/ops/contract.ts';
+import { writeCliError } from '../cli/cli-error.ts';
 import { VERSION } from '../version.ts';
 import { migrationLedgerSummary } from '../core/migration-ledger.ts';
 import { MIGRATIONS_RUNNING_EXIT_CODE, readMigrationLockHolder } from '../core/migration-orchestration-lock.ts';
@@ -577,12 +579,16 @@ async function applySelfUpgradeSetup(noAutopilotInstall: boolean): Promise<void>
 
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain post-upgrade [--no-autopilot-install]');
+    console.log('Usage: gbrain post-upgrade [--no-autopilot-install] [--json]');
     console.log('Prints feature pitches for new migrations and runs apply-migrations.');
     console.log('--no-autopilot-install (or GBRAIN_NO_AUTOPILOT_INSTALL=1) skips autopilot installation and service rewrites.');
+    console.log('--json prints one result document on stdout (progress and banners go to stderr).');
     console.log('Idempotent — safe to re-run any time.');
     return;
   }
+  // D2: under --json the human lines go to stderr (the guard) and this report is the one document.
+  const json = jsonRequested(args);
+  const report: PostUpgradeReport = { status: 'ok', warnings: [] };
 
   // v0.35.8.0: lay down ~/.gbrain/.gitignore retroactively. Existing users
   // never re-run `gbrain init`, so init-only coverage misses them entirely
@@ -629,8 +635,12 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   // when nothing is pending. Stays inside the same process so a long Phase F
   // (autopilot install) doesn't hit a subprocess boundary.
   try {
-    const { runApplyMigrations } = await import('./apply-migrations.ts');
-    await runApplyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
+    const { applyMigrations } = await import('./apply-migrations.ts');
+    const { exitCode, failure } = await applyMigrations(['--yes', '--non-interactive', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])]);
+    report.apply_migrations = { exit_code: exitCode ?? 0 };
+    // Any status apply-migrations returns ends post-upgrade here, as its
+    // in-process process.exit always did.
+    if (exitCode !== undefined) process.exit(finishPostUpgrade(json, report, exitCode, failure));
   } catch (e) {
     // Surface the error but don't throw — post-upgrade is best-effort.
     // Users can re-run `gbrain apply-migrations` manually if they want
@@ -638,6 +648,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`\napply-migrations failed: ${msg}`);
     console.error('Run `gbrain apply-migrations --yes` manually to retry.');
+    report.warnings.push(`apply-migrations failed: ${msg}`);
   }
 
   // v0.28.5 (X1): explicitly apply pending schema migrations.
@@ -659,6 +670,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await engine.connect(toCfgSchema(cfgSchema));
         await engine.initSchema();
         console.log('  Schema up to date.');
+        report.schema = 'up_to_date';
 
         // v0.32.3 search-lite mode banner. One-shot: fires at most once per
         // install (state persisted via `search.mode_upgrade_notice_shown`).
@@ -832,6 +844,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         } catch (re) {
           const msg = re instanceof Error ? re.message : String(re);
           console.warn(`\nChunker-bump reindex skipped: ${msg}`);
+          report.warnings.push(`chunker-bump reindex skipped: ${msg}`);
           console.warn('Run `gbrain reindex --markdown` manually when ready.');
         }
 
@@ -854,6 +867,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     // hint to run `gbrain init --migrate-only`.
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
+    report.schema = 'skipped';
+    report.warnings.push(`schema auto-apply skipped: ${msg}`);
     console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
   }
 
@@ -893,6 +908,31 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   } catch {
     // Fail-open per A18: never crash post-upgrade from the banner.
   }
+  if (json) await writeJsonDocument(JSON.stringify(report));
+}
+
+interface PostUpgradeReport {
+  status: 'ok' | 'failed';
+  apply_migrations?: { exit_code: number };
+  schema?: 'up_to_date' | 'skipped';
+  warnings: string[];
+}
+
+/**
+ * D2: the exit status once apply-migrations ended the run. Success under
+ * --json writes the report; a failure (apply-migrations already printed its
+ * human lines) is one envelope leading with the report's keys.
+ */
+function finishPostUpgrade(json: boolean, report: PostUpgradeReport, exitCode: number, failure?: OperationError): number {
+  if (exitCode === 0) {
+    if (json) void writeJsonDocument(JSON.stringify(report));
+    return 0;
+  }
+  report.status = 'failed';
+  if (!json) return exitCode;
+  const e = failure ?? opError('migration_failed', `apply-migrations exited with status ${exitCode}.`,
+    'Read stderr for the failing migration, fix it, then run `gbrain post-upgrade` again.');
+  return writeCliError(e, 'post-upgrade', { json: true, stderr: false, legacy: { ...report } });
 }
 
 /**

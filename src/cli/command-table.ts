@@ -186,7 +186,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // the pre-engine lane, so help never touches the PGLite lock).
   { name: 'backup', phase: 'pre-connect-own-engine', thinClient: 'none', selfHelp: true, load: () => import('./commands/backup.ts') },
   { name: 'upgrade', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/upgrade.ts') },
-  { name: 'post-upgrade', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/post-upgrade.ts') },
+  { name: 'post-upgrade', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, json: 'document', load: () => import('./commands/post-upgrade.ts') },
   { name: 'check-update', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/check-update.ts') },
   // selfHelp: v0.42 self-upgrade ships its own usage (flags + the agent-skill story).
   { name: 'self-upgrade', phase: 'pre-connect', thinClient: 'none', selfHelp: true, skipStartupHooks: true, load: () => import('./commands/self-upgrade.ts') },
