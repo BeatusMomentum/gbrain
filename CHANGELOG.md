@@ -71,6 +71,7 @@ The CI scale tier now runs this harness at 10k pages on every change that touche
 - **`gbrain embed --stale` stopped by its 30-minute budget with chunks left exits 11** (was 0) and prints `remaining_stale` and the resume command; failures still exit 1. Doctor `embeddings` reports the backlog with `gbrain embed --stale --catch-up`, and reports "not applicable" on a keyless brain.
 - **A sync that keeps making progress is no longer stopped by its default or environment deadline.** It stops only after `GBRAIN_SYNC_STALL_ABORT_SECONDS` (900) without progress, with `code=sync_deadline_stop` and the resume command. `--hard-deadline` and `--timeout` stay strict.
 - **`gbrain serve`'s boot deadline counts time without progress,** so a large brain's slow but advancing boot (or a serve already answering tool calls) is not killed. `GBRAIN_SERVE_BOOT_TIMEOUT_SECONDS=0` still disables it.
+- **`gbrain import <dir>` imports a directory its enclosing git repository ignores** (a scratch folder inside a checkout) instead of reporting success with zero files. Importing a repository itself still honors its `.gitignore`.
 - **Writes to a checkout that `gbrain sources refresh` is draining or merging are refused** with `worktree_refreshing` (retry the same request id after about a second); database-only memory writes are not affected.
 
 ### Itemized changes
