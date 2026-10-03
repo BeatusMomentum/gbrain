@@ -5,9 +5,9 @@
  * in ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
 import { assertSourceInCallerScope, readPolicyOpts } from './context.ts';
-import { OperationError } from './contract.ts';
+import { OperationError, type Operation } from './contract.ts';
+import { invalidParam } from './op-fix.ts';
 
 // --- Orphans ---
 
@@ -47,7 +47,7 @@ const find_orphans: Operation = {
     // quietly fall back to the default and misreport the orphan set.
     const mode = p.mode === undefined ? undefined : (p.mode as string);
     if (mode !== undefined && mode !== 'inbound' && mode !== 'islanded') {
-      throw new Error(`find_orphans: invalid mode "${mode}" — use 'inbound' or 'islanded'`);
+      throw invalidParam(ctx, 'find_orphans', 'mode', 'find_orphans: invalid mode — use \'inbound\' or \'islanded\'', { choices: ['islanded', 'inbound'] });
     }
     // v0.41.29.0 (Codex F8): scope by the caller's source (ctx.sourceId /
     // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.

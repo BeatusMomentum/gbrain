@@ -11,6 +11,7 @@
 
 import type { Operation } from './contract.ts';
 import { OperationError } from './contract.ts';
+import { invalidParam } from './op-fix.ts';
 import { sourceScopeOpts, readPolicyOpts } from './context.ts';
 import {
   FIND_EXPERTS_DESCRIPTION,
@@ -302,7 +303,7 @@ const find_trajectory: Operation = {
   },
   handler: async (ctx, p) => {
     if (typeof p.entity_slug !== 'string' || !p.entity_slug.trim()) {
-      throw new Error('find_trajectory requires entity_slug (string)');
+      throw invalidParam(ctx, 'find_trajectory', 'entity_slug', 'find_trajectory requires entity_slug (string)', { example: 'people/alice-example' });
     }
     const metric = typeof p.metric === 'string' ? p.metric : undefined;
     const kind = (p.kind === 'metric' || p.kind === 'event' || p.kind === 'all')

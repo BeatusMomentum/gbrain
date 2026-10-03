@@ -8,7 +8,7 @@ import { coordinatedManualLinkWrite } from '../persistence/manual-links.ts';
  * '../operations.ts' here (cycle).
  */
 
-import { OperationError, type Operation } from './contract.ts';
+import { OperationError, opError, type Operation } from './contract.ts';
 import {
   assertExplicitSourceLive,
   enforceClientSlugFence,
@@ -89,10 +89,10 @@ const add_link: Operation = {
     // and forbid forging the reconciliation-managed built-ins.
     const linkSource = ((p.link_source as string) || 'manual').trim();
     if (MANAGED_LINK_SOURCES.includes(linkSource)) {
-      throw new Error(
+      throw opError('invalid_params',
         `link_source '${linkSource}' is reconciliation-managed and cannot be set manually; ` +
         `use 'manual' (the default) or a custom kebab tag like 'citation-graph'`,
-      );
+        `Omit link_source (defaults to 'manual') or pass a custom kebab tag such as 'citation-graph'; ${MANAGED_LINK_SOURCES.join(', ')} are reserved for reconciliation.`);
     }
     // v0.31.8 (D7): single ctx.sourceId scopes both endpoints + origin. Cross-
     // source link creation is out of scope for this wave; use the engine API
