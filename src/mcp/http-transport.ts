@@ -48,8 +48,8 @@ import { degradedLastError, isEngineDegraded } from '../core/degraded-marker.ts'
 import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
-import { normalizeTokenScopes, parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions, parseLegacyOperationGrant } from '../core/legacy-token-scope.ts';
-export { parseLegacyTokenScope };
+import { authSourcesFromGrant, grantFromTokenRow } from '../core/grants/model.ts';
+export { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
 
@@ -252,8 +252,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     const token = authHeader.slice(7);
     const hash = hashToken(token);
     try {
+      // SELECT * reads every schema generation (pre-F3 rows lack the grant columns).
       const [row] = await sql`
-        SELECT id, name, permissions, scopes FROM access_tokens
+        SELECT * FROM access_tokens
         WHERE token_hash = ${hash} AND revoked_at IS NULL
       `;
       if (!row) return { ok: false };
@@ -266,25 +267,20 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           WHERE id IN (SELECT id FROM access_tokens WHERE id = ${rowId}
             AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`
         .catch(() => { /* fire-and-forget */ });
-      // v0.28: extract per-token takes-holder allow-list. Fail-safe default
-      // is ['world'] — a token with no permissions row sees public claims only.
-      // #2529: decode + parse via the shared core helpers so this transport and
-      // the OAuth provider behind `serve --http` cannot drift — including a
-      // double-encoded jsonb string scalar (#2339 class), which both now decode
-      // identically instead of one honoring the grant while the other fails
-      // open to ['world'].
-      const perms = coerceLegacyPermissions((row as { permissions?: unknown }).permissions);
-      const allowList = parseTakesHoldersAllowList(perms?.takes_holders) ?? ['world'];
-      // #1336: honor the operator-set source grant stored on the token.
-      const { sourceId, allowedSources } = parseLegacyTokenScope(perms?.source_id);
+      // F3: one grant shape (grants/model.ts) shared with the OAuth provider
+      // behind `serve --http`, so the two transports cannot drift. Takes
+      // holders fail safe to ['world']; #1336 honors the stored source grant.
+      const grant = grantFromTokenRow(row);
+      const allowList = grant.takesHolders ?? ['world'];
+      const { sourceId, allowedSources, hasSourceGrant } = authSourcesFromGrant(grant);
       const auth: AuthInfo = {
         token,
         clientId: rowId,
         principal: { kind: 'legacy_token', id: rowId },
         clientName: rowName,
-        scopes: normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'],
+        scopes: grant.scopes,
         sourceId,
-        ...(perms?.allowed_operations === undefined ? {} : { allowedOperations: parseLegacyOperationGrant(perms.allowed_operations) }),
+        ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),
         ...(allowedSources ? { allowedSources } : {}),
       };
       return {
@@ -298,7 +294,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         auth,
         // #3242: distinguish "operator granted a scope" from "historical
         // no-grant floor" — only the latter widens to federated sources.
-        hasSourceGrant: perms?.source_id != null,
+        hasSourceGrant,
       };
     } catch {
       return { ok: false };

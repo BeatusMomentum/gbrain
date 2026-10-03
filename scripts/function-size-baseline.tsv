@@ -52,7 +52,6 @@ src/core/minions/queue.ts	MinionQueue.add	498	seed: W5 baseline, refactor wave 1
 src/core/minions/queue.ts	MinionQueue.add>result=this.engine.transaction(#0)	359	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/minions/worker.ts	MinionWorker.executeJob	303	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/minions/worker.ts	MinionWorker.start	470	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
-src/core/oauth-provider.ts	GBrainOAuthProvider.verifyAccessToken	327	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/ops/facts.ts	recall.handler	348	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/ops/search.ts	query.handler	330	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/progressive-batch/orchestrator.ts	runProgressiveBatch	348	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

@@ -9,7 +9,7 @@ import { catalogueError } from '../error-catalogue.ts';
 import { STOP_PRODUCERS, legacyRecoveryHint, selectCommand } from './legacy-selection.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
 import { hasScope } from '../scope.ts';
-import { coerceLegacyPermissions, normalizeTokenScopes, parseLegacyTokenScope } from '../legacy-token-scope.ts';
+import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import type { MinionJob } from './types.ts';
@@ -137,11 +137,12 @@ export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, autho
     }
   } else {
     const [row] = await engine.executeRaw<Record<string, unknown>>(
-      'SELECT id, revoked_at, scopes, permissions FROM access_tokens WHERE id = $1', [principal.id]);
+      'SELECT * FROM access_tokens WHERE id = $1', [principal.id]);
     if (!row || row.revoked_at != null) deny('legacy token is missing or revoked');
-    scopes = normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'];
-    if (row.permissions != null && !coerceLegacyPermissions(row.permissions)) deny('malformed token permissions');
-    sourceId = parseLegacyTokenScope(coerceLegacyPermissions(row.permissions)?.source_id).sourceId;
+    const tokenGrant = grantFromTokenRow(row);
+    if (tokenGrant.permissionsMalformed) deny('malformed token permissions');
+    scopes = tokenGrant.scopes;
+    sourceId = authSourcesFromGrant(tokenGrant).sourceId;
   }
   if (!hasScope(grant.scopes, 'admin') || !hasScope(scopes, 'admin') || sourceId !== grant.sourceId) {
     deny('the original grant and current principal must both authorize this source and admin operation');
