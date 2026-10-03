@@ -12,14 +12,14 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
  * everything; a width change with preserved data is
  * `gbrain migrate embeddings --to <model> --dim <N>`.
  *
- * Destructive. TTY confirmation required unless `--yes` is passed. JSON
- * output via `--json` for scripted callers.
+ * Destructive. Consent via requireConsent (A4): a TTY prompt or `--yes`;
+ * non-TTY without it exits 3 with the consent payload. `--json` for scripts.
  */
 
 import { existsSync, statSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { loadConfig, loadConfigFileOnly, gbrainPath } from '../core/config.ts';
-import { promptYesNo } from '../core/interaction.ts';
+import { consentGateOrExit } from '../core/consent-cli.ts';
 
 interface ReinitOpts {
   embeddingModel: string;
@@ -84,34 +84,12 @@ export async function runReinitPglite(args: string[]): Promise<void> {
     console.log('');
   }
 
-  // TTY confirmation.
-  if (!opts.yes) {
-    if (!process.stdin.isTTY) {
-      fail(
-        opts.jsonOutput,
-        'no_tty_no_yes',
-        'Non-TTY environment requires --yes to confirm destruction.',
-      );
-    }
-    // Defense in depth behind the non-TTY refusal above: a non-TTY stdin declines
-    // instead of reading. The shared prompt treats EOF as a decline and writes to
-    // stderr so stdout stays clean for --json payloads.
-    const confirmed = process.stdin.isTTY === true
-      && await promptYesNo('Wipe and reinit? (y/N): ', { output: process.stderr });
-    if (!confirmed) {
-      if (opts.jsonOutput) {
-        console.log(JSON.stringify({ status: 'aborted', reason: 'user_declined' }));
-      } else {
-        console.log('Aborted. Brain untouched.');
-      }
-      process.exit(0);
-    }
-  }
-
-  // Step 1: back up existing brain.
-  // If a previous .bak exists, refuse rather than silently overwriting it —
-  // the user's last rollback target is more valuable than this attempt's.
+  // Consent (A4): destructive. The whole brain is the selection and the target
+  // is fully named by the argv, so there is no record-level plan to bind.
+  // Non-TTY without --yes refuses with exit 3 and the consent payload; --json
+  // never implies consent; EOF/timeout at the TTY prompt is a decline.
   const bakPath = dbPath + '.bak';
+  // Refuse before asking: the user's last rollback target is more valuable than this attempt's.
   if (existsSync(bakPath)) {
     fail(
       opts.jsonOutput,
@@ -119,6 +97,23 @@ export async function runReinitPglite(args: string[]): Promise<void> {
       `Backup already exists at ${bakPath}. Move or delete it first to avoid clobbering your previous rollback target.`,
     );
   }
+  const reinitArgv = ['gbrain', 'reinit-pglite', '--embedding-model', opts.embeddingModel,
+    '--embedding-dimensions', String(opts.embeddingDimensions),
+    ...(opts.customPath ? ['--path', opts.customPath] : []), ...(opts.noSync ? ['--no-sync'] : [])];
+  await consentGateOrExit({
+    command: 'reinit-pglite', effects: ['destructive'], actor: 'agent',
+    what: `Wipe and re-create the PGLite brain at ${dbPath}`,
+    why: `PGLite cannot change the vector width in place, so the brain is moved aside and re-initialized at ${opts.embeddingDimensions} dimensions for ${opts.embeddingModel}.`,
+    risk: `Every page, chunk and embedding is removed from the active brain; DB-only pages and remember facts are NOT carried over `
+      + `(they stay only in the backup). The brain is first moved to ${bakPath}; restore with: mv ${bakPath} ${dbPath}. `
+      + `To keep everything instead, use gbrain migrate embeddings --to <model> --dim <N>.`,
+    user_message: `Wipe and re-create your brain (${sizeMb > 0 ? `${sizeMb} MB, ` : ''}${dbPath}) for ${opts.embeddingModel}? `
+      + `DB-only pages and remembered facts are not carried over; a backup is kept at ${bakPath}.`,
+    argv: reinitArgv,
+    args: opts.yes ? [...args, '--yes'] : args,
+  }, { json: opts.jsonOutput });
+
+  // Step 1: back up existing brain (the .bak collision was refused above).
 
   // Preserve user config BEFORE init (Lane B.4 already does this, but
   // belt-and-suspenders for the reinit command's contract).
@@ -303,7 +298,7 @@ flag nor the config file provides a value, the command fails.
 
 Optional:
   --path <path>                        Active brain path (default: ~/.gbrain/brain.pglite).
-  --yes / -y                           Skip the TTY confirmation prompt.
+  --yes / -y                           Authorize the wipe without a prompt (ask the user first).
   --no-sync                            Skip the post-init \`gbrain sync\`.
   --json                               Emit structured JSON output on stdout.
 
