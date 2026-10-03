@@ -53,8 +53,8 @@ export interface PlannerRefreshResult {
 }
 
 interface PlannerTestHooks {
-  /** Runs after a table's ANALYZE and before its watermark is published. */
-  beforePublish?: (engine: BrainEngine, table: PlannerStatsTable, watermark: number) => Promise<void>;
+  /** Runs after a table's watermark is read and before its ANALYZE and publication. */
+  afterWatermark?: (engine: BrainEngine, table: PlannerStatsTable, watermark: number) => Promise<void>;
   /** Runs after each published ANALYZE. */
   onAnalyzed?: (engine: BrainEngine, event: { reason: PlannerRefreshReason; table: PlannerStatsTable; pending: number; ms: number }) => Promise<void>;
 }
@@ -189,8 +189,8 @@ async function publishWatermark(engine: BrainEngine, table: PlannerStatsTable, w
 }
 
 /**
- * ANALYZE each table, then publish its watermark (read before the ANALYZE) and
- * drop the deltas it covers in one transaction. Table names come only from
+ * Per table: read its watermark, then ANALYZE it, publish the watermark and drop
+ * the deltas it covers in one transaction. Table names come only from
  * PLANNER_STATS_TABLES.
  */
 export async function analyzePlannerTables(engine: BrainEngine, tables: readonly PlannerStatsTable[], reason: PlannerRefreshReason,
@@ -199,11 +199,14 @@ export async function analyzePlannerTables(engine: BrainEngine, tables: readonly
   for (const table of tables) {
     if (!PLANNER_STATS_TABLES.includes(table)) throw new Error(`Not a planner statistics table: ${table}`);
     const watermark = (await readWatermarks(engine, [table])).get(table) ?? 0;
-    const started = performance.now();
-    await engine.executeRaw(`ANALYZE ${table}`);
-    const ms = performance.now() - started;
-    await hooks.beforePublish?.(engine, table, watermark);
-    await engine.transaction(tx => publishWatermark(tx, table, watermark, ms));
+    await hooks.afterWatermark?.(engine, table, watermark);
+    const ms = await engine.transaction(async tx => {
+      const started = performance.now();
+      await tx.executeRaw(`ANALYZE ${table}`);
+      const elapsed = performance.now() - started;
+      await publishWatermark(tx, table, watermark, elapsed);
+      return elapsed;
+    });
     const event = { table, pending: pending.get(table) ?? 0, ms: Math.round(ms) };
     analyzed.push(event);
     await hooks.onAnalyzed?.(engine, { reason, ...event });
@@ -264,10 +267,12 @@ export async function maybeRefreshPlannerStats(engine: BrainEngine, reason: Plan
  * The first relevant read (O-ENG-12): refresh stale tables within
  * `planner.first_read_budget_ms` before the read; the returned function, called
  * once the read has answered, refreshes the tables whose last ANALYZE exceeded
- * the budget. Never throws: planner upkeep must not fail a read.
+ * the budget. A no-op for reads inside a transaction. Never throws: planner
+ * upkeep must not fail a read.
  */
-export async function beforePlannerRead(engine: BrainEngine): Promise<() => void> {
+export async function beforePlannerRead(engine: BrainEngine, inTransaction = false): Promise<() => void> {
   const noop = () => {};
+  if (inTransaction) return noop;
   const state = runtimeFor(engine);
   if (!state.inflight && Date.now() - state.lastCheck < PLANNER_STATS_THROTTLE_MS) return noop;
   try {
@@ -282,6 +287,12 @@ export async function beforePlannerRead(engine: BrainEngine): Promise<() => void
   } catch {
     return noop;
   }
+}
+
+/** Run a planner-sensitive read between `beforePlannerRead` and its deferred refresh. */
+export async function plannerRead<T>(engine: BrainEngine, inTransaction: boolean, read: () => Promise<T>): Promise<T> {
+  const settle = await beforePlannerRead(engine, inTransaction);
+  try { return await read(); } finally { settle(); }
 }
 
 /** Exposed for tests. */

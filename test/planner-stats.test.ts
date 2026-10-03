@@ -41,7 +41,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM planner_stats_state');
   await engine.executeRaw("DELETE FROM config WHERE key LIKE 'planner.%' OR key = 'import.analyze_every_pages'");
   __testing.reset(engine);
-  __testing.hooks.beforePublish = undefined;
+  __testing.hooks.afterWatermark = undefined;
   __testing.hooks.onAnalyzed = undefined;
 });
 
@@ -107,7 +107,7 @@ describe('transactional accounting (O-ENG-12)', () => {
 
   test('5. a modification committed between reading the watermark and publishing stays pending', async () => {
     await insertFacts(700);
-    __testing.hooks.beforePublish = async (_engine, name) => {
+    __testing.hooks.afterWatermark = async (_engine, name) => {
       if (name === 'facts') await engine.executeRaw(`INSERT INTO facts (fact, source) SELECT 'racer ' || g, 'test' FROM generate_series(1, 25) g`);
     };
 
