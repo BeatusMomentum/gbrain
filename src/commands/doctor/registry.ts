@@ -87,6 +87,8 @@ import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
+import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
+import { agentContractEntry } from './checks/agent-contract.ts';
 import { STOP_DOCTOR, type DoctorContext, type DoctorEntry } from './context.ts';
 import type { Check } from '../doctor.ts';
 import { infoCheck } from './check-fix.ts';
@@ -105,6 +107,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   homeDirInWorktreeEntry,
   defaultSourcePathEntry,
   embeddingKeySourceEntry,
+  harnessWiringDoctorEntry,
+  agentContractEntry,
   pgliteDataDirEntry,
   projectionResidentEntry,
   offlineConnectionEntry,

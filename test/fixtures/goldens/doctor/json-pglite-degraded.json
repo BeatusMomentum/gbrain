@@ -32,6 +32,7 @@
             "path": "pglite — serve IPC socket not present",
             "policy_skill_installed": false
           },
+          "fix_unavailable_reason": "unstructured",
           "message": "pglite — serve IPC socket not present; enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise) — policy skill not installed; run `gbrain integrations install retrieval-reflex --target <host-repo>`",
           "name": "retrieval_reflex_health",
           "status": "warn"
@@ -141,6 +142,7 @@
               "webhook-transforms"
             ]
           },
+          "fix_unavailable_reason": "unstructured",
           "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
           "name": "skill_currency",
           "status": "warn"
@@ -311,6 +313,42 @@
         },
         {
           "category": "ops",
+          "details": {
+            "reason": "no_harness_detected"
+          },
+          "fix": {
+            "actor": "user",
+            "consent": [
+              "persistent_install"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart",
+            "next": "report",
+            "requires_exclusive": false,
+            "user_message": "Which agent app should get gbrain memory? The install guide has a one-line command for each.",
+            "why": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+          },
+          "message": "No agent harness was detected. Wire one when the user picks an agent app.",
+          "name": "harness_wiring",
+          "readiness_state": "missing",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "consent_refused": 0,
+            "derived_cap_exhausted": 0,
+            "events": 0,
+            "internal_errors": 0,
+            "json_document_missing": 0,
+            "window_days": 7
+          },
+          "message": "No agent dead ends in the last 7 days (0 non-success event(s) logged).",
+          "name": "agent_contract",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "message": "Connected, 0 pages",
           "name": "connection",
           "status": "ok"
@@ -422,6 +460,7 @@
         },
         {
           "category": "brain",
+          "fix_unavailable_reason": "unstructured",
           "message": "embedding: declared dims=3072 but actual is vector(1024). Fix one side: update config OR ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(3072);",
           "name": "embedding_column_registry",
           "status": "warn"
@@ -1008,6 +1047,7 @@
               "unpushed": 0
             }
           },
+          "fix_unavailable_reason": "unstructured",
           "message": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
           "name": "backup_coverage",
           "status": "warn"
@@ -1026,6 +1066,7 @@
         },
         {
           "category": "brain",
+          "fix_unavailable_reason": "unstructured",
           "message": "Source 'default' has never completed a full cycle. Run `gbrain dream --source <id>` to cycle a source, or start `gbrain autopilot`.",
           "name": "cycle_freshness",
           "status": "warn"
@@ -1227,6 +1268,7 @@
         },
         {
           "category": "brain",
+          "fix_unavailable_reason": "unstructured",
           "message": "Schema width mismatch: content_chunks.embedding is vector(1024) but gateway resolved embedding_dimensions = 3072.\n\nEmbedding dimension mismatch detected.\n\n  Existing column: vector(1024)\n  Requested:       vector(3072)  (openai:text-embedding-3-large)\n\nSwitching dims re-embeds every chunk and fact;\nPGLite cannot ALTER vector column types in place (pgvector ships as WASM).\n\nKeep this brain's width (no rebuild; pages and facts kept):\n\n  gbrain init --force --embedding-model openai:text-embedding-3-large --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite\n\nChange the width (re-embeds; pages and DB-only facts kept; preview first):\n\n  gbrain migrate embeddings --to openai:text-embedding-3-large --dim 3072 --dry-run\n\nLast resort (moves the datastore aside; DB-only pages and facts are NOT carried over):\n\n  gbrain reinit-pglite --embedding-model openai:text-embedding-3-large --embedding-dimensions 3072\n\nFull guide: docs/embedding-migrations.md",
           "name": "embedding_width_consistency",
           "status": "warn"
@@ -1325,6 +1367,7 @@
         },
         {
           "category": "brain",
+          "fix_unavailable_reason": "unstructured",
           "message": "0 takes (takes.bootstrap_enabled is false; opt in to enable)",
           "name": "takes_count",
           "status": "warn"
