@@ -161,7 +161,31 @@ in fix wave 7), skipped (owner named), closed as already fixed.
 
 ## Gate
 
-GATE_RESULTS
+Final `bun run ci:ubicloud` on the release tree (run 2026-10-03T04-47-35-733Z,
+four standard-16 VMs, 7 m 34 s): gitleaks 1/1, verify 1/1, unit 2,336/2,336,
+serial 401/401, slow 26/26, E2E 388/388 (every E2E file on Postgres, the backend
+matrix also through transaction-mode PgBouncer). Lane A's Postgres E2E ran in
+full, including `postgres-poisoned-connection` (6/6 direct and 6/6 through
+PgBouncer). The Windows regressions run in the `windows-latest` unit step of
+`.github/workflows/test.yml` on the PR.
+
+Earlier full runs on this branch found and fixed: takes joining the deferred ANN
+worklist (lanes D1 x G), a conformance test racing the consumer's worktree lock,
+a source-read ratchet, the alias-read plan regression above, an over-broad first
+fix for the adjacency stall (it slowed the 10k-page delete benchmark), and two
+order dependencies in fix wave 7's tests (`minions-authority-parity` leaving a
+job behind; `managed-connector-job-contract` `cycle_extract` racing its own
+queued `loops_extract`). Known flake seen once: `secret-scan-credential-shapes`
+CRLF (passed on every later run).
+
+Wave security scan (`bun run wave-security-scan origin/master..HEAD`, 136
+commits): gitleaks 0 findings with the test/skills allowlist stripped, no
+`admin/dist` change, no new outbound hosts. The four obfuscation alarms are
+benign: the generated flag registry's `'eval'` command key and the vendored
+Postgres driver's `String.fromCharCode(c.status)` that names the ReadyForQuery
+status byte for the #5730 poisoned-connection callback. New spawns: `git` via
+`execFileSync` in `src/core/sync-upstream.ts` (upstream observation, #5255).
+Dependency change: `package.json` version and two scripts only.
 
 ## Measured cold-home time to first readback (O-DX-11)
 
