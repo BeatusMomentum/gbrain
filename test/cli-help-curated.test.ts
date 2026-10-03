@@ -95,7 +95,8 @@ describe('curatedFlagError (D4, CLI-only commands)', () => {
 
 describe('unknown-flag did-you-mean from curated flags (D3)', () => {
   test('a typo on a curated command suggests the curated flag', async () => {
-    const e = await unknownFlagError('doctor', '--remediat', "unknown flag --remediat for 'gbrain doctor'");
+    const curated = (await loadCuratedHelp('doctor'))!.flags.map(f => f.name);
+    const e = unknownFlagError('doctor', '--remediat', "unknown flag --remediat for 'gbrain doctor'", curated);
     expect(e.code).toBe('unknown_flag');
     expect(e.message).toContain('did you mean --remediate?');
     expect(e.suggestion).toContain('Did you mean --remediate?');
