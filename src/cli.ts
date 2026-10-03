@@ -39,6 +39,7 @@ import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExit
 import { agentJsonGuardMode } from './cli/json-guard.ts';
 import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeFatalCliError } from './cli/cli-error.ts';
 import { opError } from './core/ops/contract.ts';
+import { opParamValue } from './cli/op-param-values.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
@@ -993,9 +994,11 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
 
+  let endOfOptions = false; // D6: a bare `--` ends options (as in findUnknownOpFlag); later tokens are positionals
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg.startsWith('--')) {
+    if (arg === '--' && !endOfOptions) { endOfOptions = true; continue; }
+    if (arg.startsWith('--') && !endOfOptions) {
       // #2185: `--key=value` inline form. Pre-fix this parsed as junk key
       // 'key=value' and consumed the NEXT token as its value, corrupting
       // positional parsing. Recognized here so the strict-flag validator and
@@ -1013,9 +1016,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false'
-            : def.type === 'number' ? Number(raw)
-            : raw;
+          params[key] = def.type === 'boolean' ? raw !== 'false' : opParamValue(op, key, def, raw);
           continue;
         }
       }
@@ -1062,8 +1063,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // positionally, then --content clobbered it). Warn to stderr; when
         // the discarded value names an existing file, point at capture --file.
         const prevValue = params[key];
-        params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        params[key] = opParamValue(op, key, paramDef, args[++i]);
         if (prevValue !== undefined && prevValue !== params[key]) {
           let fileHint = '';
           try {
@@ -1079,7 +1079,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
-      params[key] = paramDef?.type === 'number' ? Number(arg) : arg;
+      params[key] = opParamValue(op, key, paramDef, arg, true);
     }
   }
 

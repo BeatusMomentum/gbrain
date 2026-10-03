@@ -272,7 +272,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // answered before any engine or queue is touched. Paired with the SELF_HELP_WITHOUT_ENGINE entry
   // below so a brainless machine gets real help, and with the `--`-aware help scan in main() so
   // `agent run -- --help` submits the literal prompt instead.
-  { name: 'agent', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/agent.ts') },
+  { name: 'agent', phase: 'post-connect', thinClient: 'none', selfHelp: true, end_of_options: true, load: () => import('./commands/agent.ts') },
   { name: 'book-mirror', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/book-mirror.ts') },
   // selfHelp: v0.37 fix wave (Lane D.4 + CDX2-12): sync's --no-embed flag was unreachable via help
   // because the dispatcher's generic CLI-only short-circuit fired before runSync could print its own

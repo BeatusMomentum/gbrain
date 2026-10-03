@@ -285,6 +285,7 @@
   "test/cli-input-plumbing-2822.test.ts": 1178,
   "test/cli-multimodal-integration.test.ts": 291,
   "test/cli-op-error-status-exit.test.ts": 6871,
+  "test/cli-op-typed-args.test.ts": 2000,
   "test/cli-options.test.ts": 4937,
   "test/cli-pipe-truncation.test.ts": 1339,
   "test/cli-query-image.test.ts": 18,
