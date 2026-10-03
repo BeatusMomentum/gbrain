@@ -2439,16 +2439,10 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
       });
       if (res) {
         const { installProcessWatchdog } = await import('./core/process-watchdog.ts');
-        syncWatchdog = installProcessWatchdog({
-          deadlineMs: res.deadlineMs,
-          graceMs: res.graceMs,
-          label: 'sync-watchdog',
-          heartbeatMs: 60_000,
-        });
-        process.stderr.write(
-          `[sync-watchdog] hard deadline armed: ${Math.round(res.deadlineMs / 1000)}s ` +
-          `+ ${Math.round(res.graceMs / 1000)}s grace (${res.reason}); disable with --no-hard-deadline\n`,
-        );
+        const { syncWatchdogPlan } = await import('./core/sync-reconcile.ts');
+        const plan = syncWatchdogPlan(args, res);
+        syncWatchdog = installProcessWatchdog(plan.watchdog);
+        process.stderr.write(plan.armedLine);
       }
     } catch (e) {
       // A bad --hard-deadline value throws here (same posture as --timeout).
