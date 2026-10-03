@@ -22,7 +22,6 @@ import { redactUrlsInText } from '../core/url-redact.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import { isConsentRefusal, printConsentRefusal } from '../core/consent.ts';
-import { findCliCommand } from './command-table.ts';
 
 export interface CliErrorWriteOpts {
   /** Raw argv (defaults to process.argv.slice(2)); decides `--json`. */
@@ -95,13 +94,12 @@ export function usageError(
 }
 
 /**
- * D3: `unknown_flag` with a did-you-mean drawn from the command's curated
- * help flags when it has a help module, else from `fallback` (the generated
- * acceptance registry / op params).
+ * D3: `unknown_flag` with a did-you-mean drawn from `candidates`: the
+ * command's curated help flags when it has a help module, else the generated
+ * acceptance registry / op params (the caller resolves them, so this module
+ * stays free of the command table's import closure).
  */
-export async function unknownFlagError(command: string, flag: string, message: string, fallback: readonly string[] = []): Promise<OperationError> {
-  const help = findCliCommand(command)?.help;
-  const candidates = help ? (await help()).help.flags.map(f => f.name) : fallback;
+export function unknownFlagError(command: string, flag: string, message: string, candidates: readonly string[] = []): OperationError {
   const bare = flag.split('=')[0];
   const nearest = suggestNearest(bare, candidates.filter(c => c !== bare));
   const suggestion = nearest
