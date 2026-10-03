@@ -1030,7 +1030,13 @@
         },
         {
           "category": "ops",
-          "message": "Skipped (PGLite — no multi-process worker surface)",
+          "details": {
+            "by_queue": {},
+            "depth": 0,
+            "engine": "pglite",
+            "worker_alive": true
+          },
+          "message": "PGLite: no jobs waiting for a worker.",
           "name": "queue_health",
           "status": "ok"
         },
