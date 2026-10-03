@@ -968,6 +968,7 @@
   "unit:test/connectors-embed-kickoff.test.ts": 336,
   "unit:test/connectors-pkce.test.ts": 701,
   "unit:test/connectors-providers.test.ts": 258,
+  "unit:test/connectors-sync-flags.test.ts": 1000,
   "unit:test/consent.test.ts": 600,
   "unit:test/console-prefix.test.ts": 188,
   "unit:test/consolidate-valid-until.test.ts": 2544,
