@@ -1895,6 +1895,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'code-callers': '`code-callers` has no MCP op yet. Run on the host.',
   'code-callees': '`code-callees` has no MCP op yet. Run on the host.',
   // scratch-DB audit additions
+  pricing: "pricing registers model prices in the host brain's config and is trusted-local only (a remote caller could void a cost cap). Ask the brain's operator to run `gbrain pricing set <model> ...` on the host.",
   config: "config reads/writes the host brain's config plane. Edit the host's .gbrain/config.json (file-plane keys) or run on the host with GBRAIN_HOME set. self_upgrade.* keys are machine-local and work here.",
   jobs: '`jobs list`, `jobs get <id>`, and `jobs stats` are thin-client routable; this subcommand runs against the host queue. Use the submit_job / list_jobs / get_job / get_job_stats MCP tools from your agent, or run on the host with GBRAIN_HOME set.',
   // Gap-closure wave [OV6]: routable subcommands are intercepted before this
@@ -3100,6 +3101,7 @@ ADMIN
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
   config [show|get|set] <key> [val]  Brain config
+  pricing [set|list|unset] <model>   Register model prices for cost caps (host only)
   protocol [conformance|stats]       MEMORY_VERBS v1: schemas, conformance
                                      certification, local usage stats + TTHW
   storage status [--repo <path>]     Storage tier status and health
