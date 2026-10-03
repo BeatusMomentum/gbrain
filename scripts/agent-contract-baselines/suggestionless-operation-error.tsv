@@ -54,7 +54,6 @@ src/core/persistence/effect-targets.ts	2
 src/core/persistence/embed-facts-administration.ts	2
 src/core/persistence/embedding-settlement.ts	1
 src/core/persistence/facts-prepare.ts	13
-src/core/persistence/grandfather.ts	6
 src/core/persistence/identity.ts	9
 src/core/persistence/import-mutations.ts	2
 src/core/persistence/ipc.ts	9
@@ -62,10 +61,8 @@ src/core/persistence/journal.ts	8
 src/core/persistence/limits.ts	1
 src/core/persistence/local-client.ts	5
 src/core/persistence/loop-fact-retirement.ts	4
-src/core/persistence/managed-sources.ts	5
 src/core/persistence/memory-mutations.ts	4
 src/core/persistence/memory-prepare.ts	4
-src/core/persistence/page-mutations.ts	6
 src/core/persistence/page-prepare.ts	11
 src/core/persistence/page-visibility.ts	1
 src/core/persistence/projection-reindex.ts	7
@@ -76,7 +73,6 @@ src/core/persistence/reconcile-prepare.ts	7
 src/core/persistence/reindex-administration.ts	3
 src/core/persistence/root-registry.ts	2
 src/core/persistence/semantic-pages.ts	3
-src/core/persistence/service.ts	5
 src/core/persistence/skill-activation.ts	1
 src/core/persistence/staging.ts	2
 src/core/persistence/sync-administration.ts	1
@@ -87,7 +83,6 @@ src/core/persistence/sync-wire.ts	1
 src/core/persistence/takes-prepare.ts	8
 src/core/persistence/topology-filesystem.ts	5
 src/core/persistence/topology-locks.ts	9
-src/core/persistence/topology-receipts.ts	6
 src/core/persistence/unbound-source.ts	1
 src/core/persistence/worktree-refresh.ts	5
 src/core/repair/captured-facts.ts	1
