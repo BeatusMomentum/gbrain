@@ -113,7 +113,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
  * test/cli-help-without-brain.serial.test.ts, which runs the CLI with an empty
  * GBRAIN_HOME and requires exit 0 plus real help output.
  */
-const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, args: string[]) => unknown>> = {
+const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: never, args: string[]) => unknown>)> = {
   export: async () => (await import('./commands/export.ts')).runExport as never,
   models: async () => (await import('./commands/models.ts')).runModels as never,
   watch: async () => (await import('./commands/watch.ts')).runWatch as never,
@@ -146,12 +146,16 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // runAgent accepts BrainEngine | null; help (incl. `register --help`) is
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
+  // D3: post-connect records whose handler answers --help before the engine; run through the table.
+  advisor: true, anomalies: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, features: true,
+  founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
 };
 
 /** Returns true when the command's own help was printed. */
 async function printSelfHelpWithoutEngine(command: string, args: string[]): Promise<boolean> {
   const load = SELF_HELP_WITHOUT_ENGINE[command];
   if (!load) return false;
+  if (load === true) return dispatchConnectedCommand(command, null as never, args).then(() => true);
   const run = await load();
   // The engine is never read on the help path; passing a placeholder keeps the
   // handler signatures untouched. skillopt already declares `BrainEngine | null`

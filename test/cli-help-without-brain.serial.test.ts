@@ -39,6 +39,13 @@ const HELP_WITHOUT_BRAIN = [
   'repair',
   // System One: the decide dispatch module prints its help before connecting.
   'decide',
+  // D3: handlers that print their own help, once shadowed by the generic stub
+  // (selfHelp flipped). Pre-connect records answer before any engine...
+  'remote', 'providers', 'resolvers', 'integrity', 'mounts', 'routing-eval', 'skillify', 'claw-test',
+  // ...conversation-parser through its engine-free subcommand route, the rest
+  // through SELF_HELP_WITHOUT_ENGINE's table entries.
+  'conversation-parser', 'advisor', 'anomalies', 'backfill', 'book-mirror', 'edges-backfill', 'features',
+  'founder', 'graph-query', 'orphans', 'salience', 'think',
 ];
 
 /**
