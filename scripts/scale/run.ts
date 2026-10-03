@@ -29,7 +29,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { generateScaleFixture, SCALE_SOURCES, scaleVector, writeScaleCorpus, type ScaleFixture } from './fixture.ts';
+import { corpusMarkdownFiles, generateScaleFixture, SCALE_SOURCES, scaleVector, writeScaleCorpus, type ScaleFixture } from './fixture.ts';
 import {
   BUDGET_MULTIPLIER, evaluateScaleGates, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, reproduceCommand, resultHits, verdictLines,
   type DataCheck, type GatePolicy, type OpPlan, type OpResult, type PlanStatement, type ScaleReport,
@@ -179,6 +179,12 @@ async function writeConfig(): Promise<void> {
 interface CliImport { perFileMs: number[]; result: Record<string, unknown>; wallMs: number }
 /** Run the real `gbrain import` for one source; per-file cost comes from its JSON progress ticks (one per file at interval 0). */
 async function cliImport(sourceId: string): Promise<CliImport> {
+  const sourceDir = join(corpusDir, sourceId);
+  const onDisk = corpusMarkdownFiles(sourceDir).length;
+  if (onDisk === 0) {
+    throw new Error(`code=scale_corpus_empty: no Markdown files under ${sourceDir}, so there is nothing to import. `
+      + `Fix: delete ${corpusDir} (or pass a fresh --corpus-dir) and rerun; the harness regenerates the corpus from the seed.`);
+  }
   const started = performance.now();
   const child = Bun.spawn([process.execPath, join(REPO, 'src/cli.ts'), '--progress-json', '--progress-interval', '0',
     'import', join(corpusDir, sourceId), '--no-embed', '--source', sourceId, '--json'], { env: process.env, stdout: 'pipe', stderr: 'pipe' });
@@ -187,6 +193,12 @@ async function cliImport(sourceId: string): Promise<CliImport> {
   const lastJson = stdout.trim().split('\n').reverse().find(l => l.startsWith('{'));
   if (code !== 0 || !lastJson) {
     throw new Error(`gbrain import of source ${sourceId} exited ${code}. stdout: ${stdout.slice(-2000)} stderr: ${stderr.slice(-2000)}`);
+  }
+  const totalFiles = Number(JSON.parse(lastJson).total_files);
+  if (totalFiles !== onDisk) {
+    throw new Error(`code=scale_import_file_count: gbrain import saw ${totalFiles} of the ${onDisk} Markdown files under ${sourceDir}. `
+      + 'Its file listing skipped the rest (a .gitignore or hidden-path rule of an enclosing repository is the usual cause). '
+      + `Fix: check \`git -C ${sourceDir} check-ignore -v .\`, or pass a --corpus-dir outside any repository.`);
   }
   const elapsed: number[] = [];
   for (const line of stderr.split('\n')) {

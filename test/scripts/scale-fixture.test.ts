@@ -6,7 +6,7 @@
  * in the fixture itself.
  */
 import { expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateScaleFixture, SCALE_VECTOR_DIMS, scaleVector, writeScaleCorpus } from '../../scripts/scale/fixture.ts';
@@ -73,6 +73,33 @@ test('fixture additions: facts/takes fences parse, vectors single out their page
   expect(a.requestId).not.toBe(b.requestId);
   expect(a.slug).not.toBe(b.slug);
   for (const w of f.writers) expect(w.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+test('writeScaleCorpus never trusts the manifest alone: missing, edited or extra files regenerate the corpus', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'scale-corpus-'));
+  try {
+    const f = generateScaleFixture({ pages: 40, seed: 3 });
+    const [first, second] = [f.pages[0]!, f.pages[1]!];
+    const file = (p: typeof first) => join(dir, p.sourceId, `${p.slug}.md`);
+    expect(writeScaleCorpus(f, dir)).toBe(true);
+    // A cache restored from a partial run: the manifest is there, the files are not.
+    for (const sourceId of new Set(f.pages.map(p => p.sourceId))) rmSync(join(dir, sourceId), { recursive: true, force: true });
+    expect(existsSync(join(dir, 'manifest.json'))).toBe(true);
+    expect(writeScaleCorpus(f, dir)).toBe(true);
+    for (const p of f.pages) expect(readFileSync(file(p), 'utf8')).toBe(p.content);
+    rmSync(file(first));
+    expect(writeScaleCorpus(f, dir)).toBe(true);
+    expect(readFileSync(file(first), 'utf8')).toBe(first.content);
+    writeFileSync(file(second), 'edited by hand\n');
+    expect(writeScaleCorpus(f, dir)).toBe(true);
+    expect(readFileSync(file(second), 'utf8')).toBe(second.content);
+    writeFileSync(join(dir, first.sourceId, 'stray.md'), 'not a fixture page\n');
+    expect(writeScaleCorpus(f, dir)).toBe(true);
+    expect(existsSync(join(dir, first.sourceId, 'stray.md'))).toBe(false);
+    expect(writeScaleCorpus(f, dir)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('writeScaleCorpus writes one Markdown file per page once, reuses a matching corpus and rewrites a stale one', () => {

@@ -12,7 +12,7 @@ name: Scale tier
 #
 # Enforced: import rate, known answers, no-op re-import, no duplicates across
 # sources, the import phase timer, planner health (probed after the first
-# timed op, hot tables above 500 rows) and the budgets phase timer
+# timed op, hot tables above 500 rows; PGLite only) and the budgets phase timer
 # (PLANNER_HEALTH_ENFORCED in scripts/scale/gates.ts). Interactive ceilings
 # and calibrated budgets stay report-only until `bun scripts/scale/trend.ts`
 # prints "ceilings stable" and a reviewer sets the repo variable

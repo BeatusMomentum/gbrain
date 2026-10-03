@@ -15,7 +15,7 @@
  */
 import { renderFactsTable, type ParsedFact } from '../../src/core/facts-fence.ts';
 import { renderTakesFence, type ParsedTake } from '../../src/core/takes-fence.ts';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export interface ScalePage {
@@ -171,6 +171,22 @@ const CORPUS_LAYOUT = 1;
  * count and content digest is reused (CI caches only this directory).
  * Returns whether the corpus was (re)written.
  */
+/** Markdown files under one source's corpus directory, relative to it. */
+export function corpusMarkdownFiles(sourceDir: string): string[] {
+  if (!existsSync(sourceDir)) return [];
+  return (readdirSync(sourceDir, { recursive: true }) as string[]).filter(f => f.endsWith('.md'));
+}
+
+function corpusFilesMatch(fixture: ScaleFixture, dir: string): boolean {
+  for (const sourceId of SCALE_SOURCES) {
+    if (corpusMarkdownFiles(join(dir, sourceId)).length !== fixture.pages.filter(p => p.sourceId === sourceId).length) return false;
+  }
+  return fixture.pages.every(p => {
+    const file = join(dir, p.sourceId, `${p.slug}.md`);
+    return existsSync(file) && readFileSync(file, 'utf8') === p.content;
+  });
+}
+
 export function writeScaleCorpus(fixture: ScaleFixture, dir: string): boolean {
   const hasher = new Bun.CryptoHasher('sha256');
   for (const p of fixture.pages) hasher.update(`${p.sourceId}\0${p.slug}\0${p.content}\0`);
@@ -178,7 +194,9 @@ export function writeScaleCorpus(fixture: ScaleFixture, dir: string): boolean {
   const manifestPath = join(dir, 'manifest.json');
   if (existsSync(manifestPath)) {
     try {
-      if (JSON.stringify(JSON.parse(readFileSync(manifestPath, 'utf8'))) === JSON.stringify(manifest)) return false;
+      // The manifest alone proves nothing (a cache restored from a partial run, files deleted by hand):
+      // reuse only when every page file is present with its exact content and nothing else is there.
+      if (JSON.stringify(JSON.parse(readFileSync(manifestPath, 'utf8'))) === JSON.stringify(manifest) && corpusFilesMatch(fixture, dir)) return false;
     } catch { /* unreadable manifest: rewrite the corpus */ }
   }
   for (const sourceId of SCALE_SOURCES) rmSync(join(dir, sourceId), { recursive: true, force: true });

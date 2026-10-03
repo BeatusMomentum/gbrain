@@ -1242,6 +1242,16 @@ function isCollectibleForWalker(
   }
 }
 
+/** Whether the git work tree around `dir` ignores `dir` itself (`git check-ignore` exits 0). */
+function gitIgnoresDir(dir: string): boolean {
+  try {
+    execFileSync('git', ['-C', dir, 'check-ignore', '-q', '.'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Git-aware fast path for `collectSyncableFiles`. Returns the strategy-filtered
  * list of syncable files when `dir` is inside a git work tree (paths absolute,
@@ -1272,6 +1282,9 @@ function gitListSyncableFiles(
   } catch {
     return null; // not a git work tree, or git not on PATH → FS-walk fallback
   }
+  // A directory the enclosing repository ignores (a scratch or cache folder inside a checkout) lists
+  // nothing here, so an explicit import of it would succeed with zero files. Walk it directly instead.
+  if (stdout === '' && gitIgnoresDir(dir)) return null;
   const files: string[] = [];
   for (const rel of stdout.split('\0')) {
     if (!rel) continue;

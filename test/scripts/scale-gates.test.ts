@@ -149,6 +149,15 @@ describe('scale gates under --enforce', () => {
     expect(verdict.failures[0]!.message).toContain('gbrain repair planner-stats --apply');
   });
 
+  test('missing pg_stats rows on Postgres are report-only: autovacuum owns its statistics', () => {
+    const report = { ...passingReport(), engine: 'postgres' as const };
+    report.planner.hot_table_stat_rows.facts = 0;
+    const verdict = evaluateScaleGates(report, ENFORCE);
+    expect(verdict.exitCode).toBe(0);
+    expect(verdict.reportOnlyBreaches.map(b => b.gate)).toEqual(['planner_stats']);
+    expect(verdict.reportOnlyBreaches[0]!.message).toContain('autovacuum');
+  });
+
   test('without --enforce every run exits 0 and says how many gates would fail', () => {
     const report = passingReport();
     report.ops[0] = { ...report.ops[0]!, known_answer: 'fail', detail: 'page_count 1 != 10000' };

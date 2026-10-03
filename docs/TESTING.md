@@ -305,7 +305,7 @@ gates (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`): the Nested Loop
 inner-loop gate on the key plans, the budgets phase timer, and planner stats.
 Planner stats are probed after the first timed op, because F4b analyzes on the
 first planner-sensitive read, and only hot tables above 500 rows must have
-`pg_stats` rows.
+`pg_stats` rows (PGLite only: on Postgres autovacuum owns statistics, so a missing row is report-only).
 Interactive ceilings and calibrated budgets (`scripts/scale/budgets.json`,
 written by `--calibrate`) stay report-only until
 `bun scripts/scale/trend.ts` prints "ceilings stable" over the last five
