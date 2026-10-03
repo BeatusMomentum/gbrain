@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { operations } from '../operations.ts';
-import { OperationError, type AuthInfo } from '../ops/contract.ts';
+import { opError, OperationError, type AuthInfo } from '../ops/contract.ts';
 import { hasScope, operationScopesAllowed } from '../scope.ts';
 import { resolveSourceId } from '../source-resolver.ts';
 import { dispatchToolCall } from '../../mcp/dispatch.ts';
@@ -14,6 +14,10 @@ import { boundedWriteWaitMs } from './write-wait.ts';
 export { residentPersistenceConfig } from './local-client.ts';
 import { projectionBacklog } from '../page-state/projections.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
+import type { Action } from '../agent-output.ts';
+
+const localWritersFix: Action = { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'], consent: [], actor: 'agent',
+  why: 'Shows this brain\'s local writer registrations with their grants, read-only.', requires_exclusive: false };
 
 /** Resident lifecycle owns the consumer; each connection proves its own durable registration. */
 export async function createPersistenceIpcProvider(engine: BrainEngine, config: GBrainConfig): Promise<PersistenceIpcProvider> {
@@ -28,20 +32,28 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
   startPersistenceConsumer(engine, config);
   return { brainId: brain.brain_id, projectionStatus: () => projectionBacklog(engine), dispatch: request => withVerifiedLocalRegistration(engine, request.registration, async verified => {
     assertPersistenceAccepting(engine);
-    if (request.brain_id !== brain.brain_id) throw new OperationError('permission_denied', 'This registration belongs to a different brain.');
+    if (request.brain_id !== brain.brain_id) {
+      throw opError('permission_denied', 'This registration belongs to a different brain.',
+        'The CLI sent a writer registration for another brain to this brain\'s owner. Select the intended brain with --brain; registering this CLI on this brain is a credentials step the user approves.',
+        { fix: localWritersFix });
+    }
     const operation = operations.find(op => op.name === request.operation);
     const localSkillAdministration = !verified.remote && verified.principal.kind === 'local_cli'
       && ['get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions', 'retain_skill_revision', 'import_skill_proposal'].includes(request.operation);
     if (!operation || (!localSkillAdministration && !hasScope(verified.grant.scopes, operation.scope ?? 'read'))
       || (verified.remote && !operationScopesAllowed(verified.grant.scopes, operation))
       || (verified.grant.operations !== null && !verified.grant.operations.includes(operation.name))) {
-      throw new OperationError('permission_denied', 'The local writer grant excludes this operation.');
+      throw opError('permission_denied', 'The local writer grant excludes this operation.',
+        `This CLI's writer grant does not cover ${request.operation}. Review the grant; widening it with gbrain auth local-writer register --replace is a credentials change the user approves.`,
+        { fix: localWritersFix });
     }
     const sourceId = await resolveSourceId(engine, request.routing.source, request.routing.cwd, { skipLocalSignals: true });
     const unrestricted = verified.grant.sourceIds.includes('*');
     const sourceAllowed = (source: unknown) => typeof source === 'string' && (unrestricted || verified.grant.sourceIds.includes(source));
     if (!sourceAllowed(sourceId) || (request.params.source_id !== undefined && !sourceAllowed(request.params.source_id))) {
-      throw new OperationError('permission_denied', 'The local writer grant excludes this source.');
+      throw opError('permission_denied', 'The local writer grant excludes this source.',
+        `This CLI's writer grant does not cover source ${String(request.params.source_id ?? sourceId)}. Use a source the grant lists; widening it is a credentials change the user approves.`,
+        { fix: localWritersFix });
     }
     // AuthInfo carries server-constructed read/fence ceilings; durable identity
     // remains in the verifier's async context, never a fabricated OAuth identity.
