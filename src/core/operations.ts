@@ -333,8 +333,4 @@ for (const op of operations) {
 export const operationsByName = Object.fromEntries(
   operations.map(op => [op.name, op]),
 ) as Record<string, Operation>;
-
-// A1 render-time routing pin: which CLI names are shared ops, and whether
-// their `--source` is an op param (provenance) rather than the target source.
-registerOpRoutes(operations.filter(op => op.cliHints?.name && !op.cliHints.hidden)
-  .flatMap(op => [op.cliHints!.name!, ...(op.cliHints!.aliases ?? [])].map(name => [name, 'source' in op.params] as const)));
+registerOpRoutes(operations); // A1 render-time routing pin (src/core/fix-routing.ts)

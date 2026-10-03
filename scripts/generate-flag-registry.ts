@@ -347,14 +347,18 @@ export function buildFlagRegistry(root: string = ROOT): Record<string, string[]>
 }
 
 /**
- * Routing flags each CLI-only command CONSUMES, as opposed to merely accepts
- * (every command accepts `--brain`/`--source` through UNIVERSAL_FLAGS). A1's
- * render-time routing pin (src/core/fix-routing.ts) appends `--source` only to
- * commands with consumption evidence (the tight-quoted `'--source'` literal in
- * the command's own code, the SAFETY_FLAGS rule) and `--brain` to pre-connect
- * commands only when their code reads the global brain option.
+ * A1 render-time routing pin (src/core/fix-routing.ts): the routing flags a
+ * fix naming each CLI-only command carries. Acceptance alone is not evidence
+ * (every command accepts `--brain`/`--source` through UNIVERSAL_FLAGS), so:
+ * - `--brain` when the command opens its brain through the connect terminator
+ *   (phase other than `pre-connect`), or its own code reads the global brain
+ *   option;
+ * - `--source` when the record declares `routes_source` (its source resolves
+ *   through the ambient chain). The declaration needs consumption evidence (the
+ *   tight-quoted `'--source'` literal in the command's own code, the
+ *   SAFETY_FLAGS rule); a declaration without it fails the generator.
  */
-export function buildRoutingConsumers(root: string = ROOT): Record<string, string[]> {
+export function buildRoutingFlags(root: string = ROOT): Record<string, string[]> {
   return buildFlagArtifacts(root).routing;
 }
 
@@ -473,11 +477,15 @@ function buildFlagArtifacts(root: string): { registry: Record<string, string[]>;
       if (flags.has(f) && !consumes(depthZeroText, f)) flags.delete(f);
     }
     registry[command] = [...flags].sort();
-    const consumed = [
-      ...(/getCliOptions\(\)\.brain|cliOpts\.brain/.test(depthZeroText) ? ['--brain'] : []),
-      ...(consumes(depthZeroText, '--source') ? ['--source'] : []),
+    const record = records.find(r => r.name === command);
+    if (record?.routesSource && !consumes(depthZeroText, '--source')) {
+      throw new Error(`generate-flag-registry: ${command} declares routes_source but its code never reads '--source'`);
+    }
+    const routed = [
+      ...(record?.phase !== 'pre-connect' || /getCliOptions\(\)\.brain|cliOpts\.brain/.test(depthZeroText) ? ['--brain'] : []),
+      ...(record?.routesSource ? ['--source'] : []),
     ];
-    if (consumed.length) routing[command] = consumed;
+    if (routed.length) routing[command] = routed;
   }
   return { registry, routing };
 }
@@ -507,11 +515,11 @@ export const CLI_FLAG_REGISTRY: Record<string, readonly string[]> = {
 ${entries}
 };
 
-// Routing flags a command CONSUMES (A1 render-time pin, src/core/fix-routing.ts):
-// '--source' when the command's own code reads the tight-quoted literal,
-// '--brain' when it reads the global brain option. Acceptance alone (every
-// command accepts both) is not evidence the flag routes anything.
-export const CLI_ROUTING_FLAG_CONSUMERS: Record<string, readonly string[]> = {
+// Routing flags a fix naming each CLI-only command carries (A1 render-time pin,
+// src/core/fix-routing.ts): '--brain' when the command opens its brain (not a
+// pre-connect command, or its code reads the global brain option); '--source'
+// when the command-table record declares routes_source (consumption-checked).
+export const CLI_ROUTING_FLAGS: Record<string, readonly string[]> = {
 ${render(routing)}
 };
 `;

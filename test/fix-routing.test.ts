@@ -8,13 +8,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import '../src/core/operations.ts';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
-import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAG_CONSUMERS } from '../src/core/cli-flag-registry.generated.ts';
+import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS } from '../src/core/cli-flag-registry.generated.ts';
 import {
   __resetCliRoutingForTests, cliRouting, installCliRouting, noteResolvedSource, pinRouting, recordedSource, routingFlagsFor,
 } from '../src/core/fix-routing.ts';
 import { cliRenderContext, renderAction, toAgentError, type Action, type RenderContext } from '../src/core/agent-output.ts';
 import { opError } from '../src/core/ops/contract.ts';
-import { buildRoutingConsumers } from '../scripts/generate-flag-registry.ts';
+import { buildRoutingFlags } from '../scripts/generate-flag-registry.ts';
 
 const routing = { brain: 'teambrain', source: 'wiki' };
 const read = (argv: string[], extra: Partial<Action> = {}): Action => ({ argv, consent: [], actor: 'agent', why: 'x', requires_exclusive: false, ...extra });
@@ -58,26 +58,23 @@ describe('pinRouting', () => {
 });
 
 describe('routing table agrees with the command table and the generated registry', () => {
-  test('every routes_source command accepts and consumes --source', () => {
-    const declared = CLI_COMMANDS.filter(r => r.routes_source).map(r => r.name);
+  test('every routes_source record pins --source and accepts it; nothing else does', () => {
+    const declared = CLI_COMMANDS.filter(r => r.routes_source).map(r => r.name).sort();
     expect(declared.length).toBeGreaterThan(10);
-    for (const name of declared) {
-      expect(CLI_FLAG_REGISTRY[name], `${name} accepts --source`).toContain('--source');
-      expect(CLI_ROUTING_FLAG_CONSUMERS[name], `${name} consumes --source`).toContain('--source');
-    }
+    for (const name of declared) expect(CLI_FLAG_REGISTRY[name], `${name} accepts --source`).toContain('--source');
+    expect(Object.keys(CLI_ROUTING_FLAGS).filter(k => CLI_ROUTING_FLAGS[k]!.includes('--source')).sort()).toEqual(declared);
   });
 
-  test('pre-connect commands pin --brain only with consumption evidence', () => {
-    for (const r of CLI_COMMANDS.filter(c => c.phase === 'pre-connect')) {
-      expect(routingFlagsFor(r.name).brain, r.name).toBe((CLI_ROUTING_FLAG_CONSUMERS[r.name] ?? []).includes('--brain'));
-    }
+  test('every engine-opening command pins --brain; pre-connect ones only when their code reads the brain option', () => {
+    for (const r of CLI_COMMANDS.filter(c => c.phase !== 'pre-connect')) expect(routingFlagsFor(r.name).brain, r.name).toBe(true);
     expect(routingFlagsFor('db-repair').brain).toBe(true);
+    expect(routingFlagsFor('embeddings').brain).toBe(true);
     expect(routingFlagsFor('apply-migrations').brain).toBe(false);
+    expect(routingFlagsFor('init').brain).toBe(false);
   });
 
-  test('committed routing map matches a fresh generator run (bun run build:flag-registry)', () => {
-    const fresh = buildRoutingConsumers();
-    expect(Object.fromEntries(Object.entries(CLI_ROUTING_FLAG_CONSUMERS).map(([k, v]) => [k, [...v]]))).toEqual(fresh);
+  test('committed routing table matches a fresh generator run (bun run build:flag-registry)', () => {
+    expect(Object.fromEntries(Object.entries(CLI_ROUTING_FLAGS).map(([k, v]) => [k, [...v]]))).toEqual(buildRoutingFlags());
   });
 });
 

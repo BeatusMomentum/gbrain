@@ -183,6 +183,7 @@ describe('keyless answers ask before spending (F8/F9)', () => {
 
 describe('F6 hidden-tool hint (owner stdio only)', () => {
   test('a tool outside the stdio surface names itself, its CLI equivalent and GBRAIN_SURFACE=full', async () => {
+    // A1: the CLI fix names the served brain explicitly.
     const { STARTER_OPS } = await import('../src/mcp/surface.ts');
     const allowedOps = new Set(STARTER_OPS);
     const stdio = await dispatchToolCall(engine as any, 'get_health', {}, { remote: true, transport: 'stdio', sourceId: 'default', allowedOps, surface: 'starter' });
@@ -190,7 +191,6 @@ describe('F6 hidden-tool hint (owner stdio only)', () => {
     expect(env.code).toBe('unknown_tool');
     expect(env.suggestion).toContain('get_health exists, but this server runs the starter tool surface');
     expect(env.suggestion).toContain('GBRAIN_SURFACE=full');
-    // A1: the CLI fix names the served brain explicitly.
     expect(env.fix.command).toBe('gbrain doctor --json --brain host');
     expect(env.fix.next).toBe('tell_user_to_run');
     // HTTP keeps the opaque envelope (no existence oracle).

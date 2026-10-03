@@ -128,6 +128,10 @@ export interface TableRecordShape {
   loadSpecifier: string | null;
   /** D3: `help` absent → undefined; `() => import('<literal>')` → the literal; any other shape → null. */
   helpSpecifier?: string | null;
+  /** The record's `phase` string literal (A1 routing pin: pre-connect commands open no brain through the terminator). */
+  phase?: string;
+  /** A1: `routes_source: true` on the record. */
+  routesSource?: true;
 }
 
 /** Every record of CLI_COMMANDS in table order, read by AST (the EO13 literal-load contract). */
@@ -150,6 +154,9 @@ export function readTableRecords(root: string): TableRecordShape[] {
         && init.body.expression.kind === ts.SyntaxKind.ImportKeyword && init.body.arguments.length === 1
         && ts.isStringLiteral(init.body.arguments[0]!) ? init.body.arguments[0].text : null;
     const help = prop('help');
-    return { name: name.text, loadSpecifier: literalImport(prop('load')?.initializer), ...(help ? { helpSpecifier: literalImport(help.initializer) } : {}) };
+    const phase = prop('phase')?.initializer;
+    const routesSource = prop('routes_source')?.initializer.kind === ts.SyntaxKind.TrueKeyword;
+    return { name: name.text, loadSpecifier: literalImport(prop('load')?.initializer), ...(help ? { helpSpecifier: literalImport(help.initializer) } : {}),
+      ...(phase && ts.isStringLiteral(phase) ? { phase: phase.text } : {}), ...(routesSource ? { routesSource: true as const } : {}) };
   });
 }

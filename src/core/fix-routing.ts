@@ -8,22 +8,23 @@
  * The pin is applied once, at render time (`renderAction`), to every gbrain
  * argv in the action (`argv`, `preview_argv`, `verify.argv`, `then`):
  *
- * - `--brain <id>` is appended for commands that route through the brain axis:
- *   every shared op, every CLI-only command that opens its engine through the
- *   connect terminator (phase other than `pre-connect`), and pre-connect
- *   commands whose own code reads the global brain option
- *   (CLI_ROUTING_FLAG_CONSUMERS, generated).
- * - `--source <id>` is appended for commands whose target source resolves
- *   through the ambient chain: every shared op (makeContext's resolver; ops
- *   that own a `source` param are excluded) and CLI-only commands that declare
- *   `routes_source` in the command table (each one consumes `--source` per the
- *   generated registry; test/fix-routing.test.ts pins that).
+ * - `--brain <id>` for commands that route through the brain axis: every
+ *   shared op, and CLI-only commands that open their engine through the
+ *   connect terminator or read the global brain option.
+ * - `--source <id>` for commands whose target source resolves through the
+ *   ambient chain: every shared op (makeContext's resolver; ops that own a
+ *   `source` param are excluded) and CLI-only commands whose command-table
+ *   record declares `routes_source`.
+ *
+ * The CLI-only half is generated from the command table and each command's
+ * code (CLI_ROUTING_FLAGS, `bun run build:flag-registry`), so this module never
+ * imports the table (its lazy loaders would pull every command into any bundle
+ * that renders a fix); the op half is registered by src/core/operations.ts.
  *
  * Flags already present are kept as written; the pin goes before a bare `--`
  * so it can never land in the positional lane.
  */
-import { CLI_COMMANDS, type CliCommandRecord } from '../cli/command-table.ts';
-import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAG_CONSUMERS } from './cli-flag-registry.generated.ts';
+import { CLI_FLAG_REGISTRY, CLI_ROUTING_FLAGS } from './cli-flag-registry.generated.ts';
 import { ALL_SOURCES, SOURCE_ID_RE } from './source-id.ts';
 
 export interface FixRouting { brain?: string; source?: string }
@@ -32,29 +33,25 @@ const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
 const pinnableSource = (s: string) => SOURCE_ID_RE.test(s) || s === ALL_SOURCES;
 const SOURCE_SELECTORS = ['--source', '--source-id', '--all-sources', '--sources'];
 
-let cliRecords: Map<string, CliCommandRecord> | null = null;
 const opCommands = new Map<string, { ownsSource: boolean }>();
 
-/** Shared-op CLI names (primary + aliases) and whether the op owns a `source` param (then --source is not routing). */
-export function registerOpRoutes(entries: Iterable<readonly [cliName: string, ownsSource: boolean]>): void {
-  for (const [name, ownsSource] of entries) opCommands.set(name, { ownsSource });
-}
-
-function record(command: string): CliCommandRecord | undefined {
-  cliRecords ??= new Map(CLI_COMMANDS.map(r => [r.name, r]));
-  return cliRecords.get(command);
+/**
+ * Shared-op CLI names (primary + aliases, hidden excluded): every op routes the brain, and `--source`
+ * unless the op owns a `source` param (provenance, not the target source). Called by src/core/operations.ts.
+ */
+export function registerOpRoutes(ops: Iterable<{ params: Record<string, unknown>; cliHints?: { name?: string; aliases?: readonly string[]; hidden?: boolean } }>): void {
+  for (const op of ops) {
+    if (!op.cliHints?.name || op.cliHints.hidden) continue;
+    for (const name of [op.cliHints.name, ...(op.cliHints.aliases ?? [])]) opCommands.set(name, { ownsSource: 'source' in op.params });
+  }
 }
 
 /** The routing flags a command accepts AND routes through (see the module comment). */
 export function routingFlagsFor(command: string): { brain: boolean; source: boolean } {
-  const rec = record(command);
-  if (rec) {
-    const accepted = CLI_FLAG_REGISTRY[command] ?? [];
-    const consumed = CLI_ROUTING_FLAG_CONSUMERS[command] ?? [];
-    return {
-      brain: accepted.includes('--brain') && (rec.phase !== 'pre-connect' || consumed.includes('--brain')),
-      source: accepted.includes('--source') && rec.routes_source === true,
-    };
+  const accepted = CLI_FLAG_REGISTRY[command];
+  if (accepted) {
+    const routed = CLI_ROUTING_FLAGS[command] ?? [];
+    return { brain: accepted.includes('--brain') && routed.includes('--brain'), source: accepted.includes('--source') && routed.includes('--source') };
   }
   const op = opCommands.get(command);
   return op ? { brain: true, source: !op.ownsSource } : { brain: false, source: false };
@@ -107,7 +104,7 @@ export function cliRouting(): FixRouting | undefined {
   try { return cliProvider?.(); } catch { return undefined; }
 }
 
-/** Test seam: drop the provider and the recorded source. */
+/** Test seam: drop the provider and the recorded source (registered command tables stay). */
 export function __resetCliRoutingForTests(): void {
   cliProvider = null;
   resolvedSource = undefined;

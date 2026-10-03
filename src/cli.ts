@@ -31,7 +31,7 @@ import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
-import { installCliRouting, recordedSource, routingFlagsFor, type FixRouting } from './core/fix-routing.ts';
+import { installCliRoutingFor } from './cli/fix-routing-provider.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { currentCliWriteWait } from './core/persistence/write-wait.ts';
@@ -300,41 +300,6 @@ function maybeEmitUpdateMarker(command: string): void {
   }
 }
 
-/**
- * A1: the routing every CLI-surface fix in this invocation pins
- * (src/core/fix-routing.ts). Brain: the id connectEngine resolves (flag →
- * GBRAIN_BRAIN_ID → .gbrain-mount → mount path → host). Source: the first
- * source the invocation resolved through the ambient chain, else the
- * engine-free tiers for a command that routes `--source`. A thin client pins
- * nothing: it has no local mounts (`--brain` is refused there) and its remote
- * scopes the source.
- */
-function cliRoutingProvider(currentCommand: () => string | undefined, args: readonly string[]): () => FixRouting | undefined {
-  let base: { thin: boolean; brain?: string; source?: string } | null = null;
-  return () => {
-    if (!base) {
-      const thin = isThinClient(loadConfig());
-      let brain: string | undefined;
-      let source: string | undefined;
-      if (!thin) {
-        try { brain = resolveBrainIdForDbMarker(getCliOptions().brain); } catch { /* unresolvable: no brain pin */ }
-        const cmd = currentCommand();
-        if (cmd && routingFlagsFor(cmd).source) {
-          const end = args.indexOf('--');
-          const head = end === -1 ? args : args.slice(0, end);
-          const i = head.findIndex(a => a === '--source' || a.startsWith('--source='));
-          const explicit = i === -1 ? null : head[i]!.startsWith('--source=') ? head[i]!.slice('--source='.length) : head[i + 1] ?? null;
-          try { source = resolveSourceIdEngineFree(explicit) ?? undefined; } catch { /* invalid: no source pin */ }
-        }
-      }
-      base = { thin, brain, source };
-    }
-    if (base.thin) return undefined;
-    const source = recordedSource() ?? base.source;
-    return { ...(base.brain ? { brain: base.brain } : {}), ...(source ? { source } : {}) };
-  };
-}
-
 async function main() {
   // cwd-.env quarantine → ~/.gbrain/.env → #3688 guardrails loader (fail-closed).
   await runCliPreflight();
@@ -347,7 +312,7 @@ async function main() {
   setCliOptions(cliOpts);
 
   let command = args[0];
-  installCliRouting(cliRoutingProvider(() => command, args));
+  installCliRoutingFor(() => command, args);
 
   if (!command || command === '--help' || command === '-h') {
     printHelp();
