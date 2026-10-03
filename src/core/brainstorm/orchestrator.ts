@@ -609,8 +609,7 @@ async function _runBrainstormInner(
     profile,
     model: modelStr,
     skip: opts.skipCostPreview === true,
-    stderrWrite: stderr,
-    capUsd: opts.maxCostUsd ?? 5,
+    stderrWrite: stderr, capUsd: opts.maxCostUsd ?? 5,
   });
   if (aborted) {
     throw new Error('brainstorm: aborted before run (Ctrl-C during cost preview window)');

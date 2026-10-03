@@ -37,6 +37,7 @@
 
 import { basename } from 'node:path';
 import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
+import type { Authorization } from '../core/consent.ts';
 import type { BrainEngine, DreamVerdict } from '../core/engine.ts';
 import {
   loadSynthConfig,
@@ -264,6 +265,23 @@ async function retriageS7(engine: BrainEngine, config: Awaited<ReturnType<typeof
   };
 }
 
+/** A4 consent for retriage spend above the gate (paid, the estimate in the relay text); null after a printed refusal. */
+async function retriageConsent(engine: BrainEngine | null, args: string[], json: boolean,
+  e: { missCount: number; triageModel: string; estimateUsd: number | null; auditSuffix: string }): Promise<Authorization | null> {
+  const cost = e.estimateUsd !== null ? `about $${e.estimateUsd.toFixed(2)}` : 'an amount that cannot be estimated (unpriced model)';
+  return consentGate({
+    command: 'dream retriage', effects: ['paid'], actor: 'agent',
+    what: `Re-judge ${e.missCount} transcript file(s) with ${e.triageModel}`,
+    why: 'Re-runs the dream triage verdicts so transcripts judged under an older model or threshold get current verdicts.',
+    risk: `Spends ${cost} with the model provider${e.auditSuffix}. Verdicts are cached; nothing is deleted.`,
+    user_message: `Re-judge ${e.missCount} transcript file(s) for ${cost}?`,
+    argv: ['gbrain', 'dream', 'retriage', ...args.filter(a => a !== '--yes')],
+    preview_argv: ['gbrain', 'dream', 'retriage', ...args.filter(a => a !== '--yes' && a !== '--json'), '--dry-run'],
+    est_usd: e.estimateUsd,
+    args,
+  }, { json, env: engineConsentEnv(engine) });
+}
+
 export async function runDreamRetriage(engine: BrainEngine | null, args: string[]): Promise<void> {
   let parsed: RetriageArgs;
   try {
@@ -411,18 +429,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // a preapproval); --json never implies it. Without a user cap the soft-stop
     // runs at the derived cap. Below the gate small sweeps proceed as before.
     if (gateTriggered) {
-      const cost = estimateUsd !== null ? `about $${estimateUsd.toFixed(2)}` : 'an amount that cannot be estimated (unpriced model)';
-      const auth = await consentGate({
-        command: 'dream retriage', effects: ['paid'], actor: 'agent',
-        what: `Re-judge ${missCount} transcript file(s) with ${triageModel}`,
-        why: 'Re-runs the dream triage verdicts so transcripts judged under an older model or threshold get current verdicts.',
-        risk: `Spends ${cost} with the model provider${auditSuffix}. Verdicts are cached; nothing is deleted.`,
-        user_message: `Re-judge ${missCount} transcript file(s) for ${cost}?`,
-        argv: ['gbrain', 'dream', 'retriage', ...args.filter(a => a !== '--yes')],
-        preview_argv: ['gbrain', 'dream', 'retriage', ...args.filter(a => a !== '--yes' && a !== '--json'), '--dry-run'],
-        est_usd: estimateUsd,
-        args,
-      }, { json: parsed.json, env: engineConsentEnv(engine) });
+      const auth = await retriageConsent(engine, args, parsed.json, { missCount, triageModel, estimateUsd, auditSuffix });
       if (!auth) return;
       if (budgetUsd === null && auth.cap_usd !== null && perFileUsd !== null) budgetUsd = auth.cap_usd;
     }

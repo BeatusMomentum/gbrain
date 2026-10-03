@@ -878,6 +878,53 @@ export interface RunMigrateEmbeddingsOpts {
   exit?: (code: number) => never;
 }
 
+/**
+ * Consent gate (A4): effects paid + destructive. `spend.posture=tokenmax`
+ * covers only the paid part; the schema rebuild (existing vectors are
+ * dropped, retrieval is degraded until the re-embed finishes) still needs
+ * `--yes`. Spend stays bounded by the migration's own durable authorization
+ * (`--max-cost-usd` must cover the printed worst case), so the consent cap is
+ * not threaded into the run. No plan hash: the brain-wide target is fully
+ * named by the argv, and a resume re-runs the same command. Resolves false
+ * after a printed refusal.
+ */
+async function migrateConsent(engine: BrainEngine, args: string[], flags: ReturnType<typeof parseMigrateEmbeddingsFlags>,
+  plan: MigrationPlan, opts: RunMigrateEmbeddingsOpts): Promise<boolean> {
+  if (!flags.yes) {
+    const { resolveSpendPosture } = await import('../core/spend-posture.ts');
+    if (await resolveSpendPosture(engine) === 'tokenmax') {
+      serr('  [migrate] spend.posture=tokenmax: the cost estimate above is informational; the destructive rebuild still needs the user\'s approval.');
+    }
+  }
+  const priceNote = plan.price_known ? `about $${plan.est_cost_usd.toFixed(2)}` : 'an unpriced amount';
+  const worstCase = plan.worst_case_authorization.usd;
+  const auth = await consentGate({
+    command: 'migrate embeddings',
+    effects: ['paid', 'destructive'],
+    actor: 'agent',
+    what: `Move the brain's embeddings to ${flags.to}${flags.dim !== undefined ? ` (${flags.dim}d)` : ''}`,
+    why: `Re-embeds ${plan.chunks_to_embed} chunk(s), ${plan.facts_to_embed ?? 0} fact(s) and ${plan.takes_to_embed ?? 0} take(s) with ${flags.to} (${priceNote}) so search runs in the new model's vector space; pages and facts are kept.`,
+    risk: 'Rebuilds the embedding column in place: existing vectors are dropped and vector search is degraded until the re-embed finishes '
+      + `(a killed run resumes with the same command; status: ${EMBEDDING_MIGRATION_RECOVERY.status_command}). `
+      + `Spends up to the --max-cost-usd authorization${worstCase !== null ? ` (worst case $${worstCase.toFixed(2)})` : ''} with the target provider.`,
+    user_message: `Switch your brain's embeddings to ${flags.to}? It re-embeds ${plan.chunks_to_embed} chunk(s) for ${priceNote}`
+      + `${worstCase !== null ? ` (at most $${worstCase.toFixed(2)})` : ''}; search is degraded until it finishes. Your pages and facts are kept.`,
+    argv: ['gbrain', 'migrate', 'embeddings', ...args.filter(a => a !== '--yes')],
+    preview_argv: ['gbrain', 'migrate', 'embeddings', ...args.filter(a => a !== '--yes' && a !== '--json'), '--dry-run', '--json'],
+    est_usd: plan.price_known ? plan.est_cost_usd : null,
+    args,
+  }, {
+    json: flags.json,
+    env: engineConsentEnv(engine, {
+      configuredCapUsd: flags.maxCostUsd ?? 0,
+      note: () => {},
+      ...(opts.isTTY !== undefined ? { interactive: opts.isTTY } : {}),
+      ...(opts.confirm ? { readLine: async ({ prompt }: { prompt: string }) => ({ kind: 'line' as const, text: (await opts.confirm!(prompt)) ? 'y' : 'n' }) } : {}),
+    }),
+  });
+  return auth !== null;
+}
+
 export async function runMigrateEmbeddings(
   engine: BrainEngine,
   args: string[],
@@ -1036,46 +1083,7 @@ export async function runMigrateEmbeddings(
     exit(0);
   }
 
-  // ── Consent gate (A4): effects paid + destructive. `spend.posture=tokenmax`
-  // covers only the paid part; the schema rebuild (existing vectors are
-  // dropped, retrieval is degraded until the re-embed finishes) still needs
-  // `--yes`. Spend stays bounded by the migration's own durable authorization
-  // (`--max-cost-usd` must cover the printed worst case), so the consent cap is
-  // not threaded into the run. No plan hash: the brain-wide target is fully
-  // named by the argv, and a resume re-runs the same command.
-  if (!flags.yes) {
-    const { resolveSpendPosture } = await import('../core/spend-posture.ts');
-    if (await resolveSpendPosture(engine) === 'tokenmax') {
-      serr('  [migrate] spend.posture=tokenmax: the cost estimate above is informational; the destructive rebuild still needs the user\'s approval.');
-    }
-  }
-  const priceNote = plan.price_known ? `about $${plan.est_cost_usd.toFixed(2)}` : 'an unpriced amount';
-  const worstCase = plan.worst_case_authorization.usd;
-  const auth = await consentGate({
-    command: 'migrate embeddings',
-    effects: ['paid', 'destructive'],
-    actor: 'agent',
-    what: `Move the brain's embeddings to ${flags.to}${flags.dim !== undefined ? ` (${flags.dim}d)` : ''}`,
-    why: `Re-embeds ${plan.chunks_to_embed} chunk(s), ${plan.facts_to_embed ?? 0} fact(s) and ${plan.takes_to_embed ?? 0} take(s) with ${flags.to} (${priceNote}) so search runs in the new model's vector space; pages and facts are kept.`,
-    risk: 'Rebuilds the embedding column in place: existing vectors are dropped and vector search is degraded until the re-embed finishes '
-      + `(a killed run resumes with the same command; status: ${EMBEDDING_MIGRATION_RECOVERY.status_command}). `
-      + `Spends up to the --max-cost-usd authorization${worstCase !== null ? ` (worst case $${worstCase.toFixed(2)})` : ''} with the target provider.`,
-    user_message: `Switch your brain's embeddings to ${flags.to}? It re-embeds ${plan.chunks_to_embed} chunk(s) for ${priceNote}`
-      + `${worstCase !== null ? ` (at most $${worstCase.toFixed(2)})` : ''}; search is degraded until it finishes. Your pages and facts are kept.`,
-    argv: ['gbrain', 'migrate', 'embeddings', ...args.filter(a => a !== '--yes')],
-    preview_argv: ['gbrain', 'migrate', 'embeddings', ...args.filter(a => a !== '--yes' && a !== '--json'), '--dry-run', '--json'],
-    est_usd: plan.price_known ? plan.est_cost_usd : null,
-    args,
-  }, {
-    json: flags.json,
-    env: engineConsentEnv(engine, {
-      configuredCapUsd: flags.maxCostUsd ?? 0,
-      note: () => {},
-      ...(opts.isTTY !== undefined ? { interactive: opts.isTTY } : {}),
-      ...(opts.confirm ? { readLine: async ({ prompt }: { prompt: string }) => ({ kind: 'line' as const, text: (await opts.confirm!(prompt)) ? 'y' : 'n' }) } : {}),
-    }),
-  });
-  if (!auth) return (opts.exit ?? ((value: number) => process.exit(value)))(currentExitCode());
+  if (!(await migrateConsent(engine, args, flags, plan, opts))) return (opts.exit ?? ((value: number) => process.exit(value)))(currentExitCode());
 
   // ── Execute: locks → probe → apply → drain → reconcile → complete, all in
   // the shared orchestrator (identical semantics on the op path).
