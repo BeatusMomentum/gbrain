@@ -10,7 +10,7 @@
  */
 import { cliRenderContext, renderCliError, renderNotice, type AgentEnvelope, type Notice } from '../core/agent-output.ts';
 import { renderCliNotices } from '../core/agent-markers.ts';
-import { jsonRequested, noteRenderedErrorCode, writeStdoutFinal } from '../core/cli-force-exit.ts';
+import { jsonGuardActive, jsonRequested, noteRenderedErrorCode, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { opError, type OpErrorOpts, type OperationError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
 import {
@@ -52,7 +52,9 @@ export function writeCliError(e: unknown, command: string, opts: CliErrorWriteOp
   if (r.stdout !== undefined) {
     const env = JSON.parse(r.stdout) as AgentEnvelope;
     noteRenderedErrorCode(env.code);
-    const doc = opts.legacy ? `${JSON.stringify({ ...opts.legacy, ...withoutUndefined(env), ...opts.legacy })}\n` : r.stdout;
+    // An NDJSON stream ends a failure with one `{status:"error", …envelope}` line (D2).
+    const legacy = opts.legacy ?? (jsonGuardActive() === 'ndjson' ? { status: 'error' } : undefined);
+    const doc = legacy ? `${JSON.stringify({ ...legacy, ...withoutUndefined(env), ...legacy })}\n` : r.stdout;
     void writeStdoutFinal(doc).catch(() => { /* fd 1 gone */ });
     // stderr stays the human channel under --json (same TTY order as renderCliError).
     stderr = [`Error [${env.code}]: ${env.message}`, `Fix: ${env.fix?.command ?? env.suggestion}`,

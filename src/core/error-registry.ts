@@ -125,6 +125,7 @@ export const CODES = {
   facts_payload_expired: { class: 'server', summary: "The accepted fact extraction failed and its retained payload has expired." },
   fetch_failed: { class: 'retryable', summary: "Fetching the upstream failed." },
   full_resync_required: { class: 'retryable', summary: "The catalog cursor is invalid or expired." },
+  gate_failed: { class: 'caller', summary: "The eval gate found retrieval regressions or correctness below its thresholds." },
   git_index_locked: { class: 'retryable', summary: "Another Git process holds the canonical checkout index lock." },
   git_index_stale: { class: 'caller', summary: "Git index stale." },
   git_push_unavailable: { class: 'retryable', summary: "The canonical commit is durable locally; its push will retry." },

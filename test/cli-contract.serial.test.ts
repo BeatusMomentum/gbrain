@@ -80,7 +80,13 @@ interface JsonRow {
   okOnEmpty?: boolean;
   /** The succeeding invocation needs Postgres: the E2E file (test/e2e/…) that asserts it instead. */
   okE2E?: string;
+  /** NDJSON only: zero lines is a valid success (e.g. an export of an empty table). */
+  okMayBeEmpty?: true;
 }
+
+const EVAL_FIXTURES = join(import.meta.dir, 'fixtures', 'eval-baselines');
+const QRELS = join(EVAL_FIXTURES, 'qrels-search.json');
+const CAPTURED = join(EVAL_FIXTURES, 'captured-sample.ndjson');
 
 /** One row per command-table record that declares `json`; a new declaration needs a row. */
 const JSON_ROWS: Record<string, JsonRow> = {
@@ -92,13 +98,25 @@ const JSON_ROWS: Record<string, JsonRow> = {
   'db-repair': { ok: ['db-repair', '--json'], fail: ['db-repair', '--json'], failOnBrain: true, okE2E: 'test/e2e/cli-json-commands-postgres.test.ts' },
   dream: { ok: ['dream', '--json', '--phase', 'lint'], fail: ['dream', '--json', '--phase', 'garbage'] },
   'post-upgrade': { ok: ['post-upgrade', '--json', '--no-autopilot-install'], fail: ['post-upgrade', '--bogus', '--json'], okOnEmpty: true },
+  bench: { ok: ['bench', 'publish', '--from', CAPTURED, '--to', 'sample.baseline.ndjson', '--json'], fail: ['bench', 'publish', '--json'], okOnEmpty: true },
+  'eval export': { ok: ['eval', 'export', '--json'], fail: ['eval', 'export', '--json', '--since', 'bogus'], failOnBrain: true, okMayBeEmpty: true },
+  'eval replay': { ok: ['eval', 'replay', '--against', CAPTURED, '--json'], fail: ['eval', 'replay', '--json'], failOnBrain: true },
+  'eval gate': {
+    ok: ['eval', 'gate', '--qrels', QRELS, '--embedder', 'deterministic', '--threshold-recall-at-k', '0', '--threshold-first-relevant-hit', '0', '--threshold-expected-top1', '0', '--json'],
+    fail: ['eval', 'gate', '--qrels', QRELS, '--embedder', 'deterministic', '--json'], failOnBrain: true,
+  },
   'apply-migrations': { ok: ['apply-migrations', '--dry-run', '--json'], fail: ['apply-migrations', '--json', '--migration', '9.9.9'], failOnBrain: true },
 };
 
 function parsedShape(mode: 'document' | 'ndjson', stdout: string): unknown[] {
   if (mode === 'document') return [JSON.parse(stdout)];
-  return stdout.trim().split('\n').map(l => JSON.parse(l));
+  return stdout.split('\n').filter(l => l.trim() !== '').map(l => JSON.parse(l));
 }
+
+/** json-declared records, plus `<command> <sub>` for each per-subcommand declaration. */
+const JSON_DECLARED: ReadonlyArray<{ name: string; mode: 'document' | 'ndjson' }> = CLI_COMMANDS.flatMap(c => c.json
+  ? [{ name: c.name, mode: c.json }]
+  : Object.entries(c.jsonSubcommands ?? {}).map(([sub, mode]) => ({ name: `${c.name} ${sub}`, mode })));
 
 function assertFailureShape(name: string, mode: 'document' | 'ndjson', r: CliResult): void {
   expect(r.exitCode, `${name}: failing invocation exits non-zero`).not.toBe(0);
@@ -126,11 +144,11 @@ describe('D5 json contract: one success and one failure per json-declared comman
   }, 240_000);
 
   test('every json-declared record has a contract row', () => {
-    const declared = CLI_COMMANDS.filter(c => c.json).map(c => c.name).sort();
+    const declared = JSON_DECLARED.map(c => c.name).sort();
     expect(declared).toEqual(Object.keys(JSON_ROWS).sort());
   });
 
-  for (const record of CLI_COMMANDS.filter(c => c.json)) {
+  for (const record of JSON_DECLARED) {
     test(`${record.name} --json: success shape and failure envelope`, async () => {
       const row = JSON_ROWS[record.name];
       if (!row) throw new Error(`no D5 row for json-declared command ${record.name}`);
@@ -142,10 +160,11 @@ describe('D5 json contract: one success and one failure per json-declared comman
         } else {
           const ok = await runCli(row.ok, { home: okHome, cwd: okHome, timeoutMs: 120_000 });
           expect(ok.exitCode, `${record.name} ok: ${ok.stderr.slice(-800)}`).toBe(0);
-          expect(parsedShape(record.json!, ok.stdout).length).toBeGreaterThan(0);
+          const lines = parsedShape(record.mode, ok.stdout).length;
+          if (!row.okMayBeEmpty) expect(lines).toBeGreaterThan(0);
         }
         const failHome = row.failOnBrain ? brainHome : emptyHome;
-        assertFailureShape(record.name, record.json!, await runCli(row.fail, { home: failHome, cwd: failHome, timeoutMs: 120_000 }));
+        assertFailureShape(record.name, record.mode, await runCli(row.fail, { home: failHome, cwd: failHome, timeoutMs: 120_000 }));
       } finally {
         rmSync(fresh, { recursive: true, force: true });
       }

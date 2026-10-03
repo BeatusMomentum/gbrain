@@ -136,7 +136,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // CLI_ONLY_SELF_HELP, so the dispatcher's generic short-circuit fires and the printInitHelp()
   // guard in init.ts is dead code.
   { name: 'init', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'document', load: () => import('./commands/init.ts') },
-  { name: 'bench', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/bench.ts') },
+  { name: 'bench', phase: 'pre-connect', thinClient: 'none', selfHelp: true, json: 'ndjson', load: () => import('./commands/bench.ts') },
   // selfHelp: v0.37 fix wave (deferred TODO, shipped): reinit-pglite has its own --help in
   // runReinitPglite. Routing through SELF_HELP avoids the generic short-circuit so the
   // destructive-action warning text reaches the user.
@@ -269,7 +269,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // printHelp (15 subcommands), storage's status usage, reindex's target-flag usage — that the
   // generic one-line stub was hiding. Their engine-free --help is answered by pre-engine branches in
   // handleCliOnly (the sync/capture pattern).
-  { name: 'eval', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/eval.ts') },
+  { name: 'eval', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, jsonSubcommands: { export: 'ndjson', replay: 'ndjson', gate: 'ndjson' }, load: () => import('./commands/eval.ts') },
   // selfHelp: jobs ships JOBS_HELP + a per-subcommand record (JOBS_SUBCOMMAND_HELP) in jobs.ts,
   // guarded BEFORE the thin-client refusal and the subcommand switch so `jobs work --help` prints
   // help instead of starting a worker daemon. Without this entry the generic stub hid the worker

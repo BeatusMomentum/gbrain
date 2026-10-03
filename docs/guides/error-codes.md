@@ -732,6 +732,14 @@ More: [docs/guides/write-refusals.md#fetch_failed](../../docs/guides/write-refus
 |---|---|---|---|---|---|---|
 | The catalog cursor is invalid or expired. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### gate_failed
+
+<a id="gate_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The eval gate found retrieval regressions or correctness below its thresholds. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
 ### git_index_locked
 
 <a id="git_index_locked"></a>
