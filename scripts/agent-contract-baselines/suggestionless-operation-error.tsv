@@ -21,7 +21,6 @@ src/core/embed-facts-options.ts	1
 src/core/embed-facts.ts	2
 src/core/facts/backstop.ts	1
 src/core/harness/native-router.ts	1
-src/core/harness/shared-skills.ts	2
 src/core/minions/submission-authority.ts	1
 src/core/minions/tool-write-identity.ts	1
 src/core/page-state/import-guard.ts	1
@@ -75,11 +74,6 @@ src/core/repair/extractor-facts.ts	2
 src/core/repair/stale-atoms.ts	2
 src/core/search/evidence-delivery.ts	1
 src/core/shared-skills/adapter.ts	2
-src/core/shared-skills/compatibility.ts	2
-src/core/shared-skills/membership-authority.ts	1
 src/core/shared-skills/membership.ts	1
-src/core/shared-skills/migration-projection.ts	2
-src/core/shared-skills/setup-source-policy.ts	2
-src/core/skillpack/writer-guard.ts	1
 src/core/source-local-reference-index.ts	2
 src/mcp/dispatch.ts	1
