@@ -73,7 +73,7 @@ src/core/persistence/connector-google-receipts.ts	10
 src/core/persistence/connector-sync.ts	39
 src/core/persistence/context.ts	1
 src/core/persistence/control.ts	1
-src/core/persistence/coordinator.ts	17
+src/core/persistence/coordinator.ts	16
 src/core/persistence/database-write.ts	2
 src/core/persistence/deactivation.ts	2
 src/core/persistence/derived-facts.ts	5
@@ -92,7 +92,7 @@ src/core/persistence/facts-prepare.ts	13
 src/core/persistence/grandfather.ts	6
 src/core/persistence/identity.ts	9
 src/core/persistence/import-mutations.ts	3
-src/core/persistence/import-prepare.ts	23
+src/core/persistence/import-prepare.ts	22
 src/core/persistence/ipc.ts	9
 src/core/persistence/journal.ts	8
 src/core/persistence/limits.ts	1
@@ -100,10 +100,10 @@ src/core/persistence/local-client.ts	5
 src/core/persistence/loop-fact-retirement.ts	4
 src/core/persistence/managed-sources.ts	5
 src/core/persistence/memory-mutations.ts	4
-src/core/persistence/memory-prepare.ts	5
+src/core/persistence/memory-prepare.ts	4
 src/core/persistence/ownership.ts	20
 src/core/persistence/page-mutations.ts	6
-src/core/persistence/page-prepare.ts	13
+src/core/persistence/page-prepare.ts	11
 src/core/persistence/page-visibility.ts	1
 src/core/persistence/prepared-maintenance.ts	26
 src/core/persistence/projection-reindex.ts	7
@@ -118,7 +118,7 @@ src/core/persistence/reconcile-state.ts	11
 src/core/persistence/reconcile.ts	11
 src/core/persistence/reindex-administration.ts	5
 src/core/persistence/root-registry.ts	2
-src/core/persistence/semantic-pages.ts	4
+src/core/persistence/semantic-pages.ts	3
 src/core/persistence/service.ts	5
 src/core/persistence/skill-activation.ts	1
 src/core/persistence/source-lifecycle.ts	25

@@ -393,26 +393,83 @@ function diagnosticFix(ctx: AgentErrorContext, why: string): Action {
   };
 }
 
+/** The journal fields a receipt-bearing error carries (OperationError.receiptFields), never serialized. */
+type ReceiptFields = NonNullable<OperationError['receiptFields']>;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TEMPLATE_VALUE: Record<string, RegExp> = {
+  slug: /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/,
+  source_id: /^[a-z0-9][a-z0-9_-]{0,63}$/i,
+  request_id: UUID_RE,
+  operation: /^[a-z][a-z0-9_]{0,63}$/,
+};
+
 /**
- * A1 safe-recovery invariant: a mutating op with an unknown or pending
- * outcome is never told to retry. The fix inspects state: the caller's own
- * receipt on its channel, a job's status, or nothing (no receipt → no receipt
- * command; the op's read-side diagnostic stays the fix).
+ * Fill a registry fix template (`{slug}`, `{source_id}`, `{request_id}`,
+ * `{operation}`) from envelope/receipt fields. Every value must pass its strict
+ * id pattern; one missing or unsafe value drops the whole template (B4, A1
+ * argv safety), so no placeholder ever reaches the wire.
  */
-function recoveryFix(p: EnvelopeParts, ctx: AgentErrorContext): Action | undefined {
+export function fillFixTemplate(template: Action, fields: Record<string, string | null | undefined>): Action | undefined {
+  let ok = true;
+  const fill = (v: string): string => v.replace(/\{([a-z_]+)\}/g, (_m, key: string) => {
+    const value = fields[key];
+    if (typeof value !== 'string' || !TEMPLATE_VALUE[key]?.test(value)) { ok = false; return ''; }
+    return value;
+  });
+  const args = (a: Record<string, unknown>) => Object.fromEntries(Object.entries(a).map(([k, v]) => [k, typeof v === 'string' ? fill(v) : v]));
+  const filled: Action = {
+    ...template,
+    ...(template.argv ? { argv: template.argv.map(fill) } : {}),
+    ...(template.mcp ? { mcp: { tool: template.mcp.tool, arguments: args(template.mcp.arguments) } } : {}),
+  };
+  return ok ? filled : undefined;
+}
+
+/** The registry default fix for a code, filled from the fields this error carries (undefined when it has none or cannot be filled). */
+function registryTemplateFix(code: string, fields: Record<string, string | null | undefined> | undefined): Action | undefined {
+  const template = codeEntry(code)?.fix;
+  if (!template || !fields) return undefined;
+  return fillFixTemplate(template, fields);
+}
+
+const RECEIPT_CHANNEL: Record<Transport, string> = { cli: 'local_cli', stdio: 'local_stdio', http: '' };
+
+/**
+ * A1 safe-recovery invariant, principal-aware: a write with an unknown or
+ * pending outcome, or a replayed terminal receipt, is never told to retry. The
+ * fix reads the receipt on the channel that owns it: `gbrain write-request` on
+ * the CLI for a CLI-principal receipt, `get_write_request` over MCP where it is
+ * callable for this principal; another principal's receipt (or no callable
+ * receipt tool) gets the separately authorized host inspection, actor
+ * host_admin. No receipt → no receipt command.
+ */
+function recoveryFix(p: EnvelopeParts, ctx: AgentErrorContext, fields?: ReceiptFields): Action | undefined {
   const outcomeOpen = ctx.outcome === 'unknown' || ctx.outcome === 'pending';
-  if (!ctx.mutating || !outcomeOpen) return undefined;
-  const receipt = p.write_request as { request_id?: unknown } | undefined;
-  const requestId = typeof receipt?.request_id === 'string' && /^[0-9a-f-]{36}$/i.test(receipt.request_id) ? receipt.request_id : undefined;
+  if (!fields && (!ctx.mutating || !outcomeOpen)) return undefined;
+  const receipt = p.write_request as { request_id?: unknown; state?: unknown } | undefined;
+  const requestId = typeof receipt?.request_id === 'string' && UUID_RE.test(receipt.request_id) ? receipt.request_id : undefined;
   if (!requestId) return undefined;
-  const why = 'The write may still commit; its receipt says whether it did. Do not resubmit until the receipt is terminal.';
-  if (ctx.transport === 'cli') {
+  const terminal = typeof receipt?.state === 'string' && ['committed', 'conflict', 'failed', 'cancelled'].includes(receipt.state);
+  const why = terminal
+    ? 'The receipt is final; read it (and the target) before deciding whether a new write is needed.'
+    : 'The write may still commit; its receipt says whether it did. Do not resubmit until the receipt is terminal.';
+  const owner = fields?.principal_kind;
+  const samePrincipal = owner !== 'oauth_client' || !ctx.render.principal || fields?.principal_id === ctx.render.principal;
+  const ownChannel = owner === undefined || samePrincipal && (ctx.transport === 'http' ? !owner.startsWith('local_') : owner === RECEIPT_CHANNEL[ctx.transport]);
+  if (ownChannel && ctx.transport === 'cli') {
     return { argv: ['gbrain', 'write-request', '--', requestId], consent: [], actor: 'agent', why, requires_exclusive: false };
   }
+  if (ownChannel && ctx.render.isCallable('get_write_request')) {
+    return { mcp: { tool: 'get_write_request', arguments: { request_id: requestId } }, consent: [], actor: 'agent', why, requires_exclusive: false };
+  }
+  const source = fields && TEMPLATE_VALUE.source_id!.test(fields.source_id) ? [fields.source_id] : [];
   return {
-    argv: ['gbrain', 'write-request', '--', requestId],
-    mcp: { tool: 'get_write_request', arguments: { request_id: requestId } },
-    consent: [], actor: 'agent', why, requires_exclusive: false,
+    argv: ['gbrain', 'sources', 'writer', 'status', ...source, '--probe', '--json'],
+    consent: [], actor: 'host_admin',
+    why: `${why} This connection cannot read that receipt itself, so the brain host's operator inspects the write on the owner.`,
+    user_message: 'A write gbrain accepted needs a check on the brain host before anything is resubmitted. Please ask whoever runs this brain to run the command shown.',
+    requires_exclusive: false,
   };
 }
 
@@ -439,7 +496,8 @@ const ROWS: Row[] = [
     match: e => e instanceof OperationError,
     map: (e: OperationError, ctx) => {
       const j = e.toJSON() as Record<string, unknown>;
-      let fix = e.fix;
+      const receiptId = (j.write_request as { request_id?: string } | undefined)?.request_id;
+      let fix = e.fix ?? registryTemplateFix(e.canonicalCode, e.receiptFields ? { ...e.receiptFields, request_id: receiptId } : undefined);
       if (!fix && REFRESH_REFUSALS.has(e.code) && e.suggestion) {
         const argv = argvFromCommand(e.suggestion);
         if (argv) fix = { argv, consent: [], actor: 'agent', why: e.message, requires_exclusive: false };
@@ -497,6 +555,14 @@ const ROWS: Row[] = [
         fix: d.fix && typeof d.fix === 'object' ? d.fix as Action : undefined,
       };
     },
+  },
+  {
+    match: named('EmbeddingDisabledError'),
+    map: (e: Error & { fix?: Action }) => ({
+      error: 'embedding_disabled', code: 'embedding_disabled', reason: 'disabled_by_choice',
+      message: e.message.split('\n')[0]!, why: e.fix?.why, fix: e.fix,
+      suggestion: 'Embeddings are off by choice on this brain; keyword search still works. Turning them on needs the user\'s consent.',
+    }),
   },
   {
     match: named('CredentialError'),
@@ -603,7 +669,7 @@ export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope 
     const typed = row && ROWS.indexOf(row) < FIRST_GENERIC_ROW;
     let parts = typed ? row.map(e, ctx) : dbParts(e, ctx) ?? (row ? row.map(e, ctx) : unknownParts(e, ctx));
     if (!parts.fix) {
-      const recovery = recoveryFix(parts, ctx);
+      const recovery = recoveryFix(parts, ctx, e instanceof OperationError ? e.receiptFields : undefined);
       if (recovery) parts = { ...parts, fix: recovery };
     }
     if (!parts.fix && (codeClass(parts.code) === 'server' || codeClass(parts.code) === 'unavailable')) {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
+import { pageIdentityError } from './page-identity.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -205,7 +206,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await tx.lockPageKeys([{ sourceId: row.source_id, slug: row.slug },...(prepared.additionalPageKeys??[])]);
         const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
         await authorizePageVisibility(tx, row.authority, row.slug);
-        if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.');
+        if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted page was deleted or recreated.');
         await assertUnboundPublication(tx, row, snapshot?.page.source_path);
         if ((snapshot?.revision ?? null) !== prepared.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
       }

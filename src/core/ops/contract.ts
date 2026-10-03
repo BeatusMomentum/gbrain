@@ -87,6 +87,12 @@ export class OperationError extends Error {
    * value (A1 frozen pairs, e.g. `error: invalid_params`, `code: not_found`).
    */
   public canonical?: RegistryCode;
+  /**
+   * Agent contract v1 (B4): the journal row's own fields on a write-receipt
+   * error, never serialized. toAgentError fills the registry's fix template
+   * from them and picks the principal-correct receipt channel.
+   */
+  public receiptFields?: { operation: string; source_id: string; slug: string | null; principal_kind: string; principal_id: string };
 
   constructor(
     public code: ErrorCode,

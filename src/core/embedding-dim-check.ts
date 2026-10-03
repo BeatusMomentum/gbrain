@@ -14,6 +14,9 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import type { GBrainConfig } from './config.ts';
+import { shellQuote, type Action } from './agent-output.ts';
+import { embeddingEnablement } from './readiness.ts';
 import { OperationError } from './ops/contract.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswMaxDimsForType } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
@@ -62,22 +65,29 @@ export const PGVECTOR_COLUMN_MAX_DIMS = 16000;
  * handlers) bubble it back as a structured job failure.
  */
 export class EmbeddingDisabledError extends Error {
-  constructor(message: string) {
+  constructor(message: string, public readonly fix?: Action) {
     super(message);
     this.name = 'EmbeddingDisabledError';
   }
 }
 
-export function assertEmbeddingEnabled(cfg: { embedding_disabled?: boolean } | null): void {
-  if (cfg?.embedding_disabled) {
-    throw new EmbeddingDisabledError(
-      'This brain was initialized with `--no-embedding` (deferred setup).\n' +
-      'Configure an embedding provider before running embed / import:\n' +
-      '  gbrain config set embedding_model <provider>:<model>\n' +
-      '  gbrain config set embedding_dimensions <N>\n' +
-      '  gbrain init --force --embedding-model <provider>:<model>   # re-init to size schema\n',
-    );
-  }
+/**
+ * Keyless-by-choice guard. The enable step comes from readiness's one
+ * `embeddingEnablement` (resolved datastore path, a provider whose key is
+ * present, effects credentials + paid), never `gbrain config set
+ * embedding_model`, which the config command refuses.
+ */
+export function assertEmbeddingEnabled(cfg: GBrainConfig | null): void {
+  if (!cfg?.embedding_disabled) return;
+  const fix = embeddingEnablement(cfg);
+  const step = fix.argv ? shellQuote(fix.argv) : undefined;
+  const lines = [
+    'This brain was initialized with `--no-embedding` (deferred setup): embeddings are off by choice, so nothing was embedded.',
+    ...(step ? [`To turn on semantic search (pages and facts are kept): ${step}`] : []),
+    `Why: ${fix.why}`,
+    ...(fix.consent.length ? [`This needs ${fix.consent.join(' + ')} consent: ask the user first.${fix.user_message ? ` ${fix.user_message}` : ''}`] : []),
+  ];
+  throw new EmbeddingDisabledError(lines.join('\n'), fix);
 }
 
 export interface ColumnDimResult {

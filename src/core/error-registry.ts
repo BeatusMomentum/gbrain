@@ -26,7 +26,12 @@ export interface CodeEntry {
   docs?: string;
   /** Default prose suggestion when a site supplies none. */
   suggestion?: string;
-  /** Default fix template: read-only diagnostics only (scanner-checked). */
+  /**
+   * Default fix template: read-only diagnostics only (scanner-checked).
+   * `{slug}`, `{source_id}`, `{request_id}`, `{operation}` placeholders are
+   * filled from envelope/receipt fields at render time; an unfillable
+   * template is dropped, never rendered with a placeholder.
+   */
   fix?: Action;
   effects?: readonly Effect[];
   actor?: Actor;
@@ -169,8 +174,8 @@ export const CODES = {
   not_found: { class: 'caller', summary: "The requested resource does not exist or is not visible to this caller.", legacy_error: 'invalid_params' },
   overlapping_path: { class: 'caller', summary: "Sources cannot claim overlapping canonical directories." },
   owner_unavailable: { class: 'retryable', summary: "The brain's persistence owner is not reachable right now." },
-  page_identity_changed: { class: 'caller', summary: "The page was deleted or replaced while the operation ran." },
-  page_not_found: { class: 'caller', summary: "No page with that slug exists in the selected source.", legacy_error: 'page_identity_changed' },
+  page_identity_changed: { class: 'caller', summary: "The page was deleted or replaced while the operation ran.", fix: { argv: ['gbrain', 'get', '--source', '{source_id}', '--', '{slug}'], mcp: { tool: 'get_page', arguments: { slug: '{slug}', source_id: '{source_id}' } }, consent: [], actor: 'agent', why: "Shows which page holds the slug now and its revision; a new attempt needs a new request_id.", requires_exclusive: false } },
+  page_not_found: { class: 'caller', summary: "No page with that slug exists in the selected source.", legacy_error: 'page_identity_changed', fix: { argv: ['gbrain', 'get', '--source', '{source_id}', '--', '{slug}'], mcp: { tool: 'get_page', arguments: { slug: '{slug}', source_id: '{source_id}' } }, consent: [], actor: 'agent', why: "Confirms whether the page exists in this source before anything is recreated.", requires_exclusive: false } },
   parse_error: { class: 'caller', summary: "The request body is not valid JSON." },
   pasted_wrong_url: { class: 'caller', summary: "Google connect credential error: pasted wrong url.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   payload_too_large: { class: 'caller', summary: "The payload exceeds the configured size cap." },
@@ -204,7 +209,7 @@ export const CODES = {
   requirements_changed: { class: 'caller', summary: "The runtime requirements exceed the owner-approved publication policy." },
   response_too_large: { class: 'caller', summary: "Persistence response exceeds the local transport limit." },
   resume_spec_mismatch: { class: 'caller', summary: "Resume spec mismatch." },
-  revision_conflict: { class: 'caller', summary: "The target changed since it was read; the expected revision no longer matches." },
+  revision_conflict: { class: 'caller', summary: "The target changed since it was read; the expected revision no longer matches.", fix: { argv: ['gbrain', 'get', '--source', '{source_id}', '--', '{slug}'], mcp: { tool: 'get_page', arguments: { slug: '{slug}', source_id: '{source_id}' } }, consent: [], actor: 'agent', why: "Reads the current page and revision; resubmit against that revision with a new request_id.", requires_exclusive: false } },
   revision_required: { class: 'caller', summary: "Review the current policy and supply its expected_policy_epoch before changing disclosure." },
   revision_unavailable: { class: 'unavailable', summary: "The exact authorized revision is unavailable." },
   scope_denied: { class: 'host_only', summary: "The connection lacks the scope this memory verb requires." },

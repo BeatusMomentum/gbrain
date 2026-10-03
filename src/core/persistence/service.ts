@@ -11,6 +11,7 @@ import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
+import { isMissingPageMessage } from './page-identity.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -133,6 +134,13 @@ export async function waitForWrite(engine: BrainEngine, row: WriteRequest, confi
   }
   return row;
 }
+/** B4: what a terminal receipt means for the caller, without guessing a mutation. */
+function terminalReceiptHint(row: WriteRequest, reason: string): string {
+  const what = `The ${row.operation ? `${row.operation} ` : ''}write (request_id ${row.request_id}) ended ${row.state} with ${reason}; it will not publish.`;
+  return row.state === 'cancelled'
+    ? `${what} Submit again only if the change is still wanted, with a new request_id.`
+    : `${what} Read the current state before deciding to submit again; a new attempt needs a new request_id.`;
+}
 export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const receipt = receiptFor(row);
   if (row.state === 'committed') return { ...receipt, write_request: receipt };
@@ -141,8 +149,10 @@ export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const error = new OperationError(reason, !isTerminal(row) ? 'The write is accepted and is still pending.'
     : row.error_message ?? 'The write did not commit.', !isTerminal(row)
       ? pendingWriteHint(receipt)
-      : delivered?.suggestion ?? 'Inspect this receipt before submitting a new request_id.', delivered?.docs);
+      : delivered?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
   if (delivered?.detail) error.detail = delivered.detail;
+  if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';
+  error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };
   error.writeRequest = receipt as WriteReceipt;
   error.writeError = isWriteErrorCode(reason) ? reason : reason === 'page_identity_changed' ? 'source_changed' : 'storage_error';
   throw error;
