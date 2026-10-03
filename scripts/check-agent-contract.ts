@@ -51,6 +51,8 @@ const YES_RERUN_RE = /re-?run\b[^.\n]{0,40}--yes/i;
 const TRANSPORT_PREFIX = /^(mcp|http|cli|stdio)_/;
 /** Read-only invocations a verify step may always name (doctor --only is the canonical one). */
 const STATIC_READ_ONLY = new Set(['doctor', 'errors', 'status', 'get', 'search', 'query', 'list', 'write-request', 'write-requests', 'whoami', 'stats']);
+/** Read-only subcommands of otherwise-mutating commands. */
+const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources status', 'jobs get', 'jobs stats', 'jobs list', 'auth list', 'backup status', 'engine status']);
 
 function tsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -162,7 +164,8 @@ export function scan(root: string = ROOT): Hit[] {
           for (const p of n.initializer.properties) {
             if (!ts.isPropertyAssignment(p) || propName(p) !== 'argv' || !ts.isArrayLiteralExpression(p.initializer)) continue;
             const words = p.initializer.elements.map(e => stringText(e));
-            if (words[0] === 'gbrain' && words[1] !== undefined && !readOnly.has(words[1]!)) add('verify-not-read-only', p);
+            if (words[0] !== 'gbrain' || words[1] === undefined) continue;
+            if (!readOnly.has(words[1]!) && !READ_ONLY_SUBCOMMANDS.has(`${words[1]} ${words[2]}`)) add('verify-not-read-only', p);
           }
         }
       }
