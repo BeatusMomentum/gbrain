@@ -59,6 +59,27 @@ function planJobSteps(planned: RemediationStep[], manifest: { job_ids: string[] 
   };
 }
 
+/** One submitted job, executed by an in-process worker until it is terminal (PGLite, no worker). */
+async function runJobInline(
+  engine: BrainEngine,
+  queue: InstanceType<typeof import('../minions/queue.ts').MinionQueue>,
+  jobId: number,
+  waitOpts: { pollMs: number; timeoutMs: number },
+) {
+  const { MinionWorker } = await import('../minions/worker.ts');
+  const { registerBuiltinHandlers } = await import('../../commands/jobs.ts');
+  const { waitForCompletion } = await import('../minions/wait-for-completion.ts');
+  const worker = new MinionWorker(engine, { queue: 'default', pollInterval: 100, healthCheckInterval: 0 });
+  await registerBuiltinHandlers(worker, engine);
+  const running = worker.start();
+  try {
+    return await waitForCompletion(queue, jobId, waitOpts);
+  } finally {
+    worker.stop();
+    await running;
+  }
+}
+
 export async function runRemediation(
   engine: BrainEngine,
   opts: RemediationOpts = {},
@@ -216,6 +237,11 @@ export async function runRemediation(
   const { waitForCompletion } = await import('../minions/wait-for-completion.ts');
   const isPGLite = engine.kind === 'pglite';
   const queue = new MinionQueue(engine);
+  // PGLite has no background worker, and a Postgres queue may have none running: unless a
+  // registered worker serves the queue, run each submitted step in this process (as
+  // `jobs submit --follow` does) instead of waiting out its timeout for a worker that never comes.
+  const worker = queueWorkerAlive('default');
+  const inlineWorker = isPGLite ? worker !== true : worker === false;
 
   // A4 amended: install a BudgetTracker scope around the plan-step loop so
   // any gateway.chat / embed / rerank inside a Minion handler (synthesize,
@@ -375,10 +401,10 @@ export async function runRemediation(
         };
         submitted.push(submittedResult);
 
-        const terminal = await waitForCompletion(queue, job.id, {
-          pollMs: isPGLite ? 250 : 1000,
-          timeoutMs: (step.est_seconds + 60) * 1000,
-        });
+        const waitOpts = { pollMs: isPGLite ? 250 : 1000, timeoutMs: (step.est_seconds + 60) * 1000 };
+        const terminal = inlineWorker
+          ? await runJobInline(engine, queue, job.id, waitOpts)
+          : await waitForCompletion(queue, job.id, waitOpts);
         submittedResult.status = terminal.status;
         if (terminal.status !== 'completed') {
           abortedIds.add(step.id);

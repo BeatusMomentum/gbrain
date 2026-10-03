@@ -14,8 +14,8 @@
 
 import { VERSION } from '../version.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfig } from '../core/config.ts';
-import { PgliteBusyError } from '../core/pglite-lock.ts';
+import { gbrainPath, loadConfig } from '../core/config.ts';
+import { LiveServeLockError, PgliteBusyError, peekLock } from '../core/pglite-lock.ts';
 import {
   acquireMigrationOrchestrationLock,
   MIGRATIONS_RUNNING_EXIT_CODE,
@@ -695,6 +695,18 @@ async function runLockedMigrations(
   if (consent && !(await consentGate(consent, { json: cli.json }))) {
     doc.status = 'confirmation_required';
     return 3;
+  }
+
+  // A7: the orchestrators need a PGLite brain to themselves. With a live serve owning it
+  // every phase fails and a partial attempt is recorded against the retry cap, so refuse
+  // up front: the fatal seam prints the two-step plan (stop the owner, re-run this command).
+  const owned = loadConfig();
+  if (owned?.engine === 'pglite' && !owned.database_url) {
+    const peek = peekLock(owned.database_path ?? gbrainPath('brain.pglite'));
+    if (peek.held && peek.isServe && peek.pid !== undefined && peek.pid !== process.pid) {
+      throw new LiveServeLockError(`GBrain's local database is already open through \`gbrain serve\` (MCP, PID ${peek.pid}); apply-migrations needs it to itself. Nothing was applied.`,
+        { pid: peek.pid, transport: peek.http ? 'http' : 'stdio' });
+    }
   }
 
   // Run each orchestrator in registry order. An orchestrator failure aborts

@@ -16,6 +16,7 @@
 import type { BrainEngine } from '../../core/engine.ts';
 import type { Check } from '../doctor.ts';
 import { repairForCheck } from '../../core/repair/registry.ts';
+import { agentFix } from './check-fix.ts';
 
 export type WaveResolution = 'repair' | 'operator' | 'unsupported';
 
@@ -221,6 +222,18 @@ export async function runWaveChecks(engine: BrainEngine, opts: WaveScope & { onl
     findings.push({ spec, check, state: checkHealthUnknown(check) ? 'unknown' : check.status === 'ok' ? 'ok' : 'finding' });
   }
   return findings;
+}
+
+/**
+ * E1: a wave finding the local doctor reports carries its next step: the
+ * read-only `gbrain repair <kind>` preview, which lists what the repair would
+ * change and prints the exact apply command for the user to approve.
+ */
+export function withRepairPreviewFix(check: Check): Check {
+  if (check.status === 'ok' || check.fix || checkHealthUnknown(check)) return check;
+  const kind = repairForCheck(check.name)?.kind;
+  if (!kind) return check;
+  return { ...check, fix: agentFix(['gbrain', 'repair', kind], 'Previews the repair without changing anything and prints the exact apply command; applying rewrites stored records, so ask the user first.', check.name) };
 }
 
 /** The repair kind that clears a wave finding, when its resolution is `repair`. */

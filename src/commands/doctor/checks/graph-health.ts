@@ -257,10 +257,10 @@ async function runTimelineHistory(ctx: DoctorContext): Promise<Check[]> {
   {
     const { timelineHistoryCheck } = await import('./timeline-history.ts');
     const { derivedVisibilityCheck } = await import('./derived-visibility.ts');
-    checks.push(await timelineHistoryCheck(engine, orphanRatioSourceId), await derivedVisibilityCheck(engine, orphanRatioSourceId));
     // Wave checks registered in doctor/wave-checks.ts rather than inline here.
-    const { runWaveChecks } = await import('../wave-checks.ts');
-    for (const finding of await runWaveChecks(engine, { only: 'wave', sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(finding.check);
+    const { runWaveChecks, withRepairPreviewFix } = await import('../wave-checks.ts');
+    checks.push(withRepairPreviewFix(await timelineHistoryCheck(engine, orphanRatioSourceId)), withRepairPreviewFix(await derivedVisibilityCheck(engine, orphanRatioSourceId)));
+    for (const finding of await runWaveChecks(engine, { only: 'wave', sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(withRepairPreviewFix(finding.check));
   }
   return checks;
 }

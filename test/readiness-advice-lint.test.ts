@@ -25,7 +25,7 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
   'src/commands/models.ts': { count: 1, reason: 'Lane E: models dims hint' },
   'src/commands/reindex-code.ts': { count: 2, reason: 'Lane E: reindex-code embedding hint' },
   'src/commands/reinit-pglite.ts': { count: 2, reason: 'usage examples of reinit-pglite\'s own --embedding-model flag' },
-  'src/core/advisor/collect-setup-smells.ts': { count: 2, reason: 'Lane E: advisor setup smells read readiness' },
+  'src/core/advisor/collect-setup-smells.ts': { count: 1, reason: 'Lane E: advisor setup smells read readiness' },
   'src/core/embed-preflight.ts': { count: 5, reason: 'Lane E: embed preflight refusals carry the readiness fix' },
 };
 
