@@ -7,7 +7,6 @@ src/commands/dream-retriage.ts	1
 src/commands/hook.ts	3
 src/commands/init.ts	4
 src/commands/jobs-watch.ts	2
-src/commands/migrate-embeddings.ts	2
 src/commands/notability-eval.ts	1
 src/commands/reindex-search-vector.ts	1
 src/commands/report.ts	1

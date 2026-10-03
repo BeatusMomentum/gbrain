@@ -10,7 +10,6 @@ src/commands/doctor/checks/memory-writeback.ts	2
 src/commands/dream-retriage.ts	1
 src/commands/enrich.ts	1
 src/commands/mcp-expose.ts	3
-src/commands/migrate-embeddings.ts	1
 src/commands/migrations/v0_11_0.ts	1
 src/commands/takes.ts	1
 src/core/bootstrap/harness.ts	1
