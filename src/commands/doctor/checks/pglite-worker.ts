@@ -7,6 +7,12 @@
 import * as db from '../../../core/db.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+import { agentFix } from '../check-fix.ts';
+
+/** Read-only diagnosis; it prints the plan-bound repair command the user approves. */
+function pgliteRepairPreview() {
+  return agentFix(['gbrain', 'pglite-repair', '--dry-run'], 'Diagnoses the PGLite store without changing it and prints the exact repair command, bound to this plan, for the user to approve.', 'pglite_data_dir');
+}
 
 // ≥2 failed repair attempts inside 7 days = the corruption keeps regenerating.
 const REPAIR_RECURRENCE_WINDOW_MS = 7 * 24 * 3600 * 1000;
@@ -79,8 +85,9 @@ export function computePgliteDataDirCheck(
         message:
           `PGLite failed to open and the data dir shows unclean-shutdown state (${diagnosis.detail}). ` +
           `This is the torn-WAL class behind issue #223 — repairable in place, data preserved: ` +
-          `\`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` to repair.${backupNote}${recurrence}`,
+          `\`gbrain pglite-repair --dry-run\` diagnoses it and prints the plan-bound repair command to run once the user approves.${backupNote}${recurrence}`,
         remediation_status: 'human_only',
+        fix: pgliteRepairPreview(),
       };
     case 'looks-healthy':
     default:
@@ -90,10 +97,11 @@ export function computePgliteDataDirCheck(
         message:
           `PGLite failed to open but the data dir layout validates (${diagnosis.detail}). ` +
           `IF the connect error mentions \`Aborted()\` this is likely torn WAL state — ` +
-          `\`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` to repair in place ` +
+          `\`gbrain pglite-repair --dry-run\` diagnoses it and prints the plan-bound in-place repair command to run once the user approves ` +
           `(repair discards the un-checkpointed WAL tail — don't run it for lock-contention or ` +
           `catalog-corruption errors; 58P01/pgvector load failures need \`gbrain reinit-pglite\` instead).${backupNote}${recurrence}`,
         remediation_status: 'human_only',
+        fix: pgliteRepairPreview(),
       };
   }
 }

@@ -7,7 +7,7 @@
  * plan and writes nothing; `--yes` installs; the preapproval installs and says
  * so on stderr.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,6 +47,12 @@ async function install(extra: string[], opts: { preapprove?: boolean } = {}) {
   const wrapper = join(gbrainHome, '.gbrain', 'autopilot-run.sh');
   return { stdout: stdout.join('\n'), stderr: stderr.join(''), verdict: currentExitCode(), wrapperWritten: existsSync(wrapper) };
 }
+
+afterAll(() => {
+  // The refusal case sets exit verdict 3, which mirrors into process.exitCode.
+  _resetCliExitVerdictForTests();
+  process.exitCode = 0;
+});
 
 describe('autopilot --install consent', () => {
   test('non-TTY without --yes: exit 3, confirmation_required payload, nothing written', async () => {

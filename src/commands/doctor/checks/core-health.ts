@@ -684,7 +684,7 @@ export async function checkPgliteScratchProbe(opts: {
             `A scratch PGLite store initialized, wrote and read back fine on this machine (${secs}s), ` +
             `so the runtime is healthy and YOUR STORE is damaged — not the WASM runtime. ` +
             `Your markdown is unaffected: the DB holds derived data (chunks, embeddings, links, facts) that a re-sync rebuilds. ` +
-            `Recover: \`gbrain pglite-repair --dry-run\` to diagnose, \`gbrain pglite-repair --yes\` for in-place WAL repair (data preserved); ` +
+            `Recover: \`gbrain pglite-repair --dry-run\` diagnoses it and prints the plan-bound in-place WAL repair command (data preserved) to run once the user approves; ` +
             `if that can't fix it, restore a backup of the store directory or run \`gbrain reinit-pglite\` (wipes + re-inits + re-syncs; ` +
             `defaults embedding flags from your config file).`,
           details: { scratch_ok: true, duration_ms: r.duration_ms },
