@@ -61,12 +61,12 @@ function planJobSteps(planned: RemediationStep[], manifest: { job_ids: string[] 
 
 /**
  * How a submitted step is awaited. PGLite has no background worker, and a
- * Postgres queue may have none running: unless a registered worker serves the
- * queue, the step runs in this process (as `jobs submit --follow` does)
+ * Postgres queue may have none running: when the caller allows it and no
+ * registered worker serves the queue, the step runs in this process (as `jobs submit --follow` does)
  * instead of waiting out its timeout for a worker that never comes.
  */
-function stepWaiter(engine: BrainEngine, queue: InstanceType<typeof import('../minions/queue.ts').MinionQueue>) {
-  const worker = queueWorkerAlive('default');
+function stepWaiter(engine: BrainEngine, queue: InstanceType<typeof import('../minions/queue.ts').MinionQueue>, allowInline: boolean) {
+  const worker = allowInline ? queueWorkerAlive('default') : true;
   const inline = engine.kind === 'pglite' ? worker !== true : worker === false;
   return async (jobId: number, waitOpts: { pollMs: number; timeoutMs: number }) => {
     if (inline) return runJobInline(engine, queue, jobId, waitOpts);
@@ -252,7 +252,7 @@ export async function runRemediation(
   const { MinionQueue } = await import('../minions/queue.ts');
   const isPGLite = engine.kind === 'pglite';
   const queue = new MinionQueue(engine);
-  const waitStep = stepWaiter(engine, queue);
+  const waitStep = stepWaiter(engine, queue, opts.inlineJobs === true);
 
   // A4 amended: install a BudgetTracker scope around the plan-step loop so
   // any gateway.chat / embed / rerank inside a Minion handler (synthesize,

@@ -14,6 +14,7 @@ import { embeddingEnablement, type ReadinessEntry, type ReadinessState } from '.
 import { loadConfig } from '../../core/config.ts';
 import { classifyPgAccessError } from '../../core/pg-access-classify.ts';
 import { brainRoutingArgs } from '../../core/brain-resolver.ts';
+import { repairForCheck } from '../../core/repair/registry.ts';
 import type { Check } from '../doctor.ts';
 
 /**
@@ -130,11 +131,24 @@ function isRendered(fix: Action | RenderedAction): fix is RenderedAction {
  * `unstructured` (its message is the guidance).
  */
 export function finalizeCheckFixes<T extends CheckLike>(checks: readonly T[], render: RenderContext = cliRenderContext()): T[] {
-  return checks.map((c) => {
+  return checks.map((check) => {
+    const c = render.transport === 'cli' ? withRepairPreviewFix(check) : check;
     if (c.fix) return isRendered(c.fix) ? c : { ...c, fix: redactForTransport(renderAction(c.fix, render), render.transport) };
     if (c.status === 'ok' || c.fix_unavailable_reason) return c;
     return { ...c, fix_unavailable_reason: 'unstructured' as const };
   });
+}
+
+/**
+ * E1: a repairable finding on the local doctor carries its next step: the
+ * read-only `gbrain repair <kind>` preview, which lists what the repair would
+ * change and prints the exact apply command for the user to approve.
+ */
+function withRepairPreviewFix<T extends CheckLike>(check: T): T {
+  if (check.status === 'ok' || check.fix || check.details?.health === 'unknown') return check;
+  const kind = repairForCheck(check.name)?.kind;
+  if (!kind) return check;
+  return { ...check, fix: agentFix(['gbrain', 'repair', kind], 'Previews the repair without changing anything and prints the exact apply command; applying rewrites stored records, so ask the user first.', check.name) };
 }
 
 /** One-line human rendering of a check's fix (`Fix: <command>` / tool call), or null. */

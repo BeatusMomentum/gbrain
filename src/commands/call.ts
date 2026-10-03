@@ -85,6 +85,8 @@ export async function runCall(
       return;
     }
   } catch (error) {
+    // A delegated call's caller mistake (e.g. invalid params) gets the same v1 envelope and exit as the direct path.
+    if (!writePathFailure(error)) return failCall(tool, error, out);
     if (await reportPersistenceCliError(error, true, out)) return;
     throw error;
   }
@@ -112,11 +114,17 @@ export async function runCall(
   await out(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
     if (writePathFailure(error) && await reportPersistenceCliError(error, true, out)) return;
-    // Agent contract v1 (A1): `gbrain call` is a JSON surface, so a failure is
-    // the same envelope an MCP caller gets, on stdout, with the registry's exit.
-    const envelope = localCallErrorEnvelope(tool, error);
-    await out(JSON.stringify(envelope, null, 2) + '\n');
-    console.error(`Error [${envelope.code}]: ${envelope.message}`);
-    setCliExitVerdict(exitCodeForCode(envelope.code));
+    await failCall(tool, error, out);
   }
+}
+
+/**
+ * Agent contract v1 (A1): `gbrain call` is a JSON surface, so a failure is
+ * the same envelope an MCP caller gets, on stdout, with the registry's exit.
+ */
+async function failCall(tool: string, error: unknown, out: (text: string) => Promise<void>): Promise<void> {
+  const envelope = localCallErrorEnvelope(tool, error);
+  await out(JSON.stringify(envelope, null, 2) + '\n');
+  console.error(`Error [${envelope.code}]: ${envelope.message}`);
+  setCliExitVerdict(exitCodeForCode(envelope.code));
 }

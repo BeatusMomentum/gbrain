@@ -66,6 +66,12 @@ export interface RemediationPlan {
 export interface RemediationOpts {
   /** Target brain_score (default: 90). */
   targetScore?: number;
+  /**
+   * Run each submitted job step in this process when no registered worker
+   * serves the queue (PGLite always lacks one), as `jobs submit --follow`
+   * does, instead of waiting out the step timeout. Set by the CLI entry point.
+   */
+  inlineJobs?: boolean;
   /** Cap inner loop iterations (default: Infinity). */
   maxJobs?: number;
   /** USD cap for total plan cost. Pre-flight refuse + mid-run BudgetExhausted gate. */

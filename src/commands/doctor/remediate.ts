@@ -301,7 +301,7 @@ export async function runRemediate(engine: BrainEngine, args: string[], complete
   const before = dryRun ? [] : await runWaveChecks(engine);
 
   const result = await runRemediation(engine,
-    { targetScore, maxJobs, maxUsd, capSource, dryRun, resume: resumeMode, resumePlanHash, repairs: { include: includeRepairs, remote: false, noEmbed } },
+    { targetScore, maxJobs, maxUsd, capSource, dryRun, resume: resumeMode, resumePlanHash, inlineJobs: true, repairs: { include: includeRepairs, remote: false, noEmbed } },
     {
       onTargetUnreachable: (target, ceiling) => {
         console.error(`[remediate] target ${target} unreachable; max autonomous = ${ceiling}/100. `

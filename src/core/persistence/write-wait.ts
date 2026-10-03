@@ -6,8 +6,7 @@
  */
 import { loadConfig, type GBrainConfig } from '../config.ts';
 import { getCliOptions } from '../cli-options.ts';
-import { PENDING_WRITE_EXIT_CODE, USAGE_EXIT_CODE } from '../exit-codes.ts';
-import { exitCodeForCode } from '../error-catalogue.ts';
+import { PENDING_WRITE_EXIT_CODE } from '../exit-codes.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admittedPendingReceipt, type WriteReceipt } from './types.ts';
 
@@ -96,13 +95,12 @@ export function pendingReceiptOf(error: unknown): WriteReceipt | null {
 
 /**
  * The one CLI exit verdict for a failed write (O-DX-1/O-ENG-1): an admitted
- * pending receipt exits PENDING_WRITE_EXIT_CODE (0 with the opt-in); a caller
- * mistake (`invalid_params`) exits 2 per the A3 exit table; every other error,
- * including a pre-admission `unavailable`, exits 1.
+ * pending receipt exits PENDING_WRITE_EXIT_CODE (0 with the opt-in); every
+ * other error, including a pre-admission `unavailable`, exits 1.
  */
 export function writeErrorExitCode(error: unknown, acceptPending: boolean): number {
-  if (pendingReceiptOf(error)) return acceptPending ? 0 : PENDING_WRITE_EXIT_CODE;
-  return error instanceof OperationError && exitCodeForCode(error.code) === USAGE_EXIT_CODE ? USAGE_EXIT_CODE : 1;
+  if (!pendingReceiptOf(error)) return 1;
+  return acceptPending ? 0 : PENDING_WRITE_EXIT_CODE;
 }
 
 /** The copy-paste poll command for a pending receipt. */

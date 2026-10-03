@@ -23,7 +23,7 @@
     },
     {
       "argv": "takes add alice-example",
-      "exitCode": 2,
+      "exitCode": 1,
       "stderr": [
         "Error [invalid_params]: Missing --claim."
       ],

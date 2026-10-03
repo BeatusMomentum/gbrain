@@ -416,7 +416,7 @@ describe('REAL CLI triggers for the other families', () => {
   }, 120_000);
 
   test('--brain naming no mount: a suggestion and a mounts-list fix (human and --json)', async () => {
-    const want: Expect = { error: 'invalid_params', code: 'invalid_params', fixArgv: ['gbrain', 'mounts', 'list'] };
+    const want: Expect = { error: 'invalid_params', code: 'invalid_params', fixArgv: ['gbrain', 'mounts', 'list', '--json'] };
     const json = await gbrain(homeA, ['--brain', 'h3-no-such-mount', 'get', MISSING, '--json']);
     expect(json.exitCode).not.toBe(0);
     expectSurvives(json.json, want, 'cli --json');

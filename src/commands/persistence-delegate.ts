@@ -62,6 +62,14 @@ export async function runDeferredPersistenceCommand(
   args: string[],
   connect: () => Promise<BrainEngine>,
 ): Promise<void> {
+  // A3: refusing to remove or archive the default source is invalid input (exit 2), as on
+  // the unmanaged lane; the write lane's verdict would be 1.
+  if (command === 'sources' && ['remove', 'archive', 'purge'].includes(args[0] ?? '') && args[1] === 'default') {
+    const { exitCliError, usageError } = await import('../cli/cli-error.ts');
+    exitCliError(usageError('The default source cannot be removed or archived.',
+      'The default source holds the brain\'s primary pages and always stays registered; remove or archive a named source instead.',
+      { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Lists the named sources that can be removed or archived.' } }), 'sources');
+  }
   let connected: BrainEngine | null = null;
   const getEngine = async () => connected ??= await connect();
   try {
