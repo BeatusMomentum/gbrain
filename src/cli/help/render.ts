@@ -32,7 +32,7 @@ export function renderCuratedHelp(command: string, spec: CliHelpSpec): string {
   lines.push('', 'Examples:', ...spec.examples.map(e => `  ${e}`));
   if (spec.end_of_options) lines.push('', 'A bare `--` ends options; every later argument is a positional.');
   if (spec.flags.some(f => f.consent?.length)) lines.push('', 'A flag marked [consent: …] authorizes that effect: get the user\'s agreement before passing it.');
-  lines.push('', `Machine-readable: gbrain ${command} --help --json`);
+  if (spec.flags.some(f => f.name === '--json')) lines.push('', `Machine-readable: gbrain ${command} --help --json`);
   return `${lines.join('\n')}\n`;
 }
 

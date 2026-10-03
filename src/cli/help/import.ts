@@ -7,7 +7,7 @@ export const help: CliHelpSpec = {
   flags: [
     { name: '--source', type: 'string', desc: 'Write into this source id (must already exist; see `gbrain sources list`).' },
     { name: '--source-id', type: 'string', desc: 'Same as --source; pass one or the other.' },
-    { name: '--no-embed', type: 'boolean', desc: 'Skip embeddings (no provider calls); run `gbrain embed --stale` later.' },
+    { name: '--no-embed', type: 'boolean', desc: 'Skip embeddings (no provider calls); embed the new pages later with `gbrain embed`.' },
     { name: '--workers', type: 'number', desc: 'Parallel import workers (positive integer, default 1; clamped to the connection budget).' },
     { name: '--fresh', type: 'boolean', desc: 'Ignore the resume checkpoint and walk every file again.' },
     { name: '--include-gitignored', type: 'boolean', desc: 'Also import files git ignores.' },

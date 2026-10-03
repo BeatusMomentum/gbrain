@@ -46,6 +46,9 @@ const HELP_WITHOUT_BRAIN = [
   // through SELF_HELP_WITHOUT_ENGINE's table entries.
   'conversation-parser', 'advisor', 'anomalies', 'backfill', 'book-mirror', 'edges-backfill', 'features',
   'founder', 'graph-query', 'orphans', 'salience', 'think',
+  // D5: selfHelp handlers that already answered --help before the engine but
+  // were reached only after connect; now SELF_HELP_WITHOUT_ENGINE table entries.
+  'brainstorm', 'lsd', 'migrate', 'pages', 'pricing', 'whoknows',
 ];
 
 /**
@@ -56,13 +59,8 @@ const HELP_WITHOUT_BRAIN = [
  * entry moves.
  */
 const STILL_NEEDS_A_BRAIN = [
-  'brainstorm',
   'config',
   'embed',
-  'lsd',
-  'migrate',
-  'pages',
-  'retrieval-upgrade',
 ];
 
 async function runHelp(command: string): Promise<{ code: number; out: string }> {
@@ -125,6 +123,14 @@ describe('--help without a configured brain', () => {
       expect(stdout + stderr).not.toContain('No brain configured');
       expect(stdout + stderr).toContain('judge-agreement --suite <longmemeval|grounding> --input <file>');
     }
+  }, 30_000);
+
+  // D5: retrieval-upgrade is an alias whose help is the `migrate embeddings` usage.
+  test('retrieval-upgrade --help answers with the migrate embeddings usage', async () => {
+    const { code, out } = await runHelp('retrieval-upgrade');
+    expect(code).toBe(0);
+    expect(out).not.toContain('No brain configured');
+    expect(out).toContain('Usage: gbrain migrate embeddings --to <provider:model>');
   }, 30_000);
 
   for (const command of HELP_WITHOUT_BRAIN) {
