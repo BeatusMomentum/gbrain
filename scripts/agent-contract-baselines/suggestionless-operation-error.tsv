@@ -125,12 +125,8 @@ src/core/shared-skills/compatibility.ts	2
 src/core/shared-skills/membership-authority.ts	1
 src/core/shared-skills/membership.ts	1
 src/core/shared-skills/migration-projection.ts	2
-src/core/shared-skills/migration.ts	8
-src/core/shared-skills/retention.ts	7
 src/core/shared-skills/setup-source-policy.ts	2
-src/core/skill-catalog.ts	9
 src/core/skillpack/brain-resident-locate.ts	12
-src/core/skillpack/shared-brain-bridge.ts	7
 src/core/skillpack/writer-guard.ts	1
 src/core/source-local-reference-index.ts	2
 src/mcp/dispatch.ts	1
