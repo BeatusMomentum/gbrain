@@ -28,9 +28,9 @@ import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-vis
 // --- Agent-contract fixes shared by the op error sites ---
 
 /**
- * A slug safe to put in a fix's argv as a positional: the op CLI parser does
- * not honour `--`, so only slugs that cannot read as a flag (or carry shell
- * or Unicode surprises) are interpolated; anything else gets no slug fix.
+ * A slug that can sit in a fix's argv as a bare positional: it cannot read as
+ * a flag and needs no shell quoting. Any other printable slug goes after `--`
+ * (the op parser honours it since D6); see getPageFix.
  */
 export function cliSafeSlug(slug: unknown): slug is string {
   return typeof slug === 'string' && /^[a-z0-9][a-z0-9._/:-]{0,254}$/i.test(slug);
@@ -43,10 +43,12 @@ export function sourcesListFix(why: string): Action {
 
 /** Read-only: one page by slug, scoped to a source when known. */
 export function getPageFix(slug: string, why: string, opts: { sourceId?: string; includeDeleted?: boolean; fuzzy?: boolean } = {}): Action | undefined {
-  if (!cliSafeSlug(slug)) return undefined;
+  if (typeof slug !== 'string' || !slug || slug.length > 512 || /[\u0000-\u001f\u007f\u2028\u2029]/.test(slug)) return undefined;
   const source = opts.sourceId !== undefined && isValidSourceId(opts.sourceId) ? opts.sourceId : undefined;
+  const flags = [...(opts.includeDeleted ? ['--include-deleted'] : []), ...(opts.fuzzy ? ['--fuzzy'] : []), ...(source ? ['--source', source] : [])];
   return readFix(why, {
-    argv: ['gbrain', 'get', slug, ...(opts.includeDeleted ? ['--include-deleted'] : []), ...(opts.fuzzy ? ['--fuzzy'] : []), ...(source ? ['--source', source] : [])],
+    // A slug like `--yes` or one with shell metacharacters lands after `--`; shellQuote quotes it in `command`.
+    argv: cliSafeSlug(slug) ? ['gbrain', 'get', slug, ...flags] : ['gbrain', 'get', ...flags, '--', slug],
     mcp: { tool: 'get_page', arguments: { slug, ...(opts.includeDeleted ? { include_deleted: true } : {}), ...(opts.fuzzy ? { fuzzy: true } : {}), ...(source ? { source_id: source } : {}) } },
   });
 }

@@ -14,6 +14,7 @@ import { CredentialError } from '../src/core/creds/errors.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 import { noPricingGuidance } from '../src/core/budget/no-pricing.ts';
 import { RemoteMcpError } from '../src/core/mcp-client.ts';
+import { SourceTargetError } from '../src/core/source-resolver.ts';
 
 const render = (over: Partial<RenderContext> = {}): RenderContext => ({
   transport: 'stdio', isCallable: () => true, preapproved: () => false, ...over,
@@ -70,6 +71,12 @@ describe('normaliser rows', () => {
     expect(toAgentError({ class: 'PhaseError', code: 'storage_error', message: 'disk full' }, cx())).toMatchObject({ code: 'storage_error' });
   });
 
+  test('SourceTargetError is a caller mistake (unknown_source / invalid_source) with a sources-list read, never internal_error', () => {
+    const missing = toAgentError(new SourceTargetError('Source "nope" not found or is archived.'), cx({ transport: 'cli', command: 'import', render: render({ transport: 'cli' }) }));
+    expect(missing).toMatchObject({ error: 'unknown_source', code: 'unknown_source', class: 'caller', fix: { argv: ['gbrain', 'sources', 'list', '--json'], next: 'run' } });
+    expect(toAgentError(new SourceTargetError('Invalid GBRAIN_SOURCE value "A B". Must match [a-z0-9-]{1,32}.'), cx()).code).toBe('invalid_source');
+  });
+
   test('RemoteMcpError preserves the server envelope fields', () => {
     const e = new RemoteMcpError('tool_error', 'failed', {
       code: 'permission_denied', canonical_code: 'insufficient_scope', message: 'needs write', suggestion: 'ask the host',
@@ -121,7 +128,10 @@ describe('safe-recovery invariant', () => {
 
   test('no receipt → no receipt command; the unknown-throw text says inspect before resubmitting', () => {
     const env = toAgentError(new Error('x'), cx({ op: 'submit_job', mutating: true, outcome: 'unknown' }));
-    expect(env.fix?.argv).toEqual(['gbrain', 'doctor', '--json']);
+    // A1: a non-journaled mutation recovers through its own status read (submit_job → the job list), never a receipt or a resubmit.
+    expect(env.fix?.argv).toEqual(['gbrain', 'jobs', 'list', '--json']);
+    expect(env.fix?.mcp).toEqual({ tool: 'list_jobs', arguments: {} });
+    expect(JSON.stringify(env.fix)).not.toContain('write-request');
     expect(env.suggestion).toContain('inspect state before resubmitting');
   });
 

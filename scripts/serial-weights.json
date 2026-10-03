@@ -1,8 +1,11 @@
 {
   "test/admin-embed-spawn.serial.test.ts": 55,
   "test/advisor-backup-coverage.serial.test.ts": 2,
+  "test/agent-error-surfaces.serial.test.ts": 25,
+  "test/agent-injection-http-view.serial.test.ts": 22,
   "test/agent-install-backup.serial.test.ts": 114,
   "test/agent-journey-upgrade.serial.test.ts": 70,
+  "test/agent-recovery-consent-journeys.serial.test.ts": 23,
   "test/agent-register-guards.serial.test.ts": 22,
   "test/agent-scheduler-contract.serial.test.ts": 39,
   "test/agent-voice-cors.serial.test.ts": 1,

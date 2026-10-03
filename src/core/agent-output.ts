@@ -573,6 +573,21 @@ const ROWS: Row[] = [
     }),
   },
   {
+    // source-resolver: a caller-selected source (--source, GBRAIN_SOURCE) that is malformed, unregistered or archived.
+    match: named('SourceTargetError'),
+    map: (e: Error) => {
+      const code = e.message.startsWith('Invalid ') ? 'invalid_source' : 'unknown_source';
+      return {
+        error: code, code, message: e.message,
+        suggestion: 'Pass a registered, active source id with --source or GBRAIN_SOURCE (or unset it for the default source); `gbrain sources list --json` shows them.',
+        fix: {
+          argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} }, consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'Lists the source ids this brain has, so the next call can name one that exists.',
+        },
+      };
+    },
+  },
+  {
     // embed preflight: no usable embedding credentials (userMessage is the paste-ready diagnosis).
     match: named('EmbeddingCredentialError'),
     map: (e: Error & { userMessage?: string }) => {
@@ -614,6 +629,24 @@ const ROWS: Row[] = [
     }),
   },
 ];
+
+/**
+ * A1 safe recovery for non-journaled mutations: when the outcome is unknown
+ * (no receipt, a failure that may have struck after the work was accepted),
+ * the fix is the op's own status read, never a resubmit.
+ */
+const STATUS_READ: Readonly<Record<string, Action>> = {
+  submit_job: {
+    argv: ['gbrain', 'jobs', 'list', '--json'], mcp: { tool: 'list_jobs', arguments: {} }, consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'The job may have been queued before the failure; the job list shows whether it was before anything is resubmitted.',
+  },
+};
+const OUTCOME_UNKNOWN_CLASSES: ReadonlySet<ErrorClass> = new Set(['server', 'unavailable', 'retryable']);
+
+function statusReadFix(ctx: AgentErrorContext): Action | undefined {
+  const open = ctx.outcome === 'unknown' || ctx.outcome === 'pending';
+  return ctx.op && ctx.mutating && open ? STATUS_READ[ctx.op] : undefined;
+}
 
 /** Index of the first generic row (AIConfigError); rows before it are typed and beat the DB classifier. */
 const FIRST_GENERIC_ROW = ROWS.findIndex(r => r.match(Object.assign(new Error('x'), { name: 'AIConfigError' })));
@@ -662,7 +695,7 @@ function unknownParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts {
     error: verb ? 'internal' : 'internal_error', code: verb ? 'internal' : 'internal_error',
     message: redactForTransport(message, ctx.transport),
     suggestion: `Server-side failure in ${where}, not a caller mistake.${resubmit} Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
-    fix: diagnosticFix(ctx, 'Doctor checks the brain host for the failing dependency.'),
+    fix: statusReadFix(ctx) ?? diagnosticFix(ctx, 'Doctor checks the brain host for the failing dependency.'),
     ...(verb ? { protocol_version: 1 as const } : {}),
   };
 }
@@ -690,6 +723,10 @@ export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope 
     if (!parts.fix) {
       const recovery = recoveryFix(parts, ctx, e instanceof OperationError ? e.receiptFields : undefined);
       if (recovery) parts = { ...parts, fix: recovery };
+    }
+    if (!parts.fix && OUTCOME_UNKNOWN_CLASSES.has(codeClass(parts.code))) {
+      const status = statusReadFix(ctx);
+      if (status) parts = { ...parts, fix: status };
     }
     if (!parts.fix && (codeClass(parts.code) === 'server' || codeClass(parts.code) === 'unavailable')) {
       parts = { ...parts, fix: diagnosticFix(ctx, 'Doctor reports what is missing or failing on the brain host.') };

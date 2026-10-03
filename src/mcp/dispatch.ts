@@ -13,7 +13,7 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
-import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
+import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
@@ -545,14 +545,19 @@ function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
 
 /** The one error result path: toAgentError → exactly one content block. */
 export function errorResult(e: unknown, opts: DispatchOpts, extra: { op?: string; mutating?: boolean; idempotent?: boolean; notices?: Notice[] } = {}): ToolResult {
-  if (extra.notices?.length && e instanceof OperationError) e.notices = [...(e.notices ?? []), ...extra.notices];
+  const carried = !!extra.notices?.length && e instanceof OperationError;
+  if (carried) e.notices = [...(e.notices ?? []), ...extra.notices!];
   const render = dispatchRenderContext(opts);
   const envelope = toAgentError(e, {
     transport: render.transport, op: extra.op, mutating: extra.mutating, idempotent: extra.idempotent,
     outcome: extra.mutating ? 'unknown' : 'failed', render,
     db: { url: configuredDbUrlForClassify(), brainId: brainIdForClassify() },
   });
-  return toolErrorResult(envelope);
+  if (!extra.notices?.length || carried) return toolErrorResult(envelope);
+  // Any other throw (a plain Error, a DB fault) still carries the notices the call collected (A6: one block, `notices` key).
+  const { contract_version, ...rest } = envelope;
+  const added = extra.notices.map(n => redactForTransport(renderNotice(n, render), render.transport));
+  return toolErrorResult({ ...rest, notices: orderNotices([...(envelope.notices ?? []), ...added]), contract_version });
 }
 
 const stderrLogger: OperationContext['logger'] = {
