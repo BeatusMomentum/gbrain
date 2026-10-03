@@ -98,7 +98,7 @@ describe('#5081 — GBRAIN_SOURCE-bound stdio serve, explicit source_id reads', 
     const body = JSON.parse(textOf(res));
     expect(body.error).toBe('permission_denied');
     expect(body.suggestion).toStartWith('This connection is bound to source work (GBRAIN_SOURCE). private ');
-    expect(body.suggestion).toContain('`gbrain sources federate private` on the brain host, or start this connection without GBRAIN_SOURCE.');
+    expect(body.suggestion).toContain('`gbrain sources federate private --brain host` on the brain host, or start this connection without GBRAIN_SOURCE.');
   }, 60_000);
 
   test('unqualified reads stay on the bound source', async () => {
