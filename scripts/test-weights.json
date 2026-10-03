@@ -1139,6 +1139,7 @@
   "test/migration-v120.test.ts": 209,
   "test/migration-vector-replay.test.ts": 3137,
   "test/migrations-cjk-wave.test.ts": 229,
+  "test/migrations-fresh-install.test.ts": 3900,
   "test/migrations-registry.test.ts": 5,
   "test/migrations-v0_11_0.test.ts": 21,
   "test/migrations-v0_12_0.test.ts": 2,
