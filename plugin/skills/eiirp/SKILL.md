@@ -530,3 +530,12 @@ reads it; doctor cross-references the pack version).
   plus undeclared types, the same classification as `schema lint
   --with-db`); over MCP, `run_doctor`'s schema_pack_consistency check
   carries the same verdict.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

@@ -140,3 +140,14 @@ Each entry links to its raw source. Running totals at the bottom of each section
 ## Conventions
 
 References `skills/conventions/quality.md` for citation and back-linking rules.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `file_upload` → `gbrain call file_upload <params_json>`
+- `put_raw_data` → `gbrain call put_raw_data <params_json>`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

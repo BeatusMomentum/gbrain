@@ -350,3 +350,12 @@ Both page types have bidirectional back-links to every entity they mention.
 - Retrieve raw data from gbrain (get_raw_data)
 - Link entities in gbrain (add_link)
 - Check backlinks in gbrain (get_backlinks)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

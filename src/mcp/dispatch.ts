@@ -18,6 +18,7 @@ import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { recallInteropNotices } from '../core/interop-notices.ts';
+import { hiddenToolHint } from './hidden-tool-hint.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
@@ -454,11 +455,12 @@ export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyErro
     .filter(op => !op.localOnly && !op.publishGateKey && (allowedOps ? allowedOps.has(op.name) : true))
     .map(op => op.name);
   const nearest = suggestNearest(name, candidates);
-  const suggestion = nearest
+  const hint = hiddenToolHint(name, opts); // F6: owner's stdio pipe only
+  const suggestion = hint?.suggestion ?? (nearest
     ? `Did you mean "${nearest}"?`
-    : 'List the tools this connection can call (tools/list) and use one of those names.';
+    : 'List the tools this connection can call (tools/list) and use one of those names.');
   return errorResult(opError('unknown_tool', legacyError ? `Unknown: ${name}` : `Unknown tool: ${name}`, suggestion,
-    legacyError ? { legacy_error: legacyError } : {}), opts);
+    { ...(legacyError ? { legacy_error: legacyError } : {}), ...(hint ? { fix: hint.fix } : {}) }), opts);
 }
 
 /**

@@ -175,3 +175,14 @@ Verification:
 - Get gbrain statistics (get_stats)
 - Check gbrain health (get_health)
 - Search gbrain (query)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `add_tag` → `gbrain tag`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

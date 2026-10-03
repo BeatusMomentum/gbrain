@@ -185,3 +185,14 @@ failures; never dump raw JSON envelopes at the user.
 - **Marking loops done for the user.** Close (`gbrain loops done <id>`) only
   after the user says it's handled; thread loops self-close on the next sync
   when the reply is visible in Gmail.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `loops_close` → `gbrain loops done`
+- `loops_mute` → `gbrain loops mute`
+- `open_loops` → `gbrain loops list`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

@@ -117,3 +117,12 @@ WARN      gbrain 0.44 is available (you're on 0.43).
 - **Calling the MCP `advisor` op for workspace install state.** Over MCP the
   advisor returns brain-state signals only; uninstalled-skill findings are a
   local-CLI concern.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `advisor` → `gbrain advisor`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

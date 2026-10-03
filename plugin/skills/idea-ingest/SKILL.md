@@ -132,3 +132,13 @@ Format: `- **YYYY-MM-DD** | Referenced in [page title](path) — brief context`
 - Hallucinating connections to brain knowledge — only cite connections you verified via search/query
 - Creating generic slugs like `concepts/strategy` — be specific: `concepts/flywheel-effects`
 - Assuming the fetch succeeded without verifying content was actually retrieved
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `file_upload` → `gbrain call file_upload <params_json>`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

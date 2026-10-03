@@ -212,3 +212,14 @@ cleanup. Name pending steps and the exact repair action. Redact credentials.
 
 Only declare observed stages complete. A CLI test, schedule file, fluent
 answer, HTTP response, or job ID cannot certify the full native experience.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_health` → `gbrain doctor --json`
+- `get_stats` → `gbrain stats`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

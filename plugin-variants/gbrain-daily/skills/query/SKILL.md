@@ -214,3 +214,12 @@ If search results seem off (wrong results, missing known pages, irrelevant hits)
 - Check backlinks in gbrain (get_backlinks)
 - Traverse the link graph in gbrain (traverse_graph)
 - View timeline entries in gbrain (get_timeline)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_timeline` → `gbrain timeline`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

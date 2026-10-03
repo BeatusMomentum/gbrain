@@ -313,3 +313,13 @@ Raw source: [preserved at path / uploaded to cloud]
 - Tag a page in gbrain (add_tag)
 - Store raw data in gbrain (put_raw_data)
 - Check backlinks in gbrain (get_backlinks)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

@@ -266,3 +266,13 @@ the citation is `[gstack:plans/foo]`. That's the whole rule.
 - `add_timeline_entry` — record events
 - `get_backlinks` — check who references an entity
 - `sync_brain` — sync changes to the index
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).
