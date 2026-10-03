@@ -13,6 +13,8 @@ import type { BrainEngine } from '../../core/engine.ts';
 import { LATEST_VERSION } from '../../core/migrate.ts';
 import { loadConfig } from '../../core/config.ts';
 import { loadCompletedMigrations } from '../../core/preferences.ts';
+import { isFreshInstallStamp } from '../../core/migration-ledger.ts';
+import { pendingFreshInstallCheck } from './checks/pending-fresh-install.ts';
 import { compareVersions } from '../migrations/index.ts';
 import { resolveHoursEnv } from '../../core/env-number.ts';
 import { schemaVersionHealth } from '../../core/schema-version-health.ts';
@@ -216,14 +218,16 @@ export async function doctorReportRemote(
   // --yes. Same shape as the local doctor at line ~336.
   try {
     const completed = loadCompletedMigrations();
-    const byVersion = new Map<string, { complete: boolean; partial: boolean }>();
+    const byVersion = new Map<string, { complete: boolean; partial: boolean; ran: boolean }>();
     for (const entry of completed) {
-      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false };
+      const seen = byVersion.get(entry.version) ?? { complete: false, partial: false, ran: false };
       if (entry.status === 'complete') seen.complete = true;
+      if (entry.status === 'complete' && !isFreshInstallStamp(entry)) seen.ran = true;
       if (entry.status === 'partial') seen.partial = true;
       byVersion.set(entry.version, seen);
     }
-    const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.complete).map(([v]) => v);
+    // Fresh-install stamps are not forward progress (same rule as the local doctor).
+    const completedVersions = Array.from(byVersion.entries()).filter(([, s]) => s.ran).map(([v]) => v);
     const stuck = Array.from(byVersion.entries())
       .filter(([v, s]) => {
         if (!s.partial || s.complete) return false;
@@ -249,6 +253,9 @@ export async function doctorReportRemote(
         status: 'fail',
         message: `MINIONS HALF-INSTALLED on brain host: ${stuck.join(', ')}. Run on the host: gbrain apply-migrations --yes`,
       });
+    } else {
+      const setup = pendingFreshInstallCheck();
+      if (setup) checks.push(setup);
     }
   } catch {
     // Best-effort. A broken JSONL on the brain server should not stop the
