@@ -803,7 +803,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dreamExit(opError('no_brain',
       'No brain directory found and no database connection. ' +
       'Pass --dir <path> or configure a brain via `gbrain init`.',
-      'Pass --dir <path>, fix the brain connection, or run `gbrain init --pglite --no-embedding`.'), opts.json);
+      'Pass --dir <path>, fix the brain connection, or create a brain with `gbrain init` (see `gbrain init --help`).'), opts.json);
   }
 
   // #1869: a path-scoped run (--dir, or the configured sync.repo_path) whose

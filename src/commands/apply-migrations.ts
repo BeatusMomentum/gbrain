@@ -536,7 +536,7 @@ async function runLockedMigrations(
       const cfg = lc();
       if (!cfg) {
         console.error('No brain configured for --force-schema.');
-        fail('failed', opError('no_brain', 'No brain configured for --force-schema.', 'Run `gbrain init --pglite --no-embedding` (or `gbrain init --help`) first.'));
+        fail('failed', opError('no_brain', 'No brain configured for --force-schema.', 'Create a brain first: `gbrain init` (`gbrain init --help` lists the options).'));
         return 2;
       }
       const eng = await createEngine(toEngineConfig(cfg));

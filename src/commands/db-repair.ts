@@ -414,7 +414,7 @@ export async function runDbRepair(args: string[], deps: DbRepairDeps = defaultDe
       return 1;
     }
     if (opts.json) writeCliError(opError('no_brain', 'No brain is configured, so there is no database to repair.',
-      'Run `gbrain init --pglite --no-embedding` (or `gbrain init --help` for Postgres).'), 'db-repair', { json: true, stderr: false });
+      'Create a brain first: `gbrain init` (`gbrain init --help` lists the keyless local and Postgres options).'), 'db-repair', { json: true, stderr: false });
     return 1;
   }
 
