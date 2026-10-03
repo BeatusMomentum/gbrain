@@ -139,6 +139,12 @@ Scripts that parse exit codes or `--json` output should read the [behavior chang
 - Troubleshooting and the symptom tables in every guide gain Who acts, Consent and Verify columns; verify steps use `gbrain doctor --only <check> --json`.
 - Every skill gains a "When it fails" section pointing at the protocol.
 
+#### Follow-ups from the wave 8 re-pin
+
+- `get_timeline` without a source scope looks the page up by source and slug instead of scanning the whole slug index, so the planner statistics added in v0.60.37.0 no longer slow it down. On gbrain-evals' 1,000-page Cat 7 brain the median call fell from about 0.087 ms to 0.057 ms; on an 11,000-page brain from about 1.06 ms to 0.08 ms on PGLite, with Postgres execution falling from 0.93 ms to 0.06 ms.
+- The empty-source-grant refusal (`fence=no_source_grant`) names the token by `--id` in its fix on every path, including writes refused at submission and `POST /ingest`, which now returns the fix too. When the token can't be named, the fix is `gbrain auth list` instead of a `<name>` placeholder.
+- `edit_page`'s receipt diff lists removed lines before added ones, as `git diff` does. `gbrain skillpack reference` diffs use the same order.
+
 #### Agent journey tests
 
 - Deterministic end-to-end journeys drive the real CLI and real stdio/HTTP MCP sessions on a keyless brain with stdin closed and as an open silent pipe: init's decision bundle, a clean day-zero doctor, a refused-then-approved remediation (also on a brain with a pending migration), the degraded-recall notice, a caller mistake whose `fix` runs as given, the status-only second serve, every `--json` document, every doctor fix and remediation-plan command, one embedding-enable command on every surface, the `starter` surface, a read-only grant, recovery from another directory with conflicting `GBRAIN_BRAIN_ID` / `GBRAIN_SOURCE`, each exclusive command under a live serve, both shared-HTTP recoveries, the error normaliser across MCP, CLI and the thin client (including a frozen v0.60.37 client), injection inertness, the HTTP view, notice dedupe, Postgres parity and upgrade fixtures for existing scripts, scheduled jobs, harness configs and queued jobs.

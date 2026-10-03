@@ -51,6 +51,17 @@ describe('context.ts grant and fence refusals (B6/B7)', () => {
     expect(env.fix).toMatchObject({ next: 'tell_user_to_run', actor: 'host_admin' });
   });
 
+  test('no-source grant without a nameable token lists the tokens instead of printing a placeholder', () => {
+    for (const auth of [undefined, oauth({ clientId: 'tok', principal: { kind: 'legacy_token', id: 'not-a-uuid' } })]) {
+      const e = noSourceGrantError('POST /ingest', auth);
+      expect(e.fix).toMatchObject({ argv: ['gbrain', 'auth', 'list'], actor: 'host_admin', consent: [] });
+      expect(e.fix?.inputs).toBeUndefined();
+      expect(e.suggestion).toContain('token list');
+      const env = toAgentError(e, { transport: 'http', op: 'put_page', render: render('http') });
+      expect(JSON.stringify(env)).not.toMatch(/<name>|<sources>|<id/);
+    }
+  });
+
   test('operation-snapshot refusal regrants the exact op for an OAuth client', async () => {
     const e = await caught(() => enforceBoundClientOpAllowList(oauth({ allowedOperations: ['get_page'] }), { name: 'put_page', scope: 'write', mutating: true }));
     expect(e.detail).toBe('fence=operation_grant');

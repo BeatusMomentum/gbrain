@@ -26,7 +26,7 @@ function assertSkillWriteScopes(scopes: readonly string[], operation: string, re
   }
 }
 export async function submissionAuthority(ctx: OperationContext, operation: string, sourceId: string, sourceIncarnation: string, slug: string): Promise<WriteAuthority> {
-  if (ctx.auth?.sourceId === NO_SOURCES || sourceId === NO_SOURCES) throw noSourceGrantError(operation);
+  if (ctx.auth?.sourceId === NO_SOURCES || sourceId === NO_SOURCES) throw noSourceGrantError(operation, ctx.auth);
   if (ctx.auth?.fenceProjectionDegraded || ctx.auth?.grantProjectionDegraded) deny('The grant projection is incomplete.');
   let principal: Principal;
   let localGrant: LocalGrant | undefined;
