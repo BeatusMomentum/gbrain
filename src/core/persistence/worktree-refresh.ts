@@ -466,14 +466,16 @@ async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow
 }
 
 /**
- * Owner-startup recovery: every active refresh on this host's worktrees whose
- * refreshing process has exited (its refresh lock is free) is converged one
- * step. Member syncs are not run here; `--resume` or the next cycle sync does.
+ * Owner-startup recovery: every interrupted refresh (draining, fenced or
+ * merged) on this host's worktrees whose refreshing process has exited (its
+ * refresh lock is free) is converged one step, so the scan finds nothing on
+ * the next tick. Member syncs are not run here: a `syncing` row is finished by
+ * `--resume`, or by the next cycle sync plus admission's lazy completion.
  */
 export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostId?: string } = {}): Promise<number> {
   const host = opts.hostId ?? localHostId();
   const rows = await engine.executeRaw<WorktreeRefreshRow>(`SELECT f.* FROM persistence_worktree_refreshes f
-    JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged','syncing')
+    JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged')
     ORDER BY f.created_at LIMIT 16`, [host]);
   let moved = 0;
   for (const row of rows) {
