@@ -5,12 +5,14 @@ export const help: CliHelpSpec = {
   summary: 'Check brain health; preview and run remediation.',
   usage: [
     'gbrain doctor [--fast] [--json] [--fix [--dry-run]] [--scope=brain] [--source <id>] [--no-migrate] [--locks]',
+    'gbrain doctor --only <check>[,<check>…] [--json]',
     'gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]',
     'gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]',
     '              [--max-jobs <n>] [--no-embed] [--dry-run] [--resume [<plan_hash>]] [--json]',
   ].join('\n'),
   flags: [
     { name: '--json', type: 'boolean', desc: 'Print one JSON document (checks, score, findings) on stdout.' },
+    { name: '--only', type: 'string', desc: 'Read-only: run just the named checks (comma-separated or repeated; no migrations). The usual fix.verify. An unknown name exits 2 with the valid list.' },
     { name: '--fast', type: 'boolean', desc: 'Skip database checks; filesystem and config checks only.' },
     { name: '--fix', type: 'boolean', desc: 'Apply the local fixes doctor knows (skill files, stale locks); pair with --dry-run to preview.' },
     { name: '--dry-run', type: 'boolean', desc: 'Preview --fix or --remediate without changing anything.' },
@@ -36,6 +38,7 @@ export const help: CliHelpSpec = {
   ],
   examples: [
     'gbrain doctor --json',
+    'gbrain doctor --only harness_wiring --json',
     'gbrain doctor --remediation-plan --json',
     'gbrain doctor --remediate --yes --max-usd 5 --target-score 90',
     'gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd 5',

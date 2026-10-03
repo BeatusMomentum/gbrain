@@ -509,8 +509,10 @@ Verify: `gbrain integrations doctor` (after at least one is configured)
 ## Step 9: Verify
 
 For memory-only installs, run the install check from the
-[first-run protocol](docs/protocol/AGENT_OPERATOR_v1.md#first-run): a read-only
-`harness_wiring` smoke check, then `remember` an install-check marker with
+[first-run protocol](docs/protocol/AGENT_OPERATOR_v1.md#first-run): the read-only
+smoke check `gbrain doctor --only harness_wiring --json` (it reads the
+registration and runs initialize, tools/list and one `recall` against it), then
+`remember` an install-check marker with
 provenance `install-check`, ask the user to restart the harness, `recall` it in
 the new session and `forget` it. Never save a made-up fact about the user.
 Also save one user-approved generic test note or fact with
@@ -656,4 +658,10 @@ grants.
 ```bash
 export GBRAIN_NO_ONBOARD_NUDGE=1
 ```
-Init + upgrade banners auto-skip in non-TTY too.
+Init and upgrade notices do not skip themselves when there is no terminal:
+non-interactive callers get the onboarding nudge, the init decision bundle and
+the post-upgrade summary as `[AGENT]` blocks (or the `notices` key under
+`--json`), and stdio MCP sessions get the post-upgrade summary once as a notice
+block. `GBRAIN_NO_ONBOARD_NUDGE=1` silences the onboarding nudges and the
+post-upgrade summary everywhere. Only the remote-brain identity banner stays
+TTY-only (`GBRAIN_BANNER=1` forces it, `GBRAIN_NO_BANNER=1` hides it).
