@@ -132,6 +132,12 @@ Scripts that parse exit codes or `--json` output should read the [behavior chang
 - Troubleshooting and the symptom tables in every guide gain Who acts, Consent and Verify columns; verify steps use `gbrain doctor --only <check> --json`.
 - Every skill gains a "When it fails" section pointing at the protocol.
 
+#### Follow-ups from the wave 8 re-pin
+
+- `get_timeline` without a source scope looks the page up by source and slug instead of scanning the whole slug index, so the planner statistics added in v0.60.37.0 no longer slow it down. On gbrain-evals' 1,000-page Cat 7 brain the median call fell from about 0.087 ms to 0.057 ms; on an 11,000-page brain from about 1.06 ms to 0.08 ms on PGLite, with Postgres execution falling from 0.93 ms to 0.06 ms.
+- The empty-source-grant refusal (`fence=no_source_grant`) names the token by `--id` in its fix on every path, including writes refused at submission and `POST /ingest`, which now returns the fix too. When the token can't be named, the fix is `gbrain auth list` instead of a `<name>` placeholder.
+- `edit_page`'s receipt diff lists removed lines before added ones, as `git diff` does. `gbrain skillpack reference` diffs use the same order.
+
 ## [0.60.37.0] - 2026-10-03
 
 **Foundations 1: a 10,000-page PGLite brain answers health and orphan checks in well under a second instead of 12 to 15 seconds, imports in about a third less time, records who wrote each page version, fact, take and timeline entry, lets several agents share one brain without losing track of whose session produced what, and gives every legacy token the same grant shape as an OAuth client.**
