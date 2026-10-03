@@ -265,6 +265,60 @@ gbrain auth rescope-token bootstrap-harness --refresh-operations
 gbrain auth rescope-token bootstrap-harness --refresh-operations --add assemble_evidence
 ```
 
+## Write attribution
+
+**Say to your agent:** *"Who wrote this page, and which agent changed it last?"*
+or *"Which client saved fact 42?"* The agent runs `gbrain attribution` (or the
+`get_write_attribution` tool with an `admin` grant).
+
+Journaled and coordinated writes record, on pages, page versions, facts, takes
+and timeline entries, which request and which principal (OAuth client, legacy
+token, local CLI or stdio writer, or the application) created each row and last
+changed it. This is creation attribution, not a full audit of every write:
+legacy direct writers record nothing and read as `unrecorded`. Only that (request,
+principal) pair is stored; the operation, time and the principal's current name
+are joined when you read it, so renaming a client renames it in every answer.
+
+```bash
+gbrain attribution notes/example-page              # created, last and live revision of the page
+gbrain attribution notes/example-page --versions   # plus who wrote and who archived each version
+gbrain attribution people/alice-example --fact 42  # one fact (about or fenced on the page)
+gbrain attribution people/alice-example --take 3   # the take at row 3 of the page's takes table
+gbrain attribution people/alice-example --timeline 17
+```
+
+Each attribution is `{ request_id, operation, principal: { kind, id, name }, at,
+origin }`. Branch on `origin`:
+
+| `origin` | Meaning |
+| --- | --- |
+| `request` | Written by the named journaled request; `operation` and `at` come from it. |
+| `maintenance` | Written by a maintenance pass (cycle extraction, repair) as the named principal, with no request. |
+| `unrecorded` | Written before attribution existed, or by a legacy writer that records none. Not an error. |
+
+Who can read it:
+
+- `get_write_attribution` needs `admin` scope (the local CLI always has it).
+  Remote admins stay inside their source grant, see only `world` facts and only
+  the take holders their grant allows. A page outside the grant reads as
+  `page_not_found`.
+- `get_versions` (`gbrain history`) adds `written_by` and `archived_by` to each
+  version only for the local CLI and `admin` holders. A `read` or `write` grant
+  gets the same version rows without any attribution field.
+
+Rows written before this release start `unrecorded`. Fill the ones the write
+journal proves exactly, after you agree; it is free and changes no content:
+
+```bash
+gbrain repair attribution-backfill           # preview: batches per table and the unrecorded_* counts left alone
+gbrain repair attribution-backfill --apply   # fill them; rerun to resume after an interruption
+```
+
+The backfill fills a page revision or version only from the page write whose
+recorded result is that exact revision, and a fact only from the `remember`
+that inserted it. Everything else stays `unrecorded`; nothing is inferred.
+`gbrain repair --all` and the doctor remediation plan include it.
+
 ## Read-only stdio serve
 
 **Say to your agent:** *"Connect this agent to my brain read-only."* The agent

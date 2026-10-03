@@ -1,6 +1,7 @@
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
 import { PAGE_MUTATION_PARAMS } from '../persistence/params.ts';
 import { readPolicyOpts } from './context.ts';
+import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
@@ -171,12 +172,13 @@ const run_doctor: Operation = {
 const get_versions: Operation = {
   name: 'get_versions',
   outputRedaction: { exempt: 'full page version snapshots by slug; a page read governed by visibility like get_page (CEO-17)' },
-  description: 'Page version history',
+  description: 'Page version history. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it).',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose version history to list.' },
   },
   handler: async (ctx, p) => {
-    const versions = await ctx.engine.getVersions(p.slug as string, await readPolicyOpts(ctx));
+    const plain = await ctx.engine.getVersions(p.slug as string, await readPolicyOpts(ctx));
+    const versions = canReadWriteAttribution(ctx) ? await attributeVersions(ctx.engine, plain) : plain;
     if (ctx.remote === false) return versions;
     return versions.map(v => ({ ...v, compiled_truth: sanitizeRemoteBody(v.compiled_truth),
       ...(typeof v.timeline === 'string' ? { timeline: sanitizeRemoteBody(v.timeline) } : {}) }));

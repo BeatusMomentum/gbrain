@@ -173,6 +173,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   get_backlinks: { slug: WORLD_PAGE_SLUG },
   traverse_graph: { slug: WORLD_PAGE_SLUG },
   get_versions: { slug: WORLD_FENCE_SLUG },
+  get_write_attribution: { slug: WORLD_FENCE_SLUG, versions: true },
   get_chunks: { slug: WORLD_FENCE_SLUG },
   resolve_slugs: { partial: 'world-page' },
   volunteer_context: { window: 'Recent discussion about WORLDSWEEP topics and pages.' },
@@ -296,6 +297,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   search_stats: 'ok',
   cache_stats: 'ok',
   get_usage: 'ok',
+  get_write_attribution: 'ok',
   get_job_stats: 'ok',
   list_jobs: 'ok', // base unused — per-shape override in EXPECTED_BY_SHAPE (above)
   quarantine_list: 'ok',

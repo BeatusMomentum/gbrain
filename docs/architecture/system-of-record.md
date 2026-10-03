@@ -153,6 +153,31 @@ journaled requests and coordinated maintenance, and `withWriteAttribution`
 (through `maintenanceTransaction`) sets them for unmanaged legacy transactions. A row written outside both
 scopes keeps `NULL` attribution, which reads as "unrecorded".
 
+The stamps live in the database only (Markdown never carries them):
+
+| Table | Columns | Meaning |
+| --- | --- | --- |
+| `pages` | `revision_write_request_id`, `revision_principal_kind`, `revision_principal_id` | Who wrote the live revision. |
+| `page_versions` | `write_*` and `archived_*` | Who wrote the snapshotted revision, and whose write archived it. |
+| `facts`, `takes`, `timeline_entries` | `write_*` and `last_write_*`, `last_written_at` | Who created the row, and who last changed its content. |
+
+Only the request id (`persistence_requests.id`) and the principal (kind, id)
+are stored. Names, operations and times are joined at read time by
+`get_write_attribution` (`gbrain attribution`), an `admin` operation; see
+[write attribution](../mcp/ADMIN.md#write-attribution). `get_versions` returns
+attribution only to trusted local and `admin` callers. A NULL request with a
+principal is a maintenance write; all NULL is `unrecorded`: written before
+attribution existed or by a writer listed under "unattributed" below, so this
+is creation attribution, not an audit of every write.
+
+Nothing is inferred for older rows. `gbrain repair attribution-backfill` fills
+only rows the write journal proves exactly (the page write whose recorded
+result is that revision, the `remember` that inserted that fact) and leaves the
+rest `unrecorded`. Attribution is not file-backed: rebuilding from Markdown
+loses it, and `gbrain migrate --to` copies it verbatim only for facts (pages, takes
+and timeline rows are re-created on the target and start `unrecorded`; version
+history is not copied).
+
 - **Managed brains:** creation attribution is complete. The writer guard
   refuses a canonical write outside `withCoordinatedWrite`, so a direct writer
   below either enters a coordinated path or fails before it writes.

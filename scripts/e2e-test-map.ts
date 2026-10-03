@@ -38,6 +38,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/ops/loops.ts": ["test/e2e/managed-connector-job-contract.test.ts", "test/e2e/loops-close-fact-postgres.test.ts"],
   "src/core/persistence/loop-fact-retirement.ts": ["test/e2e/loops-close-fact-postgres.test.ts", "test/e2e/managed-connector-job-contract.test.ts"],
   "src/core/repair/loop-facts.ts": ["test/e2e/loops-close-fact-postgres.test.ts"],
+  // Foundations 1 F1b: write attribution reads and the journal-proven backfill, direct and through PgBouncer.
+  "src/core/ops/attribution.ts": ["test/e2e/write-attribution-read-parity.test.ts"],
+  "src/core/repair/attribution-backfill.ts": ["test/e2e/write-attribution-read-parity.test.ts"],
+  "src/core/engine-sql/pages.ts": ["test/e2e/write-attribution-read-parity.test.ts"],
   "src/core/google/loop-catchup.ts": ["test/e2e/google-loops-recovery-postgres.test.ts"],
   "src/core/google/loop-detect.ts": ["test/e2e/google-loops-recovery-postgres.test.ts"],
   "src/core/cycle/connector-extract.ts": ["test/e2e/connector-cycle-extract-postgres.test.ts", "test/e2e/managed-connector-job-contract.test.ts"],
