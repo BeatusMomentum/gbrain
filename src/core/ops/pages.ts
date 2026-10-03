@@ -21,8 +21,8 @@ import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
-import { OperationError } from './contract.ts';
-import type { Operation, OperationContext } from './contract.ts';
+import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
+import { invalidParam } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -32,7 +32,7 @@ import {
   normalizeSlugPrefix,
   parseSourceIdParam,
   readPolicyOpts,
-  validatePageSlug,
+  validatePageSlug, pageNotFoundError,
 } from './context.ts';
 
 // --- Page CRUD ---
@@ -139,7 +139,7 @@ const get_page: Operation = {
     }
 
     if (!page) {
-      let hint = includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify';
+      let elsewhereSource: string | undefined;
       // #4516: source scoping is by-design isolation, but the miss diagnostic
       // should say WHERE the slug actually lives. Trusted local callers only
       // (`ctx.remote === false`) — for a remote caller the probe would be a
@@ -151,13 +151,13 @@ const get_page: Operation = {
           // deliberately spans all sources to name where the slug lives.
           const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
           if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere))) {
-            hint = `Page exists in source '${elsewhere.source_id}' — pass --source ${elsewhere.source_id} (source_id: '${elsewhere.source_id}' over MCP). ${hint}`;
+            elsewhereSource = elsewhere.source_id;
           }
         } catch {
           // Diagnostic only — a probe failure must never mask the real error.
         }
       }
-      throw new OperationError('page_not_found', `Page not found: ${slug}`, hint);
+      throw pageNotFoundError(ctx, slug, { includeDeleted, sourceIdParam, elsewhereSource });
     }
 
     // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale
@@ -220,13 +220,13 @@ const fetch_page: Operation = {
   handler: async (ctx, p) => {
     const id = p.id as string;
     if (typeof id !== 'string' || !id.trim()) {
-      throw new OperationError('invalid_params', 'fetch requires a non-empty id', 'Pass the `id` field from a `search` result.');
+      throw opError('invalid_params', 'fetch requires a non-empty id', 'Pass the `id` field from a `search` result.');
     }
     let identity: ReturnType<typeof decodeDeepResearchId>;
     try { identity = decodeDeepResearchId(id); }
-    catch { throw new OperationError('invalid_params', 'Invalid fetch result id', 'Pass the unchanged `id` field from a `search` result.'); }
+    catch { throw opError('invalid_params', 'Invalid fetch result id', 'Pass the unchanged `id` field from a `search` result.'); }
     const slug = identity?.slug ?? id.trim();
-    const missing = () => new OperationError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
+    const missing = () => opError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
     let sourceOpts: ReturnType<typeof federatedSearchScope>;
     try { sourceOpts = federatedSearchScope(ctx, identity?.sourceId); }
     catch (error) {
@@ -248,7 +248,7 @@ const fetch_page: Operation = {
       });
     } catch (error) {
       if (error instanceof PageSnapshotAmbiguousError) {
-        throw new OperationError('ambiguous_id', 'The legacy id matches multiple readable pages', 'Search again and pass the source-qualified result id.');
+        throw opError('ambiguous_id', 'The legacy id matches multiple readable pages', 'Search again and pass the source-qualified result id.');
       }
       throw error;
     }
@@ -491,7 +491,7 @@ const list_pages: Operation = {
     const updatedAfter = typeof p.updated_after === 'string' ? p.updated_after : undefined;
     const updatedAfterSlug = typeof p.updated_after_slug === 'string' ? p.updated_after_slug : undefined;
     if (updatedAfterSlug !== undefined && updatedAfter === undefined) {
-      throw new OperationError('invalid_params', "list_pages: updated_after_slug requires updated_after (the cursor row's updated_at_iso).");
+      throw invalidParam(ctx, 'list_pages', 'updated_after', "list_pages: updated_after_slug requires updated_after (the cursor row's updated_at_iso).", { def: list_pages.params.updated_after, example: '2026-08-11T00:00:00.000000Z' });
     }
     const updatedAfterKeyset = updatedAfter !== undefined && updatedAfterSlug !== undefined
       ? { updatedAt: updatedAfter, slug: updatedAfterSlug }

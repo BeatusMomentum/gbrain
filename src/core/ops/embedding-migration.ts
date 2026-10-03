@@ -39,8 +39,9 @@ const migrate_embeddings: Operation = {
     // forgets the localOnly filter.
     if (ctx.remote !== false) {
       const to = typeof p.to === 'string' && /^[a-z0-9_-]+:[A-Za-z0-9._/-]+$/.test(p.to) ? ['--to', p.to] : [];
+      const brain = ctx.brainId && ctx.brainId !== 'host' && /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(ctx.brainId) ? ['--brain', ctx.brainId] : [];
       throw hostOnlyError(ctx, 'permission_denied', 'migrate_embeddings is local-only. Run `gbrain migrate embeddings` on the host.',
-        ['gbrain', 'migrate', 'embeddings', ...to, '--dry-run'],
+        ['gbrain', ...brain, 'migrate', 'embeddings', ...to, '--dry-run'],
         'Re-embedding rebuilds the vector schema and spends provider money, so only the trusted CLI on the brain host runs it; the dry run prints the plan and cost first.',
         { consent: [] });
     }

@@ -11,6 +11,7 @@ import { readPolicyOpts } from './context.ts';
 
 import type { BrainEngine } from '../engine.ts';
 import { opError, type Operation } from './contract.ts';
+import { paramUse } from './op-fix.ts';
 import { resolveRequestedScope } from './context.ts';
 
 // --- v0.36 Phase 2: search_by_image (image-as-query) ---
@@ -58,7 +59,7 @@ const search_by_image: Operation = {
     if (!imagePath && !imageUrl && !imageData) {
       throw opError('invalid_params', 'search_by_image requires one of: image_path, image_url, image_data',
         ctx.remote === false
-          ? 'Pass one image input: --image-path <file>, --image-url <http(s) URL> or --image-data <base64>.'
+          ? `Pass one image input: ${paramUse(ctx, 'image_path', 'photo.png')}, ${paramUse(ctx, 'image_url', 'https://example.com/photo.png')} or ${paramUse(ctx, 'image_data')} with base64 bytes.`
           : 'Pass one image input: `image_data` (base64 PNG/JPEG/WebP) or `image_url` (http(s) URL).');
     }
     if ([imagePath, imageUrl, imageData].filter(Boolean).length > 1) {

@@ -8,7 +8,8 @@ import { coordinatedManualLinkWrite } from '../persistence/manual-links.ts';
  * '../operations.ts' here (cycle).
  */
 
-import { OperationError, opError, type Operation } from './contract.ts';
+import { opError, type Operation } from './contract.ts';
+import { paramUse } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   enforceClientSlugFence,
@@ -76,7 +77,7 @@ const add_link: Operation = {
     if (linkType.length > 0) {
       const activePack = await loadActivePackForWriteVocabulary(ctx);
       if (activePack && !packDeclaresLinkType(activePack, linkType)) {
-        throw new OperationError(
+        throw opError(
           'invalid_params',
           undeclaredLinkTypeMessage(linkType, activePack, 'add_link'),
           undeclaredLinkTypeSuggestion(activePack),
@@ -192,10 +193,10 @@ async function resolveLinkReadScope(
 ): Promise<{ requested: string | undefined; policy: PageReadPolicy }> {
   const sourceIdParam = parseSourceIdParam(p.source_id, opName, { allowAll: true });
   if (p.all_sources === true && sourceIdParam !== undefined && sourceIdParam !== ALL_SOURCES) {
-    throw new OperationError(
+    throw opError(
       'invalid_params',
       `${opName}: pass either source_id or all_sources, not both.`,
-      'Drop all_sources to read one source, or drop source_id to span sources.',
+      `Drop ${paramUse(ctx, 'all_sources')} to read source ${sourceIdParam}, or drop source_id to span sources.`,
     );
   }
   const requested = p.all_sources === true ? ALL_SOURCES : sourceIdParam;
