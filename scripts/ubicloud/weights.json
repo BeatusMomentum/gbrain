@@ -468,6 +468,7 @@
   "serial:test/models-probe-max-output-tokens.serial.test.ts": 7640,
   "serial:test/native-base-url-fold.serial.test.ts": 412,
   "serial:test/oauth-client-setup.serial.test.ts": 2129,
+  "serial:test/observational-startup.serial.test.ts": 5000,
   "serial:test/openai-latest.serial.test.ts": 362,
   "serial:test/openclaw-context-engine-native.serial.test.ts": 335,
   "serial:test/ops-run-onboard-scope-gate.serial.test.ts": 566,

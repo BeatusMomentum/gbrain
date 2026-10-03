@@ -42,6 +42,8 @@ export type CliThinClientMode = 'none' | 'refuse' | 'route-then-refuse';
 /** What handleCliOnly hands a command module: the dispatcher-owned pieces a moved body used to close over. */
 export interface CliDispatchContext {
   connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngine>;
+  /** A4: finish startup (migrations, marker cleanup, config merge) on an observational command's engine once consent is granted. */
+  completeStartup?(engine: BrainEngine): Promise<void>;
   dbMarkerBrainId(): string | undefined;
   SELECTED_CONFIG_BY_ENGINE: Pick<WeakMap<BrainEngine, GBrainConfig>, 'get'>;
   /** import.meta.url of src/cli.ts, for paths the moved bodies resolved relative to it. */

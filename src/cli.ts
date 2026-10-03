@@ -1934,6 +1934,7 @@ function refuseThinClient(command: string, mcpUrl: string): never {
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */
 const CLI_DISPATCH_CONTEXT: CliDispatchContext = {
   connectEngine,
+  completeStartup: completeEngineStartup,
   dbMarkerBrainId,
   SELECTED_CONFIG_BY_ENGINE,
   cliModuleUrl: import.meta.url,
@@ -2584,7 +2585,8 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
   // TODOS 1050, out of scope). Kill switch: GBRAIN_SERVE_DEGRADED=0.
   let engine: BrainEngine;
   try {
-    engine = await connectEngine({ probeOnly: command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status' });
+    // A4: an observational command connects probe-only and completes startup only after consent.
+    engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status') });
   } catch (serveConnectError) {
     if (command === 'jobs' && args[0] === 'child-readiness') {
       const { writeChildReadinessFailure } = await import('./core/minions/child-readiness.ts');
@@ -2795,6 +2797,14 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   if (opts?.probeOnly === true) {
     return engine;
   }
+  await completeEngineStartup(engine);
+  return engine;
+}
+
+/** Startup after the probe-only connect: migrations, retired-marker cleanup, DB-plane config merge. Mounts: none. */
+async function completeEngineStartup(engine: BrainEngine): Promise<void> {
+  const config = SELECTED_CONFIG_BY_ENGINE.get(engine);
+  if (!config || MOUNT_ENGINES.has(engine)) return;
 
   // v0.41.6.0 D4: race-tolerant CLI-side migration runner. Replaces the
   // pre-v0.41.6.0 `try { hasPendingMigrations && initSchema() } catch warn`
@@ -2864,7 +2874,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       // was set); that coupled the gate to the field set and would silently
       // miss future DB-mutable gateway fields. One extra cache+shrinkState
       // clear per startup is microseconds, no hot path.
-      configureGateway(buildGatewayConfig(merged));
+      (await import('./core/ai/gateway.ts')).configureGateway(buildGatewayConfig(merged));
     }
     // v0.31.12: re-resolve gateway defaults through resolveModel so
     // `models.tier.*` and `models.default` overrides apply to expansion +
@@ -2875,8 +2885,6 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   } catch {
     // Non-fatal. Pre-v39 brains may not have a usable config table yet.
   }
-
-  return engine;
 }
 
 /** CLI-only usage examples appended to `gbrain <command> --help`. */
