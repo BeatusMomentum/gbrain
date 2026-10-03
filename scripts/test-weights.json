@@ -751,6 +751,7 @@
   "test/extract-by-mention-resume.test.ts": 323,
   "test/extract-by-mention.test.ts": 485,
   "test/extract-conversation-facts-entity-resolution.test.ts": 769,
+  "test/extract-conversation-facts-flags.test.ts": 2000,
   "test/extract-conversation-facts.test.ts": 3681,
   "test/extract-cross-source-links.test.ts": 4,
   "test/extract-cross-source-resolution-observability.test.ts": 6,
