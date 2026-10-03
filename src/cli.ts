@@ -2551,6 +2551,14 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
   // no-config path still exits inside connectEngine (keyless cold-home is
   // TODOS 1050, out of scope). Kill switch: GBRAIN_SERVE_DEGRADED=0.
   let engine: BrainEngine;
+  // F4: a stdio serve with no brain / unreadable config completes the MCP
+  // handshake in status-only mode instead of exiting (connectEngine exits).
+  const serveStatus = command === 'serve' ? await import('./commands/serve-status.ts') : null;
+  const serveStatusEligible = !!serveStatus?.statusModeEligible(args, (dbMarkerBrainId() ?? 'host') === 'host');
+  if (serveStatusEligible && !loadConfig()) {
+    await serveStatus!.runStatusModeServe('no_brain', null, args, () => connectEngine());
+    return null;
+  }
   try {
     // A4: an observational command connects probe-only and completes startup only after consent.
     engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status') });
@@ -2584,6 +2592,10 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         return null;
       }
     })();
+    if (serveStatusEligible && serveStatus!.statusReasonForError(serveConnectError)) {
+      await serveStatus!.runStatusModeServe('lock_held', serveConnectError, args, () => connectEngine());
+      return null;
+    }
     if (command === 'serve' &&
       process.env.GBRAIN_SERVE_DEGRADED !== '0' &&
       process.env.GBRAIN_SERVE_DEGRADED !== 'false' &&

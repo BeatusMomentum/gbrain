@@ -17,7 +17,9 @@ import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
 import { createPersistenceIpcProvider, residentPersistenceConfig } from '../core/persistence/provider.ts';
-import { resolveMcpInstructions } from './instructions.ts';
+import { installInstructionsResolver, resolveMcpInstructions } from './instructions.ts';
+import { instructionReadiness } from './initialize-context.ts';
+import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadline, statusInstructionLine, statusModeErrorResult, statusModeOf, statusPayload, statusToolResult } from './status-mode.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources } from './skill-resources.ts';
 import { operationScopesAllowed } from '../core/scope.ts';
@@ -235,7 +237,14 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // never a wrong posture — and the engine is already connected by the time
   // serve reaches this call.
   bootPhase('writeback_config');
-  const writeback = await resolveWritebackConfig(engine, config);
+  // F4 status-only mode: never touch the lazy engine at boot (its gated
+  // reconnect belongs to tool calls).
+  const statusMode = statusModeOf(engine);
+  const writeback = statusMode ? null : await resolveWritebackConfig(engine, config);
+  const writebackOpts = writeback ? ambientOptsFrom(writeback, {
+    remember: allowedOps ? allowedOps.has('remember') : true,
+    extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
+  }) : null;
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     // listChanged: a client that handshakes during DEGRADED mode receives the
@@ -246,17 +255,25 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       capabilities: { tools: { listChanged: true }, resources: {} },
       // #4748: canonical contract (+ opt-in ambient-writeback section) plus the
       // optional operator-set deployment identity, appended last.
-      instructions: resolveMcpInstructions(config, process.env, {
-        writeback: ambientOptsFrom(writeback, {
-          remember: allowedOps ? allowedOps.has('remember') : true,
-          extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
-        }),
-      }),
+      instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
     },
   );
+  // F1: the contract for the effective callable set + readiness tail (or the
+  // status-only line), resolved when the client initializes.
+  installInstructionsResolver(server, async () => {
+    if (statusMode && isEngineDegraded(engine)) {
+      return resolveMcpInstructions(config, process.env, { tools: { callable: n => n === STATUS_TOOL_NAME, statusLine: statusInstructionLine(statusMode) } });
+    }
+    const visible = new Set((await stdioVisibleTools(engine, surfacedOps)).map(op => op.name));
+    return resolveMcpInstructions(config, process.env, {
+      writeback: writebackOpts,
+      tools: { callable: n => visible.has(n), readiness: await instructionReadiness(engine, config, 'stdio') },
+    });
+  });
 
   // WP3: strict-params schema emission, resolved ONCE at startup from the
   installCapabilitiesResource(server, async () => {
+    if (statusMode && isEngineDegraded(engine)) return { transport: 'stdio', status_only: statusPayload(statusMode) };
     const scope = await resolveMcpStdioSourceScope(engine);
     const available = (await stdioVisibleTools(engine, surfacedOps)).map(op => op.name);
     let scopes: readonly string[] = [];
@@ -290,7 +307,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // `gbrain config set mcp.publish_skills true` takes effect on the next
   // tools/list without a serve restart (matches the HTTP transports).
   server.setRequestHandler(ListToolsRequestSchema, async () => trackStdioRpc(async () => ({
-    tools: buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
+    tools: statusMode && isEngineDegraded(engine)
+      ? [STATUS_TOOL_DEF]
+      : buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
   })));
 
   // #4583 (fixes #4564's misrouted-write symptom): once-per-process advisory
@@ -306,6 +325,13 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // shape and cast through `any` (the SDK accepts it via the ServerResult union).
   server.setRequestHandler(CallToolRequestSchema, async (request: any): Promise<any> => trackStdioRpc(async () => {
     const { name, arguments: params } = request.params;
+    // F4: status-only mode answers gbrain_status and refuses the rest until
+    // a tool call's re-probe finds the brain openable (then dispatch normally).
+    if (statusMode) {
+      const open = await attemptStatusRecovery(engine, statusMode);
+      if (name === STATUS_TOOL_NAME) return statusToolResult(statusMode);
+      if (!open) return statusModeErrorResult(statusMode, name);
+    }
     // #3242 / #3906: stdio resolves its source through the same ambient chain
     // as local CLI dispatch: GBRAIN_SOURCE, then .gbrain-source, then the
     // non-explicit fallback tiers. Non-explicit tiers may widen to federated
@@ -414,7 +440,9 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
 
   if (isEngineDegraded(engine)) {
     // Structured enter/exit lines for harness-log forensics.
-    process.stderr.write('[gbrain-serve] DEGRADED: database unreachable at startup — tool calls return classified errors (GBRAIN_DB_ACCESS) and the server reconnects automatically. Fix: gbrain db-repair. Kill switch: GBRAIN_SERVE_DEGRADED=0.\n');
+    process.stderr.write(statusMode
+      ? `[gbrain-serve] STATUS-ONLY: ${statusHeadline(statusMode)} Serving gbrain_status; the full tool list returns once a tool call finds the brain openable. Supervisors: --fail-fast exits instead.\n`
+      : '[gbrain-serve] DEGRADED: database unreachable at startup — tool calls return classified errors (GBRAIN_DB_ACCESS) and the server reconnects automatically. Fix: gbrain db-repair. Kill switch: GBRAIN_SERVE_DEGRADED=0.\n');
     onEngineRecovered(engine, () => {
       // A reconnect can complete while shutdown is already draining (stdin
       // EOF during the attempt) — booting IPC/sweep on an exiting process

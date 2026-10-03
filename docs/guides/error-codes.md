@@ -1456,6 +1456,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### serve_status_only
+
+<a id="serve_status_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain serve is in status-only mode: its brain is locked by another server, missing, or its config is unreadable. | A capability this request needs is not configured or not reachable on this brain. | Call gbrain_status for the cause, the fix and what to tell the user. | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `lock_held`, `no_brain`, `config_unreadable`.
+
 ### shared_skills_unavailable
 
 <a id="shared_skills_unavailable"></a>

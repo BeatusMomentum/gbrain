@@ -209,6 +209,7 @@ export const CODES = {
   revision_unavailable: { class: 'unavailable', summary: "The exact authorized revision is unavailable." },
   scope_denied: { class: 'host_only', summary: "The connection lacks the scope this memory verb requires." },
   scope_missing: { class: 'caller', summary: "Google connect credential error: scope missing.", docs: 'docs/guides/google-connect.md#troubleshooting' },
+  serve_status_only: { class: 'unavailable', summary: "gbrain serve is in status-only mode: its brain is locked by another server, missing, or its config is unreadable.", reasons: ['lock_held', 'no_brain', 'config_unreadable'], suggestion: 'Call gbrain_status for the cause, the fix and what to tell the user.' },
   shared_skills_unavailable: { class: 'unavailable', summary: "The shared-skills operation was refused." },
   shared_skills_unsupported: { class: 'unavailable', summary: "The server does not expose the shared-skills protocol." },
   skill_asset_not_found: { class: 'caller', summary: "The requested file is not in the approved revision manifest." },
