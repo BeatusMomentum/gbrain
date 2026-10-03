@@ -193,6 +193,7 @@
   "test/query-image-flag.serial.test.ts": 5,
   "test/query-image-mode-limit.serial.test.ts": 16,
   "test/query-op-limit-mode-4356.serial.test.ts": 0,
+  "test/readiness-embedding-enablement.serial.test.ts": 42,
   "test/recall-thin-client-fallback.serial.test.ts": 1,
   "test/reconcile-links.serial.test.ts": 3,
   "test/reindex-code-max-cost.serial.test.ts": 3,
