@@ -26,7 +26,7 @@ import { reindexCodeProjection } from '../core/persistence/projection-reindex.ts
 import { refreshProjectionStatistics } from '../core/search/projection-statistics.ts';
 import { estimateTokens } from '../core/chunkers/code.ts';
 import { getEmbeddingModelName, estimateEmbeddingCostUsd } from '../core/embedding.ts';
-import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
+import { consentGate, engineConsentEnv, tokenmaxUncappedEnv } from '../core/consent-cli.ts';
 import type { CapSource } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -497,7 +497,8 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
     } else {
       // A4: paid. --yes, --max-cost <usd>, spend.posture=tokenmax or a per-run
       // preapproval authorizes it; without a user cap the run is capped at the
-      // estimate x1.5 (printed). Non-interactive otherwise: exit 3, no spend.
+      // estimate x1.5 (printed), except under tokenmax, which keeps its
+      // documented uncapped meaning here. Non-interactive otherwise: exit 3.
       const auth = await consentGate({
         command: 'reindex-code',
         effects: ['paid'],
@@ -510,12 +511,12 @@ export async function runReindexCodeCli(engine: BrainEngine, args: string[]): Pr
         preview_argv: ['gbrain', 'reindex-code', ...args.filter(a => a !== '--yes' && a !== '-y' && a !== '--json'), '--dry-run', '--json'],
         est_usd: costUsd,
         args,
-      }, { json, env: engineConsentEnv(engine) });
+      }, { json, env: engineConsentEnv(engine, await tokenmaxUncappedEnv(engine, maxCostUsd !== undefined)) });
       if (!auth) return;
       if (auth.via === 'tokenmax' && json) {
         console.log(JSON.stringify({ status: 'proceeding', gate: 'posture_tokenmax', codePages: preview.totalPages, totalTokens: preview.totalTokens, costUsd, model: getEmbeddingModelName() }));
       }
-      if (maxCostUsd === undefined && auth.cap_usd !== null) {
+      if (maxCostUsd === undefined && auth.cap_usd !== null && Number.isFinite(auth.cap_usd)) {
         maxCostUsd = auth.cap_usd;
         capSource = auth.cap_source ?? undefined;
       }

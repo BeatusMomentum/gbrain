@@ -43,3 +43,19 @@ export function engineConsentEnv(engine: Pick<BrainEngine, 'getConfig'> | null |
   return engine ? { getConfig: (key: string) => engine.getConfig(key), ...extra } : extra;
 }
 
+
+/**
+ * `spend.posture=tokenmax` on a command that ran uncapped under it before
+ * the consent wave (enrich, reindex-code): the posture keeps its documented
+ * meaning there (the user removed the ceiling; spend stays ledgered, see
+ * docs/operations/spend-controls.md), so an unattended run does not flip to a
+ * derived-cap stop. Returns the ConsentEnv overlay that records the
+ * ceiling as Infinity (a user-configured posture, so no derived-cap note);
+ * callers treat a non-finite `cap_usd` as "no ceiling". Everywhere else
+ * tokenmax authorizes under requireConsent's derived cap.
+ */
+export async function tokenmaxUncappedEnv(engine: Pick<BrainEngine, 'getConfig'>, explicitCap: boolean): Promise<ConsentEnv> {
+  if (explicitCap) return {};
+  const { resolveSpendPosture } = await import('./spend-posture.ts');
+  return (await resolveSpendPosture(engine as BrainEngine)) === 'tokenmax' ? { configuredCapUsd: Infinity } : {};
+}
