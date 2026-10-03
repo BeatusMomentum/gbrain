@@ -63,6 +63,7 @@ import {
   multiSourceDriftNotVerified,
 } from './schema-pack-checks.ts';
 import { checkError } from './check-fix.ts';
+import type { RenderContext } from '../../core/agent-output.ts';
 
 // Same alias the local doctor keeps for its own freshness checks; the alias
 // is a private one-liner in doctor.ts's check-fn library, so this module
@@ -71,7 +72,7 @@ const _resolveSyncFreshnessHours = resolveHoursEnv;
 
 export async function doctorReportRemote(
   engine: BrainEngine,
-  opts: { sourceIds?: string[]; remote?: boolean } = {},
+  opts: { sourceIds?: string[]; remote?: boolean; render?: RenderContext } = {},
 ): Promise<DoctorReport> {
   const checks: Check[] = [];
 
@@ -111,7 +112,7 @@ export async function doctorReportRemote(
       checks.push(await checkPgliteScratchProbe({ realInitFailed: true, storeDamageEvidence, realStorePath }));
     }
     // Without a connection, every other check is meaningless — short-circuit.
-    return computeDoctorReport(checks);
+    return computeDoctorReport(checks, { render: opts.render });
   }
 
   // 2. Schema version. Uses engine.getConfig('version') — the same engine-
@@ -442,5 +443,5 @@ export async function doctorReportRemote(
   const { remoteWaveHandoff } = await import('./wave-checks.ts');
   checks.push(...await remoteWaveHandoff(engine, opts.sourceIds));
 
-  return computeDoctorReport(checks);
+  return computeDoctorReport(checks, { render: opts.render });
 }

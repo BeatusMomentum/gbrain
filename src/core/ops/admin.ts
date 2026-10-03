@@ -178,7 +178,9 @@ const run_doctor: Operation = {
     // unscoped ctx = brain-wide.
     const scope = sourceScopeOpts(ctx);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);
-    return doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote });
+    const transport = ctx.remote === false ? 'cli' : ctx.transport ?? 'http';
+    return doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote,
+      render: { transport, isCallable: (op) => op === 'run_doctor', preapproved: () => false } });
   },
   scope: 'admin',
   localOnly: false,

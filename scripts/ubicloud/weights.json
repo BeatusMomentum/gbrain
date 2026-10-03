@@ -1162,6 +1162,7 @@
   "unit:test/doctor-queue-divergence.test.ts": 3760,
   "unit:test/doctor-raw-provenance.test.ts": 1563,
   "unit:test/doctor-remediation-plan-render.test.ts": 328,
+  "unit:test/doctor-remote-parity.test.ts": 3000,
   "unit:test/doctor-reranker-health.test.ts": 296,
   "unit:test/doctor-retrieval-reflex.test.ts": 269,
   "unit:test/doctor-schema-column-diff.test.ts": 1774,

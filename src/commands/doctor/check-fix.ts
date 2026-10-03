@@ -9,7 +9,7 @@
  * Stored checks carry `Action`; `finalizeCheckFixes` renders them for the
  * report's transport (CLI `gbrain doctor --json`, MCP `run_doctor`).
  */
-import { cliRenderContext, renderAction, type Action, type RenderContext, type RenderedAction } from '../../core/agent-output.ts';
+import { cliRenderContext, redactForTransport, renderAction, type Action, type RenderContext, type RenderedAction } from '../../core/agent-output.ts';
 import { embeddingEnablement, type ReadinessEntry, type ReadinessState } from '../../core/readiness.ts';
 import { loadConfig } from '../../core/config.ts';
 import { classifyPgAccessError } from '../../core/pg-access-classify.ts';
@@ -113,13 +113,14 @@ function isRendered(fix: Action | RenderedAction): fix is RenderedAction {
 }
 
 /**
- * Report-time pass: render every stored `fix` for the caller's transport and
+ * Report-time pass: render every stored `fix` for the caller's transport
+ * (redacted on http: no local paths, PIDs or key names) and
  * mark any non-ok check that still has neither a fix nor a reason as
  * `unstructured` (its message is the guidance).
  */
 export function finalizeCheckFixes<T extends CheckLike>(checks: readonly T[], render: RenderContext = cliRenderContext()): T[] {
   return checks.map((c) => {
-    if (c.fix) return isRendered(c.fix) ? c : { ...c, fix: renderAction(c.fix, render) };
+    if (c.fix) return isRendered(c.fix) ? c : { ...c, fix: redactForTransport(renderAction(c.fix, render), render.transport) };
     if (c.status === 'ok' || c.fix_unavailable_reason) return c;
     return { ...c, fix_unavailable_reason: 'unstructured' as const };
   });
