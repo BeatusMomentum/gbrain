@@ -1,4 +1,5 @@
 {
+  "test/e2e/agent-journey-postgres.test.ts": 18000,
   "test/e2e/anomalies-pglite.test.ts": 2180,
   "test/e2e/auth-permissions.test.ts": 1810,
   "test/e2e/auth-takes-holders-pglite.test.ts": 1070,
