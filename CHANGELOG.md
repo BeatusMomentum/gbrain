@@ -10,6 +10,68 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.39.0] - 2026-10-03
+
+**Your agent pays less for every gbrain call: search results, tool results and the tool list are all smaller, and search skips work it does not need.**
+
+An agent connected to gbrain pays for two things on every turn: the list of tools it can call, and every tool result it has seen so far. Both were heavy. A typical search returned about 23 results of 1,200 characters each, but only a few hundred characters per result were the text the agent needed; the rest was ranking detail it never read, re-sent on every later turn. The starter tool list was about 60,000 characters before the agent asked anything.
+
+Now a search or query from an agent returns the fields an agent acts on: the text, where it came from, how strong the match is, whether creating a new page would duplicate one, and any safety or provenance warning. Results are compact JSON. The starter tool list is 24,763 characters, with the longer guidance moved to a reference page. Notices about saved facts and other names under a search have a size cap. Your own `gbrain search` on the command line, local or thin client, still shows every field.
+
+| Per agent call | Before | After |
+| --- | --- | --- |
+| Starter tool list (34 tools) | 59,969 characters (13,077 tokens) | 24,763 characters (5,568 tokens) |
+| Search result rows for an agent | every ranking field, indented JSON | lean rows, compact JSON |
+| Saved-facts / other-names notice | unbounded | 1,500 / 400 characters, whole items |
+| Cat 40 cost per task, held-out world | $0.130 | **TODO(parent): fill in after the paid held-out run** |
+| Cat 40 task success, held-out world | **TODO(parent)** | **TODO(parent)** |
+
+Tokens are cl100k counts. The Cat 40 rows are measured by the paid runs in gbrain-evals and are filled in before this ships.
+
+Things to watch: a script or third-party client that reads `page_id`, `cosine`, `keyword_hit` or another ranking field from agent-facing search results now gets lean rows. Pass `fields: "full"` per call, or set `gbrain config set mcp.result_rows full` on the brain host. A thin CLI older than this release gets lean rows until it is upgraded or the host sets that option.
+
+## To take advantage of v0.60.39.0
+
+`gbrain upgrade` installs it. No schema migration runs.
+
+1. **Restart every `gbrain serve`** so stdio servers load the new tool list and row shape.
+2. **Your agent reads `skills/migrations/v0.60.39.0.md` the next time you talk to it.** It covers the lean rows and how to get full rows back. Nothing in it spends money.
+3. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain config get mcp.result_rows   # empty: agents get lean rows
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Behavior changes
+
+- **Remote `search` and `query` callers get lean rows by default.** A row keeps `id`, `slug`, `title`, `type`, `chunk_text`, `score`, `effective_date`, `source_id`, `chunk_id`, `evidence`, `create_safety`, the markers `injection_suspected`, `injection_p`, `unverified`, `content_flag`, `status`, `superseded`, `superseded_by`, `message_id`, `thread_id` and `source_subject` when present, `modality` when not text, `stale` when true, and `delivered: {"truncated": true}` when delivery cut the text. `fields: "full"` per call, `mcp.result_rows: full` per host (DB plane wins over the config file) and gbrain's own thin client (it sends `X-Gbrain-Client: gbrain-remote-cli/<version>`) get every field. `_meta.retrieval.rows` reports the shape. Trusted local callers always get full rows. Examples and a client table: [docs/mcp/README.md](docs/mcp/README.md#search-and-query-result-rows).
+- **Successful tool results are compact JSON** in the first content block. Error envelopes are unchanged.
+- **Starter tool descriptions are short.** Every starter tool keeps its purpose, required inputs, consequential defaults, next call and recovery move; the longer text is in [docs/mcp/TOOL_REFERENCE.md](docs/mcp/TOOL_REFERENCE.md). The initialize instructions are unchanged.
+- **The saved-facts notice is capped at 1,500 characters and the other-names notice at 400**, with whole items and a `(+N more)` count; the first item always shows.
+
+### Itemized changes
+
+#### Result rows and serialization
+
+- `src/core/search/lean-rows.ts` projects rows at the end of `searchOutput` in `src/core/ops/search.ts`, after capture, response meta and the last-retrieved bump read full rows. `OperationContext.resultRows` is set by all three MCP transports (`src/mcp/result-rows.ts`: the header and dual-plane `mcp.result_rows`); the header selects a row shape only and never gates authority.
+- `src/mcp/dispatch.ts` serializes successful results with `JSON.stringify(result)`.
+- Tests: `test/search-lean-rows.test.ts` (field set, escape hatches, `assemble_evidence` and `fetch` from lean rows, truncation under omitted, configured and explicit `return_unit`, the duplicate-page guard), `test/mcp-result-rows-skew.test.ts` (old and new CLI against the host over OAuth HTTP, the legacy bearer transport and stdio, including `mcp.strict_params=reject`), `test/mcp-result-size-ceiling.test.ts` (the model-visible size of a canonical search and query result; re-pin procedure in the file).
+
+#### Tool list
+
+- Per-tool schema budgets, hard caps of 1,200 characters per description and 200 per parameter description, the 25,000-character served starter ceiling (with `mcp.publish_skills` on and off), a cl100k token ceiling and the instructions ceiling are pinned by `test/mcp-schema-budget.test.ts`, with the minimum guidance each tool must keep.
+
+#### Notices
+
+- `retrievalNoticeBlocks` (`src/mcp/dispatch.ts`) applies the ceilings; boundaries pinned by `test/mcp-notice-ceilings.test.ts`.
+
+#### Search latency
+
+- Search runs one indexed check for an active saved fact before scanning saved facts, and skips the scan when there is none. The declared-name scan skips rows without a declaration keyword and runs once per search when the response reads the same rows the other-name search did. Results are byte-identical (`test/search-c5-identical.test.ts`).
+- Per-search stage profile on the 10,000-page scale harness (PGLite, keyless): primary hybrid search 19.5 ms, projection-readiness check 6.0 ms, unsealed-pages check 0.5 ms, declared-name scans 0.01 ms each; the saved-facts scan does not run in the harness (it runs on the MCP dispatch path, where it took 3.1 ms on this fixture, which has saved facts).
+- `bun scripts/scale/run.ts --pages 10000 --seed 1`, agent (MCP) search p50: 41.1 ms before and 39.0 ms after this change, same machine and session. On the harness version that also runs v0.60.32.0, v0.60.32.0 measured 95.9 and 90.6 ms and this release 27.4 ms (27.3 ms before the search change); most of that gain is v0.60.37.0's planner statistics.
+
 ## [0.60.37.0] - 2026-10-03
 
 **Foundations 1: a 10,000-page PGLite brain answers health and orphan checks in well under a second instead of 12 to 15 seconds, imports in about a third less time, records who wrote each page version, fact, take and timeline entry, lets several agents share one brain without losing track of whose session produced what, and gives every legacy token the same grant shape as an OAuth client.**
