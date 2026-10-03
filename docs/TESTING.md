@@ -300,8 +300,9 @@ Exit codes: 0 when every enforced gate passes, or always without `--enforce`;
 its EXPLAIN; the JSON report and a `.explain.txt` land next to `--out`);
 2 on a usage error; 3 when the harness itself crashed (not a verdict).
 Enforced under `--enforce`: import rate, known answers, no-op re-import,
-no duplicates across sources, phase timers. Planner health is report-only
-until F4b lands (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`).
+no duplicates across sources, the import phase timer. The stats-dependent
+gates, planner health and the budgets phase timer, are report-only until F4b
+lands (`PLANNER_HEALTH_ENFORCED` in `scripts/scale/gates.ts`).
 Interactive ceilings and calibrated budgets (`scripts/scale/budgets.json`,
 written by `--calibrate`) stay report-only until
 `bun scripts/scale/trend.ts` prints "ceilings stable" over the last five

@@ -11,8 +11,9 @@ name: Scale tier
 # - workflow_dispatch: the size you pass.
 #
 # Enforced from day one: import rate, known answers, no-op re-import, no
-# duplicates across sources, phase timers. Planner health is report-only until
-# F4b (PLANNER_HEALTH_ENFORCED in scripts/scale/gates.ts). Interactive ceilings
+# duplicates across sources, the import phase timer. Planner health and the
+# budgets phase timer are report-only until F4b (PLANNER_HEALTH_ENFORCED in
+# scripts/scale/gates.ts). Interactive ceilings
 # and calibrated budgets stay report-only until `bun scripts/scale/trend.ts`
 # prints "ceilings stable" and a reviewer sets the repo variable
 # GBRAIN_SCALE_ENFORCE_CEILINGS=1.

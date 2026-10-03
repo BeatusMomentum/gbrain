@@ -76,6 +76,18 @@ describe('scale gates under --enforce', () => {
     expect(evaluateScaleGates(report, { ...ENFORCE, enforceCeilings: true }).results.some(r => r.gate.startsWith('ceiling:'))).toBe(false);
   });
 
+  test('an over-cap budgets phase is report-only behind the planner switch and fails when it is on', () => {
+    const report = passingReport();
+    report.phases_ms.budgets = 5 * 60_000 + 1;
+    const off = evaluateScaleGates(report, { ...ENFORCE, enforcePlanner: false });
+    expect(off.exitCode).toBe(0);
+    expect(off.reportOnlyBreaches.map(b => b.gate)).toEqual(['phase:budgets']);
+    expect(verdictLines(report, off, { ...ENFORCE, enforcePlanner: false }).join('\n')).toContain('REPORT-ONLY phase:budgets: phase timer: budgets took 300 s');
+    const on = evaluateScaleGates(report, { ...ENFORCE, enforcePlanner: true });
+    expect(on.exitCode).toBe(1);
+    expect(on.failures.map(f => f.gate)).toEqual(['phase:budgets']);
+  });
+
   test('a phase over its timer fails naming the phase; limits are 20 min at 10k and 100 min at 50k', () => {
     expect(phaseLimitsMs(10_000)).toEqual({ import: 15 * 60_000, budgets: 5 * 60_000 });
     expect(phaseLimitsMs(50_000)).toEqual({ import: 75 * 60_000, budgets: 25 * 60_000 });
