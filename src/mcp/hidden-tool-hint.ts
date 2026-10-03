@@ -6,14 +6,13 @@
  * an existence oracle; HTTP keeps the opaque unknown_tool envelope.
  */
 import type { Action } from '../core/agent-output.ts';
-import { operations } from '../core/operations.ts';
+import type { Operation } from '../core/operations.ts';
 import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
 
-export function hiddenToolHint(name: string, opts: { transport?: string; remote?: boolean; surface?: string; allowedOps?: ReadonlySet<string> }):
+export function hiddenToolHint(op: Operation | undefined, opts: { transport?: string; remote?: boolean; surface?: string; allowedOps?: ReadonlySet<string> }):
   { suggestion: string; fix: Action } | null {
-  if (opts.transport !== 'stdio' || opts.remote === false || !opts.allowedOps || opts.allowedOps.has(name)) return null;
-  const op = operations.find(o => o.name === name);
-  if (!op || op.localOnly) return null;
+  if (!op || op.localOnly || opts.transport !== 'stdio' || opts.remote === false || !opts.allowedOps || opts.allowedOps.has(op.name)) return null;
+  const name = op.name;
   const argv = cliEquivalent(op);
   const surface = opts.surface ?? 'full';
   const why = surface === 'full'

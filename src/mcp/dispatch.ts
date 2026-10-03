@@ -456,7 +456,7 @@ export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyErro
     .filter(op => !op.localOnly && !op.publishGateKey && (allowedOps ? allowedOps.has(op.name) : true))
     .map(op => op.name);
   const nearest = suggestNearest(name, candidates);
-  const hint = hiddenToolHint(name, opts); // F6: owner's stdio pipe only
+  const hint = hiddenToolHint(operations.find(o => o.name === name), opts); // F6: owner's stdio pipe only
   const suggestion = hint?.suggestion ?? (nearest
     ? `Did you mean "${nearest}"?`
     : 'List the tools this connection can call (tools/list) and use one of those names.');

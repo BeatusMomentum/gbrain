@@ -77,7 +77,7 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).',
+  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (the soft-delete recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
@@ -394,7 +394,7 @@ const restore_page: Operation = {
   name: 'restore_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
+  description: 'Restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
   params: {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', required: true, description: "Slug of the soft-deleted page to restore, e.g. 'people/alice-example'." },
@@ -421,7 +421,7 @@ const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
+  description: 'Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
   params: {
     older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
   },

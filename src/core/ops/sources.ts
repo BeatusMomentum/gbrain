@@ -25,7 +25,7 @@ const whoami: Operation = {
     '{transport: "local", scopes: []}, or {transport: "stdio", scopes: []} ' +
     'for the auth-less stdio MCP pipe. Throws unknown_transport when the ' +
     'context is ambiguous (remote=true without auth and no transport marker) ' +
-    '— fail-closed posture mirroring the v0.26.9 trust-boundary contract.',
+    '(fail-closed). Every shape also carries `readiness` (the setup gaps of this install, each with its fix); stdio scopes are the grant of the verified registration.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -90,8 +90,8 @@ const sources_add: Operation = {
   idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
-    'Register a new source. Supports either --path (existing v0.17 behavior) ' +
-    'or --url (v0.28 federated remote-clone path: parses the URL through the ' +
+    'Register a new source. Supports either path (a local directory) ' +
+    'or url (a remote clone: parses the URL through the ' +
     'SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename ' +
     'atomicity, and stores remote_url in sources.config). Pre-flight collision ' +
     'check on id; rollback on either-side failure.',
@@ -175,11 +175,11 @@ const sources_list: Operation = {
   idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
-    'List registered sources with page counts and remote_url. v0.28 surfaces ' +
-    'the new remote_url field so a remote MCP caller can confirm a source is ' +
+    'List registered sources with page counts and remote_url. remote_url lets ' +
+    'a remote MCP caller confirm a source is ' +
     'managed by clone+pull rather than user-supplied path. Results are ' +
     "confined to the caller's resolved source scope (federated read grant > " +
-    'bound source; #4433) and carry no marker when rows were withheld, so a ' +
+    'bound source) and carry no marker when rows were withheld, so a ' +
     'listing may be incomplete. Only the trusted local CLI (`gbrain sources ' +
     'list`) sees the full registry.',
   params: {
@@ -271,7 +271,7 @@ const sources_status: Operation = {
     '"not-a-dir" | "no-git" | "url-drift" | "corrupted" | "not-applicable") ' +
     'so a remote MCP caller can diagnose whether the on-disk clone is ' +
     "syncable without SSH access to the brain host. Confined to the caller's " +
-    'resolved source scope (#4433); an out-of-scope id answers not_found, ' +
+    'resolved source scope; an out-of-scope id answers not_found, ' +
     'indistinguishable from a nonexistent source.',
   params: {
     id: { type: 'string', required: true, description: "Source id to diagnose, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },

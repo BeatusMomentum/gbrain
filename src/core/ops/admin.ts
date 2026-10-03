@@ -208,7 +208,7 @@ const revert_version: Operation = {
   name: 'revert_version',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Revert page to a previous version',
+  description: 'Restore a page to an earlier version from its history (a new revision; history is kept). Use when an edit must be undone. Needs write scope. On a revision conflict: re-read the page with get_page and resubmit with its revision.',
   params: {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', required: true, description: 'Slug of the page to revert.' },

@@ -14,7 +14,7 @@ const sync_brain: Operation = {
   name: 'sync_brain',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Sync git repo to brain (incremental)',
+  description: 'Pull and import changes from a source\'s git repository (incremental; dry_run previews). Use when files changed on disk or upstream. Needs admin scope and the local stdio server. On a missing local_path: the error names the sources add command.',
   params: {
     repo: { type: 'string', description: 'Path to git repo (optional if configured)' },
     source_id: { type: 'string', description: 'Explicit source to sync (wins over repo-derived and ambient routing)' },

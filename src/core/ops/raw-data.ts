@@ -15,7 +15,7 @@ const put_raw_data: Operation = {
   name: 'put_raw_data',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Store raw API response data for a page',
+  description: 'Store a raw provider payload (API response JSON) alongside a page, keyed by source. Use when keeping the original data an enrichment came from. Needs write scope. On page_not_found: create or resolve the page first.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page to attach the raw data to.' },
     source: { type: 'string', required: true, description: 'Data source (e.g., crustdata, happenstance)' },

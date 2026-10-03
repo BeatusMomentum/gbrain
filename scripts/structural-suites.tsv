@@ -73,7 +73,7 @@ test/cli.test.ts	BigInt-safe output normalization (#2450)	5	source-surface-helpe
 test/cli.test.ts	CLI structure	2	source-surface-helper
 test/cli.test.ts	CLI version	2	readFileSync
 test/codex-plugin-manifest.test.ts	codex mcp.json	3	readFileSync
-test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	5	readFileSync
+test/codex-plugin-manifest.test.ts	curated tree membership + scanner guard	6	readFileSync
 test/codex-plugin-manifest.test.ts	generator negative fixtures (a guard that cannot fail is not coverage)	9	readFileSync
 test/codex-plugin-manifest.test.ts	variant ${def.plugin_name} (persona ${personaName})	5	readFileSync
 test/compile-view.test.ts	compileView — determinism	3	readFileSync
