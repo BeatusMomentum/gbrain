@@ -6,5 +6,4 @@ src/commands/google.ts	4
 src/commands/init-mode-picker.ts	6
 src/commands/upgrade.ts	5
 src/core/advisor/render.ts	2
-src/core/onboard/writeback-nudge.ts	5
 src/core/skillpack/brain-pack-advisory.ts	1

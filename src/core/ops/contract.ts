@@ -656,6 +656,13 @@ export interface Operation {
   requiredScopes?: readonly string[];
   localOnly?: boolean;
   /**
+   * Agent contract v1 (F5): the handler refuses every agent-facing caller,
+   * stdio included; only the trusted local CLI runs it. `isCallable` never
+   * lists it on MCP, and a call returns `cli_only` whose fix is this exact
+   * command (`<name>` tokens are inputs the agent fills from its call).
+   */
+  cliOnly?: { argv: readonly string[] };
+  /**
    * WP1 honest catalog: the op is callable by remote callers only when this
    * config gate resolves true (dual-plane, DB > file > absent=false). Network
    * transports hide the op from tools/list while the gate is off — a listed

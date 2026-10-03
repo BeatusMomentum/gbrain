@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 229615,
-    "stdoutSha256": "aaf93740a028c3db9ce963308738d61d0d1b008b249b4cbf6430e1a6fd859630",
+    "stdoutBytes": 234048,
+    "stdoutSha256": "8e3d89827ff4164242aa14101563639a97110a9fd51ee02caf44214acb82fd58",
     "toolNames": [
       "remember",
       "entity",
@@ -342,7 +342,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).",
+        "description": "Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (the soft-delete recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -578,7 +578,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.26.5 — restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.",
+        "description": "Restore a soft-deleted page (clear deleted_at) and re-create its markdown file on disk (the counterpart to delete_page removing it; the result write_through field reports the outcome). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -622,7 +622,7 @@
         "scope": "write"
       },
       {
-        "description": "v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.",
+        "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
@@ -996,7 +996,7 @@
         "scope": "read"
       },
       {
-        "description": "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit; conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience, find_anomalies, or get_recent_transcripts. Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged.",
+        "description": "Hybrid search with vector + keyword + multi-query expansion. Prefer `query` for concept / synonym / landscape questions ('all the X that do Y', 'the landscape of Z') — expansion recovers synonym- and outcome-phrased matches a single embedding misses. Still top-K, and the default count when `limit` is omitted depends on the configured search mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param description); pass `limit` explicitly for a stable count regardless of mode. When the answer needs the surrounding conversation or section, pass `return_unit` ('page' / 'section' / 'window') to get that evidence in one call instead of get_page per hit; conversation pages already come back whole by default (return_unit 'auto'; 'chunk' opts out). For exhaustive enumeration use list_pages; for exact known tokens `search` is cheaper (no expansion LLM call). For personal/emotional questions ('what's going on with me', 'anything notable', 'how am I feeling'), prefer get_recent_salience or find_anomalies (raw transcripts are owner-only: `gbrain transcripts recent` on the brain host). Semantic search returns polished pages and misses recent activity bursts. Do NOT assume words like 'crazy', 'notable', or 'big' mean impressive — they often mean difficult or emotionally charged. Needs an embedding key for semantic recall and a chat-model key for expansion; without them it runs keyword-only and a degraded_recall notice says so (a thin result is then not proof of absence).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1300,7 +1300,7 @@
         "scope": "admin"
       },
       {
-        "description": "v0.36 cross-modal Phase 2: image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL (SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text refinement merges via weighted RRF (D13 hybrid intersect). True image→full-text-knowledge requires Phase 3 (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).",
+        "description": "Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL (SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal indexing (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1357,7 +1357,7 @@
         "scope": "read"
       },
       {
-        "description": "Add tag to page",
+        "description": "Add one tag to a page (idempotent). Use when filing or grouping pages for later get_tags / list_pages tag filters. Needs write scope. On page_not_found: resolve the slug with resolve_slugs, then call again.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -1392,7 +1392,7 @@
         "scope": "write"
       },
       {
-        "description": "Remove tag from page",
+        "description": "Remove one tag from a page. Use when a tag was wrong or no longer applies. Needs write scope. On page_not_found: resolve the slug with resolve_slugs, then call again.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -1427,7 +1427,7 @@
         "scope": "write"
       },
       {
-        "description": "List tags for a page",
+        "description": "List the tags on one page. Use when checking how a page is filed before adding or removing tags. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1451,7 +1451,7 @@
         "scope": "read"
       },
       {
-        "description": "Create link between pages",
+        "description": "Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions). Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -1496,7 +1496,7 @@
         "scope": "write"
       },
       {
-        "description": "Remove link between pages",
+        "description": "Remove a link between two pages (optionally only one link_type or link_source). Use when a relationship was recorded wrongly. Needs write scope. On page_not_found: resolve both slugs with resolve_slugs.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -1536,7 +1536,7 @@
         "scope": "write"
       },
       {
-        "description": "List outgoing links from a page",
+        "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1570,7 +1570,7 @@
         "scope": "read"
       },
       {
-        "description": "List incoming links to a page",
+        "description": "List a page's incoming links (who points at it). Use when finding everything that mentions or relates to an entity. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1842,7 +1842,7 @@
         "scope": "read"
       },
       {
-        "description": "Revert page to a previous version",
+        "description": "Restore a page to an earlier version from its history (a new revision; history is kept). Use when an edit must be undone. Needs write scope. On a revision conflict: re-read the page with get_page and resubmit with its revision.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -2097,7 +2097,7 @@
         "scope": "read"
       },
       {
-        "description": "Ranked, read-only \"what to do next\" for this brain: version drift, pending migrations, schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).",
+        "description": "Ranked, read-only \"what to do next\" for this brain: version drift, pending migrations, schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask before running any fix. On by default for the local stdio server; remote HTTP callers need mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2680,7 +2680,7 @@
         "scope": "read"
       },
       {
-        "description": "Sync git repo to brain (incremental)",
+        "description": "Pull and import changes from a source's git repository (incremental; dry_run previews). Use when files changed on disk or upstream. Needs admin scope and the local stdio server. On a missing local_path: the error names the sources add command.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
@@ -2727,7 +2727,7 @@
         "scope": "admin"
       },
       {
-        "description": "Store raw API response data for a page",
+        "description": "Store a raw provider payload (API response JSON) alongside a page, keyed by source. Use when keeping the original data an enrichment came from. Needs write scope. On page_not_found: create or resolve the page first.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -2792,7 +2792,7 @@
         "scope": "read"
       },
       {
-        "description": "Fuzzy-resolve a partial slug to matching page slugs",
+        "description": "Fuzzy-match a partial name or slug to existing page slugs. Use when a slug is uncertain before get_page, links or tags. Needs read scope. On no matches: search for the name instead.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2821,7 +2821,7 @@
         "scope": "read"
       },
       {
-        "description": "Get content chunks for a page",
+        "description": "Return a page's indexed content chunks (the units search ranks). Use when debugging why search did or did not match a page. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2845,7 +2845,7 @@
         "scope": "read"
       },
       {
-        "description": "Log an ingestion event",
+        "description": "Record one ingestion event (source type, reference, pages updated, summary) in the brain's ingest log. Use after importing or enriching content. Needs write scope.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -2890,7 +2890,7 @@
         "scope": "write"
       },
       {
-        "description": "Get recent ingestion log entries",
+        "description": "List recent ingestion events (what was imported, from where, which pages changed). Use when checking whether a source was already ingested. Needs read scope.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2934,7 +2934,7 @@
         "scope": "admin"
       },
       {
-        "description": "List stored files",
+        "description": "List files stored in the brain's file storage, optionally for one page. Use when finding attachments before file_url. Needs admin scope and the local stdio server.",
         "idempotent": true,
         "local_only": true,
         "mutating": false,
@@ -2956,7 +2956,7 @@
         "scope": "admin"
       },
       {
-        "description": "Upload a file to storage",
+        "description": "Upload a local file into brain storage and attach it to a page. Use when a page needs its source document or image. Needs admin scope and the local stdio server; agent callers may only upload files under the server's working directory.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
@@ -2985,7 +2985,7 @@
         "scope": "admin"
       },
       {
-        "description": "Get a URL for a stored file",
+        "description": "Return a URL for a stored file. Use when a user needs to open an attachment listed by file_list. Needs admin scope and the local stdio server. On storage_error: list the files again with file_list.",
         "idempotent": true,
         "local_only": true,
         "mutating": false,
@@ -3091,12 +3091,13 @@
         "scope": "admin"
       },
       {
-        "description": "List jobs with optional filters. Agent-scoped tokens (no admin) see only jobs they own.",
+        "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "list_jobs",
         "parameters": {
+          "fields": "array?",
           "limit": "number?",
           "name": "string?",
           "queue": "string?",
@@ -3105,6 +3106,13 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "fields": {
+              "description": "Return only these job fields (e.g. [\"id\",\"name\",\"status\"]) to save tokens; omit for every field.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
             "limit": {
               "description": "Max results (default: 50)",
               "type": "number"
@@ -3152,7 +3160,7 @@
         "scope": "admin"
       },
       {
-        "description": "Re-queue a failed or dead job for retry",
+        "description": "Re-queue a failed or dead background job. Use when the cause of the failure is fixed. Needs admin scope. On not_found: list job ids with list_jobs.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -3200,7 +3208,7 @@
         "scope": "admin"
       },
       {
-        "description": "Pause a waiting, active, or delayed job",
+        "description": "Pause a waiting, active or delayed background job. Use when a job must stop without being cancelled. Needs admin scope. On not_found: list job ids with list_jobs.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -3224,7 +3232,7 @@
         "scope": "admin"
       },
       {
-        "description": "Resume a paused job back to waiting",
+        "description": "Resume a paused background job (back to waiting). Use after pause_job once the job may continue. Needs admin scope. On not_found: list job ids with list_jobs.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -3277,7 +3285,7 @@
         "scope": "admin"
       },
       {
-        "description": "Send a sidechannel message to a running job's inbox",
+        "description": "Send a sidechannel message to a running job's inbox (for jobs that read steering messages). Use when steering a long-running agent job. Needs admin scope. On not_found: list job ids with list_jobs.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -3573,7 +3581,7 @@
         "scope": "read"
       },
       {
-        "description": "Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.",
+        "description": "Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis. Needs a chat-model API key (Anthropic or OpenAI) for the synthesized answer, a paid call; a keyless brain returns the gathered evidence only (a synthesis_keyless notice explains). save/take persist for the local CLI only.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -3973,7 +3981,7 @@
         "scope": "write"
       },
       {
-        "description": "Introspect the calling identity. Returns one of three transport shapes: {transport: \"oauth\", client_id, client_name, scopes, expires_at, source_id, federated_read}, {transport: \"legacy\", token_name, scopes, expires_at: null}, or {transport: \"local\", scopes: []}, or {transport: \"stdio\", scopes: []} for the auth-less stdio MCP pipe. Throws unknown_transport when the context is ambiguous (remote=true without auth and no transport marker) — fail-closed posture mirroring the v0.26.9 trust-boundary contract.",
+        "description": "Introspect the calling identity. Returns one of three transport shapes: {transport: \"oauth\", client_id, client_name, scopes, expires_at, source_id, federated_read}, {transport: \"legacy\", token_name, scopes, expires_at: null}, or {transport: \"local\", scopes: []}, or {transport: \"stdio\", scopes: []} for the auth-less stdio MCP pipe. Throws unknown_transport when the context is ambiguous (remote=true without auth and no transport marker) (fail-closed). Every shape also carries `readiness` (the setup gaps of this install, each with its fix); stdio scopes are the grant of the verified registration.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -3988,7 +3996,7 @@
         "scope": "read"
       },
       {
-        "description": "Register a new source. Supports either --path (existing v0.17 behavior) or --url (v0.28 federated remote-clone path: parses the URL through the SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename atomicity, and stores remote_url in sources.config). Pre-flight collision check on id; rollback on either-side failure.",
+        "description": "Register a new source. Supports either path (a local directory) or url (a remote clone: parses the URL through the SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename atomicity, and stores remote_url in sources.config). Pre-flight collision check on id; rollback on either-side failure.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -4037,7 +4045,7 @@
         "scope": "sources_admin"
       },
       {
-        "description": "List registered sources with page counts and remote_url. v0.28 surfaces the new remote_url field so a remote MCP caller can confirm a source is managed by clone+pull rather than user-supplied path. Results are confined to the caller's resolved source scope (federated read grant > bound source; #4433) and carry no marker when rows were withheld, so a listing may be incomplete. Only the trusted local CLI (`gbrain sources list`) sees the full registry.",
+        "description": "List registered sources with page counts and remote_url. remote_url lets a remote MCP caller confirm a source is managed by clone+pull rather than user-supplied path. Results are confined to the caller's resolved source scope (federated read grant > bound source) and carry no marker when rows were withheld, so a listing may be incomplete. Only the trusted local CLI (`gbrain sources list`) sees the full registry.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -4098,7 +4106,7 @@
         "scope": "sources_admin"
       },
       {
-        "description": "Per-source diagnostic. Returns clone_state (\"healthy\" | \"missing\" | \"not-a-dir\" | \"no-git\" | \"url-drift\" | \"corrupted\" | \"not-applicable\") so a remote MCP caller can diagnose whether the on-disk clone is syncable without SSH access to the brain host. Confined to the caller's resolved source scope (#4433); an out-of-scope id answers not_found, indistinguishable from a nonexistent source.",
+        "description": "Per-source diagnostic. Returns clone_state (\"healthy\" | \"missing\" | \"not-a-dir\" | \"no-git\" | \"url-drift\" | \"corrupted\" | \"not-applicable\") so a remote MCP caller can diagnose whether the on-disk clone is syncable without SSH access to the brain host. Confined to the caller's resolved source scope; an out-of-scope id answers not_found, indistinguishable from a nonexistent source.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -4962,7 +4970,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: \"private\"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).",
+        "description": "Extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: \"private\"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -5316,7 +5324,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.35.4 — return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
+        "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5368,7 +5376,7 @@
         "scope": "read"
       },
       {
-        "description": "BEFORE editing any function, run code_callers with the symbol name to find every caller (the people who'd be affected by your change). Returns direct callers from the v0.20+ tree-sitter call graph. Use during plan-mode to size the change. Defaults to source-scoped; for multi-source brains pass source_id or all_sources=true. Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`. Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.",
+        "description": "BEFORE editing any function, run code_callers with the symbol name to find every caller (the people who'd be affected by your change). Returns direct callers from the tree-sitter call graph. Use during plan-mode to size the change. Defaults to source-scoped; for multi-source brains pass source_id or all_sources=true. Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. Example: `{symbol:'parseMarkdown', count:4, callers:[{from_symbol_qualified:'callerInA', to_symbol_qualified:'parseMarkdown', edge_type:'calls', resolved:true}]}`. Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5602,7 +5610,7 @@
         "scope": "read"
       },
       {
-        "description": "Clear cached code_blast / code_flow traversal results. Source-scoped by default; pass all_sources=true to wipe everything (D8 destructive-guard).",
+        "description": "Clear cached code_blast / code_flow traversal results. Source-scoped by default; pass all_sources=true to wipe everything (destructive: it is guarded).",
         "idempotent": true,
         "local_only": true,
         "mutating": true,
@@ -5629,7 +5637,7 @@
         "scope": "admin"
       },
       {
-        "description": "Re-embed the brain onto a different embedding provider/model (#3390): schema dimension transition, NULL-signature (#3391) invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `gbrain migrate embeddings`.",
+        "description": "Re-embed the brain onto a different embedding provider/model: schema dimension transition, NULL-signature invalidation, query-cache purge, resumable re-embed. Without yes=true returns the plan + cost estimate only. Local-only admin op; the primary surface is `gbrain migrate embeddings`.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
@@ -5683,7 +5691,7 @@
         "scope": "admin"
       },
       {
-        "description": "v0.40.6.0: cheap identity packet for the active schema pack. Returns {pack_name, version, sha8, page_types_count, link_types_count, primitive_summary, source_tier}. Useful for agents to know which pack they are operating against without paying full manifest load cost.",
+        "description": "Cheap identity packet for the active schema pack. Returns {pack_name, version, sha8, page_types_count, link_types_count, primitive_summary, source_tier}. Useful for agents to know which pack they are operating against without paying full manifest load cost.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5698,7 +5706,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.6.0: list installed schema packs (bundled + user-installed). Returns {bundled: string[], installed: string[]}. Read-only directory listing.",
+        "description": "List installed schema packs (bundled + user-installed). Returns {bundled: string[], installed: string[]}. Read-only directory listing.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5713,7 +5721,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.6.0: per-type page counts + typed-coverage from the DB. Returns {schema_version:1, pack_identity, aggregate, per_source, dead_prefixes}. Multi-source aware via ctx.sourceId/allowedSources.",
+        "description": "Per-type page counts + typed-coverage from the DB. Returns {schema_version:1, pack_identity, aggregate, per_source, dead_prefixes}. Multi-source aware via ctx.sourceId/allowedSources.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5728,7 +5736,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.6.0: lint the active (or named) schema pack. File-plane rules only over MCP — the with_db option is rejected for remote callers (DB-aware rules require local CLI). Returns {ok, errors, warnings} structured report.",
+        "description": "Lint the active (or named) schema pack. File-plane rules only over MCP — the with_db option is rejected for remote callers (DB-aware rules require local CLI). Returns {ok, errors, warnings} structured report.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5750,7 +5758,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.6.0: schema pack graph as JSON edges. Returns {nodes: [{name, primitive}], edges: [{from, verb, to}]} derived from link_types inference + frontmatter_links.",
+        "description": "Schema pack graph as JSON edges. Returns {nodes: [{name, primitive}], edges: [{from, verb, to}]} derived from link_types inference + frontmatter_links.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5765,7 +5773,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.6.0: resolved settings for a single page_type in the active pack. Returns {pack, type, primitive, path_prefixes, aliases, extractable, expert_routing}.",
+        "description": "Resolved settings for a single page_type in the active pack. Returns {pack, type, primitive, path_prefixes, aliases, extractable, expert_routing}.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5789,7 +5797,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.6.0: list pages with no active-pack type match. Returns {orphan_count, orphans: [{slug, source_id}]}.",
+        "description": "List pages with no active-pack type match. Returns {orphan_count, orphans: [{slug, source_id}]}.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5811,7 +5819,7 @@
         "scope": "read"
       },
       {
-        "description": "v0.40.7.0: batched schema pack mutation. ATOMIC: every mutation is validated against an in-memory manifest first, and the pack file is written to disk at most once, after the FULL batch has proven valid — so a failure at any point leaves the pack file byte-identical to its pre-batch state (never a partial write). Audit log records one batch_id. Admin scope; NOT localOnly so remote agents (your OpenClaw, etc.) can author packs over normal MCP. Mutation shape per ApplyMutationsRequest type — supports add_type / remove_type / update_type / add_alias / remove_alias / add_prefix / remove_prefix / add_link_type / remove_link_type / set_extractable / set_expert_routing.",
+        "description": "Batched schema pack mutation. ATOMIC: every mutation is validated against an in-memory manifest first, and the pack file is written to disk at most once, after the FULL batch has proven valid — so a failure at any point leaves the pack file byte-identical to its pre-batch state (never a partial write). Audit log records one batch_id. Admin scope; NOT localOnly so remote agents (your OpenClaw, etc.) can author packs over normal MCP. Mutation shape per ApplyMutationsRequest type — supports add_type / remove_type / update_type / add_alias / remove_alias / add_prefix / remove_prefix / add_link_type / remove_link_type / set_extractable / set_expert_routing.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -5849,7 +5857,7 @@
         "scope": "admin"
       },
       {
-        "description": "v0.40.6.0: flush the in-process schema pack cache so the next loadActivePack re-reads from disk. Cascades through extends-chain (codex C6). Admin scope; NOT localOnly. Returns {invalidated: string[]}.",
+        "description": "Flush the in-process schema pack cache so the next loadActivePack re-reads from disk. Cascades through the extends chain. Admin scope; NOT localOnly. Returns {invalidated: string[]}.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -6224,7 +6232,14 @@
               "description": "Notice code, the word after `[gbrain notice` in the block.",
               "enum": [
                 "backup_coverage",
+                "degraded_dedup",
                 "empty_retrieval",
+                "features_auto_fix",
+                "listing_truncated",
+                "onboard_opportunities",
+                "source_binding_narrowed",
+                "synthesis_keyless",
+                "think_not_saved",
                 "unknown_param"
               ],
               "type": "string"

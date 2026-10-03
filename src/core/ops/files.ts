@@ -21,7 +21,7 @@ const file_list: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'List stored files',
+  description: 'List files stored in the brain\'s file storage, optionally for one page. Use when finding attachments before file_url. Needs admin scope and the local stdio server.',
   params: {
     slug: { type: 'string', description: 'Filter by page slug' },
   },
@@ -48,7 +48,7 @@ const file_upload: Operation = {
   name: 'file_upload',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Upload a file to storage',
+  description: 'Upload a local file into brain storage and attach it to a page. Use when a page needs its source document or image. Needs admin scope and the local stdio server; agent callers may only upload files under the server\'s working directory.',
   params: {
     path: { type: 'string', required: true, description: 'Local file path' },
     page_slug: { type: 'string', description: 'Associate with page' },
@@ -159,7 +159,7 @@ const file_url: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Get a URL for a stored file',
+  description: 'Return a URL for a stored file. Use when a user needs to open an attachment listed by file_list. Needs admin scope and the local stdio server. On storage_error: list the files again with file_list.',
   params: {
     storage_path: { type: 'string', required: true },
   },

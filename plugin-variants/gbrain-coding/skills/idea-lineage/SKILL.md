@@ -227,3 +227,14 @@ Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) f
 - `takes_search` - holder-attributed beliefs, bets, hunches, and facts.
 - `find_contradictions` - cached contradiction findings when relevant.
 - `find_trajectory` - optional structured entity trajectory side-channel.
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `find_contradictions` → `gbrain find-contradictions`
+- `find_trajectory` → `gbrain find-trajectory`
+- `takes_search` → `gbrain takes-search`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

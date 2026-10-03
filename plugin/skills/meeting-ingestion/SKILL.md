@@ -538,3 +538,14 @@ Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) f
   transit between them
 - Re-checking substance in the sequence pass (or order in V1–V5) — the axes
   are orthogonal by design
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `chronicle_day` → `gbrain day`
+- `get_timeline` → `gbrain timeline`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

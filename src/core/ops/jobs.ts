@@ -6,6 +6,29 @@ function publicJob(job: MinionJob) {
   return { ...visible, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]' };
 }
 
+/** Fields `list_jobs` may project to (F10 token trim): every public job field. */
+const LIST_JOB_FIELDS = [
+  'id', 'name', 'queue', 'status', 'priority', 'data', 'max_attempts', 'attempts_made', 'attempts_started', 'backoff_type',
+  'backoff_delay', 'backoff_jitter', 'stalled_counter', 'max_stalled', 'lock_token', 'lock_until', 'delay_until', 'parent_job_id',
+  'on_child_fail', 'tokens_input', 'tokens_output', 'tokens_cache_read', 'depth', 'max_children', 'timeout_ms', 'timeout_at',
+  'lock_duration_ms', 'remove_on_complete', 'remove_on_fail', 'idempotency_key', 'private_queue_owner_job_id',
+  'private_queue_owner_token', 'private_queue_lease_until', 'quiet_hours', 'stagger_key', 'result', 'progress', 'error_text',
+  'stacktrace', 'created_at', 'started_at', 'finished_at', 'updated_at', 'coalesced',
+] as const satisfies readonly (keyof MinionJob)[];
+
+/** Parse list_jobs' `fields` (array or comma string); undefined = every field. */
+function parseJobFields(raw: unknown): readonly string[] | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const list = (Array.isArray(raw) ? raw : String(raw).split(',')).map(f => String(f).trim()).filter(Boolean);
+  const valid: ReadonlySet<string> = new Set(LIST_JOB_FIELDS);
+  const unknown = list.filter(f => !valid.has(f));
+  if (unknown.length > 0) {
+    throw opError('invalid_params', `list_jobs: unknown field(s) ${unknown.map(f => JSON.stringify(f.slice(0, 40))).join(', ')}.`,
+      `Pass fields from: ${LIST_JOB_FIELDS.join(', ')} (e.g. fields: ["id", "name", "status"]), or omit fields for every field.`);
+  }
+  return list.length ? list : undefined;
+}
+
 /**
  * Jobs (Minions) operation cluster — pure move from operations.ts (v0.46.x
  * tranche 2). Op consts stay module-private; `jobsOperations` below lists
@@ -16,7 +39,7 @@ function publicJob(job: MinionJob) {
  */
 
 import type { Operation, OperationContext } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { OperationError, opError } from './contract.ts';
 import { hasScope } from '../scope.ts';
 import {
   assertEmbedBackfillQueueAdmission,
@@ -506,16 +529,18 @@ const list_jobs: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'List jobs with optional filters. Agent-scoped tokens (no admin) see only jobs they own.',
+  description: 'List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).',
   params: {
     status: { type: 'string', description: 'Filter by status (waiting, active, completed, failed, delayed, dead, cancelled)' },
     queue: { type: 'string', description: 'Filter by queue name' },
     name: { type: 'string', description: 'Filter by job type' },
     limit: { type: 'number', description: 'Max results (default: 50)' },
+    fields: { type: 'array', items: { type: 'string' }, description: 'Return only these job fields (e.g. ["id","name","status"]) to save tokens; omit for every field.' },
   },
   scope: 'admin',
   agentCallable: true,
   handler: async (ctx, p) => {
+    const fields = parseJobFields(p.fields);
     const owner = agentOwnerFence(ctx, 'list_jobs');
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
@@ -529,7 +554,8 @@ const list_jobs: Operation = {
     } as Parameters<typeof queue.getJobs>[0]);
     // private_queue_owner_token is a capability credential (lease renewal /
     // attach), not job data — never expose it over MCP envelopes.
-    return jobs.map(publicJob);
+    const visible = jobs.map(publicJob);
+    return fields ? visible.map(j => Object.fromEntries(fields.map(f => [f, (j as Record<string, unknown>)[f]]))) : visible;
   },
 };
 
@@ -564,7 +590,7 @@ const retry_job: Operation = {
   name: 'retry_job',
   idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Re-queue a failed or dead job for retry',
+  description: 'Re-queue a failed or dead background job. Use when the cause of the failure is fixed. Needs admin scope. On not_found: list job ids with list_jobs.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
@@ -611,7 +637,7 @@ const pause_job: Operation = {
   name: 'pause_job',
   idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Pause a waiting, active, or delayed job',
+  description: 'Pause a waiting, active or delayed background job. Use when a job must stop without being cancelled. Needs admin scope. On not_found: list job ids with list_jobs.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
@@ -631,7 +657,7 @@ const resume_job: Operation = {
   name: 'resume_job',
   idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Resume a paused job back to waiting',
+  description: 'Resume a paused background job (back to waiting). Use after pause_job once the job may continue. Needs admin scope. On not_found: list job ids with list_jobs.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
@@ -678,7 +704,7 @@ const send_job_message: Operation = {
   name: 'send_job_message',
   idempotent: false,
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Send a sidechannel message to a running job\'s inbox',
+  description: 'Send a sidechannel message to a running job\'s inbox (for jobs that read steering messages). Use when steering a long-running agent job. Needs admin scope. On not_found: list job ids with list_jobs.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID to message' },
     payload: { type: 'object', required: true, description: 'Message payload (arbitrary JSON)' },

@@ -162,7 +162,7 @@ const import_skill_proposal: Operation = {
   name: 'import_skill_proposal', description: 'Publish explicitly reviewed human-edited canonical skill files through the durable coordinator. Requires exact current file hashes and skill revision; trusted local operator only.',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true, mutating: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'call', 'import_skill_proposal', '<params_json>'] }, mutating: true,
   params: { ...put_skill.params, expected_hashes: { type: 'object', required: true, description: 'Reviewed current SHA-256 hashes for every affected file and skillpack.json; null denotes an absent file.' } },
   handler: async (ctx, p) => (await import('../shared-skills/publication.ts')).importSharedSkillProposal(ctx, p),
 };
@@ -193,7 +193,7 @@ const get_skill_retention: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'skill-retention'] },
   cliHints: { name: 'skill-retention', positional: [] },
   params: { source_id: { type: 'string', description: 'Canonical source to inspect.' } },
   handler: async (ctx, p) => (await import('../shared-skills/retention.ts')).getSharedSkillRetention(ctx, typeof p.source_id === 'string' ? p.source_id : ctx.sourceId),
@@ -202,7 +202,7 @@ const prune_skill_revisions: Operation = {
   name: 'prune_skill_revisions', description: 'Prune one bounded batch of expired shared-skill history. Preserves heads, tombstones, pending publication refs, delivery leases, pins and permanent write receipts.',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true, mutating: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'prune-skill-revisions'] }, mutating: true,
   cliHints: { name: 'prune-skill-revisions', positional: [] },
   params: { source_id: { type: 'string', description: 'Canonical source to prune.' } },
   handler: async (ctx, p) => (await import('../shared-skills/retention.ts')).pruneSharedSkillRevisions(ctx, typeof p.source_id === 'string' ? p.source_id : ctx.sourceId),
@@ -211,7 +211,7 @@ const retain_skill_revision: Operation = {
   name: 'retain_skill_revision', description: 'Pin an exact shared-skill revision for up to 24 hours under a bounded operator quota. Does not grant read or execution permission.',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  scope: 'admin', localOnly: true, mutating: true,
+  scope: 'admin', localOnly: true, cliOnly: { argv: ['gbrain', 'retain-skill-revision'] }, mutating: true,
   cliHints: { name: 'retain-skill-revision', positional: [] },
   params: { ...sharedSkillKeyParams, source_incarnation: { type: 'string', required: true, description: 'Exact source incarnation.' },
     revision: { type: 'string', required: true, description: 'Exact existing immutable revision.' }, hours: { type: 'number', description: 'Pin lifetime greater than zero and at most 24 hours.' } },
@@ -253,21 +253,17 @@ const advisor: Operation = {
     'Ranked, read-only "what to do next" for this brain: version drift, pending migrations, ' +
     'schema-pack issues, stalled jobs, usage-shape gaps, and setup smells. Each finding has a ' +
     'severity, why-it-matters, and the exact fix command. Never mutates. Tell the user; ask ' +
-    'before running any fix. Gated by mcp.publish_advisor (separate from mcp.publish_skills ' +
-    'because diagnostics are not prose skills).',
+    'before running any fix. On by default for the local stdio server; remote HTTP callers need ' +
+    'mcp.publish_advisor (separate from mcp.publish_skills because diagnostics are not prose skills).',
   publishGateKey: 'mcp.publish_advisor',
   params: {},
   handler: async (ctx) => {
     // Publish gate: a remote caller needs mcp.publish_advisor=true. Local
     // (ctx.remote === false) callers bypass — the trust boundary is the OS.
     if (ctx.remote !== false) {
-      let enabled = false;
-      try {
-        const dbVal = await ctx.engine.getConfig('mcp.publish_advisor');
-        enabled = dbVal != null ? dbVal === 'true' : ctx.config?.mcp?.publish_advisor === true;
-      } catch {
-        enabled = ctx.config?.mcp?.publish_advisor === true;
-      }
+      // F7: on by default for the owner's stdio pipe; opt-in over HTTP.
+      const { readPublishGate } = await import('../../mcp/publish-gates.ts');
+      const enabled = await readPublishGate(ctx.engine, ctx.config, 'mcp.publish_advisor', ctx.transport);
       if (!enabled) {
         // Same k=v detail grammar as assertPublishEnabled (WP1): honest
         // catalogs hide this op at list time; the throw is the backstop.

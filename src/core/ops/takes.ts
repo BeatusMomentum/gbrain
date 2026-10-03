@@ -200,7 +200,7 @@ const think: Operation = {
   name: 'think',
   idempotent: false,
   outputRedaction: 'retrieval',
-  description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis.',
+  description: 'Multi-hop synthesis across pages + takes + graph. Pulls relevant evidence and produces a cited answer with conflict + gap analysis. Needs a chat-model API key (Anthropic or OpenAI) for the synthesized answer, a paid call; a keyless brain returns the gathered evidence only (a synthesis_keyless notice explains). save/take persist for the local CLI only.',
   scope: 'read',
   params: {
     question: { type: 'string', required: true, description: 'The question to think about' },
@@ -283,6 +283,10 @@ const think: Operation = {
       }
     }
 
+    // F8: the explanations the CLI formatter prints, as model-visible notices.
+    const { keylessThinkNotice, thinkNotSavedNotice } = await import('../interop-notices.ts');
+    if (result.synthesis_status === 'no_llm') ctx.emitNotice?.(keylessThinkNotice());
+    if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     return {
       ...result,
       // #1698 (#10): the persist-skip signal returns slug '' — map it (and any

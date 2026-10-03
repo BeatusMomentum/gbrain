@@ -25,7 +25,7 @@ const whoami: Operation = {
     '{transport: "local", scopes: []}, or {transport: "stdio", scopes: []} ' +
     'for the auth-less stdio MCP pipe. Throws unknown_transport when the ' +
     'context is ambiguous (remote=true without auth and no transport marker) ' +
-    '— fail-closed posture mirroring the v0.26.9 trust-boundary contract.',
+    '(fail-closed). Every shape also carries `readiness` (the setup gaps of this install, each with its fix); stdio scopes are the grant of the verified registration.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {
@@ -34,14 +34,27 @@ const whoami: Operation = {
     // where code conditionally trusted on `scopes.includes('admin')` instead
     // of `ctx.remote === false`. Empty scopes array forces clients to
     // special-case `transport: 'local'` explicitly.
+    // F2: config-plane readiness (sync, in-memory config) rides every shape.
+    const { configReadiness, readinessHttpView } = await import('../readiness.ts');
+    const readiness = (transport: 'cli' | 'stdio' | 'http') => {
+      const entries = configReadiness(ctx.config, { transport }).entries;
+      return transport === 'http' ? readinessHttpView(entries) : entries;
+    };
     if (ctx.remote === false) {
-      return { transport: 'local', scopes: [] };
+      return { transport: 'local', scopes: [], readiness: readiness('cli') };
     }
     // #1061: stdio MCP is remote/untrusted by design but has no per-token
     // auth (local pipe) — a known transport, not a bug. Report it instead of
-    // throwing. Empty scopes: nothing here may be used to gate anything.
+    // throwing. Scopes are the verified stdio registration's grant (the same
+    // scopes gbrain://capabilities reports and dispatch enforces); [] without one.
     if (!ctx.auth && ctx.transport === 'stdio') {
-      return { transport: 'stdio', scopes: [] };
+      const { readLocalWriter, verifyLocalWriter } = await import('../persistence/identity.ts');
+      let scopes: readonly string[] = [];
+      try {
+        const verified = await verifyLocalWriter(ctx.engine, await readLocalWriter(ctx.engine, 'stdio'));
+        if (verified.remote) scopes = verified.grant.scopes;
+      } catch { /* no registration: no scopes */ }
+      return { transport: 'stdio', scopes, readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
       throw new OperationError(
@@ -66,6 +79,7 @@ const whoami: Operation = {
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,
+      readiness: readiness('http'),
     };
   },
   cliHints: { name: 'whoami' },
@@ -76,8 +90,8 @@ const sources_add: Operation = {
   idempotent: false,
   outputRedaction: 'no_stored_text',
   description:
-    'Register a new source. Supports either --path (existing v0.17 behavior) ' +
-    'or --url (v0.28 federated remote-clone path: parses the URL through the ' +
+    'Register a new source. Supports either path (a local directory) ' +
+    'or url (a remote clone: parses the URL through the ' +
     'SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename ' +
     'atomicity, and stores remote_url in sources.config). Pre-flight collision ' +
     'check on id; rollback on either-side failure.',
@@ -161,11 +175,11 @@ const sources_list: Operation = {
   idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
-    'List registered sources with page counts and remote_url. v0.28 surfaces ' +
-    'the new remote_url field so a remote MCP caller can confirm a source is ' +
+    'List registered sources with page counts and remote_url. remote_url lets ' +
+    'a remote MCP caller confirm a source is ' +
     'managed by clone+pull rather than user-supplied path. Results are ' +
     "confined to the caller's resolved source scope (federated read grant > " +
-    'bound source; #4433) and carry no marker when rows were withheld, so a ' +
+    'bound source) and carry no marker when rows were withheld, so a ' +
     'listing may be incomplete. Only the trusted local CLI (`gbrain sources ' +
     'list`) sees the full registry.',
   params: {
@@ -257,7 +271,7 @@ const sources_status: Operation = {
     '"not-a-dir" | "no-git" | "url-drift" | "corrupted" | "not-applicable") ' +
     'so a remote MCP caller can diagnose whether the on-disk clone is ' +
     "syncable without SSH access to the brain host. Confined to the caller's " +
-    'resolved source scope (#4433); an out-of-scope id answers not_found, ' +
+    'resolved source scope; an out-of-scope id answers not_found, ' +
     'indistinguishable from a nonexistent source.',
   params: {
     id: { type: 'string', required: true, description: "Source id to diagnose, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },
@@ -290,7 +304,7 @@ const sources_inspect: Operation = {
     exclude: { type: 'array', items: { type: 'string' }, description: 'Repository-relative exclude globs.' },
   },
   scope: 'read',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'sources', 'inspect', '<path>'] },
   mutating: false,
   handler: async (ctx, params) => {
     if (ctx.remote !== false) throw new OperationError('permission_denied', 'Repository inspection requires the trusted local CLI.');

@@ -14,9 +14,12 @@ import { loadConfig } from '../core/config.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
-import { isCallable } from '../core/ops/callable.ts';
+import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
+import { recallInteropNotices } from '../core/interop-notices.ts';
+import { hiddenToolHint } from './hidden-tool-hint.ts';
+import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
@@ -453,11 +456,12 @@ export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyErro
     .filter(op => !op.localOnly && !op.publishGateKey && (allowedOps ? allowedOps.has(op.name) : true))
     .map(op => op.name);
   const nearest = suggestNearest(name, candidates);
-  const suggestion = nearest
+  const hint = hiddenToolHint(operations.find(o => o.name === name), opts); // F6: owner's stdio pipe only
+  const suggestion = hint?.suggestion ?? (nearest
     ? `Did you mean "${nearest}"?`
-    : 'List the tools this connection can call (tools/list) and use one of those names.';
+    : 'List the tools this connection can call (tools/list) and use one of those names.');
   return errorResult(opError('unknown_tool', legacyError ? `Unknown: ${name}` : `Unknown tool: ${name}`, suggestion,
-    legacyError ? { legacy_error: legacyError } : {}), opts);
+    { ...(legacyError ? { legacy_error: legacyError } : {}), ...(hint ? { fix: hint.fix } : {}) }), opts);
 }
 
 /**
@@ -635,6 +639,8 @@ export async function dispatchToolCall(
   if (op.localOnly && opts.transport !== 'stdio') {
     return unknownToolEnvelope(name, opts);
   }
+  // F5: an owner-only op is never listed on MCP; a call gets the exact CLI command.
+  if (op.cliOnly && opts.remote !== false) return errorResult(cliOnlyRefusal(op), opts, { op: name });
 
   // --source-guard (plugin lanes): fail-closed write routing. A user-global
   // plugin serve has no per-workspace source binding, so an ambient-tier
@@ -801,11 +807,15 @@ export async function dispatchToolCall(
     for (const w of unknownParamWarnings) {
       notices.push({ code: 'unknown_param', kind: 'info', why: buildUnknownParamWarnBlock([w]) });
     }
+    // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
+    notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
+      { config: ctx.config, transport: dispatchRenderContext(opts).transport, binding: ctx.explicitReadBinding }));
     // Monthly backup-coverage: one AGGREGATE notice per process (counts only —
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
     // an UNSET marker never probes (fail-closed).
     maybeBackupNotice(notices, opts);
+    if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);

@@ -66,3 +66,12 @@ Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) f
 - Listing meetings without loading attendee context from brain
 - Ignoring yesterday's unresolved threads
 - Presenting tasks without priority ordering
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_timeline` → `gbrain timeline`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

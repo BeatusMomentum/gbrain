@@ -37,7 +37,7 @@ const connectors_status: Operation = {
     'last_sync_at, auth_error_at, auto_sync, and the incremental watermark. ' +
     'Local-only; credentials never cross the wire.',
   scope: 'read',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'connectors', 'status'] },
   params: {
     provider: {
       type: 'string',
@@ -83,7 +83,7 @@ const connector_sync: Operation = {
     'Local-only (uses on-disk credentials).',
   scope: 'write',
   mutating: true,
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'connectors', 'sync', '<provider>'] },
   params: {
     provider: { type: 'string', required: true, description: "'chatgpt' or 'claude'." },
     full: { type: 'boolean', description: 'Ignore the watermark and re-scan everything.' },

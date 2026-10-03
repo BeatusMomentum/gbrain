@@ -168,3 +168,12 @@ Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) f
 - `put_page` — create/update brain pages
 - `add_link` — cross-reference entities
 - `add_timeline_entry` — record events on entity timelines
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

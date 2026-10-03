@@ -278,7 +278,7 @@ const code_traversal_cache_clear: Operation = {
   name: 'code_traversal_cache_clear',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Clear cached code_blast / code_flow traversal results. Source-scoped by default; pass all_sources=true to wipe everything (D8 destructive-guard).',
+  description: 'Clear cached code_blast / code_flow traversal results. Source-scoped by default; pass all_sources=true to wipe everything (destructive: it is guarded).',
   params: {
     source_id: { type: 'string', description: 'Source to clear. Required unless all_sources=true.' },
     all_sources: { type: 'boolean', description: 'Wipe cache across every source. Explicit opt-out of source-scoping.' },

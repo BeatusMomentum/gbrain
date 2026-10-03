@@ -32,7 +32,8 @@ function execFixture(args: string[], env: Record<string, string>): void {
 
 function textOf(result: unknown): string {
   const content = (result as { content?: Array<{ text?: string }> })?.content;
-  return Array.isArray(content) ? content.map((c) => c?.text ?? '').join('\n') : '';
+  // The result body is content[0]; agent contract v1 notices ride extra blocks.
+  return Array.isArray(content) ? content[0]?.text ?? '' : '';
 }
 
 function sourcesOf(text: string): string[] {

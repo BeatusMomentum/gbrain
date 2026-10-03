@@ -20,7 +20,7 @@ const get_recent_transcripts: Operation = {
   // Local-only: rejects HTTP-borne MCP traffic at tool-list time
   // (serve-http.ts filters on `localOnly`) AND at runtime via the in-handler
   // ctx.remote check. Defense in depth: hidden + rejected.
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'transcripts', 'recent'] },
   params: {
     days: { type: 'number', description: 'Window in days. Default 7.' },
     summary: {

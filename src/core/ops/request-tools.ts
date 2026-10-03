@@ -88,7 +88,7 @@ async function visibleOpsForCaller(
   if (!gateExempt) {
     try {
       const { disabledOpsForPublishGates } = await import('../../mcp/publish-gates.ts');
-      gateDisabled = await disabledOpsForPublishGates(ctx.engine, ctx.config);
+      gateDisabled = await disabledOpsForPublishGates(ctx.engine, ctx.config, { transport: ctx.transport });
     } catch {
       // Fail-closed: if the resolver can't even load, hide every gated op.
       gateDisabled = new Set(operations.filter(o => o.publishGateKey).map(o => o.name));

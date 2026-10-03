@@ -214,3 +214,12 @@ Follow the [agent operator protocol](../../docs/protocol/AGENT_OPERATOR_v1.md) f
 - List pages in gbrain by type (list_pages)
 - Check gbrain health (get_health)
 - View timeline entries in gbrain (get_timeline)
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `get_timeline` → `gbrain timeline`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).

@@ -10,6 +10,8 @@ import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { heartbeatPath } from './integrations.ts';
 import { VERSION } from '../version.ts';
+import { cliRenderContext, renderNotice, type Notice } from '../core/agent-output.ts';
+import { writeCliNotices } from '../core/interop-notices.ts';
 
 // --- Types ---
 
@@ -284,6 +286,9 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
     return;
   }
 
+  // F7: the auto-fix suggestion is a coaching notice on every surface (it was
+  // printed only on a terminal); --json carries it under `notices`.
+  const autoFixNotice = autoFix ? null : featuresAutoFixNotice(pitchable);
   if (jsonMode) {
     const fixResults: Record<string, { success: boolean; output: string }> = {};
     if (autoFix) {
@@ -292,7 +297,8 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
         offers.accepted[rec.id] = { at: new Date().toISOString().slice(0, 10), version: scan.version };
       }
     }
-    console.log(JSON.stringify({ ...scan, recommendations: pitchable, auto_fix_results: autoFix ? fixResults : undefined }, null, 2));
+    console.log(JSON.stringify({ ...scan, recommendations: pitchable, auto_fix_results: autoFix ? fixResults : undefined,
+      ...(autoFixNotice ? { notices: [renderNotice(autoFixNotice, cliRenderContext())] } : {}) }, null, 2));
     offers.lastVersion = scan.version;
     offers.lastScan = scan.scan_ts;
     saveOffers(offers);
@@ -330,13 +336,29 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
       console.log(`  ${result.success ? 'OK' : 'FAIL'}: ${rec.title} — ${result.output}`);
       offers.accepted[rec.id] = { at: new Date().toISOString().slice(0, 10), version: scan.version };
     }
-  } else if (process.stdin.isTTY) {
-    console.log(`Run 'gbrain features --auto-fix' to fix all auto-fixable issues.`);
+  } else if (autoFixNotice) {
+    writeCliNotices([autoFixNotice]);
   }
 
   offers.lastVersion = scan.version;
   offers.lastScan = scan.scan_ts;
   saveOffers(offers);
+}
+
+/** F7: the `features_auto_fix` coaching notice; null when nothing is auto-fixable. */
+function featuresAutoFixNotice(pitchable: readonly FeatureRecommendation[]): Notice | null {
+  const fixable = pitchable.filter(r => r.auto_fixable);
+  if (fixable.length === 0) return null;
+  const paid = fixable.some(r => r.id === 'missing-embeddings' || r.id === 'low-coverage');
+  return {
+    code: 'features_auto_fix', kind: 'coaching',
+    why: `${fixable.length} recommendation(s) can be fixed automatically: ${fixable.map(r => r.title).join(', ')}.`,
+    fix: {
+      argv: ['gbrain', 'features', '--auto-fix'], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
+      why: paid ? 'Runs the fixes; refreshing embeddings calls the configured embedding provider (a small paid cost).' : 'Runs the fixes (link and timeline extraction; no paid calls).',
+      ...(paid ? { user_message: 'gbrain can fill in missing embeddings for your notes; it costs a little in embedding API calls. OK to run it?' } : {}),
+    },
+  };
 }
 
 /** Lightweight features teaser for doctor output */

@@ -53,7 +53,7 @@ const add_link: Operation = {
   name: 'add_link',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Create link between pages',
+  description: 'Create a typed link (edge) from one page to another in the same source. Use when recording a relationship (works_at, invested_in, mentions). Needs write scope; an explicit link_type must be declared by the active schema pack. On page_not_found: resolve both slugs with resolve_slugs.',
   params: {
     from: { type: 'string', required: true, description: "Slug of the page the link originates from (the edge renders on this page), e.g. 'people/alice-example'. These are page slugs — there is no `source`/`target` pair." },
     to: { type: 'string', required: true, description: "Slug of the page the link points to, e.g. 'companies/acme-example'." },
@@ -131,7 +131,7 @@ const remove_link: Operation = {
   name: 'remove_link',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Remove link between pages',
+  description: 'Remove a link between two pages (optionally only one link_type or link_source). Use when a relationship was recorded wrongly. Needs write scope. On page_not_found: resolve both slugs with resolve_slugs.',
   params: {
     from: { type: 'string', required: true, description: 'Slug of the page the link originates from (same endpoint order as add_link).' },
     to: { type: 'string', required: true, description: 'Slug of the page the link points to.' },
@@ -309,7 +309,7 @@ const get_links: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List outgoing links from a page',
+  description: 'List a page\'s outgoing links (typed edges to other pages). Use when exploring what a page points at; pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose outgoing links to list.' },
     source_id: LINK_SOURCE_ID_PARAM,
@@ -325,7 +325,7 @@ const get_backlinks: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List incoming links to a page',
+  description: 'List a page\'s incoming links (who points at it). Use when finding everything that mentions or relates to an entity. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose incoming links to list.' },
     source_id: LINK_SOURCE_ID_PARAM,

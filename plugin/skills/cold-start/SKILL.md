@@ -563,3 +563,13 @@ Next: Phase N+1 — [description]. Ready to proceed?
 - `add_link` — cross-reference entities
 - `add_timeline_entry` — record events on entity timelines
 - `sync_brain` — sync changes to the index after each phase
+
+## Tools outside your MCP surface
+
+This plugin serves the starter tool surface. When a step above names one of these tools and your tool list
+does not have it, run its gbrain CLI equivalent instead:
+
+- `add_link` → `gbrain link`
+- `sync_brain` → `gbrain sync`
+
+Or widen this machine's plugin surface with GBRAIN_SURFACE=full (new sessions pick it up).
