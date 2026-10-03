@@ -164,3 +164,22 @@ export function scopeDeniedError(opts: {
       },
     });
 }
+
+/**
+ * B6: a persistence administration path reached without the current trusted
+ * CLI writer registration. The person at the brain host runs it from the
+ * gbrain CLI; the fix reads the registration first (never re-registers).
+ */
+export function trustedCliRequired(message: string): OperationError {
+  return opError('permission_denied', message,
+    'Run this from the gbrain CLI in a terminal on the brain host. It needs a current CLI writer registration: `gbrain auth local-writer list --json` shows it, and `gbrain auth local-writer register cli` creates one when none is active.',
+    {
+      reason: 'trusted_cli_required',
+      fix: {
+        argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'], consent: [], actor: 'user',
+        why: 'Administration paths run only under the brain host\'s trusted CLI registration; this shows whether one is active.',
+        user_message: 'This gbrain maintenance step has to run from a terminal on the machine that hosts the brain. Please run the command shown there.',
+        requires_exclusive: false,
+      },
+    });
+}

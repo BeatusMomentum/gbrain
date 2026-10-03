@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { hostFix, hostOnlyError, invalidParam, opTransport, paramUse, readFix } from '../src/core/ops/op-fix.ts';
+import { hostFix, hostOnlyError, invalidParam, opTransport, paramUse, readFix, trustedCliRequired } from '../src/core/ops/op-fix.ts';
 import { renderAction, cliRenderContext, toAgentError } from '../src/core/agent-output.ts';
 
 const cli = { remote: false } as const;
@@ -60,5 +60,11 @@ describe('op-fix builders', () => {
     const f = readFix('Lists jobs.', { argv: ['gbrain', 'jobs', 'list'], mcp: { tool: 'list_jobs', arguments: {} } });
     expect(renderAction(f, cliRenderContext())).toMatchObject({ next: 'run', command: 'gbrain jobs list' });
     expect(renderAction(f, mcpRender('stdio', ['list_jobs']))).toMatchObject({ next: 'run', mcp: { tool: 'list_jobs' } });
+  });
+
+  test('trustedCliRequired reads the registration first and never re-registers', () => {
+    const e = trustedCliRequired('Sync requires a current trusted CLI registration.');
+    expect(e).toMatchObject({ code: 'permission_denied', reason: 'trusted_cli_required', message: 'Sync requires a current trusted CLI registration.' });
+    expect(renderAction(e.fix!, cliRenderContext())).toMatchObject({ command: 'gbrain auth local-writer list --json', actor: 'user', next: 'tell_user_to_run' });
   });
 });

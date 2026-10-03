@@ -718,7 +718,7 @@ export async function dispatchToolCall(
     return errorResult(opError('missing_source_scope',
       `Remote tool call '${name}' carries no resolved sourceId; refusing the shared 'default' source fallback. Pass an explicit sourceId resolved from the caller's grant.`,
       viaClient
-        ? 'This connection has no source grant. The brain host operator binds one to this client (gbrain auth rescope-client <client_id> --source <id>), then the call works.'
+        ? `This connection has no source grant. The brain host operator binds one to this client (gbrain auth rescope-client ${opts.auth!.clientId} --source <source-id>), then the call works.`
         : 'This MCP server resolved no source. Set GBRAIN_SOURCE to a registered source id in the environment that launches it, then restart it.',
       { fix: hostFix({ remote: true, transport: viaClient ? 'http' : 'stdio' },
         viaClient ? ['gbrain', 'auth', 'clients', '--json'] : ['gbrain', 'sources', 'list'],

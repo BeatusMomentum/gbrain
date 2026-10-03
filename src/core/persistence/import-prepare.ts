@@ -22,6 +22,7 @@ import { prepareCanonicalProjections } from './canonical-projections.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
 export interface ManagedImportIntent extends Record<string, unknown> {
@@ -92,7 +93,7 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
 
 export async function prepareManagedImportMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
   const p = row.intent as ManagedImportIntent | null;
-  if (row.authority.remote || row.principal_kind !== 'local_cli') throw new OperationError('permission_denied', 'Filesystem import requires a trusted local CLI writer.');
+  if (row.authority.remote || row.principal_kind !== 'local_cli') throw trustedCliRequired('Filesystem import requires a trusted local CLI writer.');
   if (!p || p.kind !== 'managed_file_import' || typeof p.content !== 'string' || typeof p.inputPath !== 'string' || typeof p.sourcePath !== 'string') {
     throw new OperationError('invalid_params', 'The durable file import intent is incomplete.');
   }

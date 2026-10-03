@@ -16,13 +16,14 @@ import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups,
 import type { LocalGrant } from './identity.ts';
 import { isTerminal } from './model.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 export { assertReconcileOutputPath } from './reconcile-backup.ts';
 export type { ReconcileArtifact } from './reconcile-state.ts';
 
 async function authorize(engine: BrainEngine, sourceId: unknown, slug: unknown) {
   const verified = currentVerifiedLocalWriter();
-  if (!verified || verified.remote || verified.principal.kind !== 'local_cli') throw new OperationError('permission_denied', 'Reconciliation requires a verified trusted local CLI caller.');
+  if (!verified || verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('Reconciliation requires a verified trusted local CLI caller.');
   if (typeof sourceId !== 'string' || !isValidSourceId(sourceId) || typeof slug !== 'string' || !slug) throw new OperationError('invalid_params', 'One explicit source ID and page slug are required.');
   validatePageSlug(slug);
   if (/[?*]/.test(slug)) throw new OperationError('invalid_params', 'Reconciliation requires an exact page slug, not a pattern.');

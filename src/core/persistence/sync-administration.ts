@@ -6,11 +6,12 @@ import { submissionAuthority } from './authority.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { validateSyncWireParams } from './sync-wire.ts';
 import { explicitSyncProcessing } from './sync-authority.ts';
+import { trustedCliRequired } from '../ops/op-fix.ts';
 
 /** Private CLI transport: wire fields can never manufacture a trust lane. */
 export async function runAuthenticatedSyncSlice(engine: BrainEngine, params: Record<string,unknown>): Promise<Record<string,unknown>> {
   const verified=currentVerifiedLocalWriter();
-  if(!verified||verified.remote||verified.principal.kind!=='local_cli')throw new OperationError('permission_denied','Sync requires a current trusted CLI registration.');
+  if(!verified||verified.remote||verified.principal.kind!=='local_cli')throw trustedCliRequired('Sync requires a current trusted CLI registration.');
   const wire=validateSyncWireParams(params);
   const sourceId=await resolveSourceId(engine,wire.options.sourceId??null,wire.cwd,{skipLocalSignals:true});
   const [source]=await engine.executeRaw<{incarnation:string;archived:boolean}>('SELECT incarnation,archived FROM sources WHERE id=$1',[sourceId]);
