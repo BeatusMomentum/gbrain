@@ -246,6 +246,8 @@ function indexOfName(text: string, word: string, wholeWord: boolean): number {
 }
 
 const ALIAS_DECLARATION = /\b(?:account code|also known as|a\.k\.a\.|aka|short name|ticker|code name)\b\s*[:(]?\s*["\u201c']?([A-Z0-9][A-Za-z0-9&.-]{1,24})/gi;
+/** Every ALIAS_DECLARATION keyword, lowercased: a row containing none of them cannot match the regex. */
+const DECLARATION_KEYWORDS = ['account code', 'also known as', 'a.k.a', 'aka', 'short name', 'ticker', 'code name'];
 
 /**
  * Pages often declare another name for their subject ("Account code: MULI",
@@ -262,7 +264,10 @@ export function aliasDeclarations(rows: Array<{ slug: string; title?: string; ch
   for (const row of rows.slice(0, 10)) {
     const name = (row.title ?? '').split(':').pop()!.trim();
     if (!name) continue;
-    for (const m of (row.chunk_text ?? '').matchAll(ALIAS_DECLARATION)) {
+    const text = row.chunk_text ?? '';
+    const lower = text.toLowerCase();
+    if (!DECLARATION_KEYWORDS.some(k => lower.includes(k))) continue;
+    for (const m of text.matchAll(ALIAS_DECLARATION)) {
       const alias = m[1].replace(/[.,;]+$/, '');
       if (!/[A-Z0-9]/.test(alias) || alias.toLowerCase() === name.toLowerCase()) continue;
       const hasName = q.includes(name.toLowerCase());
@@ -274,6 +279,27 @@ export function aliasDeclarations(rows: Array<{ slug: string; title?: string; ch
   return [...out.values()].slice(0, 5);
 }
 
+type DeclarationRow = { slug: string; title?: string; chunk_text?: string };
+
+/**
+ * One declaration scan per search: the fan-out and the response meta share
+ * this memo, and the meta reuses the fan-out's scan whenever it reads the
+ * same top rows (no fan-out pages spliced in, chunk text unchanged by
+ * evidence delivery); otherwise it scans its own rows, so the result never
+ * differs from scanning them directly.
+ */
+export class DeclarationMemo {
+  private rows: DeclarationRow[] | null = null;
+  private found: AliasDeclaration[] = [];
+  scan(rows: DeclarationRow[], queryText: string): AliasDeclaration[] {
+    const top = rows.slice(0, 10);
+    const same = this.rows !== null && this.rows.length === top.length
+      && top.every((r, i) => r.slug === this.rows![i].slug && r.title === this.rows![i].title && r.chunk_text === this.rows![i].chunk_text);
+    if (!same) { this.rows = top; this.found = aliasDeclarations(top, queryText); }
+    return this.found;
+  }
+}
+
 /**
  * When the evidence declares another name for the entity the query names,
  * also search under that name and splice the new pages in after the top two
@@ -282,9 +308,9 @@ export function aliasDeclarations(rows: Array<{ slug: string; title?: string; ch
  * dropped: cutting the tail to make room lost the page that answered
  * (gbrain-evals Cat 40, family B).
  */
-async function withDeclaredNameFanOut(results: SearchResult[], queryText: string,
+async function withDeclaredNameFanOut(results: SearchResult[], queryText: string, memo: DeclarationMemo,
   run: (query: string, limit: number) => Promise<SearchResult[]>): Promise<SearchResult[]> {
-  const [first] = aliasDeclarations(results, queryText);
+  const [first] = memo.scan(results, queryText);
   if (!first) return results;
   const nameAt = indexOfName(queryText, first.name, false);
   const [from, to, at] = nameAt >= 0
@@ -316,7 +342,20 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
   if (terms.length === 0 || !ctx.emitResponseMeta) return [];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const remote = ctx.remote !== false;
+  const visibility = remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : '';
   try {
+    // Most searches have no saved fact to find: one indexed probe (idx_facts_since) with the
+    // same active-fact and visibility predicates skips the LIKE ANY scan when no fact qualifies.
+    const any = await ctx.engine.executeRaw(
+      `SELECT 1 FROM facts f
+       WHERE f.source_id = ANY($1::text[])
+         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+         AND f.source != ALL($2::text[])
+         ${visibility}
+       LIMIT 1`,
+      [sources, [...AUDIT_ROW_SOURCES]],
+    );
+    if (any.length === 0) return [];
     const rows = await ctx.engine.executeRaw<SavedFactMatch & { haystack: string }>(
       `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source,
          lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) AS haystack
@@ -325,7 +364,7 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
          AND lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE ANY($3::text[])
-         ${remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}
+         ${visibility}
        ORDER BY f.valid_from DESC, f.id DESC
        LIMIT 200`,
       [sources, [...AUDIT_ROW_SOURCES], terms.map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`)],
@@ -362,7 +401,7 @@ async function buildRetrievalResponseMeta(
   queryText: string,
   results: unknown[],
   meta: HybridSearchMeta | null,
-  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string } = {},
+  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo } = {},
 ): Promise<Record<string, unknown>> {
   const m = meta as (HybridSearchMeta & { degraded?: unknown[]; retrieved_count?: number }) | null;
   const hint = opts.conceptHint && looksConceptShaped(queryText)
@@ -379,7 +418,7 @@ async function buildRetrievalResponseMeta(
     types: opts.types,
     excludeSlugPrefixes,
   });
-  const aliases = aliasDeclarations(results as Array<{ slug: string; title?: string; chunk_text?: string }>, queryText);
+  const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
   const savedFacts = await matchingSavedFacts(ctx, scope, queryText, aliases);
   const degraded = [...(m?.degraded ?? [])];
   if (safeIndexPending) degraded.push({ stage: 'safe_index_pending' });
@@ -592,7 +631,8 @@ const search: Operation = {
       decide: { remote: ctx.remote !== false },
     };
     const primary = await hybridSearchCached(ctx.engine, queryText, { ...searchOpts, onMeta: (m) => { capturedMeta = m; } });
-    const results = (await withDeclaredNameFanOut(primary, queryText,
+    const declarations = new DeclarationMemo();
+    const results = (await withDeclaredNameFanOut(primary, queryText, declarations,
       (alt, altLimit) => hybridSearchCached(ctx.engine, alt, { ...searchOpts, limit: altLimit, offset: 0 }))).map(r => ({ ...r }));
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
@@ -600,7 +640,7 @@ const search: Operation = {
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap,
-      rows => buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice }));
+      rows => buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations }));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -832,7 +872,8 @@ const query: Operation = {
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
     });
-    results = await withDeclaredNameFanOut(results, queryText, (alt, altLimit) => hybridSearchCached(ctx.engine, alt, {
+    const declarations = new DeclarationMemo();
+    results = await withDeclaredNameFanOut(results, queryText, declarations, (alt, altLimit) => hybridSearchCached(ctx.engine, alt, {
       limit: altLimit, excludePrivate, requireSafeChunks: ctx.remote !== false, takesHoldersAllowList: readHolders(ctx),
       expansion: false, types, ...querySourceScope,
     }));
@@ -995,7 +1036,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap,
-      async rows => ({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice })), crag }));
+      async rows => ({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations })), crag }));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },
