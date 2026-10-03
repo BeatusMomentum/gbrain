@@ -143,6 +143,35 @@ Keep an appropriate database backup before any destructive recovery, and do
 not delete historical unmatched facts or generate empty pages to make them
 appear file-backed.
 
+## Write attribution
+
+Journaled and coordinated writes stamp who wrote each row, in the database
+only (Markdown never carries it):
+
+| Table | Columns | Meaning |
+| --- | --- | --- |
+| `pages` | `revision_write_request_id`, `revision_principal_kind`, `revision_principal_id` | Who wrote the live revision. |
+| `page_versions` | `write_*` and `archived_*` | Who wrote the snapshotted revision, and whose write archived it. |
+| `facts`, `takes`, `timeline_entries` | `write_*` and `last_write_*`, `last_written_at` | Who created the row, and who last changed its content. |
+
+Only the request id (`persistence_requests.id`) and the principal (kind, id)
+are stored. Names, operations and times are joined at read time by
+`get_write_attribution` (`gbrain attribution`), an `admin` operation; see
+[write attribution](../mcp/ADMIN.md#write-attribution). `get_versions` returns
+attribution only to trusted local and `admin` callers. A NULL request with a
+principal is a maintenance write; all NULL is `unrecorded`: written before
+attribution existed or by a legacy writer that records none, so this is
+creation attribution for journaled and coordinated writes, not an audit of
+every write.
+
+Nothing is inferred for older rows. `gbrain repair attribution-backfill` fills
+only rows the write journal proves exactly (the page write whose recorded
+result is that revision, the `remember` that inserted that fact) and leaves the
+rest `unrecorded`. Attribution is not file-backed: rebuilding from Markdown
+loses it, and `gbrain migrate --to` copies it verbatim only for facts (pages, takes
+and timeline rows are re-created on the target and start `unrecorded`; version
+history is not copied).
+
 ## The privacy boundary
 
 Private knowledge in a fence still lives in the markdown file. If the
