@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { clearHealthMemo } from '../core/health-memo.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult } from '../core/repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, EXPLICIT_REPAIR_REGISTRY, REPAIR_REGISTRY, explicitRepairNotices, repairMaySpend, repairPreviewCommand, repairRunner, repairSpec } from '../core/repair/registry.ts';
@@ -141,6 +142,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     results.push({ ...result, paid: repairMaySpend(repairSpec(k), noEmbed) });
     if (result.stopped) break;
   }
+  if (apply) clearHealthMemo(engine);
   const paidKinds = results.filter(r => r.paid).map(r => r.kind);
   if (json) {
     console.log(JSON.stringify({ scope, mode: apply ? 'apply' : 'dry_run', results, paid_kinds: paidKinds,

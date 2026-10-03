@@ -16,6 +16,7 @@ import type { Operation, OperationContext } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
+import { memoizedHealth } from '../health-memo.ts';
 
 // --- Admin ---
 
@@ -46,14 +47,24 @@ const get_stats: Operation = {
 const get_health: Operation = {
   name: 'get_health',
   outputRedaction: 'no_stored_text',
-  description: 'Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host.',
+  description: 'Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host. `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.',
   params: {},
   handler: async (ctx) => {
     // The `migrations` block below stays GLOBAL for scoped callers by
     // decision: it is a host filesystem ledger with no per-source semantics,
     // and a wedged host migration is exactly what a remote agent needs to
     // see to explain degraded behavior.
-    const health = await ctx.engine.getHealth(diagnosticScope(ctx));
+    // F4a (O-ENG-13): memoized per engine, scope, config generation and page
+    // clock (src/core/health-memo.ts); engine.getHealth itself stays uncached.
+    const scope = diagnosticScope(ctx);
+    const health = await memoizedHealth(ctx.engine, scope, async () => {
+      const counters = await ctx.engine.getHealth(scope);
+      // #4732: name the column embed_coverage and missing_embeddings measured
+      // (the same resolution getHealth uses), so a 0% coverage on an embedded
+      // brain points at a mis-routed column instead of a paid re-embed.
+      const { name: embedding_column } = await resolveActiveEmbeddingColumnFromEngine(ctx.engine, { fallbackToLegacy: true });
+      return { ...counters, embedding_column };
+    });
     // TODOS:4063 — composed at the OP layer (not BrainEngine.getHealth):
     // the ledger is a filesystem JSONL, engine-agnostic; growing the engine
     // interface would force both engines to duplicate a file read.
@@ -67,11 +78,7 @@ const get_health: Operation = {
     } catch {
       migrations = { error: 'ledger_unreadable' };
     }
-    // #4732: name the column embed_coverage and missing_embeddings measured
-    // (the same resolution getHealth uses), so a 0% coverage on an embedded
-    // brain points at a mis-routed column instead of a paid re-embed.
-    const { name: embedding_column } = await resolveActiveEmbeddingColumnFromEngine(ctx.engine, { fallbackToLegacy: true });
-    return { ...health, embedding_column, migrations };
+    return { ...health, migrations };
   },
   scope: 'admin',
   cliHints: { name: 'health' },

@@ -24,6 +24,7 @@
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
+import { clearHealthMemo } from '../../core/health-memo.ts';
 import type { RemediationPlan, RemediationResult } from '../../core/remediation/types.ts';
 import type { RepairPlanStep } from '../../core/remediation/repairs.ts';
 import { repairPreviewCommand, repairSpec, type ExplicitRepairNotice } from '../../core/repair/registry.ts';
@@ -297,6 +298,8 @@ export async function runRemediate(engine: BrainEngine, args: string[]): Promise
       onBudgetExhausted: (_planHash, snapshot) => console.error(`\n[remediate] Budget exhausted (${snapshot.reason}): spent $${snapshot.spent.toFixed(4)} `
         + `of the cumulative cap $${snapshot.cap.toFixed(2)}. Checkpoint saved (cap, consent and remaining steps).`),
     });
+
+  if (!dryRun) clearHealthMemo(engine);
 
   if (result.budget_exhausted) {
     const cap = result.budget?.max_usd ?? result.budget_exhausted.cap;

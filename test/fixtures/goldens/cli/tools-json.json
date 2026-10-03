@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208089,
-    "stdoutSha256": "a63cbbb5e6793515080dcb661c072dc74b491e1ff8fb8c1b3c4bbc9ba9c9bfd0",
+    "stdoutBytes": 208298,
+    "stdoutSha256": "a88099238ea9e4a35f52664274cbebb2560787cd392af25448ed873874c80da9",
     "toolNames": [
       "remember",
       "entity",
@@ -1606,7 +1606,7 @@
         }
       },
       {
-        "description": "Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host.",
+        "description": "Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. Includes a `migrations {pending, partial, wedged, skipped_future}` block from the host migration ledger so remote agents can detect wedged/outstanding host migrations without shelling into the brain host. `computed_at` is when the counters were read: a repeat call within `health.cache_ttl_ms` (default 30000; env GBRAIN_HEALTH_CACHE_TTL_MS; 0 disables) with no page or config change returns the memoized numbers.",
         "name": "get_health",
         "parameters": {},
         "schema": {

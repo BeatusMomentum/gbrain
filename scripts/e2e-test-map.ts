@@ -30,6 +30,10 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 8, Lane G: page revision rollout (#5216).
   "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts"],
   "src/core/embedding-ann-build.ts": ["test/e2e/migrate-embeddings-ann-build-5088-postgres.test.ts", "test/e2e/migrate-embeddings-postgres.test.ts"],
+  // FOUNDATIONS 1 F4a: get_health SQL aggregate, shared orphan policy, op memo.
+  "src/core/engine-sql/health.ts": ["test/e2e/engine-sql-health-parity.test.ts", "test/e2e/health-parity-postgres.test.ts", "test/e2e/get-health-embedding-column-postgres.test.ts"],
+  "src/core/orphan-policy.ts": ["test/e2e/engine-sql-health-parity.test.ts", "test/e2e/health-parity-postgres.test.ts"],
+  "src/core/health-memo.ts": ["test/e2e/engine-sql-health-parity.test.ts", "test/e2e/get-health-embedding-column-postgres.test.ts"],
   // Fix wave 8 lane D2 (#5828): the brain_score timeline grading helper.
   "src/core/timeline-grading.ts": ["test/e2e/wave8-lane-d2-postgres.test.ts", "test/e2e/health-parity-postgres.test.ts"],
   // GBRA-35 E10: the managed connector-source job contract drives these writers on an unbound connector source.
