@@ -74,7 +74,7 @@ describe('new client', () => {
 
   test('success: body from content[0]; notices from _meta, else from prefixed blocks', () => {
     const res = golden('bare-array-result.json');
-    expect(unpackToolResult(res)).toEqual([]);
+    expect(unpackToolResult<unknown[]>(res)).toEqual([]);
     expect(extractNotices(res)[0]).toMatchObject({ code: 'empty_retrieval', kind: 'info' });
     const noMeta = { content: res.content };
     expect(extractNotices(noMeta)[0]).toMatchObject({ code: 'empty_retrieval', kind: 'info', fix: 'gbrain doctor --json' });
