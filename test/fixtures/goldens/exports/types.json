@@ -1554,7 +1554,7 @@
         "kind": "type",
         "name": "ChatRole",
         "signature": [
-          "\"user\" | \"system\" | \"assistant\" | \"tool\""
+          "\"user\" | \"tool\" | \"system\" | \"assistant\""
         ]
       },
       {
@@ -5416,7 +5416,7 @@
           "params: Record<string, ParamDef>",
           "publishGateKey?: \"mcp.publish_skills\" | \"mcp.publish_advisor\" | undefined",
           "requiredScopes?: readonly string[] | undefined",
-          "scope?: \"read\" | \"write\" | \"admin\" | \"sources_admin\" | \"users_admin\" | \"agent\" | undefined",
+          "scope?: \"agent\" | \"read\" | \"write\" | \"admin\" | \"sources_admin\" | \"users_admin\" | undefined",
           "verb?: boolean | undefined"
         ],
         "name": "Operation"
@@ -5467,6 +5467,7 @@
           "notices?: Notice[] | undefined",
           "protocolVersion?: number | undefined",
           "reason?: string | undefined",
+          "receiptFields?: { operation: string; source_id: string; slug: string | null; principal_kind: string; principal_id: string; } | undefined",
           "stack?: string | undefined",
           "suggestion?: string | undefined",
           "toJSON: () => { contract_version?: 1 | undefined; notices?: unknown[] | undefined; fix?: unknown; why?: string | undefined; reason?: string | undefined; write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; code: string; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",

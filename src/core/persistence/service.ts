@@ -139,7 +139,7 @@ function terminalReceiptHint(row: WriteRequest, reason: string): string {
   const what = `The ${row.operation ? `${row.operation} ` : ''}write (request_id ${row.request_id}) ended ${row.state} with ${reason}; it will not publish.`;
   return row.state === 'cancelled'
     ? `${what} Submit again only if the change is still wanted, with a new request_id.`
-    : `${what} Read the current state before deciding to submit again; a new attempt needs a new request_id.`;
+    : `${what} Read the receipt and the current state before deciding to submit again; a new attempt needs a new request_id.`;
 }
 export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const receipt = receiptFor(row);
