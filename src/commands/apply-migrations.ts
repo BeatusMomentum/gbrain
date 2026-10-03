@@ -556,59 +556,8 @@ async function runLockedMigrations(
     if (cli.forceAll) return; // both surfaces flushed
   }
 
-  // Pre-flight: detect schema migrations (migrate.ts) being behind.
-  // apply-migrations historically ran orchestrator migrations only; schema
-  // migrations run via connectEngine() / initSchema(). Users expect this CLI
-  // to handle everything (Issue 1 from v0.18.0 field report; #1530). With
-  // --yes/--non-interactive we apply them here; otherwise we warn and make
-  // sure the run does NOT report "All migrations up to date" with exit 0.
-  let schemaBehind = false;
-  let dbProbe: DbProbeOutcome = { status: 'skipped', reason: 'no probe attempted' };
-  try {
-    const { LATEST_VERSION } = await import('../core/migrate.ts');
-    const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
-    const { createEngine } = await import('../core/engine-factory.ts');
-    const cfg = lc();
-    if (cfg) {
-      // v0.36.x #1100: skip the pre-flight warning on PGLite. The probe
-      // briefly holds the single-writer lock; if a downstream orchestrator
-      // phase spawns `gbrain init --migrate-only` as a subprocess (the
-      // legacy v0.11.0 phase A path), the child can race the parent's
-      // lock release and hit a 30s timeout. The orchestrators handle
-      // schema lifecycle internally on PGLite (phase A routes in-process),
-      // so the warning here adds no information for PGLite users.
-      const skipPreflight = cfg.engine === 'pglite';
-      if (skipPreflight) {
-        dbProbe = { status: 'skipped', reason: 'pglite manages schema in-process' };
-      } else {
-        const eng = await createEngine(toEngineConfig(cfg));
-        await eng.connect(toEngineConfig(cfg));
-        const verStr = await eng.getConfig('version');
-        const schemaVer = parseInt(verStr || '1', 10);
-        dbProbe = { status: 'connected', schemaVer, latest: LATEST_VERSION };
-        schemaBehind = await resolveSchemaBehind({
-          schemaVer,
-          latest: LATEST_VERSION,
-          // --list and --dry-run are read-only surfaces: never mutate schema
-          // even when combined with --yes/--non-interactive.
-          autoApply: (cli.yes || cli.nonInteractive) && !cli.dryRun && !cli.list,
-          run: () => migrateSchema(eng, schemaVer),
-        });
-        await eng.disconnect();
-      }
-    }
-  } catch (err) {
-    // Non-fatal by default: if DB is unreachable, orchestrator migrations can
-    // still run their filesystem-only phases. #4364: keep the (redacted)
-    // reason so --list/--dry-run say UNREACHABLE and --require-db fails hard —
-    // connect errors are exactly what users paste into issues and CI logs.
-    const { redactUrlsInText } = await import('../core/url-redact.ts');
-    const { redactConnectionInfo } = await import('../core/audit/redact-connection-info.ts');
-    dbProbe = {
-      status: 'unreachable',
-      reason: redactConnectionInfo(redactUrlsInText(err instanceof Error ? err.message : String(err))),
-    };
-  }
+  // Pre-flight: schema drift (#1530) and the DB probe (#4364); see preflightSchema.
+  const { schemaBehind, dbProbe } = await preflightSchema(cli, migrateSchema);
 
   const completed = loadCompletedMigrations();
   const idx = indexCompleted(completed);
@@ -802,6 +751,71 @@ async function runLockedMigrations(
 
   if (!failed && schemaBehind) doc.schema_behind = true;
   return failed ? 1 : undefined;
+}
+
+/**
+ * Pre-flight for runLockedMigrations: detect schema migrations (migrate.ts)
+ * being behind and probe the database (moved out of runLockedMigrations to
+ * keep it under the function-size limit; behaviour unchanged).
+ */
+async function preflightSchema(
+  cli: ApplyMigrationsArgs,
+  migrateSchema: (eng: BrainEngine, from: number) => Promise<{ applied: number; current: number }>,
+): Promise<{ schemaBehind: boolean; dbProbe: DbProbeOutcome }> {
+  let schemaBehind = false;
+  let dbProbe: DbProbeOutcome = { status: 'skipped', reason: 'no probe attempted' };
+  // Detect schema migrations (migrate.ts) being behind.
+  // apply-migrations historically ran orchestrator migrations only; schema
+  // migrations run via connectEngine() / initSchema(). Users expect this CLI
+  // to handle everything (Issue 1 from v0.18.0 field report; #1530). With
+  // --yes/--non-interactive we apply them here; otherwise we warn and make
+  // sure the run does NOT report "All migrations up to date" with exit 0.
+  try {
+    const { LATEST_VERSION } = await import('../core/migrate.ts');
+    const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
+    const { createEngine } = await import('../core/engine-factory.ts');
+    const cfg = lc();
+    if (cfg) {
+      // v0.36.x #1100: skip the pre-flight warning on PGLite. The probe
+      // briefly holds the single-writer lock; if a downstream orchestrator
+      // phase spawns `gbrain init --migrate-only` as a subprocess (the
+      // legacy v0.11.0 phase A path), the child can race the parent's
+      // lock release and hit a 30s timeout. The orchestrators handle
+      // schema lifecycle internally on PGLite (phase A routes in-process),
+      // so the warning here adds no information for PGLite users.
+      const skipPreflight = cfg.engine === 'pglite';
+      if (skipPreflight) {
+        dbProbe = { status: 'skipped', reason: 'pglite manages schema in-process' };
+      } else {
+        const eng = await createEngine(toEngineConfig(cfg));
+        await eng.connect(toEngineConfig(cfg));
+        const verStr = await eng.getConfig('version');
+        const schemaVer = parseInt(verStr || '1', 10);
+        dbProbe = { status: 'connected', schemaVer, latest: LATEST_VERSION };
+        schemaBehind = await resolveSchemaBehind({
+          schemaVer,
+          latest: LATEST_VERSION,
+          // --list and --dry-run are read-only surfaces: never mutate schema
+          // even when combined with --yes/--non-interactive.
+          autoApply: (cli.yes || cli.nonInteractive) && !cli.dryRun && !cli.list,
+          run: () => migrateSchema(eng, schemaVer),
+        });
+        await eng.disconnect();
+      }
+    }
+  } catch (err) {
+    // Non-fatal by default: if DB is unreachable, orchestrator migrations can
+    // still run their filesystem-only phases. #4364: keep the (redacted)
+    // reason so --list/--dry-run say UNREACHABLE and --require-db fails hard —
+    // connect errors are exactly what users paste into issues and CI logs.
+    const { redactUrlsInText } = await import('../core/url-redact.ts');
+    const { redactConnectionInfo } = await import('../core/audit/redact-connection-info.ts');
+    dbProbe = {
+      status: 'unreachable',
+      reason: redactConnectionInfo(redactUrlsInText(err instanceof Error ? err.message : String(err))),
+    };
+  }
+  return { schemaBehind, dbProbe };
 }
 
 function requireDbError(dbProbe: DbProbeOutcome): OperationError {
