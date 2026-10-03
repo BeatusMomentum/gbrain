@@ -362,7 +362,7 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
         "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
@@ -375,7 +375,7 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
         "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",
@@ -388,7 +388,7 @@
       "exitCode": 1,
       "stderr": [
         "GBRAIN_DB_ACCESS conn_refused",
-        "Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
+        "Error [database_error]: Cannot connect to database: connect ECONNREFUSED  <REDACTED:ipv4>:1. Fix: Check your connection URL in ~/.gbrain/config.json",
         "Connection refused. If this is a Supabase direct URL (db.<ref>...:5432), switch to the transaction pooler (port 6543): gbrain db-repair can rewrite it. Run: gbrain db-repair"
       ],
       "stderrFirstLine": "GBRAIN_DB_ACCESS conn_refused",

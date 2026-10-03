@@ -43,6 +43,7 @@
   "test/brainstorm/checkpoint.serial.test.ts": 0,
   "test/check-update-refresh.serial.test.ts": 0,
   "test/checkpoint-harvest.serial.test.ts": 9,
+  "test/cli-error-render.serial.test.ts": 3,
   "test/cli-help-without-brain.serial.test.ts": 16,
   "test/cli-json-guard.serial.test.ts": 4,
   "test/cli-util-prompt.serial.test.ts": 3,

@@ -239,7 +239,7 @@ describe('CLI dispatch integration', () => {
     expect(stdout.trim()).toMatch(/^gbrain \d+\.\d+\.\d+/);
   });
 
-  test('unknown command prints error and exits 1', async () => {
+  test('unknown command prints error and exits 2 (usage)', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', 'notacommand'], {
       cwd: new URL('..', import.meta.url).pathname,
       stdout: 'pipe',
@@ -248,7 +248,7 @@ describe('CLI dispatch integration', () => {
     const stderr = await new Response(proc.stderr).text();
     const exitCode = await proc.exited;
     expect(stderr).toContain('Unknown command: notacommand');
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(2);
   });
 
   test('per-command --help prints usage without DB connection', async () => {

@@ -1018,6 +1018,14 @@ More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/wri
 |---|---|---|---|---|---|---|
 | A configured model is not allowed under models strict mode. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### no_brain
+
+<a id="no_brain"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No brain is configured on this machine. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run `gbrain init --pglite --no-embedding` to create a local keyless brain (or `gbrain init --help` for hosted and Postgres options). | agent | `repeat the read that failed` | 1 | no |
+
 ### no_pricing
 
 <a id="no_pricing"></a>
@@ -1161,6 +1169,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This caller is not authorized for the operation. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### pglite_busy
+
+<a id="pglite_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another gbrain process holds this PGLite brain's single-writer lock. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait for the current command or server to close, then retry. Do not remove a live lock. | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `timeout`, `live_serve`.
 
 ### plan_output_failed
 
@@ -1397,6 +1415,14 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The runtime requirements exceed the owner-approved publication policy. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### requires_local_engine
+
+<a id="requires_local_engine"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This command needs the brain's local database, and this install is a thin client of a remote brain. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
 ### response_too_large
 
@@ -1683,6 +1709,14 @@ More: [docs/guides/write-refusals.md#sync_in_progress](../../docs/guides/write-r
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | An unclassified failure (legacy StructuredError fallback code). | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### unknown_command
+
+<a id="unknown_command"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The CLI has no command by that name. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run `gbrain --help` for the command list. | agent | `repeat the read that failed` | 2 | no |
 
 ### unknown_flag
 

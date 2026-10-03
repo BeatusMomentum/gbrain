@@ -99,7 +99,7 @@ test('a query value spelling the policy flag does not opt a legacy thin call int
 
 test('explicit thin brain selection fails before remote or local work', async () => {
   const result = await thinCall('postgres', ['--budget-policy', 'query_first', '--brain', 'unregistered-example', '--json']);
-  expect(result.exitCode).toBe(1);
+  expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain('--brain is not supported on a thin-client install');
   expect(result.calls).toEqual([]);
   expect(result.localStoreCreated).toBe(false);

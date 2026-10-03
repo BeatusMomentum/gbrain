@@ -26,8 +26,6 @@ import {
   shouldEmitDbAccessMarker,
 } from './core/pg-access-classify.ts';
 import { resolveBrainId as resolveBrainIdForDbMarker } from './core/brain-resolver.ts';
-import { redactUrlsInText as redactUrlsForFatal } from './core/url-redact.ts';
-import { redactConnectionInfo as redactConnInfoForFatal } from './core/audit/redact-connection-info.ts';
 import type { GBrainConfig } from './core/config.ts';
 import type { AIGatewayConfig } from './core/ai/types.ts';
 import type { BrainEngine } from './core/engine.ts';
@@ -39,6 +37,8 @@ import { currentCliWriteWait } from './core/persistence/write-wait.ts';
 import { isScopeErrorCode } from './core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { agentJsonGuardMode } from './cli/json-guard.ts';
+import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeFatalCliError } from './cli/cli-error.ts';
+import { opError } from './core/ops/contract.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
@@ -456,18 +456,14 @@ async function main() {
     const migrationError = migrationCliArgumentError(command, subArgs, rawArgs);
     const unknown = migrationError?.flag ?? validateCommandFlags(command, subArgs);
     if (unknown) {
-      // Message contract shared with init.ts's in-handler check (which this
-      // pre-dispatch validator now reaches first): lowercase 'unknown flag'
-      // on stderr; --json callers get the structured error on stdout with
-      // reason 'invalid_flag' (pinned by test/init-migrate-only.test.ts).
+      // Message contract shared with init.ts's in-handler check: lowercase
+      // 'unknown flag' on stderr; --json gets one envelope whose legacy keys
+      // (status, reason 'invalid_flag', message) are pinned by
+      // test/init-migrate-only.test.ts. D1/D3: exit 2 + did-you-mean.
       const message = migrationError?.message ?? `unknown flag ${unknown} for 'gbrain ${command}'`;
-      // Both --json spellings get the structured envelope (--json=false opts out).
-      if (subArgs.some(a => a === '--json' || (a.startsWith('--json=') && a !== '--json=false'))) {
-        process.stdout.write(JSON.stringify({ status: 'error', reason: 'invalid_flag', message }) + '\n');
-      }
-      console.error(`gbrain ${command}: ${message}`);
-      console.error(`Run: gbrain ${command} --help`);
-      process.exit(1);
+      const flagOp = cliOps.get(command) ?? cliAliases.get(command);
+      const known = CLI_FLAG_REGISTRY[command] ?? Object.keys(flagOp?.params ?? {}).map(k => `--${k.replace(/_/g, '-')}`);
+      exitCliError(await unknownFlagError(command, unknown, message, known), command, { legacy: { status: 'error', reason: 'invalid_flag', message } });
     }
   }
 
@@ -500,11 +496,7 @@ async function main() {
 async function runSharedOperation(command: string, subArgs: string[], cliOpts: CliOptions): Promise<void> {
   // Shared operations (fall through to aliases, e.g. link-add -> add_link)
   const op = cliOps.get(command) ?? cliAliases.get(command);
-  if (!op) {
-    console.error(`Unknown command: ${command}`);
-    console.error('Run gbrain --help for available commands.');
-    process.exit(1);
-  }
+  if (!op) exitCliError(usageError(`Unknown command: ${command}`, 'Run `gbrain --help` for available commands.', { code: 'unknown_command' }), command);
 
   // v0.31.1 (Issue #734, CDX-1): parse CLI args BEFORE engine connect so
   // the routing seam below can decide local-vs-remote without paying a
@@ -532,8 +524,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       params.image_mime = mime;
       void path;
     } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
+      exitCliError(usageError(err instanceof Error ? err.message : String(err), 'Pass --image a readable PNG/JPEG/WebP/GIF path.'), command);
     }
   }
 
@@ -548,8 +539,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       const cliName = op.cliHints?.name || op.name;
       const positional = op.cliHints?.positional || [];
       const usage = positional.map(p => `<${p}>`).join(' ');
-      console.error(`Usage: gbrain ${cliName} ${usage}`);
-      process.exit(1);
+      exitCliError(usageError(`Missing required parameter '${key}' for 'gbrain ${cliName}'.`, `Usage: gbrain ${cliName} ${usage}`.trimEnd() + ` (see \`gbrain ${cliName} --help\`).`), command);
     }
   }
 
@@ -568,13 +558,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // as applyThinClientSourceScope's --source refusal). Ambient tiers
     // (GBRAIN_BRAIN_ID / .gbrain-mount) are ignored here, matching the
     // source axis's ambient-with-nowhere-to-send behavior.
-    if (cliOpts.brain) {
-      console.error(
-        '--brain is not supported on a thin-client install: the remote server is a single brain. ' +
-        'Remove the flag, or run from a machine with local mounts (gbrain mounts list).',
-      );
-      process.exit(1);
-    }
+    if (cliOpts.brain) exitCliError(usageError(THIN_CLIENT_BRAIN_FLAG_MESSAGE, 'Remove --brain, or run from a machine with local mounts (`gbrain mounts list`).'), command);
     // #2098: the local path resolves --source / GBRAIN_SOURCE / .gbrain-source
     // inside makeContext (ctx.sourceId), which this route never reaches — so
     // scope must be mapped onto the op's source_id wire param before the call.
@@ -582,8 +566,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     try {
       ambientScope = applyThinClientSourceScope(op, params);
     } catch (e: unknown) {
-      console.error(e instanceof Error ? e.message : String(e));
-      process.exit(1);
+      exitCliError(e, command);
     }
     await runThinClientRouted(op, params, cfgPre!, cliOpts, ambientScope);
     return;
@@ -594,8 +577,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   try {
     assertSingleSourceScopeFlag(op, params);
   } catch (e: unknown) {
-    console.error(e instanceof Error ? e.message : String(e));
-    process.exit(1);
+    exitCliError(e, command);
   }
 
   // The live PGLite owner exposes canonical operations over a dedicated
@@ -716,9 +698,9 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // bounds a hung one.
     // #5232: the reporter owns the write verdict; never overwrite it.
     const { reportPersistenceCliError } = await import('./commands/persistence-delegate.ts');
-    if (!await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
-      console.error(e instanceof Error ? e.message : String(e));
-      setCliExitVerdict(1);
+    const receipt = !(e instanceof OperationError) || !!e.writeRequest;
+    if (!receipt || !await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
+      setCliExitVerdict(writeCliError(e, command));
     }
   } finally {
     // 1s per-sink drain budget: read paths with no pending work pay the ~0ms
@@ -803,6 +785,13 @@ async function runThinClientRouted(
         process.off('SIGINT', onSigint);
         process.exit(sigintController.signal.aborted ? 130 : currentExitCode());
       }
+      // D1: --json gets the one v1 envelope; a server tool error renders its
+      // own code/fix. Transport failures keep their specific human text.
+      const scopeDenied = isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason);
+      if (params.json === true || (e.reason === 'tool_error' && !scopeDenied)) {
+        process.off('SIGINT', onSigint);
+        exitCliError(e, op.cliHints?.name ?? op.name);
+      }
       const url = cfg.remote_mcp!.mcp_url;
       switch (e.reason) {
         case 'config':
@@ -834,14 +823,9 @@ async function runThinClientRouted(
           }
           break;
         case 'tool_error':
-          if (isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason)) {
-            console.error('Missing OAuth scope on this client.');
-            console.error('On the host, re-register the client with broader scopes:');
-            console.error('  gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
-          } else {
-            console.error(e.message);
-            console.error('Run `gbrain remote doctor` if this persists.');
-          }
+          console.error('Missing OAuth scope on this client.');
+          console.error('On the host, re-register the client with broader scopes:');
+          console.error('  gbrain auth register-client <name> --grant-types client_credentials --scopes read,write,admin');
           break;
         case 'parse':
           console.error('Server response was malformed. Run `gbrain remote doctor`.');
@@ -858,11 +842,10 @@ async function runThinClientRouted(
       process.exit(1);
     }
     // Defense in depth: callRemoteTool's contract is that everything is
-    // RemoteMcpError. If a plain Error escapes, render it generically and
-    // exit 1 — but this should never happen post-CDX-4.
-    console.error(e instanceof Error ? e.message : String(e));
+    // RemoteMcpError. If a plain Error escapes, render it generically — but
+    // this should never happen post-CDX-4.
     process.off('SIGINT', onSigint);
-    process.exit(1);
+    exitCliError(e, op.cliHints?.name ?? op.name);
   } finally {
     process.off('SIGINT', onSigint);
   }
@@ -1152,8 +1135,7 @@ export async function applyStdinParam(
     if (content.trim() === '') return;
     const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(content, 'utf-8') > MAX_STDIN) {
-      console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
-      process.exit(1);
+      exitCliError(opError('payload_too_large', `stdin content exceeds ${MAX_STDIN} bytes.`, 'Split the content into smaller inputs.'), op.cliHints?.name ?? op.name);
     }
     params[op.cliHints.stdin] = content;
   }
@@ -1883,17 +1865,18 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
  */
 function refuseThinClient(command: string, mcpUrl: string): never {
   const hint = THIN_CLIENT_REFUSE_HINTS[command];
-  if (hint) {
-    console.error(`\`gbrain ${command}\` is not routable. ${hint}`);
-    console.error(`(thin-client of ${mcpUrl})`);
-  } else {
-    console.error(
-      `\`gbrain ${command}\` requires a local engine. This install is a thin client of ${mcpUrl}.\n` +
-      `Run \`${command}\` on the remote host, or use the corresponding MCP tool from your agent.`,
-    );
-  }
-  process.exit(1);
+  const message = hint
+    ? `\`gbrain ${command}\` is not routable from this thin client of ${mcpUrl}; run it on the brain host.`
+    : `\`gbrain ${command}\` requires a local engine. This install is a thin client of ${mcpUrl}.`;
+  exitCliError(opError('requires_local_engine', message,
+    hint ?? `Run \`${command}\` on the remote host, or use the corresponding MCP tool from your agent.`, {
+      ...(hint ? { why: hint } : {}),
+      fix: { argv: ['gbrain', command], consent: [], actor: 'host_admin', requires_exclusive: false,
+        why: 'The brain database lives on the brain host; this machine only forwards MCP calls.' },
+    }), command);
 }
+
+const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
 
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */
 const CLI_DISPATCH_CONTEXT: CliDispatchContext = {
@@ -2411,8 +2394,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
       }
     } catch (e) {
       // A bad --hard-deadline value throws here (same posture as --timeout).
-      console.error(e instanceof Error ? e.message : String(e));
-      process.exit(1);
+      exitCliError(usageError(e instanceof Error ? e.message : String(e), 'Pass --hard-deadline a duration such as 30m or 2h.'), command);
     }
   }
 
@@ -2519,11 +2501,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   if (command === 'recall' && isThinClient(loadConfig())) {
     const { hasRecallBudgetPolicy, runRecall } = await import('./commands/recall.ts');
     if (hasRecallBudgetPolicy(args)) {
-      if (getCliOptions().brain) {
-        console.error('--brain is not supported on a thin-client install: the remote server is a single brain. ' +
-          'Remove the flag, or run from a machine with local mounts (gbrain mounts list).');
-        process.exit(1);
-      }
+      if (getCliOptions().brain) exitCliError(usageError(THIN_CLIENT_BRAIN_FLAG_MESSAGE, 'Remove --brain, or run from a machine with local mounts (`gbrain mounts list`).'), command);
       await runRecall(null as never, args);
       return null;
     }
@@ -2737,8 +2715,10 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       }
       if (d?.reason === 'env_shadowed') console.error(d.remediation);
     } catch { /* marker is best-effort — the message below always prints */ }
-    console.error('No brain configured. Run: gbrain init');
-    process.exit(1);
+    exitCliError(opError('no_brain', 'No brain configured. Run: gbrain init', 'Run `gbrain init --pglite --no-embedding` for a local keyless brain, or `gbrain init --help` for hosted and Postgres options.', {
+      fix: { argv: ['gbrain', 'init', '--pglite', '--no-embedding'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Creates a local PGLite brain with no API keys; nothing leaves this machine.' },
+    }), cliCommandOf());
   }
 
   // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.
@@ -3135,42 +3115,17 @@ if (import.meta.main) {
       if (shouldForceExitAfterMain()) flushThenExit(currentExitCode());
     },
     (e) => {
-      if (e?.code === 'pglite_busy' && process.argv.includes('--json')) {
-        console.log(JSON.stringify({ error: 'pglite_busy', retryable: true, reason: e.reason,
-          next_action: 'Wait for the current command or server to close, then retry. Do not remove a live lock.' }));
-        flushThenExit(1);
-        return;
-      }
-      // db-availability loop: this choke point covers CONNECT-TIME failures
-      // for every engine-needing command. The happy path redacts (the old
-      // bare `e.message` was itself an unredacted-DSN surface); DB-access
-      // failures additionally emit the GBRAIN_DB_ACCESS marker the bundled
-      // skills/db-repair skill literal-matches. Everything is wrapped — a
-      // classifier bug must never make error reporting worse. Honest caveat:
-      // the two last-resort fallbacks below print the RAW message, reachable
-      // only when a redactor itself threw — losing the error entirely would
-      // be worse than the residual leak risk on that path.
+      // D1: the fatal seam renders through renderCliError (one --json
+      // envelope on stdout; human `Error [code]` / `Fix:` on stderr), keeping
+      // the pglite_busy keys and the GBRAIN_DB_ACCESS marker. A renderer
+      // fault must never lose the error, so the raw message is the fallback.
+      let exitCode = 1;
       try {
-        const rawMsg = (e && (e as Error).message) || String(e);
-        let printed = false;
-        try {
-          const safeMsg = redactConnInfoForFatal(redactUrlsForFatal(rawMsg));
-          const d = classifyDbAccessError(e, { url: loadConfig()?.database_url ?? null, brainId: dbMarkerBrainId() });
-          if (d.reason !== 'unknown' && shouldEmitDbAccessMarker()) {
-            console.error(formatDbMarker(d));
-          }
-          if (d.reason !== 'unknown') {
-            console.error(`${safeMsg}\n${d.remediation} Run: gbrain db-repair`);
-          } else {
-            console.error(safeMsg);
-          }
-          printed = true;
-        } catch { /* classifier/redactor failure — fall through */ }
-        if (!printed) console.error(rawMsg);
+        exitCode = writeFatalCliError(e, { dbUrl: loadConfig()?.database_url ?? null, brainId: dbMarkerBrainId() });
       } catch {
         console.error(e?.message || e);
       }
-      flushThenExit(1);
+      flushThenExit(exitCode);
     },
   );
 }
