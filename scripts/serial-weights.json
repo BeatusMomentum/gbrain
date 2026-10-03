@@ -47,6 +47,7 @@
   "test/cli-error-render.serial.test.ts": 3,
   "test/cli-help-curated.serial.test.ts": 5,
   "test/cli-help-without-brain.serial.test.ts": 21,
+  "test/cli-json-commands.serial.test.ts": 37,
   "test/cli-json-guard.serial.test.ts": 17,
   "test/cli-util-prompt.serial.test.ts": 3,
   "test/code-callers-pin.serial.test.ts": 11,

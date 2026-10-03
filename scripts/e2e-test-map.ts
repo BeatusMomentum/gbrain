@@ -58,6 +58,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 5 shared commit: preview-bound approved sets in op_checkpoints.
   "src/core/persistence/preview-approval.ts": ["test/e2e/preview-approval-postgres.test.ts", "test/e2e/minions-legacy-journey-postgres.test.ts"],
   // #5157: the legacy recovery commands and doctor check.
+  // Agent operator wave D2: the Postgres-only --json successes (db-repair healthy, supervisor --detach).
+  "src/commands/db-repair.ts": ["test/e2e/cli-json-commands-postgres.test.ts"],
+  "src/commands/jobs/supervisor.ts": ["test/e2e/cli-json-commands-postgres.test.ts"],
   "src/commands/jobs/authorize-legacy.ts": ["test/e2e/minions-legacy-journey-postgres.test.ts"],
   "src/commands/jobs/cancel.ts": ["test/e2e/minions-legacy-journey-postgres.test.ts"],
   "src/commands/doctor/checks/legacy-job-authority.ts": ["test/e2e/minions-legacy-journey-postgres.test.ts"],
