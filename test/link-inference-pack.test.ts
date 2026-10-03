@@ -141,14 +141,16 @@ import { readFileSync } from 'node:fs';
 import { parseYamlMini } from '../src/core/schema-pack/index.ts';
 import { inferNerLinkType } from '../src/core/extract-ner.ts';
 import { extractPageLinks } from '../src/core/link-extraction.ts';
+import { bundledPackPath } from '../src/core/schema-pack/bundled-assets.ts';
 
 describe('#2117: gbrain-base-v2 NER verb routes', () => {
-  const p = new URL('../src/core/schema-pack/base/gbrain-base-v2.yaml', import.meta.url);
-  const v2 = parseSchemaPackManifest(parseYamlMini(readFileSync(p, 'utf-8')), {
-    path: p.pathname,
-  });
-  const p1 = new URL('../src/core/schema-pack/base/gbrain-base.yaml', import.meta.url);
-  const v1 = parseSchemaPackManifest(parseYamlMini(readFileSync(p1, 'utf-8')), { path: p1.pathname });
+  // The bundled packs, loaded from the asset path the runtime resolves.
+  const bundled = (name: string) => {
+    const path = bundledPackPath(name)!;
+    return parseSchemaPackManifest(parseYamlMini(readFileSync(path, 'utf-8')), { path });
+  };
+  const v2 = bundled('gbrain-base-v2');
+  const v1 = bundled('gbrain-base');
 
   test('founded/invested_in/advises/works_at resolve via pack regexes for NER', () => {
     expect(inferNerLinkType(v2, 'person', 'co-founded Acme Corp last year')).toBe('founded');

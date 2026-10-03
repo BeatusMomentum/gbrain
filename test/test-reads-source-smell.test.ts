@@ -92,7 +92,6 @@ const GRANDFATHERED: Record<string, number> = {
   'fix-wave-structural.test.ts': 20,
   'jobs-embed-background-parity.serial.test.ts': 1,
   'lens-pack-manifests.test.ts': 1,
-  'link-inference-pack.test.ts': 1,
   'link-source-check-repair.test.ts': 1,
   'longmemeval-embed-cache.test.ts': 1,
   'loops-extract-wiring.test.ts': 1,
