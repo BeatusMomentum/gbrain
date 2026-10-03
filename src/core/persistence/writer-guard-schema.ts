@@ -1,7 +1,11 @@
 import { ROW_ATTRIBUTION_COLUMNS } from './attribution-schema.ts';
 const ROW_ATTRIBUTION_KEYS = `ARRAY[${ROW_ATTRIBUTION_COLUMNS.map(column => `'${column}'`).join(',')}]`;
-/** Defense in depth for inventoried legacy writers. Manual SQL is outside the protocol. */
-export const MANAGED_WRITER_GUARD_SQL = `
+/** Guarded tables with no canonical source_id: their source is always their page's (#5983). */
+const PAGE_CHILD_TABLES = ['tags', 'timeline_entries', 'takes'];
+const GUARDED_TABLES = ['pages', 'tags', 'slug_aliases', 'page_aliases', 'facts', 'takes', 'timeline_entries', 'sources'];
+const sqlList = (names: string[]) => names.map(name => `'${name}'`).join(',');
+/** The guard function alone: replacing it takes no table lock (v197). */
+export const MANAGED_WRITER_GUARD_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_require_managed_writer() RETURNS trigger LANGUAGE plpgsql AS $fn$
 DECLARE target_source text; old_source text; row_data jsonb; old_data jsonb; allowed jsonb;
 BEGIN
@@ -37,11 +41,12 @@ BEGIN
     IF (row_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at'])
       = (old_data - ARRAY['embedding','embedded_at','last_retrieved_at','retrieval_count','updated_at']) THEN RETURN NEW; END IF;
   END IF;
-  IF row_data ? 'source_id' THEN target_source := row_data->>'source_id';
-  ELSE SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
-  IF TG_OP='UPDATE' THEN
-    IF old_data ? 'source_id' THEN old_source := old_data->>'source_id';
-    ELSE SELECT source_id INTO old_source FROM pages WHERE id=(old_data->>'page_id')::integer; END IF;
+  IF TG_TABLE_NAME NOT IN (${sqlList(PAGE_CHILD_TABLES)}) THEN
+    target_source := row_data->>'source_id'; old_source := old_data->>'source_id';
+  END IF;
+  IF target_source IS NULL THEN SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
+  IF TG_OP='UPDATE' AND old_source IS NULL THEN
+    SELECT source_id INTO old_source FROM pages WHERE id=(old_data->>'page_id')::integer;
   END IF;
   -- Cascaded projection removal after the already-guarded parent deletion.
   IF target_source IS NULL AND TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -51,10 +56,13 @@ BEGIN
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $fn$;
+`;
+/** Defense in depth for inventoried legacy writers. Manual SQL is outside the protocol. */
+export const MANAGED_WRITER_GUARD_SQL = `${MANAGED_WRITER_GUARD_FUNCTION_SQL}
 DO $body$
 DECLARE target text;
 BEGIN
-  FOREACH target IN ARRAY ARRAY['pages','tags','slug_aliases','page_aliases','facts','takes','timeline_entries','sources'] LOOP
+  FOREACH target IN ARRAY ARRAY[${sqlList(GUARDED_TABLES)}] LOOP
     IF to_regclass(target) IS NOT NULL THEN
       EXECUTE format('DROP TRIGGER IF EXISTS managed_writer_guard ON %I',target);
       EXECUTE format('CREATE TRIGGER managed_writer_guard BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()',target);
