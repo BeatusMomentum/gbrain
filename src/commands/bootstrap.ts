@@ -97,6 +97,7 @@ import {
   writeOpencodeMcpEntry,
 } from '../core/bootstrap/opencode-json.ts';
 import { promptLine } from '../core/cli-util.ts';
+import { isInteractive } from '../core/interaction.ts';
 import {
   appendInstallLog,
   gitOriginUrl,
@@ -1746,7 +1747,9 @@ async function runHarness(rest: string[], home: string, runner: ExecRunner, dete
     // Fallback only — the flag itself is parsed (and error-checked) once, by
     // parseHarnessArgs; flags.gbrainBin wins inside applyHarness.
     gbrainBin: resolveGbrainBin(),
-    isTTY: process.stdout.isTTY === true,
+    // C6: a prompt only when a human can answer it (agent markers, CI and
+    // GBRAIN_NON_INTERACTIVE count as no human); promptLine reads EOF as ''.
+    isTTY: isInteractive(),
     prompt: promptLine,
     ...harnessDetectDeps(detect),
   };

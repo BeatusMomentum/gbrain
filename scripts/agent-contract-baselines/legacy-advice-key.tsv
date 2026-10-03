@@ -21,8 +21,6 @@ src/commands/hook.ts	2
 src/commands/loops.ts	1
 src/commands/mcp-admin.ts	2
 src/commands/mcp.ts	2
-src/commands/reindex-code.ts	1
-src/commands/reindex-search-vector.ts	1
 src/commands/serve-http-clients.ts	1
 src/commands/serve-http-grants.ts	2
 src/commands/serve-http-oauth.ts	1
