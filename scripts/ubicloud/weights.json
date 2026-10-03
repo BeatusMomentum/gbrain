@@ -2454,6 +2454,7 @@
   "unit:test/test-backends.test.ts": 161,
   "unit:test/test-reads-source-smell.test.ts": 364,
   "unit:test/text-safe.test.ts": 211,
+  "unit:test/thin-client-connect-engine-guard.test.ts": 20000,
   "unit:test/thin-client-launcher-routing.test.ts": 1631,
   "unit:test/thin-client-routing-audit.test.ts": 163,
   "unit:test/thin-client-routing.test.ts": 343,

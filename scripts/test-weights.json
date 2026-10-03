@@ -1942,6 +1942,7 @@
   "test/test-backends.test.ts": 1,
   "test/test-reads-source-smell.test.ts": 2296,
   "test/text-safe.test.ts": 7,
+  "test/thin-client-connect-engine-guard.test.ts": 20000,
   "test/thin-client-launcher-routing.test.ts": 1455,
   "test/thin-client-routing-audit.test.ts": 46,
   "test/thin-client-routing.test.ts": 20,

@@ -493,7 +493,9 @@ const ROWS: Row[] = [
         protocol_version: d.protocol_version === 1 ? 1 : undefined,
         write_request: d.write_request, write_error: typeof d.write_error === 'string' ? d.write_error : undefined,
         notices: Array.isArray(d.notices) ? d.notices as Notice[] : undefined,
-        fix: d.fix && typeof d.fix === 'object' ? d.fix as Action : undefined,
+        fix: d.fix && typeof d.fix === 'object' ? d.fix as Action
+          : e.reason !== 'tool_error' ? { argv: ['gbrain', 'remote', 'doctor'], consent: [], actor: 'agent', requires_exclusive: false,
+            why: 'remote doctor checks the remote brain URL, OAuth discovery and credentials from this machine.' } : undefined,
       };
     },
   },
