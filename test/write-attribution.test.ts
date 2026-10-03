@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -22,7 +22,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
-import { registerLocalWriter, readLocalWriter } from '../src/core/persistence/identity.ts';
+import { localHostId, registerLocalWriter, readLocalWriter } from '../src/core/persistence/identity.ts';
 import { getWriteRequest } from '../src/core/persistence/journal.ts';
 import { submitRememberMutation, submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -415,15 +415,19 @@ describe('write attribution scopes', () => {
 });
 
 describe('maintenance attribution', () => {
-  test('names the local CLI registration, or the host when this installation has none', async () => {
+  test('names the local CLI registration, else the host, and never mints an identity file', async () => {
     for (const engine of engines) {
       const brain = await managedBrain(engine);
       expect(await engine.transaction(tx => maintenanceAttribution(tx))).toEqual({ requestId: null, principal: brain.principals.local });
       const elsewhere = mkdtempSync(join(home, 'unregistered-'));
-      const fallback = await withEnv({ GBRAIN_HOME: elsewhere }, () => engine.transaction(tx => maintenanceAttribution(tx)));
-      expect(fallback.requestId).toBeNull();
-      expect(fallback.principal.kind).toBe('application');
-      expect(fallback.principal.id).toMatch(/^host:[0-9a-f-]{36}$/);
+      const unregistered = await withEnv({ GBRAIN_HOME: elsewhere }, () => engine.transaction(tx => maintenanceAttribution(tx)));
+      expect(unregistered).toEqual({ requestId: null, principal: { kind: 'application', id: 'host:unregistered' } });
+      expect(readdirSync(elsewhere)).toEqual([]);
+      const fallback = await withEnv({ GBRAIN_HOME: elsewhere }, async () => {
+        const hostId = localHostId();
+        return { hostId, attribution: await engine.transaction(tx => maintenanceAttribution(tx)) };
+      });
+      expect(fallback.attribution).toEqual({ requestId: null, principal: { kind: 'application', id: `host:${fallback.hostId}` } });
     }
   });
 });

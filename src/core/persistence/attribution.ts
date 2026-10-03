@@ -1,4 +1,4 @@
-import { currentVerifiedLocalWriter, localHostId, readLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { withWriteAttribution } from './context.ts';
@@ -27,7 +27,9 @@ export function principalAttribution(principal: Principal): WriteAttribution {
  * (server-side owner work), else this installation's local CLI registration,
  * else the host itself when the installation has no usable registration.
  * Attribution records the actor and never authorizes, so an unreadable
- * registration falls back to the host instead of failing the write. The
+ * registration falls back to the host instead of failing the write, and it
+ * never mints an identity file: an installation without one (an ephemeral
+ * demo brain, a first direct import) is recorded as `host:unregistered`. The
  * registration found is memoized per engine (an in-process rotation keeps
  * naming the registration this process started with): per-page maintenance
  * loops would otherwise repeat a file read and two queries for every page.
@@ -43,7 +45,7 @@ export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAt
   try { return principalAttribution({ kind: 'local_cli', id: await registration }); }
   catch {
     installationRegistration.delete(engine);
-    return principalAttribution({ kind: 'application', id: `host:${localHostId()}` });
+    return principalAttribution({ kind: 'application', id: `host:${existingLocalHostId() ?? 'unregistered'}` });
   }
 }
 const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();

@@ -161,8 +161,11 @@ scopes keeps `NULL` attribution, which reads as "unrecorded".
   principal with `write_request_id` NULL: direct markdown, code and image
   imports (every `importFromContent` caller without `prepare`), the
   `extract_facts` page reconcile, `extract-takes` and the
-  `gbrain repair stale-atoms --apply` retirement. The direct writers listed
-  under "unattributed" below still write without an actor.
+  `gbrain repair stale-atoms --apply` retirement. The maintenance principal is
+  the local CLI registration (`local_cli`), else this host's identity
+  (`application`, `host:<id>`), else `host:unregistered`: attribution never
+  creates an identity file. The direct writers listed under "unattributed"
+  below still write without an actor.
 
 Agents: treat `NULL` attribution on an unmanaged brain as "written by a legacy
 maintenance path", not as evidence of tampering. To get attribution for a
