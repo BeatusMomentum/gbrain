@@ -238,8 +238,9 @@ test('12. an unmanaged brain refuses refresh_not_managed naming gbrain sync, on 
     expect(JSON.parse(out.join('\n'))).toMatchObject({ status: 'refused', code: 'refresh_not_managed', fix: `gbrain sync --source ${f.alpha}`,
       docs: 'docs/guides/write-refusals.md#refresh_not_managed' });
     expect(currentExitCode()).toBe(1);
+  } finally {
     _resetCliExitVerdictForTests();
-  } finally { await f.engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
+    process.exitCode = 0; await f.engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
 }), 120_000);
 
 test('13. drain starvation: a writer every 50 ms is refused during draining and the refresh completes inside --wait-drain', () => each(async f => {
