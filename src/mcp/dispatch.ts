@@ -15,6 +15,7 @@ import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { isCallable } from '../core/ops/callable.ts';
+import { mutedNoticeCodes, processNoticeLedger, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
@@ -214,6 +215,8 @@ export interface DispatchOpts {
    * was replaced by dispatchToolCall.
    */
   auth?: AuthInfo;
+  /** Agent contract v1 (A6): HTTP's per-server notice ledger (ServeHttpContext); stdio uses the process ledger. */
+  noticeLedger?: NoticeLedger;
   /**
    * MEMORY_VERBS v1 surface enforcement [c2]. When set, a tool name outside
    * the set returns the unknown_tool envelope BEFORE resolution — fail-closed
@@ -485,6 +488,23 @@ export function localCallErrorEnvelope(tool: string, e: unknown) {
     outcome: op?.mutating ? 'unknown' : 'failed', render: cliRenderContext(),
     db: { url: configuredDbUrlForClassify(), brainId: brainIdForClassify() },
   });
+}
+
+/**
+ * A6 dedupe/budget/mute: the stdio ledger is per process; HTTP passes its
+ * ServeHttpContext ledger. Session identity is the transport-resolved id only.
+ * Fail-open: a ledger fault delivers every notice.
+ */
+function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
+  if (notices.length === 0) return notices;
+  try {
+    const principal = opts.auth?.clientId;
+    const transport = opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http';
+    return (opts.noticeLedger ?? processNoticeLedger()).admit(notices,
+      { transport, principal, sessionId: opts.sessionId }, mutedNoticeCodes(principal));
+  } catch {
+    return notices;
+  }
 }
 
 /** The one error result path: toAgentError → exactly one content block. */
@@ -783,7 +803,7 @@ export async function dispatchToolCall(
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
     // an UNSET marker never probes (fail-closed).
     maybeBackupNotice(notices, opts);
-    const out: ToolResult = toolResultWithNotices(result, notices, dispatchRenderContext(opts));
+    const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
     }
@@ -816,6 +836,6 @@ export async function dispatchToolCall(
     // access errors, uncaught throws — goes through the one total normaliser,
     // which redacts raw messages, keeps verbs on their frozen v1 codes, and
     // never tells a mutating op with an unknown outcome to retry.
-    return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices });
+    return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

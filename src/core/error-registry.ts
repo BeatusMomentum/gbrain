@@ -273,3 +273,16 @@ export const CODES = {
 } as const satisfies Record<string, CodeEntry>;
 
 export type RegistryCode = keyof typeof CODES;
+
+/** One notice code (agent contract v1, A6). Lanes add producers' codes here. */
+export interface NoticeEntry {
+  kind: 'safety' | 'degraded' | 'coaching' | 'ask' | 'info';
+  summary: string;
+}
+
+/** Notice codes. Mute (`gbrain notices mute`, `mute_notice`) accepts only coaching/info codes. */
+export const NOTICE_CODES = {
+  backup_coverage: { kind: 'coaching', summary: 'Some knowledge assets have no off-machine backup.' },
+  empty_retrieval: { kind: 'info', summary: 'A retrieval returned no results; the notice says whether recall was degraded.' },
+  unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
+} as const satisfies Record<string, NoticeEntry>;

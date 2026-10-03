@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 228714,
-    "stdoutSha256": "22642f39ac484d951b49ef713364228cf6a3780157f46daea70dfb8ad931fe80",
+    "stdoutBytes": 229615,
+    "stdoutSha256": "aaf93740a028c3db9ce963308738d61d0d1b008b249b4cbf6430e1a6fd859630",
     "toolNames": [
       "remember",
       "entity",
@@ -159,7 +159,8 @@
       "open_loops",
       "loops_close",
       "loops_mute",
-      "loops_unmute"
+      "loops_unmute",
+      "mute_notice"
     ],
     "tools": [
       {
@@ -6201,6 +6202,40 @@
           "required": [
             "kind",
             "value"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Stop a coaching or info notice from appearing for this client (or unmute it with muted: false). Safety, degraded and ask notices cannot be muted.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "mute_notice",
+        "parameters": {
+          "code": "string",
+          "muted": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "code": {
+              "description": "Notice code, the word after `[gbrain notice` in the block.",
+              "enum": [
+                "backup_coverage",
+                "empty_retrieval",
+                "unknown_param"
+              ],
+              "type": "string"
+            },
+            "muted": {
+              "description": "false unmutes. Default true.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "code"
           ],
           "type": "object"
         },

@@ -116,6 +116,7 @@ import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
+import { noticesOperations } from './ops/notices.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
@@ -219,7 +220,7 @@ export const operations: Operation[] = [
   // v0.41.18.0 run_onboard + v0.41.20.0 run_skillopt — ops/skillopt.ts
   ...skilloptOperations,
   // v0.47: open-loop engine (who is waiting on you) — ops/loops.ts
-  ...loopsOperations,
+  ...loopsOperations, ...noticesOperations, // + agent contract v1 A6 mute_notice — ops/notices.ts
 ];
 
 // ---------------------------------------------------------------------------
@@ -264,7 +265,7 @@ const OP_AREAS: Record<string, string> = {
   ontology_get: 'ontology', ontology_propose: 'ontology',
   ontology_dimensions: 'ontology', ontology_conflicts: 'ontology',
   // admin + operations
-  get_stats: 'admin', get_health: 'admin', run_doctor: 'admin',
+  get_stats: 'admin', get_health: 'admin', run_doctor: 'admin', mute_notice: 'admin',
   get_status_snapshot: 'admin', run_onboard: 'admin', run_skillopt: 'admin',
   migrate_embeddings: 'admin', code_traversal_cache_clear: 'admin', get_write_attribution: 'admin',
   // identity

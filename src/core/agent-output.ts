@@ -578,10 +578,11 @@ function unknownParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts {
 }
 
 function genericEnvelope(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
-  const message = e instanceof Error ? e.message : String(e);
+  let message = 'unclassified failure';
+  try { message = e instanceof Error ? e.message : String(e); } catch { /* hostile value: keep the placeholder */ }
   const where = ctx.op ?? ctx.command ?? 'this operation';
   return {
-    error: 'internal_error', code: 'internal_error', message: redactForTransport(message, ctx.transport),
+    error: 'internal_error', code: 'internal_error', message: redactUrlsInText(redactConnectionInfo(redactForTransport(message, ctx.transport))),
     suggestion: `Server-side failure in ${where}, not a caller mistake. Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
     docs_cmd: ['gbrain', 'errors', 'internal_error'], class: 'server', retryable: false, contract_version: CONTRACT_VERSION,
   };

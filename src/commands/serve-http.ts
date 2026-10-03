@@ -50,6 +50,7 @@ import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { VERSION } from '../version.ts';
+import { NoticeLedger } from '../core/notice-ledger.ts';
 
 export { extractGitHubItemRef, githubKindCoversRepo, selectGitHubItemSources } from './serve-http-webhooks.ts';
 export { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness, type ProbeHealthResult } from './serve-http-metrics.ts';
@@ -460,6 +461,7 @@ export async function embeddingWidthStartupWarning(engine: BrainEngine): Promise
  */
 export interface ServeHttpContext {
   engine: BrainEngine;
+  noticeLedger?: NoticeLedger; // A6: notice dedupe/coaching budget keyed by principal + session (HTTP is stateless)
   config: GBrainConfig | (Partial<GBrainConfig> & { engine: 'pglite' });
   sql: SqlQuery;
   bind: string;
@@ -808,7 +810,7 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   const requireAdmin = createRequireAdmin(adminSessions);
   const { ingestRateLimiter, githubWebhookLimiter } = createWebhookLimiters();
   const ctx: ServeHttpContext = {
-    engine, config, sql, bind, enableDcr, logFullParams, surface: options.surface, mcpOperationsBase,
+    noticeLedger: new NoticeLedger(), engine, config, sql, bind, enableDcr, logFullParams, surface: options.surface, mcpOperationsBase,
     issuerUrl, mcpResourceUrl, resourceMetadataUrl, oauthProvider, resourceVerifier,
     bootstrapHash, adminSessions, adminCookie,
     magicLinkNonces: new Map<string, number>(),

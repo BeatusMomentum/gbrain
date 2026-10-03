@@ -364,6 +364,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       sourceId: tokenSourceId,
       ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
       metaHook: getBrainHotMemoryMeta,
+      ...(ctx.noticeLedger ? { noticeLedger: ctx.noticeLedger } : {}),
       // MEMORY_VERBS v1: fail-closed surface enforcement + usage attribution.
       ...(surfaceAllowedOps ? { allowedOps: surfaceAllowedOps } : {}),
       surface,
