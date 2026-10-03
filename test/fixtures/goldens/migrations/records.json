@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 191,
+    "count": 192,
     "gaps": [
       17,
       18,
@@ -28,7 +28,7 @@
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 196,
+    "latest": 197,
     "records": [
       {
         "handler": {
@@ -2222,8 +2222,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 9186,
-          "sha256": "21a98206b5bbc4223d0aafcaaaeb674b528eb81df67e3ba2c70bc5ae530f1246"
+          "length": 9235,
+          "sha256": "ea16d9ba06b20c1651e1ed1afb6429c66271e926f2f92965da3fbe97ba643238"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2287,8 +2287,8 @@
         "idempotent": true,
         "name": "managed_alias_and_source_checkpoint_guards",
         "sql": {
-          "length": 4337,
-          "sha256": "8866c1c22107bcfbd69ad9b11eb75771fd1c5fbdf96eb580b1e4ed1ba004f531"
+          "length": 4386,
+          "sha256": "9d283e56dae87829d0e524f8b2677e1c970c78eb13eefbece81642905a93cdc1"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2446,8 +2446,8 @@
         "idempotent": true,
         "name": "fact_embedding_identity",
         "sql": {
-          "length": 4482,
-          "sha256": "04a5eb5a5338d5b4db9cc2947316b49d6fa3330e776bef81f209a78f7821c56d"
+          "length": 4531,
+          "sha256": "2af5c7c84952f4fd836302ec2328adc07afeaa3cb11d95e609e478f026953641"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2845,8 +2845,8 @@
         "idempotent": true,
         "name": "take_embedding_identity",
         "sql": {
-          "length": 4482,
-          "sha256": "c3192c2ababd73606034a0bc4d2b384ef7f42bdf1c2916e7349223d162442549"
+          "length": 4531,
+          "sha256": "b0b66298c9c33314cc08f532de9a8a18af1e96a91dc4dcbe243d525399e9f90c"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2858,8 +2858,8 @@
         "idempotent": true,
         "name": "f1_write_attribution",
         "sql": {
-          "length": 13179,
-          "sha256": "14a8b29806b434b992d5fa365c1cdb3e55b4e39f144fdd1630c660b8151c410c"
+          "length": 13228,
+          "sha256": "897907a8669f828ba0e8302c7d2198bf5fa2d70a0e10dbbf9e6a2a4b85c68a64"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -2910,6 +2910,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 196
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "managed_guard_null_source_fallback",
+        "sql": {
+          "length": 3888,
+          "sha256": "2484a363d88e487d1c8972f22aef4a604134f240e9d56f81f3df0276ccbe6c26"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 197
       }
     ],
     "versions": [
@@ -3103,7 +3116,8 @@
       193,
       194,
       195,
-      196
+      196,
+      197
     ]
   },
   "normalizer": "migrations-record-v1"
