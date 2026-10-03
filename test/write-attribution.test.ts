@@ -35,7 +35,8 @@ import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
-import { withWriteAttribution, type WriteAttribution } from '../src/core/persistence/attribution.ts';
+import { maintenanceAttribution, withWriteAttribution, type WriteAttribution } from '../src/core/persistence/attribution.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { runManagedStaleExtraction } from '../src/core/persistence/links-maintenance.ts';
@@ -411,6 +412,20 @@ describe('write attribution scopes', () => {
       expect(version.archived).toEqual(actor(null, inner.principal));
     }
   }, 120_000);
+});
+
+describe('maintenance attribution', () => {
+  test('names the local CLI registration, or the host when this installation has none', async () => {
+    for (const engine of engines) {
+      const brain = await managedBrain(engine);
+      expect(await engine.transaction(tx => maintenanceAttribution(tx))).toEqual({ requestId: null, principal: brain.principals.local });
+      const elsewhere = mkdtempSync(join(home, 'unregistered-'));
+      const fallback = await withEnv({ GBRAIN_HOME: elsewhere }, () => engine.transaction(tx => maintenanceAttribution(tx)));
+      expect(fallback.requestId).toBeNull();
+      expect(fallback.principal.kind).toBe('application');
+      expect(fallback.principal.id).toMatch(/^host:[0-9a-f-]{36}$/);
+    }
+  });
 });
 
 describe('write attribution column classification', () => {

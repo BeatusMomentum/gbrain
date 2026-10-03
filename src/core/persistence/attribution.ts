@@ -1,4 +1,3 @@
-import { OperationError } from '../ops/contract.ts';
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
 
@@ -25,14 +24,24 @@ export function principalAttribution(principal: Principal): WriteAttribution {
  * The executing maintenance principal: the verified local writer of this call
  * (server-side owner work), else this installation's local CLI registration,
  * else the host itself when the installation has no usable registration.
+ * Attribution records the actor and never authorizes, so an unreadable
+ * registration falls back to the host instead of failing the write. The
+ * registration found is memoized per engine (an in-process rotation keeps
+ * naming the registration this process started with): per-page maintenance
+ * loops would otherwise repeat a file read and two queries for every page.
  */
 export async function maintenanceAttribution(engine: SqlEngine): Promise<WriteAttribution> {
   const verified = currentVerifiedLocalWriter();
   if (verified) return principalAttribution(verified.principal);
-  try {
-    return principalAttribution({ kind: 'local_cli', id: (await readLocalWriter(engine, 'cli')).id });
-  } catch (error) {
-    if (!(error instanceof OperationError) || !['writer_registration_required', 'permission_denied'].includes(error.code)) throw error;
+  let registration = installationRegistration.get(engine);
+  if (!registration) {
+    registration = readLocalWriter(engine, 'cli').then(local => local.id);
+    installationRegistration.set(engine, registration);
+  }
+  try { return principalAttribution({ kind: 'local_cli', id: await registration }); }
+  catch {
+    installationRegistration.delete(engine);
     return principalAttribution({ kind: 'application', id: `host:${localHostId()}` });
   }
 }
+const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();
