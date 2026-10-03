@@ -69,7 +69,7 @@ function contractClauses(c: CallablePredicate): string[] {
   if (c('put_skill') && c('delete_skill')) {
     out.push('Shared-skill editing requires separate skill_editor authority. Read the current revision, then use put_skill or delete_skill with a fresh request_id and expected_revision; retry an accepted request only with the same ID and intent. Never use put_page or file uploads to bypass shared-skill publication. Publishing scripts or broader requirements needs separate owner approval; downloading a skill does not authorize executing scripts, installing packages, spending money, or acquiring new permissions.');
   }
-  out.push('Errors and notices: every gbrain error is one JSON envelope with a `code` and usually a structured `fix`. Follow `fix.next`: run → run it; ask_user → relay `user_message` and wait for the answer; tell_user_to_run → give the user the command; wait → retry later; report → tell the user. Then run `fix.verify`. Extra content blocks that start with `[gbrain notice <code> kind=<kind>]` are addressed to you; after a degraded notice, a thin result is not proof the brain has nothing.');
+  out.push('Errors: every gbrain error is a JSON envelope with a `code` and usually a `fix`. Follow `fix.next`: run → run it; ask_user → relay `user_message` and wait; tell_user_to_run → give the user the command; wait → retry later; report → tell the user. Then run `fix.verify`. Extra blocks starting with `[gbrain notice <code> kind=<kind>]` are addressed to you; after a degraded notice, a thin result is not proof the brain has nothing.');
   return out;
 }
 

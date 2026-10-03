@@ -28,8 +28,14 @@ function namedTools(text: string): string[] {
   return [...named];
 }
 
-/** The pre-F1 contract size (bytes): the budget baseline. */
-const PRE_F1_BYTES = 3377;
+/**
+ * The pre-F1 contract size (bytes): the static contract on master 566a242,
+ * which already carries Cat 40's measured answering rule (#5932). F1's
+ * readiness tail may add at most 1,200 on top; every surface's tail-free
+ * contract stays within Lane I's +15% token-overhead gate.
+ */
+const PRE_F1_BYTES = 4042;
+const LANE_I_CEILING = Math.floor(PRE_F1_BYTES * 1.15);
 
 describe('F1 generated instructions', () => {
   for (const surface of SURFACES) {
@@ -73,6 +79,13 @@ describe('F1 generated instructions', () => {
     expect(text).not.toContain('Schema is behind');
     expect(Buffer.byteLength(text) - PRE_F1_BYTES).toBeLessThanOrEqual(1200);
   });
+
+  for (const surface of SURFACES) {
+    test(`${surface}: tail-free contract stays within +15% of the pre-F1 contract`, () => {
+      const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
+      expect(Buffer.byteLength(buildMcpInstructions({ tools: { callable: n => listed.has(n) } }))).toBeLessThanOrEqual(LANE_I_CEILING);
+    });
+  }
 
   test('no tools and no writeback → the static contract', () => {
     expect(buildMcpInstructions()).toBe(GBRAIN_MCP_INSTRUCTIONS);
