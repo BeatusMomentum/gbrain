@@ -37,6 +37,7 @@ import { currentCliWriteWait } from './core/persistence/write-wait.ts';
 import { isScopeErrorCode } from './core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { agentJsonGuardMode } from './cli/json-guard.ts';
+import { printCuratedHelp } from './cli/help/render.ts';
 import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeFatalCliError } from './cli/cli-error.ts';
 import { opError } from './core/ops/contract.ts';
 import { opParamValue } from './cli/op-param-values.ts';
@@ -411,6 +412,7 @@ async function main() {
     ? subArgs.slice(0, subArgs.indexOf('--'))
     : subArgs;
   if (hasHelpFlag(helpScanArgs)) {
+    if (await printCuratedHelp(command, subArgs)) return;
     // `eval brainbench` ships a published foreign-runner flag surface — its
     // own usage() must win over the generic eval stub (codex P3). Fall
     // through to handleCliOnly's no-DB brainbench route, which prints it.
