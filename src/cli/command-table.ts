@@ -207,7 +207,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'friction', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/friction.ts') },
   { name: 'claw-test', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/claw-test.ts') },
   { name: 'report', phase: 'pre-connect', thinClient: 'none', load: () => import('./commands/report.ts') },
-  { name: 'apply-migrations', phase: 'pre-connect', thinClient: 'refuse', help: () => import('./help/apply-migrations.ts'), load: () => import('./commands/apply-migrations.ts') },
+  { name: 'apply-migrations', phase: 'pre-connect', thinClient: 'refuse', json: 'document', help: () => import('./help/apply-migrations.ts'), load: () => import('./commands/apply-migrations.ts') },
   { name: 'repair-jsonb', phase: 'pre-connect', thinClient: 'refuse', load: () => import('./commands/repair-jsonb.ts') },
   { name: 'skillpack-check', phase: 'pre-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/skillpack-check.ts') },
   { name: 'doctor', phase: 'pre-connect-own-engine', thinClient: 'none', json: 'document', help: () => import('./help/doctor.ts'), load: () => import('./commands/doctor.ts') },

@@ -12,7 +12,7 @@ export const help: CliHelpSpec = {
     { name: '--yes', type: 'boolean', desc: 'Run without prompting (default mode pain_triggered); authorizes the Phase F autopilot install.', consent: ['persistent_install'] },
     { name: '--non-interactive', type: 'boolean', desc: 'Never prompt; authorizes only the Phase F autopilot install.', consent: ['persistent_install'] },
     { name: '--dry-run', type: 'boolean', desc: 'Print the plan; take no action.' },
-    { name: '--json', type: 'boolean', desc: 'With --dry-run or --list: machine-readable plan, inventories and conflicts.' },
+    { name: '--json', type: 'boolean', desc: 'One JSON document on stdout (plan, previews, per-migration results); a failure is the error envelope with code and suggestion.' },
     { name: '--list', type: 'boolean', desc: 'Show applied and pending migrations.' },
     { name: '--mode', type: 'enum', values: ['always', 'pain_triggered', 'off'], desc: 'Set minion_mode without prompting.' },
     { name: '--migration', type: 'string', desc: 'Force-run one migration by version.' },

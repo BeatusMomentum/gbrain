@@ -994,6 +994,32 @@ More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/wri
 |---|---|---|---|---|---|---|
 | The HTTP method is not allowed on this endpoint. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### migration_failed
+
+<a id="migration_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A migration orchestrator failed, so the migration chain stopped; finished migrations stay recorded. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `preview_failed`, `schema_failed`.
+
+### migrations_pending
+
+<a id="migrations_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Schema migrations are behind and this run did not apply them. | apply-migrations applies schema migrations only with --yes (or --non-interactive); without it the run reports the drift instead of claiming the brain is up to date. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### migrations_running
+
+<a id="migrations_running"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another apply-migrations run holds the migration orchestration lock. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 75 | yes |
+
 ### missing_source_scope
 
 <a id="missing_source_scope"></a>

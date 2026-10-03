@@ -7,6 +7,8 @@
  * needed at runtime.
  */
 
+import type { Effect } from '../../core/agent-output.ts';
+
 export interface FeaturePitch {
   /** One-line headline printed post-upgrade. */
   headline: string;
@@ -67,4 +69,10 @@ export interface Migration {
   orchestrator: (opts: OrchestratorOpts) => Promise<OrchestratorResult>;
   preview?: (opts: OrchestratorOpts) => Promise<unknown>;
   reconcile?: boolean;
+  /**
+   * Consent effects the orchestrator performs (agent operator contract A4);
+   * apply-migrations asks for them before running it. `persistent_install`
+   * is skipped (and not asked) under --no-autopilot-install or on PGLite.
+   */
+  effects?: readonly Effect[];
 }

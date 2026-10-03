@@ -1,7 +1,6 @@
 # shrink-only baseline for scripts/check-agent-contract.ts rule stdio-inherit: path<TAB>count
 src/cli/commands/smoke-test.ts	1
 src/commands/autopilot.ts	1
-src/commands/migrations/v0_11_0.ts	2
 src/commands/skillopt.ts	1
 src/commands/takes.ts	1
 src/commands/upgrade.ts	6
