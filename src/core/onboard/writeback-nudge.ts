@@ -35,18 +35,21 @@ import {
   DEFAULT_TRANSIENT_TTL,
 } from '../facts/writeback-config.ts';
 
-export async function runWritebackNudge(
-  engine: BrainEngine,
-  opts: { context?: 'init' | 'post-upgrade' } = {},
-): Promise<void> {
+/**
+ * Whether the writeback ask applies to this brain right now: a personal host
+ * brain whose operator has not answered yet, with no bypass. The gate behind
+ * both this nudge and init's first-run `writeback` decision. Never throws
+ * (any failure → false).
+ */
+export async function writebackAskApplies(engine: BrainEngine): Promise<boolean> {
   try {
-    if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return;
+    if (process.env.GBRAIN_NO_ONBOARD_NUDGE === '1') return false;
     const cfg = loadConfig();
-    if (cfg && isThinClient(cfg)) return;
+    if (cfg && isThinClient(cfg)) return false;
     try {
-      if (resolveBrainId(undefined) !== HOST_BRAIN_ID) return;
+      if (resolveBrainId(undefined) !== HOST_BRAIN_ID) return false;
     } catch {
-      return; // mount resolution failed — fail-quiet
+      return false; // mount resolution failed — fail-quiet
     }
 
     // Double gate: shown once ever, and never when the operator already
@@ -55,10 +58,21 @@ export async function runWritebackNudge(
       engine.getConfig(AUTO_WRITEBACK_NOTICE_KEY),
       engine.getConfig(AUTO_WRITEBACK_KEY),
     ]);
-    if (shown === 'true' || mode) return;
+    if (shown === 'true' || mode) return false;
 
     const audience = await classifyBrainAudience(engine, cfg);
-    if (audience.audience !== 'personal') return;
+    return audience.audience === 'personal';
+  } catch {
+    return false;
+  }
+}
+
+export async function runWritebackNudge(
+  engine: BrainEngine,
+  opts: { context?: 'init' | 'post-upgrade' } = {},
+): Promise<void> {
+  try {
+    if (!(await writebackAskApplies(engine))) return;
 
     const line = console.log;
     line('');

@@ -178,7 +178,7 @@ risk: Spends up to the cap on embedding calls; no data is deleted.
 consent: paid
 actor: agent
 next: ask_user
-if_yes: gbrain doctor --remediate --max-usd 0.60 --yes To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
+if_yes: gbrain doctor --remediate --max-usd 0.60 --yes — To stop asking for runs under a limit the user picks: gbrain config set consent.preapprove.paid.max_usd_per_run '<usd>'
 if_no: Nothing runs; nothing was changed. To look first (read-only): gbrain doctor --remediation-plan --json
 [SHOW USER]
 Fixing your brain's health will cost about $0.40 in embedding calls. OK to proceed?
@@ -500,7 +500,7 @@ if_yes: <command to run after the user agrees>
 if_no: <what happens if they decline>
 verify: <read-only check>
 1. <decision question> (id: <decision id>)
-   - <option id>: <label>
+   - <option id>: <label> (run: <command that applies it>)
    default: <option id> — <why this default>
 [SHOW USER]
 <text to relay to the user verbatim>
