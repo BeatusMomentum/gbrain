@@ -864,6 +864,9 @@ export class PGLiteEngine implements BrainEngine {
         const runtimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
         await this._db.query(`SELECT set_config('TimeZone', $1, false)`, [runtimeZone]);
       }
+      // Without planner statistics the generic plan Postgres adopts after five executions of a
+      // prepared statement can be a pages x links nested loop (6th search: ~7 s vs ~45 ms at 2k pages).
+      await this._db?.query(`SELECT set_config('plan_cache_mode', 'force_custom_plan', false)`);
       // Healthy open: close any repair episode left open by a prior failed
       // attempt (red-team: episodes otherwise stayed open forever — doctor
       // kept reporting corruption-likely and a weeks-stale episode backup
