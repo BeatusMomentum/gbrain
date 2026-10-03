@@ -94,7 +94,7 @@ import type {
   EmotionalWeightInputRow, EmotionalWeightWriteRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { GBrainError, PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
+import { GBrainError, PAGE_SORT_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import * as db from './db.ts';
 import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manager.ts';
@@ -108,16 +108,14 @@ import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defa
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
-import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides, gradeTimelinePages } from './orphan-policy.ts';
-import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
-import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as salienceImpl from './engine-sql/salience.ts';
+import * as healthImpl from './engine-sql/health.ts';
 import * as pagesImpl from './engine-sql/pages.ts';
 import * as tagsImpl from './engine-sql/tags.ts';
 import * as linksImpl from './engine-sql/links.ts';
@@ -2392,225 +2390,11 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth> {
-    const sql = this.sql;
-    // #4592: optional source scope — same contract as getStats. Every count,
-    // coverage numerator AND denominator, degree, and the islanded predicate
-    // confine to the scope; a link only contributes when BOTH endpoints are
-    // in scope (a granted→ungranted edge must not leak the far side's
-    // existence through a degree or rescue a page from orphan-hood).
-    const scope: string[] | null = opts?.sourceIds ?? (opts?.sourceId ? [opts.sourceId] : null);
-    // Bug 11 doc-drift fix — orphan_pages means "islanded" (no inbound AND
-    // no outbound links). The raw islanded list is filtered through the same
-    // policy as `gbrain orphans` so convention pages do not count against
-    // dashboard health.
-    // #1305: every page-scoped count here excludes soft-deleted rows — same
-    // posture as getStats — so brain_score moves when the user deletes pages.
-    // Chunk/link counts stay raw (storage until the purge phase), matching
-    // getStats, and destructive-removal counts elsewhere deliberately stay raw.
-    // S2: coverage + missing_embeddings key on the registry-ACTIVE column.
-    const colId = await this.activeEmbeddingColId({ fallbackToLegacy: true });
-    const [h] = await sql`
-      WITH scoped_pages AS (
-        SELECT id, slug, frontmatter, deleted_at, source_id FROM pages p
-        WHERE (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
-      ),
-      entity_pages AS (
-        -- #4280: quarantined entity shells are not served memory — keep them
-        -- out of the link/timeline coverage denominators (parity with
-        -- onboard's VISIBLE_ENTITY_PREDICATE).
-        SELECT id, slug FROM scoped_pages WHERE id IN (
-          SELECT id FROM pages WHERE type IN ('entity', 'person', 'company') AND deleted_at IS NULL
-            AND ${sql.unsafe(quarantineFilterFragment('pages'))}
-        )
-      )
-      SELECT
-        (SELECT count(*) FROM scoped_pages WHERE deleted_at IS NULL) as page_count,
-        -- Coverage is the stored-VECTOR truth over ELIGIBLE chunks: keyed on
-        -- embedding (not embedded_at, which a schema rebuild leaves stale) and
-        -- excluding embed_skip pages from BOTH sides so a brain with zero
-        -- remediable work can't read as under-covered. Zero eligible chunks =
-        -- vacuous 100%, matching missing_embeddings' exclusion below.
-        (SELECT CASE
-           WHEN count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')) = 0
-           THEN 1.0
-           ELSE count(*) FILTER (WHERE cc.${sql.unsafe(colId)} IS NOT NULL
-                                   AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
-              / count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
-         END
-         FROM content_chunks cc
-         JOIN scoped_pages p ON p.id = cc.page_id) as embed_coverage,
-        0 as stale_pages,
-        0 as orphan_pages,
-        (SELECT count(*) FROM links l
-         WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
-           AND (${scope}::text[] IS NULL
-                OR EXISTS (SELECT 1 FROM scoped_pages sp WHERE sp.id = l.from_page_id))
-        ) as dead_links,
-        -- missing_embeddings uses the same predicate as the thing that
-        -- resolves it: buildStaleChunkWhere / countStaleChunks, i.e. what
-        -- 'embed --stale' actually processes. Two divergences existed:
-        --   1. embedded_at vs embedding. upsertChunks resets BOTH to NULL
-        --      when chunk_text changes, but the stale-chunk predicate keys
-        --      on 'embedding IS NULL' deliberately (see the CONSISTENCY note
-        --      on that upsert) because embedded_at can be non-NULL while
-        --      embedding is NULL. Health should agree with the embedder.
-        --   2. embed_skip pages were counted here but excluded there, so
-        --      chunks the author opted out of read as permanently "missing"
-        --      and the count could never reach zero.
-        -- Effect of the mismatch: computeRecommendations emits an embed.stale
-        -- step from a number that 'embed --stale' reports as 0, so the step
-        -- cannot move it and 'doctor --remediate' re-plans it every pass.
-        (SELECT count(*) FROM content_chunks cc
-           JOIN scoped_pages p ON p.id = cc.page_id
-          WHERE cc.${sql.unsafe(colId)} IS NULL AND p.deleted_at IS NULL
-            AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
-        ) as missing_embeddings,
-        (SELECT count(*) FROM links l
-          WHERE (${scope}::text[] IS NULL
-             OR (EXISTS (SELECT 1 FROM scoped_pages sp WHERE sp.id = l.from_page_id)
-                 AND EXISTS (SELECT 1 FROM scoped_pages sp WHERE sp.id = l.to_page_id)))) as link_count,
-        (SELECT count(*) FROM entity_pages) as entity_page_count,
-        -- gbrain#4153 consistency: an inbound link counts toward coverage
-        -- only when its SOURCE page is live — the same endpoint-liveness rule
-        -- the islanded predicate below applies, so an entity whose only
-        -- inbound link comes from a soft-deleted page can't read as covered
-        -- AND islanded in one payload.
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM links l
-                       JOIN scoped_pages src ON src.id = l.from_page_id
-                       WHERE l.to_page_id = e.id AND src.deleted_at IS NULL))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as link_coverage,
-        (SELECT count(*) FROM entity_pages e
-         WHERE EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = e.id))::float /
-          GREATEST((SELECT count(*) FROM entity_pages), 1)::float as timeline_coverage
-    `;
-
-    // X8 (#4592): a degree counts an edge only when its FAR endpoint is in
-    // scope too — otherwise a granted→ungranted edge leaks through the count.
-    // NULL scope keeps the historical raw degree (far-endpoint EXISTS against
-    // an unfiltered pages row is FK-total for live links; dead links kept by
-    // the OR NOT EXISTS arm so unscoped output is byte-identical).
-    const connected = await sql`
-      SELECT p.slug,
-             (SELECT count(*) FROM links l
-               WHERE (l.from_page_id = p.id
-                      AND (${scope}::text[] IS NULL
-                           OR EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.to_page_id AND fp.source_id = ANY(${scope}))))
-                  OR (l.to_page_id = p.id
-                      AND (${scope}::text[] IS NULL
-                           OR EXISTS (SELECT 1 FROM pages fp WHERE fp.id = l.from_page_id AND fp.source_id = ANY(${scope}))))
-             )::int as link_count
-      FROM pages p
-      WHERE p.type IN ('entity', 'person', 'company') AND p.deleted_at IS NULL
-        AND ${sql.unsafe(QUARANTINE_FILTER_FRAGMENT)}
-        AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
-      ORDER BY link_count DESC
-      LIMIT 5
-    `;
-
-    // Per-page flags for the linkable scope: orphan_pages and the
-    // no-orphans / timeline-coverage DENOMINATORS are all computed over
-    // pages the shared orphan-reporting policy considers linkable (the same
-    // scope `gbrain orphans` and doctor's orphan_ratio use), so one doctor
-    // report cannot carry two contradictory orphan/coverage numbers.
-    // Archive (raw/), generated, and daily-log pages are not expected to
-    // participate in the curated graph. Filtered in TS because the policy
-    // includes per-brain config overrides. PGLite path has the same logic.
-    // gbrain#4153: endpoint liveness in BOTH directions — an inbound link
-    // only counts when its SOURCE page is live (the invariant
-    // findOrphanPages documents), and an outbound link only counts when its
-    // TARGET is live. Without this, get_health's orphan_pages disagreed with
-    // `gbrain orphans` whenever a soft-deleted page still linked to (or was
-    // linked from) a live one.
-    // #4592: out-of-scope endpoints cannot rescue a page from orphan-hood —
-    // the caller's graph IS its grant.
-    // #4280: quarantined pages drop out of the linkable scope in SQL;
-    // machine leaf types (atom/conversation/source) drop out through the
-    // shared policy below via p.type.
-    const pageScopeRows = await sql<{ slug: string; type: string; islanded: boolean; has_timeline: boolean }[]>`
-      SELECT p.slug, p.type,
-             (NOT EXISTS (SELECT 1 FROM links l
-                          JOIN pages src ON src.id = l.from_page_id
-                          WHERE l.to_page_id = p.id AND src.deleted_at IS NULL
-                            AND (${scope}::text[] IS NULL OR src.source_id = ANY(${scope})))
-              AND NOT EXISTS (SELECT 1 FROM links l
-                          JOIN pages tgt ON tgt.id = l.to_page_id
-                          WHERE l.from_page_id = p.id AND tgt.deleted_at IS NULL
-                            AND (${scope}::text[] IS NULL OR tgt.source_id = ANY(${scope})))) as islanded,
-             EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = p.id) as has_timeline
-      FROM pages p
-      WHERE p.deleted_at IS NULL
-        AND ${sql.unsafe(QUARANTINE_FILTER_FRAGMENT)}
-        AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
-    `;
-
-    const pageCount = Number(h.page_count);
-    const embedCoverage = Number(h.embed_coverage);
-    // Scoped: sum the scalar-sourceId counter per grant (grants are small);
-    // the unmatchable __all__ sentinel scalar fail-closes to 0 naturally.
-    const stalePages = scope === null
-      ? await this.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })
-      : (await Promise.all(scope.map(sid =>
-          this.countStalePagesForExtraction({ sourceId: sid, versionTs: LINK_EXTRACTOR_VERSION_TS }),
-        ))).reduce((a, b) => a + b, 0);
-    const orphanOverrides = await loadOrphanPolicyOverrides(this);
-    const linkablePages = pageScopeRows.filter(row =>
-      !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides, { type: row.type }));
-    const linkablePageCount = linkablePages.length;
-    const orphanPages = linkablePages.filter(row => row.islanded).length;
-    const { graded: timelineGradedCount, withTimeline: linkableTimelinePages } = await gradeTimelinePages(this, linkablePages); // #5828
-    const deadLinks = Number(h.dead_links);
-    const linkCount = Number(h.link_count);
-
-    // brain_score: 0-100 weighted average
-    const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    // linkablePageCount === 0 gets full marks for the orphan / timeline
-    // components (same vacuous-truth rule as the empty-brain fix below):
-    // an all-archive brain has no curated graph to penalize.
-    const timelineCoverageWhole =
-      timelineGradedCount > 0 ? Math.min(linkableTimelinePages / timelineGradedCount, 1) : 1;
-    const noOrphans = linkablePageCount > 0 ? 1 - (orphanPages / linkablePageCount) : 1;
-    const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
-    // Per-component points. Sum equals brainScore by construction.
-    //
-    // v0.37.10.0: empty brains (pageCount === 0) get FULL marks (100/100),
-    // not 0. Semantically an empty brain has no coverage problem to penalize
-    // — there's nothing to embed, nothing to link, nothing to orphan. The
-    // pre-fix "empty = 0" caused fresh-init brains to score as critically
-    // unhealthy on `gbrain doctor`, which was a structural surprise to users
-    // who'd just successfully run init. PGLite path has the same fix.
-    const embedCoverageScore = pageCount === 0 ? 35 : Math.round(embedCoverage * 35);
-    const linkDensityScore = pageCount === 0 ? 25 : Math.round(linkDensity * 25);
-    const timelineCoverageScore = pageCount === 0 ? 15 : Math.round(timelineCoverageWhole * 15);
-    const noOrphansScore = pageCount === 0 ? 15 : Math.round(noOrphans * 15);
-    const noDeadLinksScore = pageCount === 0 ? 10 : Math.round(noDeadLinks * 10);
-    const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
-
-    return {
-      page_count: pageCount,
-      linkable_page_count: linkablePageCount,
-      embed_coverage: embedCoverage,
-      stale_pages: stalePages,
-      orphan_pages: orphanPages,
-      missing_embeddings: Number(h.missing_embeddings),
-      brain_score: brainScore,
-      dead_links: deadLinks,
-      entity_page_count: Number(h.entity_page_count),
-      // gbrain#4147: below the small-N floor the ratio is statistically
-      // meaningless (0/0 used to read as a hard 0%), so it reports null and
-      // consumers suppress both the percentage and its remediation actions.
-      link_coverage: Number(h.entity_page_count) >= MIN_ENTITY_PAGES_FOR_COVERAGE ? Number(h.link_coverage) : null,
-      timeline_coverage: Number(h.entity_page_count) >= MIN_ENTITY_PAGES_FOR_COVERAGE ? Number(h.timeline_coverage) : null,
-      most_connected: (connected as unknown as { slug: string; link_count: number }[]).map(c => ({
-        slug: c.slug,
-        link_count: Number(c.link_count),
-      })),
-      embed_coverage_score: embedCoverageScore,
-      link_density_score: linkDensityScore,
-      timeline_coverage_score: timelineCoverageScore,
-      no_orphans_score: noOrphansScore,
-      no_dead_links_score: noDeadLinksScore,
-    };
+    return healthImpl.getHealth(unscopedExecutor(this.engineSql, 'health: unscoped on master (EO4 inventory)'), opts, {
+      embeddingColumn: async () => (await resolveActiveEmbeddingColumnFromEngine(this, { fallbackToLegacy: true })).name,
+      countStalePagesForExtraction: (o) => this.countStalePagesForExtraction(o),
+      getConfig: (key) => this.getConfig(key),
+    });
   }
 
   // Ingest log

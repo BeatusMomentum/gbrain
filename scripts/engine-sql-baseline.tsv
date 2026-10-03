@@ -13,6 +13,7 @@ migrated	cjk-search
 migrated	code-edges
 migrated	facts
 migrated	files
+migrated	health
 migrated	links
 migrated	pages
 migrated	salience
@@ -28,7 +29,6 @@ method	src/core/pglite-engine.ts	PGLiteEngine.findOntologyConflicts
 method	src/core/pglite-engine.ts	PGLiteEngine.getAllConfig
 method	src/core/pglite-engine.ts	PGLiteEngine.getConfig
 method	src/core/pglite-engine.ts	PGLiteEngine.getDreamVerdict
-method	src/core/pglite-engine.ts	PGLiteEngine.getHealth
 method	src/core/pglite-engine.ts	PGLiteEngine.getIngestLog
 method	src/core/pglite-engine.ts	PGLiteEngine.getOntology
 method	src/core/pglite-engine.ts	PGLiteEngine.getRawData
@@ -59,7 +59,6 @@ method	src/core/postgres-engine.ts	PostgresEngine.findOntologyConflicts
 method	src/core/postgres-engine.ts	PostgresEngine.getAllConfig
 method	src/core/postgres-engine.ts	PostgresEngine.getConfig
 method	src/core/postgres-engine.ts	PostgresEngine.getDreamVerdict
-method	src/core/postgres-engine.ts	PostgresEngine.getHealth
 method	src/core/postgres-engine.ts	PostgresEngine.getIngestLog
 method	src/core/postgres-engine.ts	PostgresEngine.getOntology
 method	src/core/postgres-engine.ts	PostgresEngine.getRawData
