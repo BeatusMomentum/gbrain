@@ -123,10 +123,12 @@ export interface ToolResult {
    * The dispatcher injects `_meta.brain_hot_memory` here when an op succeeds
    * and the configured `metaHook` returns a payload.
    *
-   * Existing clients ignore unknown `_meta` fields; capable clients (Claude
-   * Code, Claude Desktop) read it. NOT a wrapper around the result body —
-   * `content` stays the same shape it always had. Best-effort: any error in
-   * the meta hook is absorbed and the tool call still succeeds.
+   * Structured data for programmatic consumers only: MCP hosts generally do
+   * NOT show `_meta` to the model, so anything the agent must act on also
+   * rides a model-visible channel (the notice blocks; agent contract v1).
+   * NOT a wrapper around the result body — `content` stays the same shape it
+   * always had. Best-effort: any error in the meta hook is absorbed and the
+   * tool call still succeeds.
    */
   _meta?: Record<string, unknown>;
 }
