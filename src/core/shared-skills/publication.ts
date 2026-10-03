@@ -419,7 +419,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
 export async function prepareSharedSkillMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   if (!['put_skill', 'delete_skill'].includes(row.operation) || row.target_kind !== 'skill_bundle' || row.protocol_version !== 2 || !row.intent) {
     throw opError('unsupported_mutation_protocol', 'Unsupported shared skill publication target.',
-      `Write request ${row.id} is not a shared-skill publication this gbrain can prepare; it was probably accepted by another gbrain version. Run gbrain upgrade on every host that serves this brain; the request stays journaled for inspection.`);
+      `Write request ${row.request_id} is not a shared-skill publication this gbrain can prepare; it was probably accepted by another gbrain version. Run gbrain upgrade on every host that serves this brain; the request stays journaled for inspection.`);
   }
   const intent = row.intent as unknown as PublicationIntent;
   skillName(intent.name); skillName(intent.pack_id, 'pack_id');
@@ -431,7 +431,7 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
   const keys = await headKeys(engine, row.source_id, row.source_incarnation, intent.pack_id);
   const inventory = packInventory(currentPack, keys, row.source_id);
   const changedAfterAdmission = (message: string) => opError('revision_conflict', message,
-    `${intent.pack_id}/${intent.name} or a skill sharing its files changed after request ${row.id} was accepted, so it did not publish. Read the skill again, reapply the change, and resubmit with a new request_id.`,
+    `${intent.pack_id}/${intent.name} or a skill sharing its files changed after request ${row.request_id} was accepted, so it did not publish. Read the skill again, reapply the change, and resubmit with a new request_id.`,
     { fix: skillHeadFix(row.source_id, intent.pack_id, intent.name) });
   const current = await heads(engine, row.source_id, row.source_incarnation, intent.pack_id, intent.affected.map(target => target.name));
   if ((currentPack?.revision ?? null) !== intent.expected_pack_revision || intent.affected.some(target => (current.find(head => head.name === target.name)?.revision ?? null) !== target.revision)) {
@@ -467,7 +467,7 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
   const totalBytes = Buffer.byteLength(manifestContent) + [...changedFiles.values()].reduce((sum, file) => sum + (file?.size ?? 0), 0) + Object.values(intent.extra_files).reduce((sum, content) => sum + Buffer.byteLength(content), 0);
   if (totalBytes > SHARED_SKILL_LIMITS.bundleBytes || changedFiles.size + Object.keys(intent.extra_files).length + 1 > SHARED_SKILL_LIMITS.files) {
     throw opError('invalid_params', 'The complete canonical publication exceeds the file-set bound.',
-      `Request ${row.id} would write ${changedFiles.size + Object.keys(intent.extra_files).length + 1} files and ${totalBytes} bytes; one publication may write at most ${SHARED_SKILL_LIMITS.files} files and ${SHARED_SKILL_LIMITS.bundleBytes} bytes. Split the shared-conventions edit into smaller changes and resubmit each with a new request_id.`);
+      `Request ${row.request_id} would write ${changedFiles.size + Object.keys(intent.extra_files).length + 1} files and ${totalBytes} bytes; one publication may write at most ${SHARED_SKILL_LIMITS.files} files and ${SHARED_SKILL_LIMITS.bundleBytes} bytes. Split the shared-conventions edit into smaller changes and resubmit each with a new request_id.`);
   }
   return {
     target: 'skill_bundle', sourceExclusive: true, observedRevision: intent.expected_revision,
@@ -482,7 +482,7 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
       const policy = await readSharedSkillPolicy(tx, row.source_id, row.source_incarnation, await publicationEnabled(ctx), true);
       if (policy.epoch !== intent.policy_epoch) {
         throw opError('approval_required', 'Publication policy changed after this request was accepted.',
-          `Source ${row.source_id}'s publication policy changed after request ${row.id} was accepted, so it did not publish. Review the current policy, then resubmit with a new request_id if the skill still fits it.`,
+          `Source ${row.source_id}'s publication policy changed after request ${row.request_id} was accepted, so it did not publish. Review the current policy, then resubmit with a new request_id if the skill still fits it.`,
           { fix: policyFix(row.source_id) });
       }
       for (const revision of revisions) validateDisclosure(revision.files, revision.metadata, policy.policy, policy.epoch === 'legacy-prose' || policy.epoch === 'consent-required', row.source_id);
