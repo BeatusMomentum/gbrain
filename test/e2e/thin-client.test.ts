@@ -420,8 +420,8 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
       GBRAIN_REMOTE_CLIENT_SECRET: 'gbrain_cs_definitely_not_the_real_secret',
     });
     expect(r.exitCode, cliDiagnostic("thin-client CLI", r)).toBe(1);
-    // No fabricated results — stdout stays empty on the error path.
-    expect(r.stdout.trim()).toBe('');
+    // No fabricated results: under --json stdout carries only the v1 error envelope (agent contract D1).
+    expect(JSON.parse(r.stdout)).toMatchObject({ code: expect.any(String), suggestion: expect.any(String), contract_version: 1 });
     // Canonical RemoteMcpError surface. mcp-client maps the non-401 /token
     // HTTP failure to reason 'discovery' today ("OAuth discovery failed at
     // <issuer>."); allow the 'auth' spelling too so a future 401
@@ -448,10 +448,10 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     // the hang this test exists to forbid.
     expect(Date.now() - t0).toBeLessThan(60_000);
     expect(search.exitCode, cliDiagnostic("thin-client CLI", search)).toBe(1);
-    expect(search.stdout.trim()).toBe('');
+    expect(JSON.parse(search.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 }); // D1: the error envelope, no results
     expect(search.stderr).toContain(`Cannot reach http://127.0.0.1:${serverPort}/mcp`);
     expect(recall.exitCode, cliDiagnostic("thin-client CLI", recall)).toBe(1);
-    expect(recall.stdout.trim()).toBe('');
+    expect(JSON.parse(recall.stdout)).toMatchObject({ code: expect.any(String), contract_version: 1 }); // D1: the error envelope, no results
     expect(recall.stderr).toMatch(/OAuth discovery failed/);
   });
 });

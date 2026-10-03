@@ -37,7 +37,8 @@ import { currentCliWriteWait } from './core/persistence/write-wait.ts';
 import { isScopeErrorCode } from './core/error-catalogue.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { agentJsonGuardMode } from './cli/json-guard.ts';
-import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeFatalCliError } from './cli/cli-error.ts';
+import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli/cli-error.ts';
+import type { Notice } from './core/agent-output.ts';
 import { opError } from './core/ops/contract.ts';
 import { opParamValue } from './cli/op-param-values.ts';
 import { serializeMarkdown } from './core/markdown.ts';
@@ -787,13 +788,11 @@ async function runThinClientRouted(
         process.off('SIGINT', onSigint);
         process.exit(sigintController.signal.aborted ? 130 : currentExitCode());
       }
-      // D1: --json gets the one v1 envelope; a server tool error renders its
-      // own code/fix. Transport failures keep their specific human text.
+      // D1: a server tool error renders its own code/fix; --json gets the one v1
+      // envelope on stdout while transport failures keep their human text on stderr.
       const scopeDenied = isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason);
-      if (params.json === true || (e.reason === 'tool_error' && !scopeDenied)) {
-        process.off('SIGINT', onSigint);
-        exitCliError(e, op.cliHints?.name ?? op.name);
-      }
+      if (e.reason === 'tool_error' && !scopeDenied) { process.off('SIGINT', onSigint); exitCliError(e, op.cliHints?.name ?? op.name); }
+      const failExit = params.json === true ? writeCliError(e, op.cliHints?.name ?? op.name, { stderr: false }) : 1;
       const url = cfg.remote_mcp!.mcp_url;
       switch (e.reason) {
         case 'config':
@@ -841,7 +840,7 @@ async function runThinClientRouted(
         }
       }
       process.off('SIGINT', onSigint);
-      process.exit(1);
+      process.exit(failExit);
     }
     // Defense in depth: callRemoteTool's contract is that everything is
     // RemoteMcpError. If a plain Error escapes, render it generically — but
@@ -1055,7 +1054,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         if (isKnownOpFlag(op, args[i + 1])) {
           const flag = `--${key.replace(/_/g, '-')}`;
           const stdinHint = op.cliHints?.stdin === key ? `; omit ${flag} (or put it last) to read stdin` : '';
-          throw new OperationError('invalid_params', `${flag} requires a value, but '${args[i + 1]}' is a flag${stdinHint}.`);
+          throw usageError(`${flag} requires a value, but '${args[i + 1]}' is a flag${stdinHint}.`, `Pass ${flag} a value before the next flag (see \`gbrain ${op.cliHints?.name ?? op.name} --help\`).`);
         }
         // #2822: a flag silently overwriting an already-set positional is
         // almost always an argument-plumbing mistake (e.g. `gbrain put
@@ -1086,11 +1085,9 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
   for (const [key, def] of Object.entries(op.params)) {
     if ((def.type !== 'object' && def.type !== 'array') || typeof params[key] !== 'string') continue;
     let value: unknown;
-    try { value = JSON.parse(params[key] as string); }
-    catch { throw new OperationError('invalid_params', `--${key.replace(/_/g, '-')} requires a JSON ${def.type}.`); }
-    if (def.type === 'array' ? !Array.isArray(value) : value === null || typeof value !== 'object' || Array.isArray(value)) {
-      throw new OperationError('invalid_params', `--${key.replace(/_/g, '-')} requires a JSON ${def.type}.`);
-    }
+    const jsonError = () => usageError(`--${key.replace(/_/g, '-')} requires a JSON ${def.type}.`, `Pass JSON, e.g. --${key.replace(/_/g, '-')} '${def.type === 'array' ? '["a","b"]' : '{"key":"value"}'}'.`);
+    try { value = JSON.parse(params[key] as string); } catch { throw jsonError(); }
+    if (def.type === 'array' ? !Array.isArray(value) : value === null || typeof value !== 'object' || Array.isArray(value)) throw jsonError();
     params[key] = value;
   }
   return params;
@@ -2781,6 +2778,12 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   return engine;
 }
 
+/** A6/D1: the pending-migrations warning as a notice whose fix applies them (stderr; stdout stays the command's). */
+function migrationsNotice(why: string): Notice {
+  return { code: 'migrations_pending', kind: 'safety', why, fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent',
+    requires_exclusive: true, why: 'Applies the pending schema migrations (the same ones every command applies on connect).', verify: { argv: ['gbrain', 'doctor', '--json'] } } };
+}
+
 /** Startup after the probe-only connect: migrations, retired-marker cleanup, DB-plane config merge. Mounts: none. */
 async function completeEngineStartup(engine: BrainEngine): Promise<void> {
   const config = SELECTED_CONFIG_BY_ENGINE.get(engine);
@@ -2797,25 +2800,16 @@ async function completeEngineStartup(engine: BrainEngine): Promise<void> {
     const { tryRunPendingMigrations } = await import('./core/migrate.ts');
     const result = await tryRunPendingMigrations(engine);
     if (result.status === 'persistent') {
-      console.warn(
-        '  Schema migrations are pending. Another process attempted to apply them ' +
-        'but the migration didn\'t complete within the retry window. This is usually transient.',
-      );
-      console.warn('  If it persists:');
-      console.warn('    1. Check `gbrain doctor` for stale locks or stuck advisory locks.');
-      console.warn('    2. Check `gbrain jobs supervisor status` for crashed migration workers.');
-      console.warn('    3. Re-run: `gbrain apply-migrations --yes`');
+      writeCliNotice(migrationsNotice('Schema migrations are pending: another process attempted them but they did not complete within the retry window (usually transient). If it persists, check `gbrain doctor` for stale advisory locks and `gbrain jobs supervisor status` for crashed migration workers.'));
     } else if (result.status === 'error') {
       // Non-deadlock error during initSchema. Surface the message and continue;
       // subsequent operations will resurface the real schema error in context.
-      console.warn(`  Schema probe failed: ${result.error.message}`);
-      console.warn('  Re-run: `gbrain apply-migrations --yes`');
+      writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
-    console.warn(`  Schema probe failed (unexpected): ${(err as Error).message}`);
-    console.warn('  Re-run: `gbrain apply-migrations --yes`');
+    writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
   }
 
   // #5628: drop this host's markers of a retired managed epoch before any filesystem guard check.
