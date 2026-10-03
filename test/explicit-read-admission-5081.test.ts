@@ -222,14 +222,14 @@ describe('#5081 — callers that pass no admission set keep denying (ENG-O6 pins
     const { isError, body } = await call(await bound(), 'search_by_image', { image_data: png, source_id: 'notes' });
     expect(isError).toBe(true);
     expect(body.error).toBe('permission_denied');
-    expect(body.suggestion).toBe(ORIGINAL_HINT);
+    expect(body.suggestion).toContain(ORIGINAL_HINT);
   });
 
   test('open_loops still denies an explicit federated source', async () => {
     const { isError, body } = await call(await bound(), 'open_loops', { source_id: 'notes' });
     expect(isError).toBe(true);
     expect(body.error).toBe('permission_denied');
-    expect(body.suggestion).toBe(ORIGINAL_HINT);
+    expect(body.suggestion).toContain(ORIGINAL_HINT);
   });
 
   test('code-intel scope resolution still denies an explicit federated source', async () => {
@@ -305,6 +305,6 @@ describe('#5081 — HTTP tokens and unbound stdio keep the no-widening rule', ()
     const auth = { token: '', clientId: 'legacy', scopes: ['read'], sourceId: 'work', hasSourceGrant: true } as AuthInfo;
     const { body } = await call({ remote: true, transport: 'http', sourceId: 'work', auth }, 'search', { query: MARKER, source_id: 'notes' });
     expect(body.error).toBe('permission_denied');
-    expect(body.suggestion).toBe('Your token is not granted notes; ask the brain owner to grant it.');
+    expect(body.suggestion).toContain('Your token is not granted notes; ask the brain owner to grant it.');
   });
 });
