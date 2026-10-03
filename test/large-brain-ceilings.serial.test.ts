@@ -6,10 +6,14 @@
  *   - `gbrain sync` under a non-TTY caller: the default and env deadlines no
  *     longer kill a run that is still importing. A sync whose work outlasts
  *     its deadline window completes and imports every file.
+ *   - `gbrain sources add` registers a checkout far above the ~8k-file point
+ *     where the old per-file manifest crossed its 1 MiB metadata bound.
  * Fails when: the sync watchdog goes back to a plain wall-clock kill (the
- * child exits 143 after the 1 s deadline with files missing).
+ * child exits 143 after the 1 s deadline with files missing), or the managed
+ * manifest grows with the file count again (`request_too_large`).
  * Why new: test/process-watchdog.serial.test.ts drives the watchdog through a
- * harness; it does not run the real CLI command the operator runs.
+ * harness and test/persistence-large-manifest.test.ts calls the lifecycle
+ * function directly; neither runs the real CLI commands the operator runs.
  * Seam: none. Deadlines are shortened through the documented env knob, not by
  * waiting an hour.
  */
@@ -58,5 +62,15 @@ describe('large-brain ceilings (CLI)', () => {
     expect(sync.stdout).not.toContain('sync_deadline_stop');
     expect(sync.exitCode).toBe(0);
     expect(sync.stdout).toContain('150 file(s) imported');
+  }, 300_000);
+
+  test('sources add registers a 20,000-file checkout', async () => {
+    const home = await freshBrain('add');
+    const repo = join(dir, 'add', 'repo');
+    commitWorktree(repo, 20_000);
+    const add = await runCli(['sources', 'add', 'big', '--path', repo], { home, env: KEYS, timeoutMs: 180_000 });
+    expect(add.stderr).not.toContain('request_too_large');
+    expect(add.exitCode).toBe(0);
+    expect(JSON.parse(add.stdout.slice(add.stdout.indexOf('{')))).toMatchObject({ source_id: 'big', state: 'committed' });
   }, 300_000);
 });

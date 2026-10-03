@@ -89,7 +89,6 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         const manifest=before?{...before,canonical_stamp:canonicalStamp}:owner?.manifest?compactStoredManifest(owner.manifest):null;
         if(input.operation==='reclone'&&(!manifest||manifest.canonical_stamp!==canonicalStamp))
           throw new OperationError('recovery_required','The missing checkout has no current verified canonical manifest. Recover it from a verified checkpoint before recloning.');
-        if(manifest&&Buffer.byteLength(JSON.stringify(manifest))>1_048_576)throw new OperationError('request_too_large','The canonical manifest exceeds the 1 MiB recovery metadata bound.');
         const recovery:TopologyCloneRecovery={version:1,kind:'clone',phase:'reserved',operation:input.operation as 'add'|'reclone',sourceId:input.sourceId,
           incarnation,worktreeId,ownerHostId:localHostId(),ownerEpoch:String(currentBinding?.owner_epoch??preparedOwner?.owner_epoch??1),target,stage,aside,
           beforeHash:before?.digest??null,afterHash:null,manifest,canonicalStamp,checkpoint:source?.last_commit??null,sourceRemoteUrl:source?.config.remote_url as string??null,input,cloneBudget:0};
@@ -126,7 +125,6 @@ export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifec
         await (hooks.clone??cloneTopologyCheckout)(url,recovery.stage,recovery.cloneBudget);
         const stageBytes=await topologyDirectoryBytes(recovery.stage,recovery.cloneBudget);
         const candidate=worktreeManifest(recovery.stage,{progress:humanManifestProgress()});
-        if(Buffer.byteLength(JSON.stringify(candidate))>1_048_576)throw new OperationError('request_too_large','The cloned canonical manifest exceeds its 1 MiB recovery metadata bound.');
         if(recovery.manifest&&candidate.digest!==recovery.manifest.digest)throw new OperationError('writer_manifest_mismatch','The cloned checkout differs from the verified canonical manifest, including deletions.');
         flushTopologyTree(recovery.stage);flushTopologyDirectory(dirname(recovery.stage));
         recovery.afterHash=candidate.digest;recovery.phase='prepared';recovery.manifest={...candidate,canonical_stamp:recovery.canonicalStamp};
