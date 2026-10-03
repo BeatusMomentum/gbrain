@@ -31,6 +31,10 @@ native OAuth flow if available; otherwise use a private machine handoff. Follow
 the hosted setup guide and report configuration separately from an observed
 connection in this harness.”
 
+Tool descriptions are deliberately short (the starter list is pinned at 25,000
+characters by `test/mcp-schema-budget.test.ts`); the longer guidance for each
+starter tool is in the [MCP tool reference](TOOL_REFERENCE.md).
+
 Client-specific details: [ChatGPT](CHATGPT.md), [Claude Code](CLAUDE_CODE.md),
 [Claude Desktop](CLAUDE_DESKTOP.md), [Codex](CODEX.md),
 [opencode](OPENCODE.md), [Perplexity](PERPLEXITY.md),

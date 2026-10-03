@@ -75,14 +75,14 @@ function stripPrivacyFencesForRemoteReader(page: Page): Page {
 const get_page: Operation = {
   name: 'get_page',
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).',
+  description: 'Read a page by slug (fuzzy optional; renamed slugs redirect). To edit, pass include_content:true and send `content` to put_page, or use edit_page. Timeline rows need include_timeline_entries.',
   params: {
-    slug: { type: 'string', required: true, description: 'Page slug' },
-    fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
-    include_content: { type: 'boolean', description: '#2225: include the canonical serialized `content` field (frontmatter + body + timeline sentinel) for lossless get→edit→put_page round-trips. Default false — it roughly duplicates compiled_truth + timeline, so read-only callers should not pay for it.' },
-    include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
-    include_timeline_entries: { type: 'boolean', description: '#5709: also return `timeline_entries`, the page\'s timeline rows (the same rows and filtering as get_timeline for this caller). Default false to keep the payload small.' },
-    source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
+    slug: { type: 'string', description: 'Page slug.', required: true },
+    fuzzy: { type: 'boolean', description: 'Fuzzy slug match.' },
+    include_content: { type: 'boolean', description: 'Full markdown + revision, for editing.' },
+    include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
+    include_timeline_entries: { type: 'boolean', description: 'Also return timeline rows.' },
+    source_id: { type: 'string', description: "One source, or '__all__'." },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -282,21 +282,21 @@ const fetch_page: Operation = {
 const put_page: Operation = {
   name: 'put_page',
   outputRedaction: 'no_stored_text',
-  description: 'Replace a complete canonical Markdown page. Read get_page with include_content:true and pass its revision as expected_revision; force explicitly overwrites the current revision. Omitting both permits creation only. Retain a UUID request_id and repeat identical arguments after transport failure or a pending receipt. Content, tags, sanitized text projections, versions and the committed receipt publish together; embedding and optional Git effects have separate status. Remote callers preserve protected facts/takes fences; automatic graph links are skipped for untrusted writes. A stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` or use trusted local capture/put_page for inline link extraction. Remote callers receive write_through.warning when no repo is configured. For file input use gbrain capture --file PATH --slug SLUG.',
+  description: 'Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: graph links are skipped; a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep. Small changes: edit_page.',
   params: {
     ...PAGE_MUTATION_PARAMS,
-    slug: { type: 'string', required: true, description: 'Page slug' },
-    content: { type: 'string', required: true, description: 'Complete markdown content with YAML frontmatter. REPLACES the entire page; this is not a partial edit. Read the canonical page first with `get_page include_content:true` before modifying it.' },
-    allow_empty: { type: 'boolean', required: false, description: 'Allow overwriting an existing non-empty page with empty/whitespace-only content (default: false). Without it, put_page rejects the empty overwrite — the empty-stdin failure class.' },
+    slug: { type: 'string', description: 'Page slug.', required: true },
+    content: { type: 'string', required: true, description: 'Complete markdown with frontmatter; read get_page include_content:true first.' },
+    allow_empty: { type: 'boolean', required: false, description: 'Allow emptying a non-empty page.' },
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
     // MCP callers (ctx.remote !== false) have their values OVERRIDDEN with
     // server stamps below; the params are accepted on the wire only so the
     // op schema stays uniform across transports. Audit-trail spoofing is
     // closed structurally — clients cannot poison source_kind labels.
-    source_kind: { type: 'string', required: false, description: 'Ingestion channel taxonomy (capture-cli | put_page | webhook | …). Remote callers: SERVER-STAMPED, client value ignored.' },
-    source_uri: { type: 'string', required: false, description: 'Original URI/path/message-id the event carried. Remote callers: SERVER-STAMPED null.' },
-    ingested_via: { type: 'string', required: false, description: 'Richer label paired with source_kind. Remote callers: SERVER-STAMPED.' },
+    source_kind: { type: 'string', description: 'Server-stamped remotely.', required: false },
+    source_uri: { type: 'string', description: 'Server-stamped remotely.', required: false },
+    ingested_via: { type: 'string', description: 'Server-stamped remotely.', required: false },
   },
   mutating: true,
   scope: 'write',
@@ -438,28 +438,26 @@ const list_pages: Operation = {
   outputRedaction: 'retrieval',
   description: LIST_PAGES_DESCRIPTION,
   params: {
-    type: { type: 'string', description: 'Filter by page type' },
-    tag: { type: 'string', description: 'Filter by tag' },
-    limit: { type: 'number', description: 'Max results (default 50; remote callers are capped at 100)' },
+    type: { type: 'string', description: 'Page type.' },
+    tag: { type: 'string', description: 'Tag.' },
+    limit: { type: 'number', description: 'Max rows (default 50; remote max 100).' },
     offset: {
-      type: 'number',
-      description: 'Skip first N rows (pagination). Engine-supported since PageFilters gained offset; previously accepted at the CLI and silently dropped.',
+      type: 'number', description: 'Rows to skip.',
     },
     // v0.29 — surface filter that already exists on PageFilters.
     updated_after: {
       type: 'string',
-      description: 'ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value. Bare (without updated_after_slug) this is LOSSY across rows sharing one timestamp — a bulk sync stamps one now() across a transaction; pair with updated_after_slug to page exactly.',
+      description: 'Only pages updated after this ISO time.',
     },
     updated_after_slug: {
       type: 'string',
-      description: "Keyset cursor slug: pass the last row's slug together with updated_after set to that row's updated_at_iso (column precision — a millisecond-rounded value re-selects same-millisecond rows). Resumes strictly after (updated_at, slug) and forces sort=updated_asc.",
+      description: "Last row's slug (with updated_after).",
     },
     sort: {
-      type: 'string',
+      type: 'string', description: 'Default updated_desc.',
       enum: [...LIST_PAGES_SORT_VALUES],
-      description: 'Sort order. Default updated_desc (matches pre-v0.29). Options: updated_desc, updated_asc, created_desc, slug.',
     },
-    include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
+    include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
     // #4400 — list_pages had no source-scoping param at all: unlike
     // search/query it silently ignored any caller-supplied source and always
     // fell back to whatever federatedSearchScope() resolved from ctx alone,
@@ -468,8 +466,7 @@ const list_pages: Operation = {
     // `source_id` param already on search/query, same '__all__' semantics.
     source_id: {
       type: 'string',
-      description:
-        "v0.46.25: scope listing to a single source. Defaults to OperationContext.sourceId / federated scope. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+      description: "One source, or '__all__'.",
     },
   },
   handler: async (ctx, p) => {
@@ -610,10 +607,10 @@ const capture: Operation = {
   params: {
     ...PAGE_MUTATION_PARAMS,
     ...CAPTURE_EVENT_PARAMS,
-    content: { type: 'string', required: true, description: 'Markdown or plain text to capture. File paths are NOT accepted over MCP — read the file yourself and pass its content (the CLI --file lane is local-only).' },
-    local_file: { type: 'string', required: false, description: 'Trusted local CLI only (--file): the absolute path of the captured file. Recorded as the page origin only when it lies inside the source and names the slug; the path itself is never stored. Remote callers are refused.' },
-    slug: { type: 'string', required: false, description: "Target slug. Default: inbox/YYYY-MM-DD-<sha8-of-content> (stable per content — recapturing identical text hits the same slug); type diary/event routes under life/. Fenced clients: the default lands under your first bound prefix." },
-    type: { type: 'string', required: false, description: "Page type for the stamped frontmatter. Omitted: the content's frontmatter `type:` when present, else 'note'. An explicit type (this param or a frontmatter `type:`) must be declared by the active schema pack; undeclared types are rejected before writing, naming the declared vocabulary." },
+    content: { type: 'string', required: true, description: 'Markdown or text (not a file path).' },
+    local_file: { type: 'string', description: 'Local CLI only.', required: false },
+    slug: { type: 'string', required: false, description: 'Default inbox/<date>-<hash>.' },
+    type: { type: 'string', required: false, description: 'Schema-pack page type (default note).' },
   },
   scope: 'write',
   mutating: true,

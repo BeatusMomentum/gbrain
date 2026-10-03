@@ -97,25 +97,18 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
 const FIELDS_PARAM = {
   type: 'string' as const,
   enum: ['lean', 'full'],
-  description: "Row fields. Remote callers get 'lean' rows by default; 'full' adds every ranking diagnostic.",
+  description: "lean (remote default) or full.",
 };
 
 /** Evidence delivery params shared by `search` and `query`. */
 const RETURN_UNIT_PARAM = {
   type: 'string' as const,
   enum: ['chunk', 'window', 'section', 'page', 'auto'],
-  description:
-    "Evidence unit returned in each result's chunk_text (default: config search.return_unit, which defaults to 'auto').\n" +
-    "  'chunk'   — the ranked chunk only (~300-450 tokens per result).\n" +
-    "  'window'  — the hit chunk plus return_window neighbor chunks each side (local context, ~3x chunk).\n" +
-    "  'section' — the enclosing markdown section, or the conversation rounds around the hit.\n" +
-    "  'page'    — the whole page/session, capped. Use for multi-session or temporal questions where the answer needs the whole conversation.\n" +
-    "  'auto'    — the whole page for conversation pages (conversation/transcript/chat/meeting/slack/imessage types, chat/ or conversations/ slugs), the ranked chunk unchanged for everything else. When no hit is a conversation the response is exactly the chunk response.\n" +
-    'Non-chunk units return one result per page, packed into token_budget (default 6000, auto 24000; remote max 32000), with a `delivered` object (unit, chunk_ids, match_spans, tokens, truncated; reason under auto) per result and `delivery` in the response meta.',
+  description: "chunk, window, section, page or auto (default; whole page for conversations).",
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
-  description: "Neighbor chunks on each side for return_unit 'window' (integer 1-3, default 1).",
+  description: 'Neighbor chunks each side for window (1-3).',
 };
 
 /**
@@ -459,15 +452,13 @@ function normalizeTypesParam(raw: unknown): string[] | undefined {
   return types;
 }
 
-const TYPES_PARAM_DESCRIPTION =
-  "Filter results to pages whose `type` is in this list (e.g. ['person','company']). " +
-  'CLI: --types person,company. Applied at SQL level on every retrieval leg — the same ' +
-  'filter `whoknows` uses. Stacks with all other filters.';
+const TYPES_PARAM_DESCRIPTION = "Page types, e.g. ['person'].";
 
-const SNIPPET_CHARS_PARAM_DESCRIPTION =
-  'Cap each result\'s chunk_text at N characters (a "… [truncated]" marker names the ' +
-  'get_page recovery move). 0 forces full text. Unset: subagent tool loops default to ' +
-  'the agent.search_snippet_chars config (300; 0=full); every other caller gets full text. (#3800)';
+const SOURCE_ID_PARAM_DESCRIPTION = "One source, or '__all__'.";
+const SALIENCE_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: 'Boost emotional pages (default: auto).' };
+const RECENCY_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: "Boost recent pages (default: auto)." };
+
+const SNIPPET_CHARS_PARAM_DESCRIPTION = 'Max chars per chunk_text (0 = full).';
 
 /**
  * #3800: resolve the effective snippet cap for one call. Explicit
@@ -496,43 +487,27 @@ const search: Operation = {
   outputRedaction: 'retrieval',
   description: SEARCH_DESCRIPTION,
   params: {
-    query: { type: 'string', required: true, description: "Search text. Exact tokens, names, and structured-field values work best here (e.g. 'acme-example series A'), since this op does no LLM expansion. This is the search text param — there is no `text` or `q` param." },
-    limit: { type: 'number', description: 'Max results (default 20)' },
-    offset: { type: 'number', description: 'Skip first N results (for pagination)' },
-    mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    query: { type: 'string', required: true, description: "Exact tokens or names, e.g. 'acme-example series A'." },
+    limit: { type: 'number', description: 'Max results (default 20).' },
+    offset: { type: 'number', description: 'Rows to skip.' },
+    mode: { type: 'string', description: 'Local callers only.' },
     // #4398: per-call source scope, mirroring `query` — MCP clients passed it
     // here, got 'unknown parameter ignored', and read UNSCOPED results.
-    source_id: {
-      type: 'string',
-      description:
-        "Scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile); when unset, an unqualified read spans every federated source. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
-    },
+    source_id: { type: 'string', description: SOURCE_ID_PARAM_DESCRIPTION },
     // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
     types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
     // #3800: subagent token economy — per-call snippet cap.
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: "Token budget for delivered evidence when return_unit is not 'chunk' (default search.return_budget_default = 6000; auto: search.return_budget_conversation = 24000). Ignored in chunk mode." },
+    token_budget: { type: 'number', description: 'Evidence token budget (default 6000).' },
     // #4415: explicit ranking-axis overrides (the same knobs `query` has had
     // since v0.29.1). The auto-detect banks are English regex, so on a
     // non-English brain the recency/salience stages never fire — these flags
     // (CLI: --salience / --recency) are the per-call override; the
     // search.intent_patterns config is the per-brain fix.
-    salience: {
-      type: 'string',
-      enum: ['off', 'on', 'strong'],
-      description:
-        "Salience boost (emotional_weight + take_count, no time component): 'off' | 'on' | 'strong'. " +
-        'Omit and gbrain auto-detects from query text. Independent of `recency`.',
-    },
-    recency: {
-      type: 'string',
-      enum: ['off', 'on', 'strong'],
-      description:
-        "Recency boost (per-prefix age decay, no mattering signal): 'off' | 'on' | 'strong'. " +
-        'Omit and gbrain auto-detects. Independent of `salience`. Ignored on the keyword-only opt-out path.',
-    },
+    salience: SALIENCE_PARAM,
+    recency: RECENCY_PARAM,
     fields: FIELDS_PARAM,
   },
   handler: async (ctx, p) => {
@@ -641,12 +616,12 @@ const query: Operation = {
     // validator at src/cli.ts honors `cliHints.altRequired` and admits the
     // image-only invocation. MCP / programmatic callers must still pass
     // `query` OR `image` (handler refuses if both are absent).
-    query: { type: 'string', required: false, description: "Question or topic text for hybrid retrieval with expansion (e.g. 'agents that do web research'). This is the search text param — there is no `text` or `q` param. Optional ONLY because `image` is the alternative entry point; a call with neither fails with invalid_params." },
+    query: { type: 'string', required: false, description: "Question or topic (required unless image)." },
     /** v0.27.1: image-similarity search. Path resolved on the CLI side
      *  before the op fires (the op receives raw bytes neither side; the
      *  CLI loads the file, base64-encodes, and passes through `image`). */
-    image: { type: 'string', description: 'Base64-encoded image bytes for image-similarity search (CLI: --image <path>).' },
-    image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
+    image: { type: 'string', description: 'Base64 image for image search.' },
+    image_mime: { type: 'string', description: 'MIME type of image.' },
     // #4356 — the text/hybrid path no longer hard-defaults this to 20; an
     // omitted OR falsy (0) `limit` resolves from the active search mode's
     // searchLimit (10/25/50 for conservative/balanced/tokenmax by default,
@@ -663,97 +638,36 @@ const query: Operation = {
     // param) below now resolves the SAME mode-derived searchLimit as the
     // text path (was a hard `|| 20` regardless of mode, the last search arm
     // in this op that didn't honor conservative/balanced/tokenmax).
-    limit: { type: 'number', description: 'Max results. Omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override) — for both text queries and image-similarity queries (`image` param).' },
-    offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    limit: { type: 'number', description: 'Default 10/25/50 by search mode.' },
+    offset: { type: 'number', description: 'Rows to skip.' },
     // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
     types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
     // #3800: subagent token economy — per-call snippet cap.
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: "Token budget. Chunk mode, and whenever return_unit is omitted: caps the cumulative chunk payload (results that would overflow are skipped). Explicit non-chunk return_unit: the budget for delivered evidence (default search.return_budget_default = 6000, auto 24000; remote max search.return_budget_max_remote = 32000)." },
-    expand: { type: 'boolean', description: 'Request multi-query expansion (default: true in every search mode, regardless of search.expansion). Set false to opt out. Requires configured embedding and expansion providers; a cloud expander receives the query and may charge for the call. Response metadata expansion_applied reports whether variants were actually used.' },
-    detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
+    token_budget: { type: 'number', description: 'Token cap on the returned evidence.' },
+    expand: { type: 'boolean', description: 'Default true; false skips the expansion LLM call.' },
+    detail: { type: 'string', description: 'low (compiled truth only), medium (default) or high (all chunks).' },
     fields: FIELDS_PARAM,
-    mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
+    mode: { type: 'string', description: 'Local callers only.' },
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
-    lang: { type: 'string', description: 'Filter to chunks where content_chunks.language matches (e.g., typescript, python, ruby)' },
-    symbol_kind: { type: 'string', description: 'Filter to chunks where content_chunks.symbol_type matches (e.g., function, class, method, type, interface)' },
+    lang: { type: 'string', description: 'Code language.' },
+    symbol_kind: { type: 'string', description: 'Code symbol type.' },
     // v0.20.0 Cathedral II Layer 7 (A2) / Layer 10 C3: two-pass structural expansion.
-    near_symbol: { type: 'string', description: 'Anchor retrieval at this qualified symbol name (e.g., BrainEngine.searchKeyword). Enables A2 two-pass.' },
-    walk_depth: { type: 'number', description: 'Structural walk depth 1-2. Default 0 (off). Expands anchors through code_edges with 1/(1+hop) decay.' },
+    near_symbol: { type: 'string', description: 'Anchor code symbol.' },
+    walk_depth: { type: 'number', description: 'Code walk depth 1-2.' },
     // v0.29.1 — orthogonal recency + salience axes. YOU (the agent) decide.
-    salience: {
-      type: 'string',
-      enum: ['off', 'on', 'strong'],
-      description:
-        "v0.29.1 salience boost — emotional_weight + take_count, NO time component.\n" +
-        "  'off' — default for entity / canonical / definitional queries\n" +
-        "  'on'  — surface emotionally-weighted + take-rich pages\n" +
-        "  'strong' — aggressive mattering tilt\n" +
-        "Omit and gbrain auto-detects from query text. Independent of `recency`.",
-    },
-    recency: {
-      type: 'string',
-      enum: ['off', 'on', 'strong'],
-      description:
-        "v0.29.1 recency boost — per-prefix age decay, NO mattering signal.\n" +
-        "  'off' — default for canonical truth\n" +
-        "  'on'  — daily/, media/x/, chat/ decay aggressively; concepts/, originals/, writing/ stay evergreen\n" +
-        "  'strong' — multiplies the recency factor by 1.5 (use for 'today' / 'right now')\n" +
-        "Omit and gbrain auto-detects. Independent of `salience` (orthogonal axes).",
-    },
-    since: {
-      type: 'string',
-      description:
-        "v0.29.1 — filter to pages whose effective_date is >= this. ISO-8601 (YYYY-MM-DD or full timestamp) OR relative ('7d', '2w', '1y'). Replaces deprecated `afterDate`.",
-    },
-    until: {
-      type: 'string',
-      description:
-        "v0.29.1 — filter to effective_date <= this. Same format as `since`. Replaces deprecated `beforeDate`. YYYY-MM-DD lands at end-of-day.",
-    },
-    source_id: {
-      type: 'string',
-      description:
-        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to span every source for trusted local callers. For remote callers, '__all__' uses the same scope as omission: an OAuth grant when present, otherwise the transport-computed federated sources for grantless local stdio.",
-    },
-    cross_modal: {
-      type: 'string',
-      enum: ['text', 'image', 'both', 'auto'],
-      description:
-        "v0.36 cross-modal search routing.\n" +
-        "  'text' (default for non-image-intent queries) — text-only path, no behavior change vs v0.35.\n" +
-        "  'image' — route the query through Voyage multimodal-3 + the embedding_image column. Best for 'show me photos of...' phrasings.\n" +
-        "  'both' — run text AND image searches in parallel; merge via weighted RRF.\n" +
-        "  'auto' — same effect as omitting the field; intent classifier decides based on query phrasing.",
-    },
-    embedding_column: {
-      type: 'string',
-      description:
-        "v0.36: route vector search through a non-default embedding column. Defaults to 'embedding' (the brain's primary column) unless `search_embedding_column` config sets a different default. Per-call override for A/B benchmarking across providers (e.g. 'embedding_voyage', 'embedding_openai'). Column MUST be declared in the `embedding_columns` config registry — unknown names throw with a paste-ready hint listing valid columns.",
-    },
-    adaptive_return: {
-      type: 'boolean',
-      description:
-        "v0.41.33 — return a TIGHT, intent-sized result set instead of the full top-K. YOU (the agent) set this per query to serve the user well:\n" +
-        "  TRUE when the user's question has a small, specific answer — a lookup ('what is X', 'who is Y', 'what's my <thing>', 'what did Z decide'), a single-fact recall, or when you'll route the result into a precise downstream step (a classifier, a decision, an exact citation). The user gets the answer, not a wall of loosely-related pages, and you spend fewer tokens reading noise.\n" +
-        "  Omit / FALSE for breadth — 'everything about X', 'list all', 'what do I know about Y', exploration, brainstorming, or any time you'd rather see more candidates and judge for yourself. Recall matters more there, so take the full top-K.\n" +
-        "Safe by construction: it NEVER returns empty when there are matches (you always get at least the top hit), and it only applies to the first page (omit when paginating). Caps come from config (search.adaptive_return_entity_max / _other_max; default 2 / 6) — pass `limit` 1 alongside this for a hard single-answer cap.",
-    },
-    autocut: {
-      type: 'boolean',
-      description:
-        "v0.42.3.0 — autocut is the SMART DEFAULT (already ON when the reranker runs, which it does in the default search mode). It returns only the confident cluster by cutting where the relevance score drops off a cliff, so an obvious single answer comes back as 1 result and a genuine handful comes back as that handful — not a fixed wall of 20+.\n" +
-        "  You almost never set this. Pass FALSE only to FORCE the full top-K when you deliberately want breadth — broad exploration, 'show me everything about X', enumeration where you'd rather over-collect and judge for yourself, or when you suspect the top hit is wrong and want to see the alternatives.\n" +
-        "  TRUE is redundant in default mode (it's already on); it only matters to override a brain whose config turned autocut off.\n" +
-        "Safe by construction: never returns empty when there are matches, only applies to the first page (omit when paginating), and is a no-op when no reranker scored the results (so it can't cut on an untrustworthy signal). Distinct from `adaptive_return`: autocut cuts on the score cliff; adaptive_return caps by question intent. Leave both unset for the smart default.",
-    },
-    relational: {
-      type: 'boolean',
-      description:
-        "v0.43 — relational recall arm. SMART DEFAULT (on in balanced/tokenmax). When the question is about a RELATIONSHIP ('who invested in widget-co', 'who introduced me to alice', 'what connects fund-a and fund-b'), the brain resolves the named entity and walks its typed-edge graph (invested_in, works_at, founded, …), surfacing the answer even when no passage mentions both sides. Pure no-op for non-relational questions. Pass FALSE to force lexical/vector-only retrieval (e.g. debugging why a graph answer appeared). You almost never set this.",
-    },
+    salience: SALIENCE_PARAM,
+    recency: RECENCY_PARAM,
+    since: { type: 'string', description: 'On/after: YYYY-MM-DD or 7d/2w/1y.' },
+    until: { type: 'string', description: 'On/before.' },
+    source_id: { type: 'string', description: SOURCE_ID_PARAM_DESCRIPTION },
+    cross_modal: { type: 'string', enum: ['text', 'image', 'both', 'auto'], description: 'Default auto.' },
+    embedding_column: { type: 'string', description: 'Registered embedding column.' },
+    adaptive_return: { type: 'boolean', description: 'true when one specific answer is wanted (fewer rows; never returns empty); omit for breadth.' },
+    autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth. Cuts at the score cliff, unlike adaptive_return.' },
+    relational: { type: 'boolean', description: 'Relationship-graph arm (default on).' },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();

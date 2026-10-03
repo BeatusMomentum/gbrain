@@ -164,11 +164,11 @@ const remove_link: Operation = {
 
 const LINK_SOURCE_ID_PARAM = {
   type: 'string',
-  description: "Scope the read to one source (a multi-source brain can hold the same slug in several sources). Omitted: your granted sources remotely (a connection with no grant reads every federated source); locally, the resolved source, or every federated source when no --source / GBRAIN_SOURCE / .gbrain-source pinned it. '__all__' spans every source for trusted local callers and only your readable sources for remote callers.",
+  description: "One source, or '__all__'.",
 } as const;
 const LINK_ALL_SOURCES_PARAM = {
   type: 'boolean',
-  description: 'Span sources (equivalent to source_id=__all__): every source locally, only your readable sources remotely.',
+  description: 'Same as source_id __all__.',
 } as const;
 
 /**
@@ -319,9 +319,9 @@ const get_links: Operation = {
 const get_backlinks: Operation = {
   name: 'get_backlinks',
   outputRedaction: 'retrieval',
-  description: 'List incoming links to a page',
+  description: 'List links pointing to a page.',
   params: {
-    slug: { type: 'string', required: true, description: 'Slug of the page whose incoming links to list.' },
+    slug: { type: 'string', description: 'Page slug.', required: true },
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },
@@ -336,7 +336,7 @@ const list_link_sources: Operation = {
   // v114 (#1941): the read-side counterpart to link-add/link-rm. Since
   // link_source is now an open kebab provenance (no allowlist), this is how an
   // agent discovers which provenances a brain actually carries.
-  description: 'List distinct link_source provenances in the brain with edge counts (e.g. citation-graph, manual, markdown)',
+  description: 'Link provenances in the brain (e.g. markdown, manual) with edge counts.',
   params: {},
   handler: async (ctx) => {
     // Route through sourceScopeOpts so the read honors both scalar ctx.sourceId
@@ -372,12 +372,12 @@ const DEFAULT_TRAVERSE_DEPTH = 5;
 const traverse_graph: Operation = {
   name: 'traverse_graph',
   outputRedaction: 'retrieval',
-  description: `Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (pass depth explicitly for deeper walks); trusted local no-filter callers keep the legacy node shape at depth ${DEFAULT_TRAVERSE_DEPTH}.`,
+  description: `Walk the link graph from a page. Remote callers get bidirectional paths at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} by default.`,
   params: {
-    slug: { type: 'string', required: true, description: "Slug of the page to start the traversal from, e.g. 'people/alice-example'. This is the start-node param — there is no `start` or `root` param." },
-    depth: { type: 'number', description: `Max traversal depth (capped at ${TRAVERSE_DEPTH_CAP}). Default ${DEFAULT_TRAVERSE_DEPTH}, except a remote call that lets direction default to 'both' uses ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (bidirectional path enumeration is combinatorial on hubs); an explicit depth is always honored up to the cap.` },
-    link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
-    direction: { type: 'string', enum: ['in', 'out', 'both'], description: "Traversal direction ('in', 'out', or 'both'). Remote callers default to 'both'; trusted local no-filter callers keep the legacy outgoing-node output." },
+    slug: { type: 'string', description: 'Start page slug.', required: true },
+    depth: { type: 'number', description: `Max depth (cap ${TRAVERSE_DEPTH_CAP}).` },
+    link_type: { type: 'string', description: 'Follow only this link type.' },
+    direction: { type: 'string', description: 'Remote default both.', enum: ['in', 'out', 'both'] },
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },

@@ -237,14 +237,14 @@ async function probeQueueStateSafe(
 const submit_agent: Operation = {
   name: 'submit_agent',
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Submit an LLM agent job that the worker dispatches via the gateway-native tool loop. Requires the `agent` OAuth scope. Tools, source, slug prefixes, max concurrency, and daily budget are bound at OAuth client registration time.',
+  description: 'Submit an agent job (agent scope; tools and budget bound to your client). Poll get_agent_job.',
   params: {
-    prompt: { type: 'string', required: true, description: 'User prompt for the agent' },
-    model: { type: 'string', description: 'provider:model string (defaults to models.tier.subagent)' },
-    allowed_tools: { type: 'array', description: 'Subset of bound_tools the agent may invoke', items: { type: 'string' } },
-    allowed_slug_prefixes: { type: 'array', description: 'Subset of delegated_slug_prefixes for writes; omit for a job-owned namespace', items: { type: 'string' } },
-    max_turns: { type: 'number', description: 'Max LLM turns (default 20, hard cap 100)' },
-    queue: { type: 'string', description: 'Queue name (default "default")' },
+    prompt: { type: 'string', description: 'Task prompt.', required: true },
+    model: { type: 'string', description: 'provider:model (default: subagent tier).' },
+    allowed_tools: { type: 'array', description: 'Subset of your bound tools.', items: { type: 'string' } },
+    allowed_slug_prefixes: { type: 'array', description: 'Subset of your write prefixes.', items: { type: 'string' } },
+    max_turns: { type: 'number', description: 'Default 20, max 100.' },
+    queue: { type: 'string', description: 'Default "default".' },
   },
   mutating: true,
   scope: 'agent',
@@ -393,9 +393,9 @@ const submit_agent: Operation = {
 const get_agent_job: Operation = {
   name: 'get_agent_job',
   outputRedaction: 'retrieval',
-  description: 'Poll an agent job submitted via submit_agent. Returns a trimmed status view (id, status, timestamps, error_text, result) plus queue_position (waiting jobs ahead in claim order; 0 = next) while the job is still waiting. Requires the `agent` OAuth scope; only jobs owned by the calling client are visible.',
+  description: 'Poll a submit_agent job: status, result, queue_position.',
   params: {
-    id: { type: 'number', required: true, description: 'Job id returned by submit_agent' },
+    id: { type: 'number', description: 'Job id.', required: true },
   },
   scope: 'agent',
   handler: async (ctx, p) => {
@@ -528,9 +528,9 @@ const list_jobs: Operation = {
 const cancel_job: Operation = {
   name: 'cancel_job',
   outputRedaction: { exempt: 'admin-scoped job introspection: job params and results are operator data, not retrieved brain text' },
-  description: 'Cancel a waiting, active, or delayed job. Agent-scoped tokens (no admin) can cancel only jobs they own.',
+  description: 'Cancel a waiting, active or delayed job you may manage.',
   params: {
-    id: { type: 'number', required: true, description: 'Job ID' },
+    id: { type: 'number', description: 'Job id.', required: true },
   },
   mutating: true,
   scope: 'admin',
