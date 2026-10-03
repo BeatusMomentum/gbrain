@@ -16,6 +16,7 @@ import { VERSION } from '../version.ts';
 import { OperationError } from './ops/contract.ts';
 import { StructuredAgentError } from './errors.ts';
 import { codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
+import { recordAgentContractEvent } from './agent-contract-log.ts';
 
 export const CONTRACT_VERSION = 1 as const;
 
@@ -400,7 +401,11 @@ export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope 
       return buildEnvelope({ error: env.code, code: env.code, message: env.message, suggestion: env.hint, docs: env.docs_url }, ctx.render);
     }
     return genericEnvelope(e, ctx);
-  } catch {
+  } catch (fault) {
+    recordAgentContractEvent({
+      transport: ctx.transport, op: ctx.op, command: ctx.command, code: 'internal_error',
+      fault: fault instanceof Error ? fault.name : typeof fault,
+    });
     return genericEnvelope(e, ctx);
   }
 }
