@@ -1870,6 +1870,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   call: '`call` dispatches against a local engine. Use the named CLI command or an authorized MCP tool through your agent, or run `gbrain call` on the host.',
   sync: 'sync runs on the host. Use the dedicated `sync_brain` MCP operation, or run `gbrain sync` on the host.',
   embed: 'embed runs on the host. Run `gbrain embed` or `gbrain cycle` on the host machine.',
+  embeddings: 'embeddings enable changes the brain host config. Run `gbrain embeddings enable` (or the readiness fix) on the host machine.',
   extract: 'extract runs on the host. Run `gbrain extract` or `gbrain cycle` on the host machine.',
   'extract-conversation-facts': 'extract-conversation-facts runs on the host (requires local engine + chat gateway). Run on the host machine.',
   enrich: 'enrich runs on the host (requires local engine + chat gateway for grounded synthesis). Run on the host machine.',
@@ -2942,6 +2943,7 @@ SETUP
                                      (--yes --apply-rewrites for config rewrites)
   migrate --to <supabase|pglite>     Transfer brain between engines
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
+  embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)

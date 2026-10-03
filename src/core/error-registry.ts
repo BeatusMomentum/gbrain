@@ -103,6 +103,7 @@ export const CODES = {
   embedding_storage_unavailable: { class: 'retryable', summary: "Embedding policy or claim storage is temporarily unavailable." },
   embedding_unavailable: { class: 'unavailable', summary: "The provider returned an incomplete embedding batch." },
   embedding_unconfigured: { class: 'host_only', summary: "The selected brain has no verifiable text embedding model and dimensions." },
+  embedding_width_mismatch: { class: 'caller', summary: "The embedding model cannot produce the width of the brain's vector column; nothing was changed." },
   export_limit: { class: 'caller', summary: "This migration is bounded to 5,000 active pages per source; split or use a reviewed bulk export." },
   extraction_failed: { class: 'server', summary: "The accepted atom extraction produced malformed output." },
   extractor_identity_mismatch: { class: 'server', summary: "The approved extractor differs from the installed extractor; this receipt cannot resume or admit another revision." },

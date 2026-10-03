@@ -564,6 +564,25 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "embeddings": {
+        "hasSwitchCase": false,
+        "phase": "pre-connect",
+        "preConnectRules": [
+          {
+            "condition": "command === 'embeddings'",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "embeddings"
+            ]
+          }
+        ],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "engine": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
