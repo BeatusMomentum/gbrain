@@ -3,18 +3,14 @@ import { assertManagedFilesystemWrite } from '../core/persistence/filesystem-gua
 /**
  * `gbrain reinit-pglite` — wipe-and-reinit PGLite brain in one command.
  *
- * v0.37 fix wave (deferred TODO, shipped end-of-wave): the canonical path
- * for switching embedding models / dimensions on PGLite is wipe-and-reinit
- * (PGLite cannot `ALTER COLUMN TYPE vector(N)` — pgvector ships as WASM).
- * The recipe is 3 commands by hand:
- *
- *   mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak
- *   gbrain init --pglite --embedding-model X --embedding-dimensions N
- *   gbrain sync
- *
- * This command wraps that into one call so users (and agents reading
- * `embeddingMismatchMessage` recipes) don't have to type the wipe + the
- * init + the sync separately.
+ * Last-resort width change on PGLite (PGLite cannot `ALTER COLUMN TYPE
+ * vector(N)` — pgvector ships as WASM): moves the datastore aside to
+ * `<path>.bak`, re-inits at the new width and re-syncs the brain repo.
+ * DB-only pages and `remember` facts are NOT carried over (they live only in
+ * the moved-aside datastore). Turning embeddings on for a keyless brain never
+ * needs this: readiness's `embeddingEnablement` enables in place and keeps
+ * everything; a width change with preserved data is
+ * `gbrain migrate embeddings --to <model> --dim <N>`.
  *
  * Destructive. TTY confirmation required unless `--yes` is passed. JSON
  * output via `--json` for scripted callers.
