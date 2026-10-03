@@ -91,7 +91,7 @@ describe('callRemoteTool when /token fails after discovery succeeded', () => {
   test('a 429 surfaces as rate_limited, not discovery', async () => {
     tokenResponse = rateLimited('900');
     await expect(callRemoteTool(config(), 'get_brain_identity')).rejects.toMatchObject({
-      reason: 'rate_limited', detail: { status: 429, retry_after_s: 900 },
+      reason: 'rate_limited', detail: { status: 429, retry_after_s: 900, code: 'rate_limited', fix: { actor: 'provider' } },
     });
   });
 

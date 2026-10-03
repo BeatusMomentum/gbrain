@@ -427,6 +427,7 @@ type Row = { match: (e: unknown) => boolean; map: (e: any, ctx: AgentErrorContex
 /** RemoteMcpError transport reasons (no server envelope) → registry codes. */
 const REMOTE_REASON_CODE: Record<string, string> = {
   config: 'config_error', discovery: 'unavailable', auth: 'invalid_token', auth_after_refresh: 'invalid_token',
+  rate_limited: 'rate_limited', token: 'unavailable',
   'network:timeout': 'timeout', 'network:aborted': 'interrupted', parse: 'internal_error',
 };
 

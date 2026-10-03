@@ -9,7 +9,7 @@
  */
 import type { Action, Effect, McpCall, Transport } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
-import { opError, type OperationContext, type OperationError, type ParamDef } from './contract.ts';
+import { opError, type AuthInfo, type OperationContext, type OperationError, type ParamDef } from './contract.ts';
 
 type TransportCtx = Pick<OperationContext, 'remote' | 'transport'>;
 
@@ -117,4 +117,50 @@ export function invalidParam(
   const call = cli ? paramUse(ctx, param, example) : `${tool} {"${param}": ${JSON.stringify(example)}}`;
   return opError('invalid_params', message, `Pass ${name} as ${what}. Example: ${call}.`,
     opts.legacy_error ? { legacy_error: opts.legacy_error } : {});
+}
+
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * B5: the one scope-denial error. Code `insufficient_scope` (the caller's
+ * frozen `error` value rides `legacy_error`), the client id and current
+ * scopes in `why`, and the exact `gbrain auth` command that widens this
+ * connection's grant, run by the brain host's operator.
+ */
+export function scopeDeniedError(opts: {
+  op: string;
+  required: readonly string[];
+  auth?: Pick<AuthInfo, 'clientId' | 'scopes' | 'principal' | 'clientName'>;
+  transport: 'stdio' | 'http';
+  message?: string;
+  legacy_error?: string;
+}): OperationError {
+  const current = opts.auth?.scopes ?? [];
+  const wanted = [...new Set([...current, ...opts.required])];
+  const principal = opts.auth?.principal;
+  const clientId = opts.auth?.clientId;
+  const argv = principal?.kind === 'legacy_token' && UUID.test(principal.id)
+    ? ['gbrain', 'auth', 'rescope-token', '--id', principal.id, '--scopes', wanted.join(',')]
+    : clientId && SAFE_ID.test(clientId) && opts.transport === 'http'
+      ? ['gbrain', 'auth', 'rescope', '--client', clientId, '--scopes', wanted.join(',')]
+      : opts.transport === 'stdio' ? ['gbrain', 'auth', 'local-writer', 'list', '--json'] : ['gbrain', 'auth', 'clients', '--json'];
+  const who = clientId ? `Client ${clientId}` : 'This connection';
+  const why = `${who} has scopes [${current.join(', ') || 'none'}]; ${opts.op} needs ${opts.required.map(s => `'${s}'`).join(' and ')}.`;
+  const grant = argv[2] === 'rescope' || argv[2] === 'rescope-token';
+  return opError('insufficient_scope', opts.message ?? `Operation ${opts.op} requires '${opts.required.join("', '")}' scope`,
+    `Ask the brain host's operator to grant ${opts.required.map(s => `'${s}'`).join(' and ')} to this connection (the command is in fix), then reconnect.`, {
+      ...(opts.legacy_error ? { legacy_error: opts.legacy_error } : {}),
+      reason: 'insufficient_scope',
+      why,
+      fix: {
+        argv, consent: grant ? ['credentials'] : [], actor: opts.transport === 'http' ? 'host_admin' : 'user', why: grant
+          ? `Widens this connection's grant to ${wanted.join(', ')}; only the brain host's operator can change grants.`
+          : 'Shows this connection\'s grant so the operator can widen it.',
+        user_message: opts.transport === 'http'
+          ? `${who} is missing the ${opts.required.join(', ')} scope for ${opts.op}. Please ask whoever runs this gbrain server to run the command shown, then reconnect.`
+          : `This MCP connection is missing the ${opts.required.join(', ')} scope for ${opts.op}. Please run the command shown in a terminal on this machine to review its grant.`,
+        requires_exclusive: false,
+      },
+    });
 }

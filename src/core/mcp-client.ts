@@ -142,6 +142,24 @@ export class RemoteMcpError extends Error {
 }
 
 /**
+ * B5 (#5949): a 429 on the /token mint is the host's mint budget, not a
+ * connectivity fault: code `rate_limited`, a provider-side wait, and the
+ * read-only check to run once the wait is over.
+ */
+function rateLimitedMintDetail(retryAfterS: number | undefined): RemoteMcpErrorDetail {
+  const wait = retryAfterS !== undefined ? `${retryAfterS}s` : 'a few minutes';
+  return {
+    code: 'rate_limited',
+    why: `The brain host's OAuth /token mint budget is spent (HTTP 429); it clears by itself in ${wait}.`,
+    suggestion: `Wait ${wait}, then re-run the same command. If this repeats, the host operator can raise GBRAIN_OAUTH_TOKEN_RATE_LIMIT_MAX.`,
+    fix: {
+      argv: ['gbrain', 'remote', 'doctor', '--json'], consent: [], actor: 'provider',
+      why: `Retry after ${wait}; remote doctor confirms the token mint works again.`, requires_exclusive: false,
+    },
+  };
+}
+
+/**
  * v0.31.1: convert any thrown value into a RemoteMcpError. Used by the
  * outermost catch in `callRemoteTool` so the dispatcher's exhaustive switch
  * is sound — no plain `Error` (undici, AbortError, JSON parse) escapes.
@@ -300,6 +318,7 @@ async function getAccessToken(config: GBrainConfig, force = false, signal?: Abor
       {
         ...(tokenRes.status ? { status: tokenRes.status } : {}), ...(tokenRes.kind ? { kind: tokenRes.kind } : {}),
         ...(tokenRes.retry_after_s !== undefined ? { retry_after_s: tokenRes.retry_after_s } : {}), mcp_url: remote.mcp_url,
+        ...(tokenRes.reason === 'rate_limited' ? rateLimitedMintDetail(tokenRes.retry_after_s) : {}),
       },
     );
   }

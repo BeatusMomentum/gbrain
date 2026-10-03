@@ -377,3 +377,27 @@ describe('query op with neither `query` nor `image` (WP3 typed envelope)', () =>
     expect(envelope.message).toContain('`image`');
   });
 });
+
+// ---------------------------------------------------------------------------
+// B3 — schema failures carry the param's type, choices and an example
+// ---------------------------------------------------------------------------
+
+describe('schema invalid_params hints (agent contract B3)', () => {
+  test('a wrong type names the param type, its description and an example call', async () => {
+    const out = await dispatchToolCall(stubEngine('warn'), 'search', { query: 'x', limit: 'ten' }, DISPATCH_OPTS);
+    const envelope = body(out);
+    expect(envelope).toMatchObject({ error: 'invalid_params', code: 'invalid_params', message: 'Parameter "limit" must be a number' });
+    expect(envelope.suggestion).toMatch(/^Pass `limit` as a number/);
+    expect(envelope.suggestion).toContain('Example: search {"limit": ');
+    expect(envelope.suggestion).not.toContain('ten');
+  });
+
+  test('a missing required param gets an example; verbs keep protocol_version', async () => {
+    const envelope = body(await dispatchToolCall(stubEngine('warn'), 'forget', {}, DISPATCH_OPTS));
+    expect(envelope).toMatchObject({ error: 'invalid_params', message: 'Missing required parameter: id', protocol_version: 1 });
+    expect(envelope.suggestion).toMatch(/^Pass `id` as a string.*Example: forget \{"id": "value"\}\.$/);
+    const search = body(await dispatchToolCall(stubEngine('warn'), 'search', {}, DISPATCH_OPTS));
+    expect(search.message).toBe('Missing required parameter: query');
+    expect(search.suggestion).toMatch(/^Pass `query` as a string/);
+  });
+});

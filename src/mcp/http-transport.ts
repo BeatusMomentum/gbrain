@@ -34,7 +34,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { resolveMcpInstructions } from './instructions.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
-import { operations, operationsByName, opAllowedForBoundClient, opError } from '../core/operations.ts';
+import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
+import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -507,8 +508,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         if (op && !op.localOnly && !operationScopesAllowed(auth.auth!.scopes, op)) {
           logRequest(auth.tokenName!, `tools/call:${toolName}`, 'denied_after_list', Date.now() - startedMs);
           // Frozen v1 pair: `error: permission_denied` stays; `code: insufficient_scope`.
-          const denial = opError('insufficient_scope', `Tool requires ${op.scope ?? 'read'} scope`,
-            `Ask the brain host's operator to grant the '${op.scope ?? 'read'}' scope to this token.`, { legacy_error: 'permission_denied' });
+          const denial = scopeDeniedError({ op: toolName, required: [op.scope ?? 'read', ...(op.requiredScopes ?? [])], auth: auth.auth,
+            transport: 'http', message: `Tool requires ${op.scope ?? 'read'} scope`, legacy_error: 'permission_denied' });
           return Response.json({ jsonrpc: '2.0', id, result: errorResult(denial, { remote: true, transport: 'http', auth: auth.auth }, { op: toolName }) },
             { headers: corsHeaders(origin) });
         }
