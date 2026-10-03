@@ -507,6 +507,14 @@
       },
       {
         "category": "ops",
+        "name": "legacy_token_grant_shape"
+      },
+      {
+        "category": "ops",
+        "name": "legacy_token_grant_drift"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
