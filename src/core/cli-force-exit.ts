@@ -54,6 +54,7 @@
  */
 
 import { writeSync } from 'node:fs';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { formatWithOptions } from 'node:util';
 import {
   drainAllBackgroundWorkForCliExit,
@@ -680,7 +681,8 @@ function chainStdoutWrite(data: string | Uint8Array, encoding?: BufferEncoding):
  * later than the native writer fired it, never earlier), boolean return
  * (always true: the chain owns backpressure, and flushThenExit awaits it).
  */
-export function installStdoutPipeDelivery(): void {
+export function installStdoutPipeDelivery(opts: { json?: 'document' | 'ndjson' } = {}): void {
+  void opts;
   if (stdoutInterposed) return;
   if (process.stdout.isTTY) return;
   stdoutInterposed = true;
@@ -753,6 +755,32 @@ export function installStdoutPipeDelivery(): void {
  */
 export async function writeStdoutFinal(output: string): Promise<void> {
   await chainStdoutWrite(output);
+}
+
+/**
+ * Agent contract v1 (A0/D2): `--json` (or `--json=true`) appears before a
+ * bare `--` end-of-options marker.
+ */
+export function jsonRequested(argv: readonly string[]): boolean {
+  for (const a of argv) {
+    if (a === '--') return false;
+    if (a === '--json' || a === '--json=true') return true;
+  }
+  return false;
+}
+
+/** One NDJSON line on fd 1 (the only stdout path for `json: 'ndjson'` commands under the guard). */
+export async function writeNdjsonLine(line: unknown): Promise<void> {
+  await chainStdoutWrite(`${JSON.stringify(line)}\n`);
+}
+
+/**
+ * Spawn a child CLI process. Under the `--json` guard the child's stdout is
+ * piped to this process's stderr so it can never corrupt the JSON document;
+ * otherwise stdio is inherited. The one sanctioned `stdio: 'inherit'` site.
+ */
+export function spawnCliChild(cmd: string, args: readonly string[], opts: SpawnOptions = {}): ChildProcess {
+  return spawn(cmd, [...args], { stdio: 'inherit', ...opts });
 }
 
 export interface FinishCliTeardownOpts {

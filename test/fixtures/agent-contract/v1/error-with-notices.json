@@ -1,0 +1,9 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"error\": \"unavailable\",\n  \"code\": \"unavailable\",\n  \"message\": \"Semantic search is unavailable.\",\n  \"suggestion\": \"Keyword search still works.\",\n  \"docs\": \"{{DOCS_BASE}}/docs/guides/error-codes.md#unavailable\",\n  \"reason\": \"embeddings_disabled\",\n  \"docs_cmd\": [\n    \"gbrain\",\n    \"errors\",\n    \"unavailable\"\n  ],\n  \"class\": \"unavailable\",\n  \"retryable\": false,\n  \"notices\": [\n    {\n      \"code\": \"backup_coverage\",\n      \"kind\": \"safety\",\n      \"why\": \"Two sources have no backup.\",\n      \"fix\": {\n        \"argv\": [\n          \"gbrain\",\n          \"backup\",\n          \"--json\"\n        ],\n        \"command\": \"gbrain backup --json\",\n        \"consent\": [],\n        \"actor\": \"user\",\n        \"why\": \"Shows which assets are not backed up.\",\n        \"requires_exclusive\": false\n      },\n      \"user_message\": \"Some of your notes are not backed up. Want me to show you which ones?\",\n      \"contract_version\": 1\n    }\n  ],\n  \"contract_version\": 1\n}"
+    }
+  ],
+  "isError": true
+}

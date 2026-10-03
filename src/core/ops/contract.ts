@@ -10,6 +10,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../persistence/types.ts';
+import { cliRenderContext, renderAction, renderNotice, CONTRACT_VERSION, type Action, type Notice } from '../agent-output.ts';
+import { canonicalCodeFor, type RegistryCode } from '../error-catalogue.ts';
 
 // --- Types ---
 
@@ -60,6 +62,21 @@ export class OperationError extends Error {
   public protocolVersion?: number;
   public writeRequest?: WriteReceipt;
   public writeError?: WriteErrorCode;
+  /** Agent contract v1 (A1): which cause, when one code covers several. */
+  public reason?: string;
+  /** Agent contract v1: why it happened, for the agent to explain and weigh. */
+  public why?: string;
+  /** Agent contract v1: the one next step. Rendered (`next`, `command`) only at serialization. */
+  public fix?: Action;
+  /** Agent contract v1: advice that rides the error (rendered into the envelope's `notices`). */
+  public notices?: Notice[];
+  /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
+  public contractVersion?: 1;
+  /**
+   * Canonical registry code when this site keeps a frozen legacy `error`
+   * value (A1 frozen pairs, e.g. `error: invalid_params`, `code: not_found`).
+   */
+  public canonical?: RegistryCode;
 
   constructor(
     public code: ErrorCode,
@@ -71,9 +88,27 @@ export class OperationError extends Error {
     this.name = 'OperationError';
   }
 
+  /** The canonical registry code (`code` on the wire); `this.code` stays the frozen `error` value. */
+  get canonicalCode(): string {
+    return this.canonical ?? canonicalCodeFor(this.code);
+  }
+
+  /**
+   * The explicit escape from opError()'s required suggestion: a refusal whose
+   * next step genuinely cannot be named at the throw site. `reason` is
+   * required so the registry default fix can still be selected.
+   */
+  static bare(code: RegistryCode, message: string, reason: string): OperationError {
+    const e = new OperationError(code, message);
+    e.reason = reason;
+    e.contractVersion = CONTRACT_VERSION;
+    return e;
+  }
+
   toJSON() {
     return {
       error: this.code,
+      code: this.canonicalCode,
       message: this.message,
       suggestion: this.suggestion,
       docs: this.docs,
@@ -81,8 +116,43 @@ export class OperationError extends Error {
       protocol_version: this.protocolVersion,
       ...(this.writeRequest ? { write_request: publicWriteReceipt(this.writeRequest) } : {}),
       ...(this.writeError ? { write_error: this.writeError } : {}),
+      ...(this.reason !== undefined ? { reason: this.reason } : {}),
+      ...(this.why !== undefined ? { why: this.why } : {}),
+      ...(this.fix ? { fix: renderAction(this.fix, cliRenderContext()) } : {}),
+      ...(this.notices?.length ? { notices: this.notices.map(n => renderNotice(n, cliRenderContext())) } : {}),
+      ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }
+}
+
+export interface OpErrorOpts {
+  reason?: string;
+  why?: string;
+  fix?: Action;
+  docs?: string;
+  detail?: string;
+  /**
+   * The frozen v1 `error` wire value when this site historically threw a
+   * different code (A1 frozen pairs). `error` keeps this value; `code` is the
+   * canonical registry code passed to opError().
+   */
+  legacy_error?: string;
+}
+
+/**
+ * Agent contract v1 error constructor (mirrors verbError): `suggestion` is
+ * positional and required. Use `OperationError.bare()` only when no next step
+ * can be named at the throw site.
+ */
+export function opError(code: RegistryCode, message: string, suggestion: string, opts: OpErrorOpts = {}): OperationError {
+  const e = new OperationError(opts.legacy_error ?? code, message, suggestion, opts.docs);
+  if (opts.legacy_error !== undefined) e.canonical = code;
+  if (opts.reason !== undefined) e.reason = opts.reason;
+  if (opts.why !== undefined) e.why = opts.why;
+  if (opts.fix !== undefined) e.fix = opts.fix;
+  if (opts.detail !== undefined) e.detail = opts.detail;
+  e.contractVersion = CONTRACT_VERSION;
+  return e;
 }
 
 /**
@@ -335,6 +405,13 @@ export interface OperationContext {
    */
   emitResponseMeta?: (key: string, value: unknown) => void;
   /**
+   * Agent contract v1 (A6): model-visible advice. MCP dispatch renders each
+   * notice as a prefixed extra text block plus `_meta.gbrain_notices` on
+   * success, and into the error envelope's `notices` key on failure. Unset
+   * on callers that have no notice channel; producers call it optionally.
+   */
+  emitNotice?: (n: Notice) => void;
+  /**
    * WP4 (D2): the SERVER surface ceiling for this transport (force-clamped),
    * threaded by the MCP dispatch layer. Consumed by `request_tools`: the
    * catalog never names ops above the ceiling, and the persist branch
@@ -542,6 +619,13 @@ export interface Operation {
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
+  /**
+   * Agent contract v1 (A2): repeating the call with the same arguments (and,
+   * for journaled writes, the same request identity) has the same effect as
+   * calling it once. Drives `idempotentHint` and whether an unknown-outcome
+   * failure may say `retryable: true`.
+   */
+  idempotent?: boolean;
   /**
    * Capability scope required to invoke this op over an authenticated
    * transport. v0.28 added `sources_admin` (manage federated sources) and

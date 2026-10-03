@@ -34,6 +34,7 @@
  */
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import type { Effect, Notice } from '../core/agent-output.ts';
 
 export type CliPhase = 'pre-connect' | 'pre-connect-own-engine' | 'post-connect';
 export type CliThinClientMode = 'none' | 'refuse' | 'route-then-refuse';
@@ -45,6 +46,27 @@ export interface CliDispatchContext {
   SELECTED_CONFIG_BY_ENGINE: Pick<WeakMap<BrainEngine, GBrainConfig>, 'get'>;
   /** import.meta.url of src/cli.ts, for paths the moved bodies resolved relative to it. */
   cliModuleUrl: string;
+  /** Agent contract v1 (A6): CLI notice channel (TTY stderr lines, non-TTY `[AGENT]` block, `--json` `notices`). */
+  emitNotice?: (n: Notice) => void;
+}
+
+/** One curated flag in a lazy help module (D3). */
+export interface CliHelpFlag {
+  name: string;
+  type: 'boolean' | 'string' | 'number' | 'enum';
+  values?: readonly string[];
+  desc: string;
+  /** Effects the flag authorizes or triggers (e.g. `--yes` on paid work). */
+  consent?: readonly Effect[];
+}
+
+/** Curated help spec loaded lazily from `src/cli/help/<command>.ts` (D3). */
+export interface CliHelpSpec {
+  summary: string;
+  usage: string;
+  flags: readonly CliHelpFlag[];
+  examples: readonly string[];
+  end_of_options?: true;
 }
 
 export interface PreConnectCommandModule {
@@ -62,6 +84,16 @@ interface CliCommandBase {
   selfHelp?: true;
   /** Skip the startup update check and mark children (member of STARTUP_HOOK_SKIP_COMMANDS). */
   skipStartupHooks?: true;
+  /** Agent contract v1 (D2): the command's `--json` output contract; turns the stdout guard on. */
+  json?: 'document' | 'ndjson';
+  /** The whole invocation, startup included, is read-only (eligible as a `fix.verify`). */
+  read_only?: true;
+  /** A4: consent-gated command; connects probe-only until consent is granted. */
+  startup?: 'observational';
+  /** Honours a bare `--` as end of options (positionals after it are never flags). */
+  end_of_options?: true;
+  /** D3: lazy curated help module. */
+  help?: () => Promise<{ help: CliHelpSpec }>;
 }
 
 export type CliCommandRecord =
