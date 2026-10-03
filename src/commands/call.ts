@@ -85,9 +85,7 @@ export async function runCall(
       return;
     }
   } catch (error) {
-    // A delegated call's caller mistake (e.g. invalid params) gets the same v1 envelope and exit as the direct path.
-    if (!writePathFailure(error)) return failCall(tool, error, out);
-    if (await reportPersistenceCliError(error, true, out)) return;
+    if (await reportPersistenceCliError(error, true, out)) return usageVerdict(error);
     throw error;
   }
   try {
@@ -113,9 +111,17 @@ export async function runCall(
   // its tail to the exit grace under queued stdout writes.
   await out(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
   } catch (error) {
-    if (writePathFailure(error) && await reportPersistenceCliError(error, true, out)) return;
+    if (writePathFailure(error) && await reportPersistenceCliError(error, true, out)) return usageVerdict(error);
     await failCall(tool, error, out);
   }
+}
+
+/**
+ * A3 on `gbrain call`: a caller mistake refused before any write was admitted
+ * (no receipt) is invalid input, exit 2, even when the write lane rendered it.
+ */
+function usageVerdict(error: unknown): void {
+  if (error instanceof OperationError && error.code === 'invalid_params' && error.writeRequest === undefined) setCliExitVerdict(2);
 }
 
 /**

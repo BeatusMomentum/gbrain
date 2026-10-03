@@ -37,7 +37,7 @@ export function persistenceConfigForBrain(
   const mount = mounts.find(candidate => candidate.id === brainId || candidate.alias === brainId);
   if (!mount || mount.enabled === false) {
     throw opError('invalid_params', `Brain '${brainId}' is not an enabled mount.`,
-      'Pass --brain host or the id or alias of an enabled mount; re-enabling a disabled mount is the user\'s call.',
+      'Pass --brain host or the id or alias of an enabled mount (`gbrain mounts list --json` shows them); re-enabling a disabled mount is the user\'s call.',
       { fix: readFix('Lists mounted brains with their ids, aliases and enabled state.', { argv: ['gbrain', 'mounts', 'list', '--json'] }) });
   }
   return { engine: mount.engine, database_path: mount.database_path, database_url: mount.database_url } as GBrainConfig;
