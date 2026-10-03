@@ -20,10 +20,13 @@ warmup, same machine and fixture for both arms):
 | This branch before the alias-read fix, three runs | 134.9 / 126.3 / 147.8 ms | 1,269-1,439 ms | 7.0-9.7 |
 | This branch after the alias-read fix | 104.9 ms | 1,290 ms | 8.1 |
 | This branch as shipped (also with the adjacency-read fix), paired with v0.60.32.0 at 106.0 ms | 105.3 ms | 1,275 ms | 6.9 |
+| v0.60.35.0 (master after #5932, which adds saved-fact and declared-name work to each MCP search) | 138.3 ms | 1,286 ms | 8.8 |
+| This branch merged with v0.60.35.0, as shipped | 141.2 ms | 1,253 ms | 8.3 |
 
 Each row is a separate run of the full harness on the same 4-core machine
 (seed 1, five timed runs after a warmup). Runs of the same build vary by up to
-25 ms, so "as shipped" means no regression, not a speed-up. The three
+25 ms, so "as shipped" means no regression, not a speed-up. The jump from about 106 ms to about 140 ms between v0.60.32.0
+and v0.60.35.0 comes from #5932, and wave 8 adds no measurable time on top of it. The three
 mid-wave runs showed a real 20-30 ms regression: the #5094 foreign key from
 `page_aliases` to `sources` flipped PGLite's statistics-free plan for the alias
 read, so every MCP search walked all readable pages (10 ms at 3k pages, 24 ms
