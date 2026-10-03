@@ -1,6 +1,6 @@
 # TODOS
 
-## Foundations 1 follow-ups (filed 2026-10-03, follow-up from v0.60.36.0)
+## Foundations 1 follow-ups (filed 2026-10-03, follow-up from v0.60.37.0)
 
 - [ ] **P1 — Mutation attribution for the writers still unattributed.**
   **What:** creation attribution covers journaled and coordinated writes and four unmanaged legacy transactions; the writers listed under "unattributed" in `docs/architecture/system-of-record.md` (extract timeline, sync renames, enrichment, schema-pack conversions, legacy facts and takes helpers, and others) still write `NULL`. **Fix:** route them through `maintenanceTransaction` or the coordinator, shrinking the pinned list. **Effort:** L. **Priority:** P1 (Foundations 2).
@@ -41,7 +41,7 @@
   **What:** v0.60.34.0 writes the supersession pointer on the old take row; chains written before it keep `superseded_by` NULL on managed brains. **Fix:** a `gbrain repair` kind that rebuilds the pointers from the fence. **Effort:** S. **Priority:** P2.
 - [ ] **P2 — Doctor check for pages still waiting on their revision backfill (#5216).**
   **What:** the backfill is resumable and reports progress on upgrade, but a brain whose backfill keeps stopping on a failing row has no standing doctor signal. **Effort:** S. **Priority:** P2.
-- [x] **P2 — Scale harness gaps (`bun run test:scale`).** Shipped in v0.60.36.0 (F4c scale tier).
+- [x] **P2 — Scale harness gaps (`bun run test:scale`).** Shipped in v0.60.37.0 (F4c scale tier).
   **What:** the report-only harness lacks injected query vectors, populated facts and takes, a source-scoped grant query, a cold-process first query, concurrent receipt-bearing writers, the Postgres engine and the 10k/20k/50k CI tiers. At 10k pages the per-page import cost of the last 10% is about 8x the first 10% (gate 1.5). **Effort:** L. **Priority:** P2 (Foundations 1, F4).
 - [ ] **P2 — Same-width embedding migrations into a live HNSW index.**
   **What:** #5088 defers the ANN build only when the schema transition rebuilds the column; a same-width model swap still re-embeds into the live index. **Effort:** M. **Priority:** P2.

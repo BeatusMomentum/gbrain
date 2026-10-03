@@ -1,4 +1,4 @@
-# Foundations 1 notes (`capy/foundations-1`, v0.60.36.0)
+# Foundations 1 notes (`capy/foundations-1`, v0.60.37.0)
 
 One integrated PR. Ten lanes (F0, F1a, F1b, F1c, F2, F3, F4a, F4b, F4c, F4d)
 were built in parallel on the fix wave 8 collector (`capy/fix-wave-8`), merged
@@ -18,7 +18,7 @@ were on one Ubicloud standard-8 VM, with the same fixture for every build:
 five interleaved runs each for the last two columns and two runs for the
 first.
 
-| Metric | v0.60.34.0 (fix wave 8) | + #5932's ANALYZE fix (ad7252a) | Foundations 1 |
+| Metric | Fix wave 8 without #5932 | Fix wave 8 + #5932's ANALYZE fix (ad7252a) | Foundations 1 |
 | --- | --- | --- | --- |
 | `get_health` (memo off) | 12,073 ms | 208 ms | 158 ms |
 | `find_orphans` | 14,989 ms | 43.5 ms | 34.3 ms |
@@ -30,7 +30,7 @@ first.
 | Enforced gates | n/a (report-only build) | `planner_stats` fails | all pass |
 
 Most of the drop from fix wave 8 comes from GBRA-39's full ANALYZE after bulk
-writes (#5932, cherry-picked into F4b as f1970519). Foundations adds what
+writes (#5932, on master since v0.60.35.0; F4b carried it as the cherry-pick f1970519, which the master merge reconciles). Foundations adds what
 keeps statistics fresh between syncs: import time falls from 99 s to 62 s, and
 the hybrid query from 375 ms to 26 ms, because the vector arm uses its HNSW
 index once statistics see the injected embeddings. Keyword search scoped to
