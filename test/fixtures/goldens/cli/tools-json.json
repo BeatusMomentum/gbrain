@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 229615,
-    "stdoutSha256": "aaf93740a028c3db9ce963308738d61d0d1b008b249b4cbf6430e1a6fd859630",
+    "stdoutBytes": 229621,
+    "stdoutSha256": "c8e5f93cf4806fe7e4c6df1544c77779543b3d51023504dcc140383bb690eb1e",
     "toolNames": [
       "remember",
       "entity",
@@ -3988,7 +3988,7 @@
         "scope": "read"
       },
       {
-        "description": "Register a new source. Supports either --path (existing v0.17 behavior) or --url (v0.28 federated remote-clone path: parses the URL through the SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename atomicity, and stores remote_url in sources.config). Pre-flight collision check on id; rollback on either-side failure.",
+        "description": "Register a new source. Supports either `path` (existing v0.17 behavior) or `url` (v0.28 federated remote-clone path: parses the URL through the SSRF gate, clones into $GBRAIN_HOME/clones/<id>/ via temp-dir + rename atomicity, and stores remote_url in sources.config). Pre-flight collision check on id; rollback on either-side failure.",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -4330,7 +4330,7 @@
         "scope": "read"
       },
       {
-        "description": "Sync a chat provider's conversation history into the brain: list new conversations since the watermark, fetch them, and ingest as pages under conversations/<provider>/. Incremental by default; --full re-scans. Local-only (uses on-disk credentials).",
+        "description": "Sync a chat provider's conversation history into the brain: list new conversations since the watermark, fetch them, and ingest as pages under conversations/<provider>/. Incremental by default; `full: true` re-scans. Local-only (uses on-disk credentials).",
         "idempotent": false,
         "local_only": true,
         "mutating": true,

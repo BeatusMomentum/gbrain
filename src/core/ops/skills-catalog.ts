@@ -7,7 +7,8 @@
  */
 
 import type { Operation } from './contract.ts';
-import { OperationError } from './contract.ts';
+import { opError } from './contract.ts';
+import { hostFix, invalidParam } from './op-fix.ts';
 import {
   LIST_SKILLS_DESCRIPTION,
   GET_SKILL_DESCRIPTION,
@@ -39,7 +40,7 @@ const list_skills: Operation = {
   },
   handler: async (ctx, p) => {
     if (p.schema_version === 2) return (await import('../shared-skills/catalog.ts')).listSharedSkills(ctx, p);
-    if (p.schema_version !== undefined && p.schema_version !== 1) throw new OperationError('invalid_params', 'Supported skill catalog schema versions are 1 and 2.');
+    if (p.schema_version !== undefined && p.schema_version !== 1) throw invalidParam(ctx, 'list_skills', 'schema_version', 'Supported skill catalog schema versions are 1 and 2.', { choices: ['1', '2'], example: 2 });
     const compatibility = await import('../shared-skills/compatibility.ts');
     if (await compatibility.sharedCatalogActive(ctx)) return compatibility.listLegacySharedSkills(ctx, typeof p.section === 'string' ? p.section : undefined);
     const sc = await import('../skill-catalog.ts');
@@ -81,8 +82,8 @@ const get_skill: Operation = {
   },
   handler: async (ctx, p) => {
     if (p.schema_version === 2) return (await import('../shared-skills/catalog.ts')).getSharedSkill(ctx, sharedSkillReadSelector(p));
-    if (p.expected_brain_id !== undefined) throw new OperationError('invalid_params', 'expected_brain_id requires schema_version 2; it asserts identity and never selects a brain connection.');
-    if (p.schema_version !== undefined && p.schema_version !== 1) throw new OperationError('invalid_params', 'Supported skill catalog schema versions are 1 and 2.');
+    if (p.expected_brain_id !== undefined) throw opError('invalid_params', 'expected_brain_id requires schema_version 2; it asserts identity and never selects a brain connection.', 'Pass schema_version: 2 with expected_brain_id, or drop expected_brain_id.');
+    if (p.schema_version !== undefined && p.schema_version !== 1) throw invalidParam(ctx, 'get_skill', 'schema_version', 'Supported skill catalog schema versions are 1 and 2.', { choices: ['1', '2'], example: 2 });
     const compatibility = await import('../shared-skills/compatibility.ts');
     if (await compatibility.sharedCatalogActive(ctx)) return compatibility.getLegacySharedSkill(ctx, p.name, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sc = await import('../skill-catalog.ts');
@@ -271,11 +272,13 @@ const advisor: Operation = {
       if (!enabled) {
         // Same k=v detail grammar as assertPublishEnabled (WP1): honest
         // catalogs hide this op at list time; the throw is the backstop.
-        const err = new OperationError(
+        const err = opError(
           'permission_denied',
           'The advisor is not published over MCP by the brain owner, so it is hidden from your ' +
             'tool catalog. Ask the owner to enable it if you need it.',
           'The owner can enable it with `gbrain config set mcp.publish_advisor true`.',
+          { fix: hostFix(ctx, ['gbrain', 'config', 'set', 'mcp.publish_advisor', 'true'],
+            'Publishing the advisor over MCP is the brain owner\'s choice; only the trusted CLI on the brain host changes it.') },
         );
         err.detail = 'config_key=mcp.publish_advisor';
         throw err;
