@@ -225,7 +225,7 @@ const request_tools: Operation = {
         throw opError(
           'rate_limited',
           'surface persistence is rate-limited to ~5 changes per hour per client (D14.5).',
-          `Retry after ~${rl.retryAfter ?? 60}s.`,
+          `Nothing changed. Call request_tools with this surface again after ~${rl.retryAfter ?? 60}s.`,
         );
       }
       // Atomic re-check: a concurrent operator pin between the SELECT and
