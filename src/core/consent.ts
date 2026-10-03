@@ -339,7 +339,7 @@ function previewChangedError(req: ConsentRequest, expected: string): OperationEr
 export function renderConsentRefusal(p: ConfirmationPayload, opts: { json: boolean }): CliErrorRender {
   if (opts.json) return { stdout: `${JSON.stringify(p, null, 2)}\n`, exitCode: 3 };
   const preview = p.preview ? ` To look first (read-only): ${p.preview.command}` : '';
-  const preapprove = p.preapprove_argv ? ` To stop asking for runs under a limit the user picks: ${shellQuote(p.preapprove_argv)}` : '';
+  const preapprove = p.preapprove_argv ? `To stop asking for runs under a limit the user picks: ${shellQuote(p.preapprove_argv)}` : '';
   const block = agentBlock({
     ask: p.user_message,
     why: p.why,
@@ -347,7 +347,7 @@ export function renderConsentRefusal(p: ConfirmationPayload, opts: { json: boole
     consent: p.effects.join(', '),
     actor: p.fix.actor,
     next: p.fix.next,
-    if_yes: `${p.fix.command ?? ''}${preapprove}`,
+    if_yes: [p.fix.command, preapprove].filter(Boolean).join(' — '),
     if_no: `Nothing runs; nothing was changed.${preview}`,
   }, { showUser: p.user_message });
   return { stdout: block, stderr: `Error [confirmation_required]: ${p.message}\n`, exitCode: 3 };
