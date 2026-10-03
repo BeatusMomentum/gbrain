@@ -367,10 +367,8 @@ export interface PhaseResult {
   summary: string;
   details: Record<string, unknown>;
   error?: PhaseError;
-  /** Agent contract v1: canonical registry code for `error` (sibling, additive). */
-  code?: string;
-  /** Agent contract v1: the next step for `error`, rendered (sibling, additive). */
-  fix?: import('./agent-output.ts').RenderedAction;
+  code?: string; // agent contract v1: canonical registry code for `error` (sibling, additive)
+  fix?: import('./agent-output.ts').RenderedAction; // agent contract v1: the next step for `error`
 }
 
 export type CycleStatus = 'ok' | 'clean' | 'partial' | 'skipped' | 'failed';
