@@ -30,6 +30,7 @@ import { runPersistenceAdministration } from '../src/core/persistence/administra
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistence/worktree-refresh.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -277,7 +278,7 @@ test('admission completes a syncing refresh whose members all reached the target
   const [row] = await f.refreshRows();
   // A refresh whose process died in `syncing` after a later cycle sync caught one member up but not the other.
   await f.engine.executeRaw(`UPDATE persistence_worktree_refreshes SET state='syncing',completed_at=NULL WHERE id=$1::uuid`, [row.id]);
-  const setLastCommit = (sha: string) => f.engine.transaction(tx => withCoordinatedWrite(tx, [f.beta], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.beta, sha])));
+  const setLastCommit = (sha: string) => f.engine.transaction(tx => withCoordinatedWrite(tx, [f.beta], () => tx.executeRaw('UPDATE sources SET last_commit=$2 WHERE id=$1', [f.beta, sha]), TEST_WRITE_ATTRIBUTION));
   await setLastCommit(git(f.root, 'rev-parse', 'HEAD~1'));
   await refusedWith(f.put(f.alpha, 'notes/lagging', page('Lagging', 'refused')), 'worktree_refreshing');
   await setLastCommit(target);
