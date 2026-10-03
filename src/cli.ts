@@ -6,7 +6,8 @@ import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
 import { installCleanupSignalHandlers } from './core/serve-invocation.ts';
 
-import { readFileSync, existsSync, unlinkSync, fstatSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync } from 'fs';
+import { readStdinBounded as readStdinPayload } from './core/interaction.ts';
 import { spawn } from 'child_process';
 import {
   readUpdateCache,
@@ -1122,13 +1123,14 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
  *    returns without blocking (`gbrain put x < file`, `< /dev/null` → '').
  *  - FIFO/socket: stream-read with a deadline on the FIRST byte only. A real
  *    pipe (`echo foo | gbrain put x`, heredocs) delivers its first byte
- *    within milliseconds; once any data arrives the deadline is lifted and
- *    we read to EOF like readFileSync did (slow producers stay supported).
+ *    within milliseconds; once data flows only a 60s inactivity timeout
+ *    applies, reset on every chunk (slow producers stay supported).
  *    An empty-but-closed pipe (`: | gbrain put x`) EOFs immediately → ''.
  *    A pipe that never delivers a byte times out → param stays unset, so
  *    the existing required-param usage error fires (fail fast, exit 1).
  *
- * GBRAIN_STDIN_TIMEOUT_MS overrides the first-byte deadline (default 5000).
+ * GBRAIN_STDIN_TIMEOUT_MS overrides the first-byte deadline (default 30s,
+ * stderr notice at 5s). The reader is interaction.ts readStdinBounded (A5).
  * Exported for tests; called by the op dispatch right after parseOpArgs.
  */
 export async function applyStdinParam(
@@ -1156,56 +1158,15 @@ export async function applyStdinParam(
   }
 }
 
-/** First-byte deadline for pipe/socket stdin (#3513). Env-overridable escape hatch. */
-function stdinFirstByteTimeoutMs(): number {
-  const n = Number(process.env.GBRAIN_STDIN_TIMEOUT_MS);
-  return Number.isFinite(n) && n > 0 ? n : 5000;
-}
-
 /**
- * Returns the full stdin content, '' for a readable-but-empty stdin, or
- * null when stdin is a pipe/socket that never delivered a byte within the
- * first-byte deadline (or the fd is closed/unreadable).
+ * Legacy-signature shim over interaction.ts readStdinBounded (A5): the full
+ * stdin content, '' for a readable-but-empty stdin, or null for anything else
+ * (first-byte or inactivity timeout, stream error, closed fd). No byte cap
+ * here: applyStdinParam keeps its own 5MB check and message.
  */
 export async function readStdinBounded(): Promise<string | null> {
-  let isPipeOrSocket: boolean;
-  try {
-    const st = fstatSync(0);
-    isPipeOrSocket = st.isFIFO() || st.isSocket();
-  } catch {
-    return null; // closed/invalid fd — treat as no input
-  }
-  if (!isPipeOrSocket) {
-    // Regular file redirect, /dev/null, etc. — read returns without blocking.
-    try {
-      return readFileSync(0, 'utf-8');
-    } catch {
-      return null;
-    }
-  }
-  return await new Promise<string | null>((resolve) => {
-    const chunks: Buffer[] = [];
-    let gotData = false;
-    const timer = setTimeout(() => {
-      if (!gotData) {
-        process.stdin.destroy();
-        resolve(null);
-      }
-    }, stdinFirstByteTimeoutMs());
-    const finish = () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString('utf-8'));
-    };
-    process.stdin.on('data', (c: Buffer) => {
-      if (!gotData) {
-        gotData = true;
-        clearTimeout(timer); // deadline applies to the FIRST byte only
-      }
-      chunks.push(c);
-    });
-    process.stdin.once('end', finish);
-    process.stdin.once('error', finish);
-  });
+  const r = await readStdinPayload({ maxBytes: Infinity });
+  return r.kind === 'data' ? r.text : r.kind === 'empty' ? '' : null;
 }
 
 /**
