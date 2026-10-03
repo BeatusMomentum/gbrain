@@ -57,6 +57,7 @@ import { uninstallWorkspace } from '../core/bootstrap/uninstall.ts';
 import {
   registerClaudeMcp,
   registerCodexMcp,
+  parseSeatFlags,
   writeClaudeHooks,
   writeCommittedClaudeHooks,
   removeClaudeHooks,
@@ -124,12 +125,15 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   contract [--repair]             Audit the same-turn GBrain write-back contract.
                                   --repair appends it additively and backs up AGENTS.md.
   hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]
+        [--seat <label> | --no-seat]
                                   Register MCP (+ per-turn hooks on Claude Code,
                                   ON by default; --no-hooks opts out, GBRAIN_HOOKS=0
                                   disables at runtime). opencode registrations are
                                   written directly into its JSONC config (user-global
                                   by default; MCP_SCOPE=project is an explicit opt-in
-                                  with a sharing warning).
+                                  with a sharing warning). --seat credits captured
+                                  sessions to this agent seat (kept on re-install;
+                                  --no-seat clears it; --seat off records none).
   repo                            Create the dedicated PRIVATE GitHub repo (or adopt
                                   an EMPTY private repo you created under your own
                                   account), verify the privacy bit via the API, push.
@@ -139,6 +143,7 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
   harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]
           [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...
           [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--refresh-skills] [--yes] [--json]
+          [--seat <label> | --no-seat]
                                   Wire framework-spawned Claude Code / Codex / opencode
                                   sessions to a RUNNING \`gbrain serve --http\` on this box
                                   (#4043): scoped bearer token, user-scope MCP + headless
@@ -194,7 +199,9 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  under your own account), verify the privacy bit via the API, push.',
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
-    '  Register MCP (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).',
+    '                       [--seat <label> | --no-seat]\n' +
+    '  Register MCP (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).\n' +
+    '  --seat credits captured sessions to this agent seat (kept on re-install; --no-seat clears it; --seat off records none).',
   verify:
     'gbrain bootstrap verify [--json]\n' +
     '  The whole install contract (round-trip, graph floor, magic moment, scans, hooks smoke). Exit 0 or not done.',
@@ -215,6 +222,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'gbrain bootstrap harness [--harness claude-code|codex|opencode|all] [--url U | --port N] [--source ID]\n' +
     '                       [--token-name NAME | --token TOK] [--name MCPNAME] [--project DIR]...\n' +
     '                       [--no-hooks] [--no-capture] [--force] [--status] [--remove] [--yes] [--json]\n' +
+    '                       [--seat <label> | --no-seat]\n' +
     '  Wire framework-spawned Claude Code / Codex / opencode sessions to a RUNNING `gbrain serve --http`\n' +
     '  on this box (#4043). Idempotent; --remove tears it down. (--local is an accepted no-op alias.)\n' +
     '  See `gbrain bootstrap --help` for the per-flag description.',
@@ -1079,6 +1087,9 @@ async function runHooks(
   // `--no-hooks` is the explicit install-time opt-out; `GBRAIN_HOOKS=0` and
   // `uninstall` are the runtime/after off-ramps.
   const noHooks = rest.includes('--no-hooks');
+  const seatFlags = parseSeatFlags(rest, harness);
+  if (seatFlags.error || seatFlags.note) console.error(seatFlags.error ?? seatFlags.note);
+  if (seatFlags.error) return 2;
   // Plugin-lane override: detection reads the plugin-ENABLE config entry,
   // which is not a health signal — a plugin whose launcher can't find the
   // gbrain binary still matches. This flag forces the hand-wired MCP
@@ -1545,7 +1556,7 @@ async function runHooks(
         // installs keep the gitignored settings.local.json with the absolute
         // binary path. The writers enforce that one event never fires from
         // both files.
-        const hookEnv = { GBRAIN_SOURCE: sourceId, ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}) };
+        const hookEnv = { GBRAIN_SOURCE: sourceId, ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}), GBRAIN_SEAT: seatFlags.seat };
         const cloudCarrier = detectExecutionEnvironment() === 'cloud-sandbox';
         let r: ReturnType<typeof writeClaudeHooks> | ReturnType<typeof writeCommittedClaudeHooks>;
         try {
