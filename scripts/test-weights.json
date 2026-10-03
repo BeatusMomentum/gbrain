@@ -127,6 +127,7 @@
   "test/autopilot-fanout-wiring.test.ts": 14,
   "test/autopilot-fanout.test.ts": 10,
   "test/autopilot-global-maintenance.test.ts": 986,
+  "test/autopilot-install-consent.test.ts": 600,
   "test/autopilot-install.test.ts": 75,
   "test/autopilot-lock-path.test.ts": 13,
   "test/autopilot-lock.test.ts": 81,
