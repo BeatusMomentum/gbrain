@@ -1544,8 +1544,10 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       arguments: { slug: 'e2e-c4-denied', content: '---\ntitle: t\n---\nbody' },
     });
     expect(denied.isError).toBe(true);
-    expect(JSON.parse(denied.content[0].text)).toEqual({
+    // Agent contract v1: legacy keys keep their values; code + the rest of the envelope are additive.
+    expect(JSON.parse(denied.content[0].text)).toMatchObject({
       error: 'insufficient_scope',
+      code: 'insufficient_scope',
       message: "Operation put_page requires 'write' scope",
       your_scopes: ['read'],
     });
@@ -1593,8 +1595,9 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
       arguments: { slug: 'e2e-c4-agent-denied' },
     });
     expect(denied.isError).toBe(true);
-    expect(JSON.parse(denied.content[0].text)).toEqual({
+    expect(JSON.parse(denied.content[0].text)).toMatchObject({
       error: 'insufficient_scope',
+      code: 'insufficient_scope',
       message: "Operation get_page requires 'read' scope",
       your_scopes: ['agent'],
     });

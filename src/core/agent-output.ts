@@ -13,7 +13,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../version.ts';
-import { OperationError } from './ops/contract.ts';
+import { OperationError, __registerOperationErrorRenderer } from './ops/contract.ts';
 import { StructuredAgentError } from './errors.ts';
 import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
 import { VERB_NAMES } from './verbs.ts';
@@ -444,7 +444,7 @@ const ROWS: Row[] = [
         if (argv) fix = { argv, consent: [], actor: 'agent', why: e.message, requires_exclusive: false };
       }
       return {
-        error: e.code, code: e.canonicalCode, message: e.message, suggestion: e.suggestion,
+        error: e.code, code: canonicalCodeFor(e.canonicalCode), message: e.message, suggestion: e.suggestion,
         reason: e.reason, why: e.why, fix, docs: e.docs, notices: e.notices, detail: e.detail,
         protocol_version: e.protocolVersion === 1 ? 1 : undefined,
         write_request: j.write_request, write_error: e.writeError,
@@ -503,6 +503,7 @@ const ROWS: Row[] = [
       error: e.code, code: e.code, message: e.problem, why: e.cause_text, suggestion: e.fix, docs: e.doc_url,
     }),
   },
+  // ── generic rows: the DB classifier runs before these ──
   {
     match: e => named('AIConfigError')(e) || named('AITransientError')(e),
     map: (e: Error & { fix?: string }) => ({
@@ -527,6 +528,9 @@ const ROWS: Row[] = [
     }),
   },
 ];
+
+/** Index of the first generic row (AIConfigError); rows before it are typed and beat the DB classifier. */
+const FIRST_GENERIC_ROW = ROWS.findIndex(r => r.match(Object.assign(new Error('x'), { name: 'AIConfigError' })));
 
 function argvFromPricing(command: string): string[] | undefined {
   const s = command.replace(/<([a-z0-9-]+)>/gi, 'PLACEHOLDER_$1');
@@ -591,8 +595,12 @@ function genericEnvelope(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
 /** Total: never throws; on an internal fault returns the prior generic envelope and logs the class (E11). */
 export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
   try {
+    // Typed rows first (OperationError … CredentialError); then the DB-access
+    // classifier, which must win over the generic GBrainError/AI/phase rows
+    // (a connect failure is often a GBrainError); then the unknown fallback.
     const row = ROWS.find(r => r.match(e));
-    let parts = row ? row.map(e, ctx) : dbParts(e, ctx) ?? unknownParts(e, ctx);
+    const typed = row && ROWS.indexOf(row) < FIRST_GENERIC_ROW;
+    let parts = typed ? row.map(e, ctx) : dbParts(e, ctx) ?? (row ? row.map(e, ctx) : unknownParts(e, ctx));
     if (!parts.fix) {
       const recovery = recoveryFix(parts, ctx);
       if (recovery) parts = { ...parts, fix: recovery };
@@ -695,3 +703,8 @@ export function fallbackJsonDocument(exitCode: number, lastCode?: string): Recor
     contract_version: CONTRACT_VERSION,
   };
 }
+
+__registerOperationErrorRenderer({
+  fix: a => renderAction(a, cliRenderContext()),
+  notice: n => renderNotice(n, cliRenderContext()),
+});

@@ -15,7 +15,7 @@ import { resolveBrainId } from '../core/brain-resolver.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { cliRenderContext, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { isCallable } from '../core/ops/callable.ts';
-import { mutedNoticeCodes, processNoticeLedger, type NoticeLedger } from '../core/notice-ledger.ts';
+import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
@@ -76,6 +76,7 @@ let backupNoticeCheckedMs = 0;
 export function __resetBackupNoticeForTests(): void {
   backupNoticeShown = false;
   backupNoticeCheckedMs = 0;
+  __resetProcessNoticeLedgerForTests();
 }
 
 /**

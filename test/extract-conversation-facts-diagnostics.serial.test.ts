@@ -230,7 +230,7 @@ describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
     const log = spyOn(console, 'log').mockImplementation(() => {});
     const exit = spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`exit:${code}`); }) as never);
     try {
-      await expect(runExtractConversationFacts(engine, ['--source-id', 'speaker-a', '--types', 'conversation', '--sleep', '0'])).rejects.toThrow('exit:3');
+      await expect(runExtractConversationFacts(engine, ['--source-id', 'speaker-a', '--types', 'conversation', '--sleep', '0'])).rejects.toThrow('exit:1'); // agent contract v1 A3: lock skips exit 1 (retryable); 3 means confirmation_required
       expect(log.mock.calls.map(call => call.join(' ')).join('\n')).toContain('Skipped 1 page(s) held by another worker');
     } finally {
       exit.mockRestore();

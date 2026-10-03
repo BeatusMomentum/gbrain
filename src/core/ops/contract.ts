@@ -10,8 +10,18 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../persistence/types.ts';
-import { cliRenderContext, renderAction, renderNotice, CONTRACT_VERSION, type Action, type Notice } from '../agent-output.ts';
-import { canonicalCodeFor, type RegistryCode } from '../error-catalogue.ts';
+// Type-only: this module sits in the PGLite snapshot-schema import closure
+// (via persistence/digest.ts), so it must not pull agent-output's runtime
+// graph (version.ts, the DB classifier) in. agent-output registers the wire
+// renderer below when it loads.
+import type { Action, Notice } from '../agent-output.ts';
+import type { RegistryCode } from '../error-registry.ts';
+
+/** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
+interface OperationErrorWireRenderer { fix(a: Action): unknown; notice(n: Notice): unknown }
+let wireRenderer: OperationErrorWireRenderer | null = null;
+/** @internal agent-output.ts only. Unregistered (agent-output never loaded) → the stored Action is emitted as-is. */
+export function __registerOperationErrorRenderer(r: OperationErrorWireRenderer): void { wireRenderer = r; }
 
 // --- Types ---
 
@@ -88,9 +98,13 @@ export class OperationError extends Error {
     this.name = 'OperationError';
   }
 
-  /** The canonical registry code (`code` on the wire); `this.code` stays the frozen `error` value. */
+  /**
+   * The canonical registry code (`code` on the wire); `this.code` stays the
+   * frozen `error` value. Registry-wide legacy aliases are applied by
+   * toAgentError / the thin client (canonicalCodeFor), not here.
+   */
   get canonicalCode(): string {
-    return this.canonical ?? canonicalCodeFor(this.code);
+    return this.canonical ?? this.code;
   }
 
   /**
@@ -101,7 +115,7 @@ export class OperationError extends Error {
   static bare(code: RegistryCode, message: string, reason: string): OperationError {
     const e = new OperationError(code, message);
     e.reason = reason;
-    e.contractVersion = CONTRACT_VERSION;
+    e.contractVersion = 1;
     return e;
   }
 
@@ -118,8 +132,8 @@ export class OperationError extends Error {
       ...(this.writeError ? { write_error: this.writeError } : {}),
       ...(this.reason !== undefined ? { reason: this.reason } : {}),
       ...(this.why !== undefined ? { why: this.why } : {}),
-      ...(this.fix ? { fix: renderAction(this.fix, cliRenderContext()) } : {}),
-      ...(this.notices?.length ? { notices: this.notices.map(n => renderNotice(n, cliRenderContext())) } : {}),
+      ...(this.fix ? { fix: wireRenderer ? wireRenderer.fix(this.fix) : this.fix } : {}),
+      ...(this.notices?.length ? { notices: this.notices.map(n => wireRenderer ? wireRenderer.notice(n) : n) } : {}),
       ...(this.contractVersion !== undefined ? { contract_version: this.contractVersion } : {}),
     };
   }
@@ -151,7 +165,7 @@ export function opError(code: RegistryCode, message: string, suggestion: string,
   if (opts.why !== undefined) e.why = opts.why;
   if (opts.fix !== undefined) e.fix = opts.fix;
   if (opts.detail !== undefined) e.detail = opts.detail;
-  e.contractVersion = CONTRACT_VERSION;
+  e.contractVersion = 1;
   return e;
 }
 

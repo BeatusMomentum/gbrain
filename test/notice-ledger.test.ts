@@ -73,3 +73,23 @@ describe('mute store', () => {
     }
   });
 });
+
+describe('mute_notice op', () => {
+  test('remote callers mute for their own client; non-muteable codes refuse with the valid list', async () => {
+    const { noticesOperations } = await import('../src/core/ops/notices.ts');
+    const op = noticesOperations.find(o => o.name === 'mute_notice')!;
+    expect([op.mutating, op.idempotent, op.scope]).toEqual([true, true, 'write']);
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-mute-op-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const ctx = { remote: true, auth: { clientId: 'client-a' } } as never;
+        expect(await op.handler(ctx, { code: 'backup_coverage' })).toMatchObject({ muted: true, scope: 'client', muted_codes: ['backup_coverage'] });
+        expect([...mutedNoticeCodes()]).toEqual([]);
+        expect([...mutedNoticeCodes('client-a')]).toEqual(['backup_coverage']);
+        await expect(op.handler(ctx, { code: 'keyword_only' })).rejects.toMatchObject({ code: 'invalid_params' });
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
