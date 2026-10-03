@@ -1239,6 +1239,7 @@ export async function initPGLite(opts: {
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     preserveConversionConfig(false);
     saveConfig(config);
+    if (freshContentDatabase) (await import('./migrations/fresh-install.ts')).recordFreshInstallMigrations();
     const contentReceipt = await setupSharedBrainContent({ engine, config, sourceId: await resolveSourceId(engine, undefined), remote: false, dryRun: false, logger: { info: console.error, warn: console.error, error: console.error } }, {
       ...opts.content, fresh: freshContentDatabase,
       ...(process.env.GBRAIN_IN_AGENT_SETUP === '1' && !opts.content?.root ? { root: join(dirname(configPath()), '..', 'memory') } : {}),
@@ -1582,6 +1583,7 @@ export async function initPostgresCore(opts: {
     config.protocol_installed_at = config.protocol_installed_at ?? new Date().toISOString();
     preserveConversionConfig(false);
     saveConfig(config);
+    if (freshContentDatabase) (await import('./migrations/fresh-install.ts')).recordFreshInstallMigrations();
     const contentReceipt = await setupSharedBrainContent({ engine, config, sourceId: await resolveSourceId(engine, undefined), remote: false, dryRun: false, logger: { info: console.error, warn: console.error, error: console.error } }, { ...opts.content, fresh: freshContentDatabase });
     if (!opts.jsonOutput) console.error(`[init] Content: ${contentReceipt.root ?? contentReceipt.repository_kind} (${contentReceipt.repository_kind}; ${contentReceipt.status}). ${contentReceipt.pending_actions.join(' ')}`);
     console.log('Config saved to ~/.gbrain/config.json');

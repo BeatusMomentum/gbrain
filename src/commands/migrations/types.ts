@@ -46,6 +46,8 @@ export interface OrchestratorPhaseResult {
   name: string;
   status: 'complete' | 'skipped' | 'failed';
   detail?: string;
+  /** The exact command that resolves or inspects what this phase left open; printed by the runner and kept in the ledger. */
+  argv?: string[];
 }
 
 export interface OrchestratorResult {
@@ -67,4 +69,13 @@ export interface Migration {
   orchestrator: (opts: OrchestratorOpts) => Promise<OrchestratorResult>;
   preview?: (opts: OrchestratorOpts) => Promise<unknown>;
   reconcile?: boolean;
+  /**
+   * True only when the orchestrator changes nothing on a brain `gbrain init`
+   * just created: schema already current, no data to backfill, no files,
+   * preferences or services to write. Init records these as complete
+   * (`fresh_install: true` ledger entries, `./fresh-install.ts`); every other
+   * migration lists as `pending_fresh_install` until it runs. Each flagged
+   * migration is proven by test/migrations-fresh-install-audit.serial.test.ts.
+   */
+  fresh_install_noop?: true;
 }
