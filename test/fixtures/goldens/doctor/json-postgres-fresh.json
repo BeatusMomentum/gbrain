@@ -389,7 +389,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 192 (latest: 192)",
+          "message": "Version 193 (latest: 193)",
           "name": "schema_version",
           "status": "ok"
         },
