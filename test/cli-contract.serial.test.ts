@@ -78,6 +78,8 @@ interface JsonRow {
   failOnBrain?: boolean;
   /** The succeeding invocation runs against an empty home (default: the keyless brain). */
   okOnEmpty?: boolean;
+  /** The succeeding invocation needs Postgres: the E2E file (test/e2e/…) that asserts it instead. */
+  okE2E?: string;
 }
 
 /** One row per command-table record that declares `json`; a new declaration needs a row. */
@@ -87,6 +89,7 @@ const JSON_ROWS: Record<string, JsonRow> = {
   doctor: { ok: ['doctor', '--json', '--fast'], fail: ['doctor', '--json'] },
   sync: { ok: ['sync', '--source', 'notes', '--no-pull', '--json'], fail: ['sync', '--source', 'notes', '--json'], failOnBrain: true },
   embed: { ok: ['embed', '--stale', '--json'], fail: ['embed', '--all', '--json'], failOnBrain: true },
+  'db-repair': { ok: ['db-repair', '--json'], fail: ['db-repair', '--json'], failOnBrain: true, okE2E: 'test/e2e/cli-json-commands-postgres.test.ts' },
   'post-upgrade': { ok: ['post-upgrade', '--json', '--no-autopilot-install'], fail: ['post-upgrade', '--bogus', '--json'], okOnEmpty: true },
   'apply-migrations': { ok: ['apply-migrations', '--dry-run', '--json'], fail: ['apply-migrations', '--json', '--migration', '9.9.9'], failOnBrain: true },
 };
@@ -133,9 +136,13 @@ describe('D5 json contract: one success and one failure per json-declared comman
       const fresh = mkdtempSync(join(tmpdir(), 'gbrain-cli-contract-ok-'));
       try {
         const okHome = row.okOnEmpty ? fresh : brainHome;
-        const ok = await runCli(row.ok, { home: okHome, cwd: okHome, timeoutMs: 120_000 });
-        expect(ok.exitCode, `${record.name} ok: ${ok.stderr.slice(-800)}`).toBe(0);
-        expect(parsedShape(record.json!, ok.stdout).length).toBeGreaterThan(0);
+        if (row.okE2E) {
+          expect(existsSync(join(import.meta.dir, '..', row.okE2E)), `${record.name}: ${row.okE2E} covers the success shape`).toBe(true);
+        } else {
+          const ok = await runCli(row.ok, { home: okHome, cwd: okHome, timeoutMs: 120_000 });
+          expect(ok.exitCode, `${record.name} ok: ${ok.stderr.slice(-800)}`).toBe(0);
+          expect(parsedShape(record.json!, ok.stdout).length).toBeGreaterThan(0);
+        }
         const failHome = row.failOnBrain ? brainHome : emptyHome;
         assertFailureShape(record.name, record.json!, await runCli(row.fail, { home: failHome, cwd: failHome, timeoutMs: 120_000 }));
       } finally {
