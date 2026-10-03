@@ -201,19 +201,59 @@ gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 di
 
 ## Operator price overrides (`pricing.overrides`)
 
-Cost caps are fail-closed: when `--max-cost` (or a phase's default cap) is set
-and a model has no shipped pricing row, the budget tracker aborts with
-`no_pricing` rather than pretend the call is free. Proxy routes hit this by
-design — a LiteLLM endpoint can front a paid provider, so `litellm:*` models
-are deliberately absent from both the pricing tables and the free-local sets.
+Under a cost cap you set (`--max-cost`, `--max-usd`, `--max-cost-usd`, or an
+explicit cap in config), a model with no shipped pricing row stops the run
+with `no_pricing` rather than pretend the call is free. A cap gbrain applied by
+default does not: an unpriced model warns and runs, so a newly released model
+always works. Proxy routes hit the explicit-cap refusal by design: a LiteLLM
+endpoint can front a paid provider, so `litellm:*` models are deliberately
+absent from both the pricing tables and the free-local sets.
 
-Declare your real rate in the config plane instead:
+### Registering a model price
+
+The `no_pricing` refusal tells the agent what to do: look up the provider's
+current price for the model (for example, search the web for its pricing
+page), register it, and retry. The refusal text and its JSON fields
+(`model`, `provider`, `kind`, `units`, `lookup`, `register_command`,
+`register_scope`, `docs`) carry the exact command:
+
+```bash
+# Chat models: USD per 1M input tokens and per 1M output tokens.
+gbrain pricing set litellm:gpt-4o --input 2.5 --output 10 \
+  --source https://example.com/pricing
+
+# Embedding and reranker models: one USD-per-1M-token rate.
+gbrain pricing set litellm:text-embedding-3-large --rate 0.13
+
+gbrain pricing list            # what is registered, with source and date
+gbrain pricing unset litellm:gpt-4o
+```
+
+- `pricing set` and `pricing unset` change one entry and keep every other
+  entry in `pricing.overrides`. (`gbrain config set pricing.overrides '<json>'`
+  still works, but it replaces the whole value.)
+- Rates must be non-negative finite numbers; anything else is refused and
+  nothing is written. An unreadable stored value is left unchanged and the
+  command refuses rather than overwrite it.
+- `--source` and the registration time are stored beside the rates
+  (`source`, `set_at`) for provenance. Cost caps ignore them.
+- **$0 is allowed, with a warning.** The operator decides; $0 is right for a
+  local or flat-rate route. Every call to that model then counts as free
+  against every cost cap.
+- **Registration is trusted-local only.** `gbrain pricing` is a CLI-only
+  command on the brain host, never an MCP operation, and a thin client
+  refuses it. Otherwise a remote agent could register $0 and void the cap.
+  An agent connected over MCP that meets `no_pricing` looks the price up and
+  asks the brain's operator to run the command the refusal names.
+
+The raw config shape, for reference:
 
 ```bash
 # Scalar = one USD-per-1M-token rate for input AND output (natural for embeddings):
 gbrain config set pricing.overrides '{"litellm:text-embedding-3-large": 0.13}'
 
-# Object form for chat models with distinct input/output rates:
+# Object form for chat models with distinct input/output rates
+# (pricing set also writes source and set_at beside them):
 gbrain config set pricing.overrides \
   '{"litellm:gpt-4o": {"input": 2.5, "output": 10}, "litellm:text-embedding-3-large": 0.13}'
 ```
@@ -242,10 +282,10 @@ nobody chose. When the configured embedding model has no shipped pricing row
 and no `pricing.overrides` entry (the `isModelPriceable` contract), enforcing
 that implicit cap would fail-close every job for a model that may well be
 free or self-hosted. So the handler drops the DEFAULT cap and runs uncapped,
-with a stderr warning naming both fixes (add a `pricing.overrides` entry, or
+with a stderr warning naming both fixes (register its price with `gbrain pricing set`, or
 set `embed.backfill_max_usd` to an explicit number). An EXPLICIT cap is a
 different contract: you chose a ceiling, so an unpriced model stays
-fail-closed (`no_pricing`) — declare the model's rate in `pricing.overrides`
+fail-closed (`no_pricing`) — register the model's rate with `gbrain pricing set`
 to proceed. Spend is ledgered by the tracker either way; only the ceiling
 changes.
 
