@@ -382,7 +382,7 @@ that inserted it. Everything else stays `unrecorded`; nothing is inferred.
 registers `gbrain serve --access read-only` as its stdio MCP command.
 
 ```bash
-claude mcp add gbrain -- gbrain serve --access read-only
+claude mcp add gbrain -- "$(command -v gbrain)" serve --access read-only
 gbrain serve --surface starter --access read-only
 ```
 
