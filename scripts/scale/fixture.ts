@@ -9,7 +9,7 @@
  * pages of its own source, carries two dated timeline bullets and a unique
  * search token. A few island pages have no links in or out (known orphans).
  * Every tenth page (a person) carries a `## Facts` and a `## Takes` fence with
- * two rows each. Each page has a deterministic two-hot query vector
+ * two rows each. Each page has a deterministic query vector
  * (`scaleVector`) that the harness writes onto its chunks and injects through
  * `queryEmbedFn`, so the vector arm runs keylessly.
  */
@@ -66,19 +66,26 @@ function kindFor(i: number): 'people' | 'companies' | 'notes' {
   return r < 2 ? 'people' : r < 3 ? 'companies' : 'notes';
 }
 
-/**
- * The two dimensions set in page `index`'s vector. Distinct for every index
- * below dim * (dim - 1), so the target page is the only chunk at cosine 1.
- */
-export function scaleVectorDims(index: number, dim: number): [number, number] {
-  const a = index % dim;
-  const b = (a + 1 + (Math.floor(index / dim) % (dim - 1))) % dim;
-  return [a, b];
-}
+/** Dimensions a scale vector occupies: a low intrinsic dimension an HNSW graph can navigate. */
+export const SCALE_VECTOR_DIMS = 16;
 
+/**
+ * Page `index`'s vector: a seeded random unit vector in the first
+ * SCALE_VECTOR_DIMS dimensions, zero elsewhere. Distinct per index, so the
+ * target page is the only chunk at cosine 1. Dense on purpose: with sparse
+ * two-hot vectors almost every pair sits at the same distance, so an HNSW
+ * search has no gradient to follow and misses the target in most index builds.
+ */
 export function scaleVector(index: number, dim: number): Float32Array {
+  const rand = mulberry32(Math.imul(index + 1, 0x9e3779b1));
+  const k = Math.min(SCALE_VECTOR_DIMS, dim);
   const v = new Float32Array(dim);
-  for (const d of scaleVectorDims(index, dim)) v[d] = Math.SQRT1_2;
+  let norm = 0;
+  for (let i = 0; i < k; i++) {
+    v[i] = rand() * 2 - 1;
+    norm += v[i]! * v[i]!;
+  }
+  for (let i = 0; i < k; i++) v[i] = v[i]! / Math.sqrt(norm);
   return v;
 }
 

@@ -9,7 +9,7 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateScaleFixture, scaleVector, scaleVectorDims, writeScaleCorpus } from '../../scripts/scale/fixture.ts';
+import { generateScaleFixture, SCALE_VECTOR_DIMS, scaleVector, writeScaleCorpus } from '../../scripts/scale/fixture.ts';
 import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { parseTakesFence } from '../../src/core/takes-fence.ts';
 
@@ -55,11 +55,11 @@ test('fixture additions: facts/takes fences parse, vectors single out their page
   expect(facts).toBeGreaterThan(0);
   expect(f.expected).toEqual({ facts, takes });
 
-  // Two-hot vectors: the probe page is the only page at cosine 1 to its own vector.
+  // Dense unit vectors in a low-dimensional subspace: the probe page is the only page at cosine 1 to its own vector.
   const dim = 64;
-  const keys = f.pages.map(p => scaleVectorDims(p.index, dim).join(','));
-  expect(new Set(keys).size).toBe(f.pages.length);
   const probe = scaleVector(f.vectorProbe.index, dim);
+  expect(probe.slice(SCALE_VECTOR_DIMS).every(x => x === 0)).toBe(true);
+  expect(Math.abs(probe.reduce((s, x) => s + x * x, 0) - 1)).toBeLessThan(1e-5);
   const cosines = f.pages.map(p => scaleVector(p.index, dim).reduce((s, x, i) => s + x * probe[i]!, 0));
   expect(cosines.filter(c => c > 0.999)).toHaveLength(1);
   expect(f.pages[f.vectorProbe.index]).toMatchObject({ sourceId: f.vectorProbe.sourceId, slug: f.vectorProbe.slug });

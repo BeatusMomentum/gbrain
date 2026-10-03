@@ -277,7 +277,7 @@ O-CEO-9) in the Foundations 1 plan; `scripts/scale/gates.ts` and
 [--corpus-dir <dir>] [--import-mode cli|content] [--enforce] [--out <file.json>]`
 (`scripts/scale/run.ts`) generates a deterministic two-source brain from the
 seed (`scripts/scale/fixture.ts`: links, timeline bullets, `## Facts` and
-`## Takes` fences, partly overlapping bodies, island pages, a two-hot vector
+`## Takes` fences, partly overlapping bodies, island pages, a seeded dense vector in 16 dimensions
 per page), and imports it into a fresh brain under a temporary `GBRAIN_HOME`:
 PGLite in a fresh data dir, or Postgres in a fresh database created from
 `DATABASE_URL` and dropped afterwards. The default `--import-mode cli` writes
