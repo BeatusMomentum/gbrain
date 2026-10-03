@@ -17,11 +17,8 @@ import { resolveSourceId } from '../core/source-resolver.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { readPrimaryEmbeddingStores, readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 import { deferInitJsonError, flushInitJsonResult, initJsonError, setInitJsonResult, writeDeferredInitJsonError } from './init-json.ts';
-import { buildInitFirstRunNotices } from './init-first-run.ts';
-import { renderNotice, cliRenderContext, shellQuote, type Notice } from '../core/agent-output.ts';
+import { firstRunBundle, firstRunJson, harnessRegistrationCommand } from './init-first-run.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
-import { configReadiness, harnessWiringEntry } from '../core/readiness.ts';
-import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { promptLineStderr } from '../core/interaction.ts';
 import type { SearchMode as SearchModeName } from '../core/search/mode.ts';
@@ -1307,37 +1304,6 @@ export async function initPGLite(opts: {
 }
 
 const INIT_EMBEDDING_HINT = 'Pick an embedding model whose dimensions match (`gbrain init --help`), or pass --no-embedding for a keyless brain.';
-
-/**
- * G5: the ONE first-run decision bundle: search mode, writeback (personal
- * brain, unanswered), harness wiring and the optional skills scaffold. Human
- * output writes it through the CLI notice channel; --json carries it.
- */
-async function firstRunBundle(engine: BrainEngine, searchMode: { mode: SearchModeName; reason: string } | undefined): Promise<Notice[]> {
-  const { writebackAskApplies } = await import('../core/onboard/writeback-nudge.ts');
-  const { initSkillsScaffold } = await import('../core/skillpack/post-install-advisory.ts');
-  return buildInitFirstRunNotices({ searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold() });
-}
-
-/** D2/G5: the bundle rendered into init's --json document (`notices`, empty → omitted). */
-function firstRunJson(bundle: Notice[]): { notices?: unknown[]; contract_version: 1 } {
-  const notices = bundle.map(n => renderNotice(n, cliRenderContext()));
-  return { ...(notices.length ? { notices } : {}), contract_version: 1 };
-}
-
-/**
- * The harness registration line for the quickstart: the readiness
- * `harness_wiring` fix (absolute binary, `--surface verbs`) for the detected
- * harness, else the Claude Code registration built the same way. Null when
- * the gbrain binary has no absolute path (never registered bare).
- */
-function harnessRegistrationCommand(): string | null {
-  const cfg = loadConfig();
-  const detected = cfg ? configReadiness(cfg, { transport: 'cli' }).entries.find(e => e.capability === 'harness_wiring')?.fix : undefined;
-  if (detected?.argv) return shellQuote(detected.argv);
-  const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: resolveGbrainBin() }).fix;
-  return claude?.argv ? shellQuote(claude.argv) : null;
-}
 
 /**
  * MEMORY_VERBS v1 quickstart funnel (E3 + D4B + T1 consent). Printed LAST in

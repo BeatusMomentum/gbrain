@@ -40,7 +40,6 @@ export const help: CliHelpSpec = {
     'gbrain doctor --json',
     'gbrain doctor --only harness_wiring --json',
     'gbrain doctor --remediation-plan --json',
-    'gbrain doctor --remediate --yes --max-usd 5 --target-score 90',
     'gbrain doctor --remediate --yes --include-repairs --expect <plan_hash> --max-usd 5',
   ],
 };

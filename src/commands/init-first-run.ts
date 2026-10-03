@@ -14,9 +14,11 @@
  * init's separate writeback ask and skills pointer. Extend
  * `buildInitFirstRunNotices` rather than adding a second notice.
  */
-import type { Decision, Notice } from '../core/agent-output.ts';
-import type { GBrainConfig } from '../core/config.ts';
-import { configReadiness } from '../core/readiness.ts';
+import { cliRenderContext, renderNotice, shellQuote, type Decision, type Notice } from '../core/agent-output.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import { resolveGbrainBin } from '../core/gbrain-bin.ts';
+import { configReadiness, harnessWiringEntry } from '../core/readiness.ts';
 import type { SearchMode } from '../core/search/mode.ts';
 
 export interface InitFirstRunInputs {
@@ -109,4 +111,31 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
     user_message: `gbrain is installed. Reply 'defaults' to keep the recommended settings (${defaults}), or tell me what to change.`,
     decisions,
   }];
+}
+
+/** init's bundle for this brain: reads the writeback gate and the agent workspace's missing skills. */
+export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: SearchMode; reason: string } | undefined): Promise<Notice[]> {
+  const { writebackAskApplies } = await import('../core/onboard/writeback-nudge.ts');
+  const { initSkillsScaffold } = await import('../core/skillpack/post-install-advisory.ts');
+  return buildInitFirstRunNotices({ searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold() });
+}
+
+/** D2/G5: the bundle rendered into init's --json document (`notices`, empty → omitted). */
+export function firstRunJson(bundle: Notice[]): { notices?: unknown[]; contract_version: 1 } {
+  const notices = bundle.map(n => renderNotice(n, cliRenderContext()));
+  return { ...(notices.length ? { notices } : {}), contract_version: 1 };
+}
+
+/**
+ * The harness registration line for init's quickstart: the readiness
+ * `harness_wiring` fix (absolute binary, `--surface verbs`) for the detected
+ * harness, else the Claude Code registration built the same way. Null when
+ * the gbrain binary has no absolute path (never registered bare).
+ */
+export function harnessRegistrationCommand(): string | null {
+  const cfg = loadConfig();
+  const detected = cfg ? configReadiness(cfg, { transport: 'cli' }).entries.find(e => e.capability === 'harness_wiring')?.fix : undefined;
+  if (detected?.argv) return shellQuote(detected.argv);
+  const claude = harnessWiringEntry({ transport: 'cli', harnesses: ['claude-code'], lockOwner: null, gbrainBin: resolveGbrainBin() }).fix;
+  return claude?.argv ? shellQuote(claude.argv) : null;
 }

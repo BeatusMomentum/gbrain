@@ -452,6 +452,21 @@ interface ConsentExtra {
   user_message: string;
 }
 
+/** The publish run's consent request: effects, the approved command and the words to relay. */
+function publishConsent(opts: ExposeOptions): ConsentExtra {
+  const where = opts.noTailscale ? 'on this machine' : opts.funnel ? 'on the public internet through Tailscale Funnel' : 'on your Tailscale network';
+  return {
+    yes: opts.yes, nextAction: rerunCommand(opts),
+    confirmationMessage: 'These are system-state changes (Tailscale, serve config, a user service). Pass --yes to confirm.',
+    argv: ['gbrain', 'mcp', 'expose', ...publishFlags(opts)],
+    effects: ['persistent_install', 'egress'],
+    what: 'mcp expose',
+    why: `Publishes this brain's MCP server ${where}${opts.noService ? '' : ' and installs a user service that keeps it running'}, so authorized agents on other machines can reach it.`,
+    risk: 'Changes system state (Tailscale serve config, a user service, files under the serve directory); `gbrain mcp expose --remove` undoes it.',
+    user_message: `I'd like to publish your gbrain MCP server ${where}${opts.noService ? '' : ' and install a background service for it'}. OK?`,
+  };
+}
+
 /**
  * The `consent` check, through the consent primitive (requireConsent). Returns
  * the exit code to hand back when the run must stop, or null to proceed.
@@ -665,16 +680,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   }
 
   // 2. consent -------------------------------------------------------------
-  const consent = await confirmOrFinish(d, s, 'Proceed with the plan above? [y/N] ', {
-    yes: opts.yes, nextAction: rerunCommand(opts),
-    confirmationMessage: 'These are system-state changes (Tailscale, serve config, a user service). Pass --yes to confirm.',
-    argv: ['gbrain', 'mcp', 'expose', ...publishFlags(opts)],
-    effects: ['persistent_install', 'egress'],
-    what: 'mcp expose',
-    why: `Publishes this brain's MCP server ${opts.noTailscale ? 'on loopback' : opts.funnel ? 'to the public internet (Tailscale Funnel)' : 'on your tailnet (Tailscale serve)'}${opts.noService ? '' : ' and installs a user service that keeps it running'}, so authorized agents on other machines can reach it.`,
-    risk: 'Changes system state (Tailscale serve config, a user service, files under the serve directory); `gbrain mcp expose --remove` undoes it.',
-    user_message: `I'd like to publish your gbrain MCP server ${opts.noTailscale ? 'on this machine' : opts.funnel ? 'on the public internet through Tailscale Funnel' : 'on your Tailscale network'}${opts.noService ? '' : ' and install a background service for it'}. OK?`,
-  });
+  const consent = await confirmOrFinish(d, s, 'Proceed with the plan above? [y/N] ', publishConsent(opts));
   if (consent !== null) return consent;
 
   // 3-6. tailscale ---------------------------------------------------------
