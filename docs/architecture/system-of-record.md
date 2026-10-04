@@ -212,9 +212,19 @@ or a physical projection that leaves attribution untouched):
 - `src/commands/sync/holds.ts` (1): a full sync's move of a held rename (`updateSlug` and its `source_path`) runs in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/commands/sync/renames.ts` (1): the legacy sync rename (`updateSlug`) runs in `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/core/chronicle/publish.ts` (3): Life Chronicle event generations: maintenance requests on managed brains; the unmanaged event write, retirement soft delete and retired stamp run in `maintenanceTransaction`.
+- `src/core/cycle/dream-provenance.ts` (1): the dream provenance frontmatter stamp runs per page in `maintenanceTransaction` (unmanaged brains only; managed synthesis publishes through maintenance requests).
+- `src/core/cycle/drift.ts` (1): the unmanaged drift report page runs in `maintenanceTransaction`; managed brains publish it through a maintenance request.
+- `src/core/cycle/extract-atoms-page-state.ts` (1): the atom completion stamp runs in `maintenanceTransaction`.
+- `src/core/cycle/extract-atoms.ts` (1): stale atom retirement soft-deletes in 500-page `maintenanceTransaction` chunks.
+- `src/core/cycle/extract-facts.ts` (7): the unmanaged page reconcile and the expiry of fence facts whose page was soft-deleted run in `maintenanceTransaction`; managed brains write through `withDerivedFactsWrite`.
 - `src/core/cycle/extract-takes.ts` (2): coordinated per page on managed brains; the unmanaged batch upsert runs in `maintenanceTransaction`.
+- `src/core/cycle/grade-takes.ts` (1): unmanaged take auto-resolution runs in `maintenanceTransaction`; managed brains publish a `takes_resolve` request.
+- `src/core/cycle/phantom-redirect.ts` (3): the unmanaged phantom fact move, canonical body refresh and phantom soft delete run in `maintenanceTransaction`; the managed redirect moves facts inside its coordinated write.
+- `src/core/cycle/phases/consolidate.ts` (4): unmanaged consolidation takes and fact updates run in `maintenanceTransaction` per cluster step; managed brains submit a maintenance consolidation request.
+- `src/core/cycle/synthesize.ts` (1): the unmanaged dream summary page runs in `maintenanceTransaction`; managed brains publish it through a maintenance request.
 - `src/core/embed-facts.ts` (1): embedding columns only (physical projection).
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
+- `src/core/extract/receipt-writer.ts` (1): the extraction receipt page runs in `maintenanceTransaction`.
 - `src/core/facts/backstop.ts` (3): the facts backstop's DB-only fallbacks insert each fact in `maintenanceTransaction`; managed brains publish through the facts request preparer.
 - `src/core/facts/fence-write.ts` (2): the markdown-first fence reconcile insert and its page body mirror each run in `maintenanceTransaction`.
 - `src/core/facts/forget.ts` (4): the legacy fence expiry, withdrawal and strike-through each run in `maintenanceTransaction` (nested inside a caller's coordinated write, they keep its actor).
@@ -223,6 +233,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
 - `src/core/facts/write-single.ts` (2): the legacy single-fact insert and its supersession link each run in `maintenanceTransaction`; managed brains publish through the fact request.
 - `src/core/import-file.ts` (11): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
+- `src/core/output/writer.ts` (4): `BrainWriter.transaction` is a `maintenanceTransaction`, so its pages and timeline rows carry the maintenance principal.
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/rename-alias.ts` (2): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and every caller is attributed.
 - `src/core/page-state/versions.ts` (1): `createVersion` itself; the caller's scope supplies the actor.
@@ -247,6 +258,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
 - `src/core/sweep.ts` (1): the maintenance sweep's bounded timeline batch runs in `maintenanceTransaction`.
 - `src/core/takes-write.ts` (7): the takes file helpers' DB mirror (add, append, update, supersede, resolve and its self-heal) runs in `maintenanceTransaction`; managed brains publish through the takes request preparer.
+- `src/core/think/index.ts` (1): the saved `think` result page runs in `maintenanceTransaction`.
 - `src/core/timeline-dedup-repair.ts` (1): the legacy timeline source repair rewrites each page's rows in one `maintenanceTransaction`.
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 <!-- write-attribution-covered:end -->
@@ -259,28 +271,16 @@ these write with `NULL` attribution):
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
 - `src/core/calibration/undo-wave.ts` (1): calibration wave undo of take resolutions.
 - `src/core/company-brain/profile.ts` (1): company-brain sync soft deletes.
-- `src/core/cycle/dream-provenance.ts` (1): dream provenance frontmatter stamp.
-- `src/core/cycle/drift.ts` (1): drift report page.
-- `src/core/cycle/extract-atoms-page-state.ts` (1): atom extraction frontmatter stamp.
-- `src/core/cycle/extract-atoms.ts` (1): soft delete of stale atoms.
-- `src/core/cycle/extract-facts.ts` (7): remaining site: expiry of fence facts whose page was soft-deleted. The page reconcile is attributed.
-- `src/core/cycle/grade-takes.ts` (1): take resolution.
-- `src/core/cycle/phantom-redirect.ts` (3): fact move, phantom page body refresh and soft delete.
-- `src/core/cycle/phases/consolidate.ts` (4): consolidation takes and fact updates.
-- `src/core/cycle/synthesize.ts` (1): synthesis summary page.
 - `src/core/enrichment-service.ts` (2): enrichment page and auto-timeline entry.
 - `src/core/extract-timeline-from-meetings.ts` (1): meeting timeline batch.
-- `src/core/extract/receipt-writer.ts` (1): extraction receipt page.
 - `src/core/minions/handlers/ingest-capture.ts` (1): capture ingest soft delete.
 - `src/core/ops/extraction.ts` (2): extraction review promote (frontmatter) and reject (soft delete).
-- `src/core/output/writer.ts` (4): synthesize-phase BrainWriter pages and timeline.
 - `src/core/repair/captured-facts.ts` (1): unmanaged captured-facts expiry.
 - `src/core/repair/extractor-facts.ts` (1): extractor-facts repair update.
 - `src/core/schema-pack/page-to-alias.ts` (1): page-to-alias conversion soft delete.
 - `src/core/schema-pack/page-to-link.ts` (1): page-to-link conversion soft delete.
 - `src/core/schema-pack/retype.ts` (1): schema-pack retype.
 - `src/core/schema-pack/sync.ts` (1): schema-pack type sync.
-- `src/core/think/index.ts` (1): saved `think` result page.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary
