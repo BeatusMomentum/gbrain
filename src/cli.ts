@@ -2062,6 +2062,14 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
     const { tryRunConfigEngineFree } = await import('./commands/config.ts');
     if (await tryRunConfigEngineFree(args)) return true;
   }
+  // Engine graduation (PGLite -> Postgres) owns its connections: --plan and
+  // --status migrate neither schema, and the run holds the source's kernel
+  // lock itself. Everything else (`migrate embeddings`, `--to pglite`, the
+  // migrate.graduation=false opt-out) falls through to the post-connect record.
+  if (command === 'migrate') {
+    const { tryRunMigrateGraduation } = await import('./commands/migrate-graduation.ts');
+    if (await tryRunMigrateGraduation(args)) return true;
+  }
   if (command === 'mcp') {
     const { runMcp, mcpNeedsEngine } = await import('./commands/mcp.ts');
     if (!mcpNeedsEngine(args)) { await runMcp(args); return true; }
@@ -2570,6 +2578,12 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
   let engine: BrainEngine;
   // F4: a stdio serve with no brain / a missing or repair-failed brain / unreadable config
   // completes the MCP handshake in status-only mode instead of exiting (connectEngine exits).
+  // Engine graduation (§6.4): a serve (re)launched while a run owns the host brain exits 75 with graduation_in_progress.
+  if (command === 'serve' && (dbMarkerBrainId() ?? 'host') === 'host') {
+    const guard = await import('./core/persistence/graduation-serve-guard.ts');
+    const running = guard.serveGraduationStartRefusal();
+    if (running) process.exit(guard.writeServeGraduationEnvelope(running));
+  }
   const serveStatus = command === 'serve' ? await import('./commands/serve-status.ts') : null;
   const serveStatusEligible = !!serveStatus?.statusModeEligible(args, (dbMarkerBrainId() ?? 'host') === 'host');
   const preConnectReason = serveStatusEligible ? serveStatus!.preConnectStatusReason() : null;
@@ -2629,6 +2643,8 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         console.error(`${formatDbMarker(d)}\n${d.message}\n${d.remediation} Run: gbrain db-repair`);
       } catch { /* marker is best-effort; degraded serve still starts */ }
       const { createDegradedEngine } = await import('./core/degraded-engine.ts');
+      const { engineIdentity, exitOnEngineIdentityChange } = await import('./core/persistence/graduation-serve-guard.ts');
+      const startIdentity = engineIdentity();
       const degraded = createDegradedEngine({
         initialError: serveConnectError,
         // Guarded reconnect: connectEngine's no-config path calls
@@ -2638,6 +2654,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         // through connectMountEngine before loadConfig() and needs no host
         // config, so the guard must not brick a mount serve's recovery.
         reconnect: async () => {
+          if ((dbMarkerBrainId() ?? 'host') === 'host') exitOnEngineIdentityChange(startIdentity);
           if ((dbMarkerBrainId() ?? 'host') === 'host' && !loadConfig()) {
             throw new Error('No brain configured (config.json missing or unreadable). Run: gbrain init');
           }
@@ -2960,7 +2977,7 @@ SETUP
   engine status [--json] [--probe]   Which engine + URL source, engine-free
   db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
                                      (--yes --apply-rewrites for config rewrites)
-  migrate --to <supabase|pglite>     Transfer brain between engines
+  migrate --to <postgres|pglite>     Move the brain between engines (PGLite -> Postgres graduates: plan, then --yes --expect)
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)
   upgrade                            Self-update

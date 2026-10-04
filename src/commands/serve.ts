@@ -8,6 +8,7 @@ import { VERB_NAMES } from '../core/verbs.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { onForwardProgress } from '../core/forward-progress.ts';
+import { graduationHandoffRequested, writeServeGraduationEnvelope } from '../core/persistence/graduation-serve-guard.ts';
 import {
   installLoopStallWatchdog,
   resolveServeStallWatchdogMs,
@@ -66,6 +67,8 @@ const IDLE_SWEEP_INTERVAL_MS = 10 * 60_000;
 // Small per-run budget for idle sweeps: the serve must snap back to
 // serving tool calls the moment the client wakes up.
 const IDLE_SWEEP_BUDGET_MS = 3_000;
+/** How often a PGLite stdio serve checks for a graduation run's intent marker (a stat; plan: at most every 2 s). */
+const GRADUATION_HANDOFF_POLL_MS = 2_000;
 
 export interface ServeOptions {
   // Test seam — defaults to the live process. The lifecycle plumbing reads
@@ -499,6 +502,8 @@ function installStdioLifecycle(
   let shuttingDown = false;
   let parentWatchdog: unknown = null;
   let idleSweepTimer: unknown = null;
+  let graduationHandoffTimer: unknown = null;
+  let shutdownExitCode = 0;
   let activateIdleActivityTracking = (): void => {};
   const beginShutdown = (reason: string): void => {
     if (shuttingDown) return;
@@ -517,6 +522,10 @@ function installStdioLifecycle(
     if (idleSweepTimer !== null) {
       deps.clearInterval(idleSweepTimer);
       idleSweepTimer = null;
+    }
+    if (graduationHandoffTimer !== null) {
+      deps.clearInterval(graduationHandoffTimer);
+      graduationHandoffTimer = null;
     }
 
     deps.log(`GBrain MCP server: graceful exit (${reason})`);
@@ -567,9 +576,24 @@ function installStdioLifecycle(
       })
       .finally(() => {
         if (deadline) clearTimeout(deadline);
-        deps.exit(0);
+        deps.exit(shutdownExitCode);
       });
   };
+
+  // Engine graduation hand-off (§13): a live run's intent marker asks the PGLite
+  // serve that holds the brain to finish, release the lock and exit 75 so the
+  // run can take the brain; a relaunched serve then exits the same way.
+  if (engine.kind === 'pglite') {
+    graduationHandoffTimer = deps.setInterval(() => {
+      if (shuttingDown || isEngineDegradedForServe(engine)) return;
+      const request = graduationHandoffRequested();
+      if (!request) return;
+      deps.log(`GBrain MCP server: an engine graduation run asked for this brain; handing it over.`);
+      shutdownExitCode = writeServeGraduationEnvelope(request, (s) => deps.log(s.trimEnd()));
+      drainThenShutdown('graduation-handoff');
+    }, GRADUATION_HANDOFF_POLL_MS);
+    (graduationHandoffTimer as { unref?: () => void } | null)?.unref?.();
+  }
 
   // Signal-based termination. SIGTERM: daemon ask. SIGINT: user Ctrl-C.
   // SIGHUP: terminal disconnect / daemon-style "reload" channels — Aragorn
