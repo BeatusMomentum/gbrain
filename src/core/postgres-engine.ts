@@ -706,7 +706,7 @@ export class PostgresEngine implements BrainEngine {
 
   async readPageSnapshot(slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx =>
-      readCanonicalPageSnapshot(async (query, params) => Array.from(await tx.unsafe(query, params as never)) as never, slug, opts));
+      readCanonicalPageSnapshot(async (query, params) => Array.from(await tx.unsafe(query, params as never, { prepare: true })) as never, slug, opts));
   }
 
   async lockPageKeys(keys: readonly PageKey[]): Promise<void> {
@@ -2692,11 +2692,11 @@ export class PostgresEngine implements BrainEngine {
         owner = reserved ?? conn as unknown as postgres.TransactionSql;
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
         if (signal && !hasPostgresCancellationCapability(owner)) throw postgresCancellationUnavailable();
-        // prepare/simple are forwarded only when a caller sets them (the
-        // engine-sql adapter, EO2); executeRaw/executeRawDirect never do.
-        const driverOpts = opts?.prepare === undefined && opts?.simple === undefined
-          ? { cancelFence: !!signal }
-          : { cancelFence: !!signal, prepare: opts.prepare, simple: opts.simple };
+        // #5984: parameterized statements default to named prepared statements, as tagged templates do.
+        // postgres.js ANDs this with the connection option, so a PgBouncer transaction pooler
+        // (`prepare: false`) stays unprepared; elsewhere a repeat costs one round trip instead of a
+        // describe round trip plus an execute round trip.
+        const driverOpts = { cancelFence: !!signal, prepare: opts?.prepare ?? true, ...(opts?.simple === undefined ? {} : { simple: opts.simple }) };
         pending = conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1], driverOpts);
         return await pending as unknown as T[];
       } finally {
