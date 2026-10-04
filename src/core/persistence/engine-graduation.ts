@@ -499,6 +499,10 @@ export async function planGraduation(opts: GraduationPlanOptions): Promise<Gradu
 
 // ── run ────────────────────────────────────────────────────────────────────
 
+/** Blockers the drain resolves inside --drain-timeout; every other blocker refuses before anything is fenced. */
+const DRAIN_RESOLVED_BLOCKERS: ReadonlySet<GraduationBlocker['kind']> = new Set(['request', 'topology_recovery', 'effect_recovery']);
+function refusesRun(blocker: GraduationBlocker): boolean { return blocker.needsUser || !DRAIN_RESOLVED_BLOCKERS.has(blocker.kind); }
+
 function blockerRefusal(blocker: GraduationBlocker, run: { m: GraduationManifest }): OperationError {
   const codeByKind: Partial<Record<GraduationBlocker['kind'], GraduationErrorCode>> = {
     foreign_host_binding: 'graduation_foreign_host_binding', target_not_empty: 'graduation_target_not_empty',
@@ -581,7 +585,7 @@ async function quiesceFresh(run: Run, input: PlanInputs, expect: string): Promis
         fix: { argv: runArgv(input.invokedAs, input.routes, plan.planHash), consent: ['egress', 'destructive'], actor: 'agent', requires_exclusive: true,
           why: 'Runs the move against the fresh plan once the user agrees.', plan_hash: plan.planHash, preview_argv: planArgv(run), verify: { argv: STATUS_ARGV } } });
   }
-  const blocker = plan.blockers.find(b => b.needsUser || b.kind === 'unclassified_relation');
+  const blocker = plan.blockers.find(refusesRun);
   if (blocker) throw blockerRefusal(blocker, run);
   run.m.source = plan.source;
   run.m.triggerBypass = plan.triggerBypass!;
@@ -615,7 +619,7 @@ async function recheckApproval(run: Run): Promise<void> {
   };
   const ours = row?.role === 'target' && row.run_id === run.m.runId;
   const plan = await assemblePlan(run.deps, input, run.source, run.main, ours);
-  const blocker = plan.blockers.find(b => b.needsUser || b.kind === 'unclassified_relation');
+  const blocker = plan.blockers.find(refusesRun);
   if (blocker) throw blockerRefusal(blocker, run);
   if (!run.m.force && plan.planHash !== run.m.planHash) {
     throw opError('preview_changed', 'The brain or target changed since the approved plan; the run did not continue.',
@@ -790,6 +794,7 @@ async function stepVerify(run: Run): Promise<void> {
   await run.deps.assertRelationSet(run.main!, 'postgres', run.deps.inventory);
   const result = await run.deps.verifyGraduation({ source: run.source!, target: run.main! }, {
     inventory: run.deps.inventory, sourceReceipts: run.m.sourceReceipts ?? [], replayRequestId: run.m.replayRequestId ?? undefined,
+    runId: run.m.runId, expectFence: true,
     runDoctor: () => run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main),
   });
   const timings = { ...run.m.timings, verify_ms: Date.now() - started };
@@ -1244,7 +1249,8 @@ async function detectRollbackLosses(run: Run): Promise<RollbackLoss[]> {
     if (!(entry.class === 'carry' || entry.class === 'rebind') || !entry.engines.postgres || securityNames.has(entry.relation)) continue;
     const before = receipts.get(entry.relation);
     if (!before) continue;
-    const now = await run.deps.digestTable(run.main!, entry);
+    // persistence_brain.enabled legitimately differs after cutover: digest it through its transform, like the receipt.
+    const now = await run.deps.digestTable(run.main!, entry, { applyTransforms: entry.relation === 'persistence_brain' });
     if (now.rootSha256 !== before.rootSha256) {
       losses.push({ relation: entry.relation, lossKind: entry.lossKind, change: 'changed', rows: Math.abs(now.rows - before.rows) || now.rows, final: false });
     }

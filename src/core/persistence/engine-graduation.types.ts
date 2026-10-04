@@ -84,6 +84,8 @@ export interface ColumnTransform {
   column: string;
   /** Human-readable rule, also printed by --plan (e.g. "cleared", "active -> waiting"). */
   rule: string;
+  /** SQL expression over the source row's columns that yields the target value; the copier selects it and verify digests it. */
+  expression?: string;
 }
 
 export interface InventoryEntry {
@@ -94,7 +96,22 @@ export interface InventoryEntry {
   lossKind: LossKind;
   /** The only differences verify tolerates between source snapshot and target. */
   transforms: readonly ColumnTransform[];
+  /** SQL predicate selecting the rows that belong to the copy; rows outside it stay engine-local on both sides (copy and digest). */
+  rowFilter?: string;
   reason: string;
+}
+
+/** One column as both the column contract and the canonical digest read it from the catalog. */
+export interface ColumnMeta {
+  name: string;
+  /** format_type(atttypid, atttypmod), e.g. 'vector(1024)', 'timestamp with time zone', 'text[]'. */
+  type: string;
+  /** pg_type.typcategory of the column type ('A' array, 'S' string, 'D' date/time, 'U' user-defined, ...). */
+  category: string;
+  /** The type has a collation, so ORDER BY and keyset predicates need COLLATE "C". */
+  collatable: boolean;
+  /** GENERATED ALWAYS ... STORED: never inserted, but digested. */
+  generated: boolean;
 }
 
 export interface Inventory {
@@ -245,7 +262,7 @@ export interface GraduationPlan {
 
 export type ReplayProbeResult =
   | { status: 'passed'; requestId: string }
-  | { status: 'not_available'; reason: 'no_caller_input' | 'archived_source' | 'revoked_principal' | 'no_uncompacted_request' }
+  | { status: 'not_available'; reason: 'no_caller_input' | 'archived_source' | 'revoked_principal' | 'no_uncompacted_request' | 'source_changed' }
   | { status: 'failed'; requestId: string; detail: string };
 
 export interface VerifyFailure {
