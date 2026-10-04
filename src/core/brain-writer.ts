@@ -53,12 +53,32 @@ export interface AuditFix {
  */
 export type RecoverabilityByCode = Partial<Record<ParseValidationCode, { recoverable: number; unrecoverable: number }>>;
 
+/**
+ * #5988: files `gbrain repair frontmatter` can fix, by the cause it fixes:
+ * recoverable `YAML_PARSE`, `needs_interpretation` (the held reading needs a
+ * fold or a duplicate-key choice), a `#`-leading value YAML read as a comment
+ * (`FRONTMATTER_COMMENT_VALUE` on title/name/description/summary),
+ * `NESTED_QUOTES`, `NULL_BYTES`, `MISSING_CLOSE`, `SLUG_MISMATCH`. A file
+ * counts once in `files` and once per cause in `by_code`.
+ */
+export interface RepairableReport {
+  files: number;
+  by_code: Partial<Record<RepairableCause, number>>;
+  sample: string[];
+}
+
+export type RepairableCause = 'YAML_PARSE' | 'needs_interpretation' | 'FRONTMATTER_COMMENT_VALUE' | 'NESTED_QUOTES' | 'NULL_BYTES' | 'MISSING_CLOSE' | 'SLUG_MISMATCH';
+
+const REPAIRABLE_ERRORS: ReadonlySet<string> = new Set(['NESTED_QUOTES', 'NULL_BYTES', 'MISSING_CLOSE', 'SLUG_MISMATCH']);
+const RESCUE_KEYS: ReadonlySet<string> = new Set(['title', 'name', 'description', 'summary']);
+
 export interface PerSourceReport {
   source_id: string;
   source_path: string;
   total: number;
   errors_by_code: Partial<Record<ParseValidationCode, number>>;
   recoverability_by_code?: RecoverabilityByCode;
+  repairable?: RepairableReport;
   sample: { path: string; codes: ParseValidationCode[] }[];
   ignoredMissingOpen: number;
   /** Did this source finish the walk, get interrupted, or never start?
@@ -734,6 +754,7 @@ function scanOneSource(
   const errorsByCode: Partial<Record<ParseValidationCode, number>> = {};
   const recoverability: RecoverabilityByCode = {};
   const sample: PerSourceReport['sample'] = [];
+  const repairable: RepairableReport = { files: 0, by_code: {}, sample: [] };
   const rootResolved = resolve(sourcePath);
   let scanned = 0;
   let total = 0;
@@ -774,10 +795,22 @@ function scanOneSource(
       ignoredMissingOpen++;
       return false;
     });
+    const hold = classifyImportHold(parsed, { expectedSlug });
+    const causes = new Set<RepairableCause>();
+    for (const e of parsed.errors ?? []) {
+      if (e.code === 'YAML_PARSE' && e.recoverable) causes.add('YAML_PARSE');
+      else if (REPAIRABLE_ERRORS.has(e.code)) causes.add(e.code as RepairableCause);
+    }
+    if (hold?.reason === 'needs_interpretation') causes.add('needs_interpretation');
+    if ((parsed.warnings ?? []).some(w => w.code === 'FRONTMATTER_COMMENT_VALUE' && RESCUE_KEYS.has(w.key))) causes.add('FRONTMATTER_COMMENT_VALUE');
+    if (causes.size > 0) {
+      repairable.files++;
+      for (const cause of causes) repairable.by_code[cause] = (repairable.by_code[cause] ?? 0) + 1;
+      if (repairable.sample.length < SAMPLE_PER_SOURCE) repairable.sample.push(relPath);
+    }
     if (errs.length > 0) {
       total += errs.length;
       const codes: ParseValidationCode[] = [];
-      const hold = classifyImportHold(parsed, { expectedSlug });
       for (const e of errs) {
         errorsByCode[e.code] = (errorsByCode[e.code] ?? 0) + 1;
         codes.push(e.code);
@@ -818,6 +851,7 @@ function scanOneSource(
     total,
     errors_by_code: errorsByCode,
     recoverability_by_code: recoverability,
+    repairable,
     sample,
     ignoredMissingOpen,
     status: interrupted ? 'partial' : 'scanned',
