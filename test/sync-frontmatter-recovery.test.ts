@@ -6,8 +6,8 @@
  * message, which sync output and `get_write_request` show as is, and which
  * `isContentRefusal` recognizes from the stored receipt.
  *
- * Holding such files instead of blocking is Lane 2; this pins the refusal
- * the hold store and auto-conversion read.
+ * Sync holds such files by default (Lane 2); with sync.holds=fail this pins
+ * the refusal the hold store and auto-conversion read.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -83,6 +83,8 @@ test('a file that needs guessing refuses with the typed location-only message in
   for (const engine of engines) {
     const id = await source(engine, { 'notes/post.md': '---\ntitle: alice-example first line\nalice-example second line\n---\nA synthetic post.\n' });
     const expected = 'Invalid YAML frontmatter: key "title" at line 2 continues on unquoted lines.';
+    // #5988: sync holds such a file by default; sync.holds=fail keeps the fail-closed refusal this pins.
+    await engine.setConfig('sync.holds', 'fail');
     try {
       const result = await performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true });
       expect(result).toMatchObject({ status: 'blocked_by_failures', managedWrite: { write_error: 'invalid_params' } });
@@ -100,6 +102,7 @@ test('a file that needs guessing refuses with the typed location-only message in
       expect(receipt.write_error_message.startsWith(expected)).toBe(true);
       expect(isContentRefusal(receipt.write_error, receipt.write_error_message)).toBe(true);
     } finally {
+      await engine.unsetConfig('sync.holds');
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     }
