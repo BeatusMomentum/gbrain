@@ -29,7 +29,7 @@ type Case = typeof managedEmbeddingCases[number];
 
 export async function exerciseManagedEmbedding(engine: BrainEngine, scenario: Case): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-fact-model-'));
-  const restoreWait = __setMaintenanceWriteWaitForTests(testWaitMs(250));
+  let restoreWait = () => {};
   try {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       await disposePersistenceConsumer(engine);
@@ -65,6 +65,7 @@ export async function exerciseManagedEmbedding(engine: BrainEngine, scenario: Ca
       const embeddings: string[] = [];
       let allEmbeddings = 0;
       const deferred = ['changed_before_publication', 'changed_before_replay', 'disabled_before_replay', 'file_disabled_before_replay', 'unchanged_replay', 'unsigned_replay'].includes(scenario);
+      if (deferred) restoreWait = __setMaintenanceWriteWaitForTests(testWaitMs(250));
       __setChatTransportForTests(async () => {
         generations++;
         if (scenario === 'changed_before_embedding') await engine.setConfig('embedding_model', hostModel);
