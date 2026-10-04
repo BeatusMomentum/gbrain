@@ -2092,6 +2092,7 @@ Unit tests and what they cover:
 
 ### Lane-move pilot (2026-09)
 
+<!-- repo-paths: historical -->
 The 20 heaviest PGLite-only files in `test/e2e/` (by `scripts/e2e-weights.json`)
 moved out of the sequential Postgres runner into the lanes that run on every PR.
 Each met the move criterion: it constructs PGLite (or spawns a PGLite CLI)
