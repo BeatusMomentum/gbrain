@@ -79,7 +79,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
           await member.validate?.(tx);
           await setMemberAttribution(tx, requestAttribution(row));
           member.postimage = undefined;
-          const outcome = await member.apply(tx);
+          const outcome = await member.apply(tx, snapshot);
           await classifyUnboundPage(tx, row);
           if (member.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
           const final = await publicationPostimage(tx, row, member);

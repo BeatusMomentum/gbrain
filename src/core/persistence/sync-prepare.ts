@@ -15,7 +15,7 @@ import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
-import { pipelined } from '../page-state/transactions.ts';
+import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
@@ -36,7 +36,7 @@ import { isUnboundSourcePage, UNBOUND_COLLISION_MESSAGE } from './unbound-source
 import { checkpointRetryCommand, findIncompleteSyncReceipt } from './checkpoint-validation.ts';
 import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
-import { clearGitHold, recordSyncImportProvenance } from './sync-holds.ts';
+import { clearGitHold, countGitHolds, recordSyncImportProvenance } from './sync-holds.ts';
 import { VERSION } from '../../version.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
@@ -170,7 +170,10 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     'Its intent records an unowned path on something other than a deletion.');
   const originPageId = p.unownedDeletion ? null : row.page_id;
   const releaseHold = async (tx: BrainEngine, path: string | null = p.path) => {
-    if (p.holdObservedAt && path !== null) await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path, observedAt: p.holdObservedAt });
+    if (!p.holdObservedAt || path === null) return;
+    // #5984: a source without holds (one summary read per transaction) has none to clear.
+    if (await transactionMemo(tx, `git-holds:${row.source_id}:${row.source_incarnation}`, () => countGitHolds(tx, row.source_id, row.source_incarnation)) === 0) return;
+    await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path, observedAt: p.holdObservedAt });
   };
   await assertManagedSyncActive(engine);
   if (p.kind !== 'managed_sync_delete' && (!p.processingOptions ||
@@ -305,8 +308,8 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       `A canonical file now occupies the path of page ${row.slug}, written while ${row.source_id} was unbound; neither copy was overwritten. Rename or remove the file and commit, or copy what you need into the page first.`);
   }
   if (p.kind === 'managed_sync_delete') return { observedRevision: snapshot?.revision ?? null, noop: !snapshot || snapshot.page.deleted_at != null,
-    validate, apply: async tx => {
-      if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
+    validate, apply: async (tx, preimage) => {
+      if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, preimage ? { ...source, preimage } : source); await tx.softDeletePage(row.slug, source); }
       await releaseHold(tx);
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
@@ -417,7 +420,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     deferEmbedding: p.processingOptions?.noEmbed,
     ...(writeback ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
     ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
-    apply: async tx => {
+    apply: async (tx, preimage) => {
       let applied = ready;
       if (renamed) {
         // The page moves first, keeping its id, inbound links and history and leaving
@@ -432,7 +435,8 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
         await movedImport.validate(tx);
         applied = movedImport;
       }
-      await applied.apply(tx);
+      // A moved page is versioned from its own (rename source) read.
+      await applied.apply(tx, renamed ? undefined : preimage);
       // Hash no-ops still repair a missing physical origin under the same guard.
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
       // #5984: the one read of the page after its last page write (the projections

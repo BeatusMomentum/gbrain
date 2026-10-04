@@ -82,14 +82,17 @@ export async function upsertChunksOnce(
     // Source-scope the page-id lookup. Without this filter, multi-source
     // brains where the slug exists in 2+ sources return >1 row and the
     // chunk replacement targets the wrong page (or fans out across pages).
-    const pages = (await exec.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId} FOR UPDATE`)).rows;
+    // #5984: `sealChunkerVersion` is a complete replacement: the caller deleted
+    // every chunk of the page earlier in this transaction, so nothing stale can
+    // remain, and the seal (which also locks the page row and yields its id)
+    // commits only together with the insert below.
+    const seal = opts?.sealChunkerVersion;
+    const pages = (await exec.run<{ id: number }>(seal === undefined
+      ? sqlFragment`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId} FOR UPDATE`
+      : sqlFragment`UPDATE pages SET chunker_version = ${seal} WHERE slug = ${slug} AND source_id = ${sourceId} RETURNING id`)).rows;
     if (pages.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const pageId = pages[0].id;
 
-    // #5984: `sealChunkerVersion` is a complete replacement: the caller deleted
-    // every chunk of the page earlier in this transaction, so nothing stale can
-    // remain, and the page is sealed at that chunker version after the insert.
-    const seal = opts?.sealChunkerVersion;
     if (seal === undefined) {
       // A fragment write cannot certify the full-body fence boundary. Import seals
       // only after its complete replacement succeeds in the same transaction.
@@ -104,10 +107,7 @@ export async function upsertChunksOnce(
         await exec.run(sqlFragment`DELETE FROM content_chunks WHERE page_id = ${pageId}`);
         return;
       }
-    } else if (chunks.length === 0) {
-      await exec.run(sqlFragment`UPDATE pages SET chunker_version = ${seal} WHERE id = ${pageId}`);
-      return;
-    }
+    } else if (chunks.length === 0) return;
 
     // Batch upsert: build a single multi-row INSERT ON CONFLICT statement.
     // v0.19.0: includes language/symbol_name/symbol_type/start_line/end_line
@@ -304,7 +304,6 @@ export async function upsertChunksOnce(
          modality = EXCLUDED.modality,
          embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`);
     await exec.query(text, params);
-    if (seal !== undefined) await exec.run(sqlFragment`UPDATE pages SET chunker_version = ${seal} WHERE id = ${pageId}`);
   }
 
 export async function getChunks(

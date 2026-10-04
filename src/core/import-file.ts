@@ -32,6 +32,7 @@ import { embedBatchKeepingUsable, embedBatchWithBackoff } from './embed-retry.ts
 import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
 import type { ChunkInput, Page, PageInput, PageType } from './types.ts';
+import type { PageSnapshot } from './page-state/types.ts';
 import { computeEffectiveDate, fallbackCreatedAt, isValidTimeZone } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
@@ -224,13 +225,7 @@ export async function importFromContent(
   opts: {
     /** Coordinator seam: prepare without publishing, then commit under its guarded transaction. */
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult>;
-    /**
-     * #5984, with `prepare`: the publication coordinator proves the page's base
-     * revision under its page guard before apply, and the caller reads the page
-     * once after apply, seals its text projection from that read and checks the
-     * read-back against `contentHash`. apply then skips its own base re-read,
-     * text-projection seal and read-back.
-     */
+    /** #5984, with `prepare`: the coordinator proves the base revision under its page guard, and the caller seals the text projection and checks the read-back (`contentHash`) from its own read after apply; apply skips all three. */
     coordinated?: boolean;
     /** Internal canonical metadata, after protected-body overlays and before hashing. */
     prepareFrontmatter?: (page: ParsedPage) => void;
@@ -830,10 +825,10 @@ export async function importFromContent(
   const txOpts = { sourceId: sourceId ?? 'default' };
   let persistedProjection: ProjectionSnapshot | null = null;
   const timeZone = await loadBrainTimeZone(engine);
-  const applyPrepared = async (tx: BrainEngine) => {
+  const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
     if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing);
     await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
-    if (existing) await tx.createVersion(slug, txOpts);
+    if (existing) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
 
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
     // Filename comes from importFromFile path (basename) or the slug tail
@@ -912,8 +907,6 @@ export async function importFromContent(
     if (chunks.length > 0) {
       const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
         { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
-      // A complete replacement of the chunks deleted above: the full-body seal
-      // (`chunker_version`) is stamped by the same upsert, after its insert.
       await tx.upsertChunks(slug, chunks, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION });
       // v0.41.31: stamp embedding provenance when this import actually
       // embedded (not --no-embed), so a later model/dims swap is detectable
@@ -928,12 +921,9 @@ export async function importFromContent(
         }
       }
     } else {
-      // Content is empty — delete stale chunks so they don't ghost in search results
-      await tx.deleteChunks(slug, txOpts);
-      // Seal only the completed, full-body sanitized replacement. A body-only
-      // write or a failed transaction must never certify old stored fragments.
-      await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
-        [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+      // Seal only the completed, full-body sanitized replacement (the upsert above seals its own); a
+      // body-only write or a failed transaction must never certify old stored fragments.
+      await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3', [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
     }
     if (!opts.coordinated) await sealPageTextProjection(tx, slug, txOpts.sourceId);
 
