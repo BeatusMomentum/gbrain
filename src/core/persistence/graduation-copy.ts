@@ -222,7 +222,7 @@ export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
     return `((r.v->>${i})::${columns[i]!.type})`;
   };
   const insertExprs = columns.map(c => selfFk.includes(c.name) ? 'NULL' : transforms.get(c.name)?.sql(typed) ?? typed(c.name));
-  const insertSql = `INSERT INTO ${targetIdent} (${columns.map(c => c.ident).join(', ')}) SELECT ${insertExprs.join(', ')} FROM jsonb_array_elements($1::jsonb) AS r(v)`;
+  const insertSql = `INSERT INTO ${targetIdent} (${columns.map(c => c.ident).join(', ')}) SELECT ${insertExprs.join(', ')} FROM jsonb_array_elements($1::text::jsonb) AS r(v)`;
   const orderBy = pkColumns.map(c => c.collatable ? `${c.ident} COLLATE "C"` : c.ident).join(', ');
   const keyset = `(${orderBy}) > (${pkColumns.map((c, j) => `$${j + 1}::${c.type}${c.collatable ? ' COLLATE "C"' : ''}`).join(', ')})`;
   const batchBytes = opts.batchBytes ?? DEFAULT_COPY_BATCH_BYTES;
@@ -264,7 +264,7 @@ export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
     if (selfFk.length) {
       const fkColumns = selfFk.map(name => columns[index.get(name)!]!);
       const updateSql = `UPDATE ${targetIdent} AS t SET ${fkColumns.map((c, j) => `${c.ident} = (r.v->>${pkColumns.length + j})::${c.type}`).join(', ')}
-        FROM jsonb_array_elements($1::jsonb) AS r(v) WHERE ${pkColumns.map((c, j) => `t.${c.ident} = (r.v->>${j})::${c.type}`).join(' AND ')}`;
+        FROM jsonb_array_elements($1::text::jsonb) AS r(v) WHERE ${pkColumns.map((c, j) => `t.${c.ident} = (r.v->>${j})::${c.type}`).join(' AND ')}`;
       await scan(`(${fkColumns.map(c => `${c.ident} IS NOT NULL`).join(' OR ')})`, async rows => {
         const payload = rows.map(row => [...pkColumns.map(c => row[index.get(c.name)!]), ...fkColumns.map(c => row[index.get(c.name)!] ?? null)]);
         await tx.executeRaw(updateSql, [JSON.stringify(payload)]);
