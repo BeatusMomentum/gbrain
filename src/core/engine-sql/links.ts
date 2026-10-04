@@ -22,6 +22,8 @@ import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
+import { isTemporalLinkType } from '../link-validity.ts';
 
 export async function addLink(
   exec: SqlExecutor,
@@ -68,11 +70,15 @@ export async function addLink(
       )
       SELECT
         endpoint_state.from_id IS NOT NULL AS from_exists,
-        endpoint_state.to_id IS NOT NULL AS to_exists
+        endpoint_state.to_id IS NOT NULL AS to_exists,
+        endpoint_state.from_id, endpoint_state.to_id
       FROM endpoint_state
-    `)).rows;
+    `)).rows as Array<{ from_exists: boolean; to_exists: boolean; from_id: number | null; to_id: number | null }>;
     if (!result?.from_exists) throw new PageMissingError('addLink', 'from', from, fromSrc);
     if (!result.to_exists) throw new PageMissingError('addLink', 'to', to, toSrc);
+    if (isTemporalLinkType(linkType)) {
+      await refreshRelationships(exec, [{ from_page_id: Number(result.from_id), to_page_id: Number(result.to_id), link_type: linkType! }]);
+    }
   }
 
 
@@ -87,8 +93,8 @@ export async function addLinksBatch(exec: SqlExecutor, links: LinkBatchInput[]):
     // the same array serializer this fix exists to avoid. Row construction +
     // NUL-stripping + exact defaulting live in buildLinkRows (shared with PGLite).
     const rows = buildLinkRows(links);
-    const result = await executeRawJsonb(
-      exec,
+    const insert = (target: SqlExecutor) => executeRawJsonb<RelationshipKey>(
+      target,
       `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, link_kind, origin_page_id, origin_field)
        SELECT f.id, t.id, v.link_type, v.context, v.link_source, v.link_kind, o.id, v.origin_field
        FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(
@@ -100,11 +106,18 @@ export async function addLinksBatch(exec: SqlExecutor, links: LinkBatchInput[]):
        JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
        LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
        ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
-       RETURNING 1`,
+       RETURNING from_page_id, to_page_id, link_type`,
       [],
       [{ rows }],
     );
-    return result.length;
+    // Temporal relation types also refresh their relationship state in the
+    // same transaction; batches of plain references skip it entirely.
+    if (!rows.some(r => isTemporalLinkType(r.link_type))) return (await insert(exec)).length;
+    return exec.transaction(async tx => {
+      const inserted = await insert(tx);
+      await refreshRelationships(tx, inserted);
+      return inserted.length;
+    });
   }
 
 
@@ -150,10 +163,11 @@ export async function removeLinksByPagesAndSource(
              WHERE k.from_id = l.from_page_id AND k.to_id = l.to_page_id
            )
          )
-       RETURNING 1`,
+       RETURNING l.from_page_id, l.to_page_id, l.link_type`,
       [opts.linkSource],
       [payload],
-    );
+    ) as RelationshipKey[];
+    await refreshRelationships(exec, rows);
     return rows.length;
   }
 
@@ -181,8 +195,9 @@ export async function removeLink(
           AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
           AND link_type = ${linkType}
           AND link_source IS NOT DISTINCT FROM ${linkSource}
-        RETURNING 1
-      `)).rows;
+        RETURNING from_page_id, to_page_id, link_type
+      `)).rows as unknown as RelationshipKey[];
+      await refreshRelationships(exec, rows);
       return rows.length;
     } else if (linkType !== undefined) {
       const rows = (await exec.run(sqlFragment`
@@ -190,8 +205,9 @@ export async function removeLink(
         WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
           AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
           AND link_type = ${linkType}
-        RETURNING 1
-      `)).rows;
+        RETURNING from_page_id, to_page_id, link_type
+      `)).rows as unknown as RelationshipKey[];
+      await refreshRelationships(exec, rows);
       return rows.length;
     } else if (linkSource !== undefined) {
       const rows = (await exec.run(sqlFragment`
@@ -199,16 +215,18 @@ export async function removeLink(
         WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
           AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
           AND link_source IS NOT DISTINCT FROM ${linkSource}
-        RETURNING 1
-      `)).rows;
+        RETURNING from_page_id, to_page_id, link_type
+      `)).rows as unknown as RelationshipKey[];
+      await refreshRelationships(exec, rows);
       return rows.length;
     } else {
       const rows = (await exec.run(sqlFragment`
         DELETE FROM links
         WHERE from_page_id = (SELECT id FROM pages WHERE slug = ${from} AND source_id = ${fromSrc})
           AND to_page_id = (SELECT id FROM pages WHERE slug = ${to} AND source_id = ${toSrc})
-        RETURNING 1
-      `)).rows;
+        RETURNING from_page_id, to_page_id, link_type
+      `)).rows as unknown as RelationshipKey[];
+      await refreshRelationships(exec, rows);
       return rows.length;
     }
   }

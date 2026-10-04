@@ -100,7 +100,8 @@ export function defineLinkRelationshipTests(label: string, open: () => Promise<B
 
     test('a relationship without a state row reads as live; the stale sweep finds it', async () => {
       await page(newco, 'company');
-      await eng.addLink(alice, newco, 'advisor to New Co', 'advises', 'markdown');
+      // A writer from before temporal state (raw insert, no refresh).
+      await eng.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source) VALUES ($1, $2, 'advises', 'advisor to New Co', 'markdown')`, [ids[alice], ids[newco]]);
       expect(await liveTargets(alice)).toContain('companies/new-co:advises');
       const stale = await staleRelationshipKeys(eng, 5000);
       expect(stale.some(k => k.to_page_id === ids[newco])).toBe(true);
