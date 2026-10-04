@@ -38,14 +38,19 @@ interface MigrateOpts {
 function parseArgs(args: string[]): MigrateOpts {
   const toIdx = args.indexOf('--to');
   if (toIdx === -1 || !args[toIdx + 1]) {
-    throw opError('invalid_params', 'gbrain migrate needs --to <supabase|pglite>.',
-      'Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]. Example: gbrain migrate --to pglite --path ~/.gbrain/brain.pglite');
+    throw opError('invalid_params', 'gbrain migrate needs --to <postgres|supabase|pglite>.',
+      'Usage: gbrain migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force]. Example: gbrain migrate --to pglite --path ~/.gbrain/brain.pglite');
   }
 
   const targetRaw = args[toIdx + 1];
   const targetEngine = targetRaw === 'supabase' ? 'postgres' : targetRaw as 'postgres' | 'pglite';
   if (targetEngine !== 'postgres' && targetEngine !== 'pglite') {
-    throw new Error(`Unknown target engine: "${targetRaw}". Use: supabase or pglite`);
+    throw opError('invalid_params', `Unknown target engine: "${targetRaw}". Use postgres (alias supabase) or pglite.`,
+      'Usage: gbrain migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force].',
+      { why: `gbrain migrate moves a brain between its two engines, postgres and pglite; "${targetRaw}" is neither.`,
+        fix: { argv: ['gbrain', 'migrate', '--to', '<engine>'], inputs: [{ name: 'engine', how: 'postgres (alias supabase) or pglite, whichever engine the user wants to move to.' }],
+          consent: [], actor: 'agent', requires_exclusive: true, verify: { argv: ['gbrain', 'engine', 'status', '--json'] },
+          why: 'Names an engine gbrain supports.' } });
   }
 
   const urlIdx = args.indexOf('--url');
@@ -828,8 +833,9 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
-  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
-  await assertLegacyEngineMigration(sourceEngine);
+  const migration = { from: sourceEngine.kind, to: opts.targetEngine };
+  await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration', { migration: { side: 'source', ...migration } });
+  await assertLegacyEngineMigration(sourceEngine, { side: 'source', ...migration });
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: gbrain init');
@@ -880,8 +886,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   await targetEngine.connect(targetConfig);
   await targetEngine.initSchema();
   try {
-    await assertUnmanagedCanonicalWriter(targetEngine, 'engine migration');
-    await assertLegacyEngineMigration(targetEngine);
+    await assertUnmanagedCanonicalWriter(targetEngine, 'engine migration', { migration: { side: 'target', ...migration } });
+    await assertLegacyEngineMigration(targetEngine, { side: 'target', ...migration });
   } catch (error) {
     try { await targetEngine.disconnect(); } finally { resumeAutopilot(); }
     throw error;

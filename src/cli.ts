@@ -2960,7 +2960,7 @@ SETUP
   engine status [--json] [--probe]   Which engine + URL source, engine-free
   db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
                                      (--yes --apply-rewrites for config rewrites)
-  migrate --to <supabase|pglite>     Transfer brain between engines
+  migrate --to <postgres|pglite>     Transfer brain between engines (supabase = postgres)
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)
   upgrade                            Self-update

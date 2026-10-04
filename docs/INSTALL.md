@@ -81,9 +81,11 @@ gbrain init --prefer-postgres    # env URL → Supabase token discovery → loca
 To switch later:
 
 ```bash
-gbrain migrate --to supabase     # PGLite → Postgres
+gbrain migrate --to postgres     # PGLite → Postgres (alias: --to supabase)
 gbrain migrate --to pglite       # Postgres → PGLite (rare)
 ```
+
+The move works for brains with no write history. A brain that has saved memory through the write coordinator stays on its engine; the refusal explains the choices ([engine migration refused](ENGINES.md#engine-migration-refused)).
 
 If Postgres access ever breaks at runtime, `gbrain engine status --probe` diagnoses it and `gbrain db-repair` fixes it — see the "Engine detection and access repair" section of [`docs/ENGINES.md`](ENGINES.md).
 
