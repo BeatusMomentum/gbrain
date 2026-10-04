@@ -83,6 +83,7 @@
     "local_writers": { "live": 2, "revoked": 1 },
     "bytes": { "raw_data_min": 2097152, "files_metadata_min": 262144, "minion_data_min": 524288, "frontmatter_min": 65536 },
     "cycle_locks": 1,
+    "embeddings": { "chunks": 1, "facts": 1 },
     "brain": { "enabled": true }
   },
   "target": {

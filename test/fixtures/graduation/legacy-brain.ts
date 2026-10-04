@@ -104,6 +104,7 @@ export interface LegacyExpected {
     local_writers: { live: number; revoked: number };
     bytes: { raw_data_min: number; files_metadata_min: number; minion_data_min: number; frontmatter_min: number };
     cycle_locks: number;
+    embeddings: { chunks: number; facts: number };
     brain: { enabled: boolean };
   };
   target: {
@@ -217,9 +218,6 @@ export async function buildLegacyBrain(engine: BrainEngine, { root }: { root: st
   await sql(`INSERT INTO tags(page_id,tag) VALUES($1,'company'),($1,'Legacy'),($1,'legacy')`, [acme]);
   await sql(`INSERT INTO timeline_entries(page_id,date,source,summary,detail) VALUES($1,'2025-10-01','legacy','Founded','Acme-example was founded.'),
     ($1,'2026-01-10','legacy','Seed round','Raised from fund-a.')`, [acme]);
-  await sql(`INSERT INTO content_chunks(page_id,chunk_index,chunk_text,chunk_source,embedding,model,token_count,embedded_at)
-    VALUES($1,0,'Acme-example builds widgets.','compiled_truth',$2::vector,'fixture:legacy',6,'2025-11-02T00:00:00Z')`,
-  [acme, fixtureVector(chunkDims, 1)]);
 
   // Takes: row 1 superseded by row 2 (supersession is by row number, no FK).
   await sql(`INSERT INTO takes(page_id,row_num,claim,kind,holder,weight,superseded_by,active,created_at,updated_at)
@@ -313,6 +311,10 @@ export async function buildLegacyBrain(engine: BrainEngine, { root }: { root: st
   await sql(`UPDATE persistence_effects SET state='running',attempts=1,error_code=NULL,execution_token=$2::uuid,claim_expires_at='2026-03-10T00:05:00Z',
     outcome=NULL,next_attempt_at='2026-03-10T00:00:00Z' WHERE id=$1`, [effectIds.orphanRunning, LEGACY_IDS.orphanExecutionToken]);
 
+  // The consumer re-chunked every page; the Acme chunk gets the legacy vector (vectors must round-trip as text).
+  const embedded = await engine.executeRaw(`UPDATE content_chunks SET embedding=$2::vector,model='fixture:legacy',embedded_at='2025-11-02T00:00:00Z'
+    WHERE page_id=$1 AND chunk_index=0 RETURNING id`, [acme, fixtureVector(chunkDims, 1)]);
+  assert.equal(embedded.length, 1, 'legacy fixture: the Acme page has no chunk to embed');
   // Git effects settle on the consumer's timing; pin them to the state a crash right after publication leaves.
   await sql(`UPDATE persistence_effects SET state='queued',attempts=0,error_code=NULL,execution_token=NULL,claim_expires_at=NULL,
     next_attempt_at='2026-03-10T00:00:00Z' WHERE kind='git'`);
@@ -458,6 +460,9 @@ export async function legacySourceMismatches(engine: BrainEngine, expected = loa
     if (!(Number(bytes[key]) >= s.bytes[`${key}_min`])) m.push(`bytes ${key}: ${bytes[key]} < ${s.bytes[`${key}_min`]}`);
   }
   compare(m, 'cycle locks', await count(engine, 'gbrain_cycle_locks'), s.cycle_locks);
+  const [vectors] = await engine.executeRaw<{ chunks: number; facts: number }>(`SELECT
+    (SELECT count(*) FROM content_chunks WHERE embedding IS NOT NULL)::int AS chunks, (SELECT count(*) FROM facts WHERE embedding IS NOT NULL)::int AS facts`);
+  compare(m, 'embeddings', { chunks: Number(vectors.chunks), facts: Number(vectors.facts) }, s.embeddings);
   const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
   compare(m, 'brain', brain, s.brain);
   return m;
