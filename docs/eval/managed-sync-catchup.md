@@ -633,3 +633,57 @@ admission and 1.4 claim waves. Between two group commits about 7 s is
 freeze, admission, cursor saves, claim and prepare, all strictly after
 the previous commit; that is the gap Phase 1.5 (the cursor window)
 targets.
+
+## Admit-ahead (150 pages/min plan, Phase 1.5)
+
+While a bulk group publishes, the drain freezes and admits the next group
+and records it in the cursor's `window` (`src/core/persistence/sync-window.ts`).
+The per-worktree FIFO claim is unchanged: the window group waits queued
+behind the publishing group, and the consumer claims it as soon as that
+group commits. Window members name the previous group's last request
+(`intent.after`); the consumer cancels a window group whose predecessor
+did not commit, publication re-checks the predecessor, and the drain
+cancels the window after a failed page, so no page publishes after an
+earlier page of the same sync failed. Publication reads the cursor
+`FOR KEY SHARE` and accepts `pending`, `group` and `window` members, so
+the drain's cursor saves no longer wait for the publishing group (the
+`FOR SHARE` read they used to wait on would have serialized admit-ahead
+behind publication). Nothing is admitted ahead while foreground writes
+are recent (one was queued on the worktree in the last minute).
+
+Same host and bench as the diet table above, 57 ms rows time-boxed at
+10 min (the 10k row at 15 min):
+
+| Measure | Master `6622a119` | Admit-ahead only | Diet only | Diet + admit-ahead |
+|---|---|---|---|---|
+| `cli` pages/min, 57 ms | 10.6 | 13.4 | 24.5 | **28.8** |
+| Gap between group publications, 57 ms (p50) | about 5.6 s | 2.2 s | about 7 s | 3.7 s (claim + prepare of an 8 to 9 page group) |
+| Pages per group (steady state) | 3 to 4 | 4 | 7 to 9 | 8 to 9 |
+| `cli` 10k files, 300-word pages, 300 receipts, 57 ms | 3.4 pages/min on v0.60.39 (about 49 h); 15.7 on v0.60.48 (about 10.7 h) | | | **30.9 pages/min, about 5.4 h** |
+| `cli` pages/min, ~0 ms | 527 | 514 | 504 (3-run median) | 545 |
+| Foreground `put_page` p95 at 57 ms, idle / during catch-up | 15.5 s / 18.2 s, 0 failures | 15.3 s / 17.7 s, 0 failures | 15.0 s / 14.7 s, 0 failures | **14.9 s / 15.1 s, 0 failures, 0 lock timeouts** |
+| Catch-up while a `put_page` arrives every second, 57 ms | 3.9 pages/min | 3.8 | | 4.4 |
+
+The foreground idle figure comes from 5 writes per run, so single-run p95
+values carry about ±1 s of noise; master on this host shows the same
+during-catch-up excess as admit-ahead alone.
+
+Per-phase critical path with both changes (57 ms `cli` row, p50 per
+occurrence): publication 10.9 s (180 waves, 21.8 per page), prepare 2.5 s
+(144 waves, 17.7 per page), freeze 1.2 s, admission 1.1 s, claim 0.36 s,
+cursor save 0.37 s. Freeze and admission of the next group now overlap the
+publishing group; claim and prepare still run strictly between two group
+commits (15.0 s from commit to commit, p50).
+
+### Against the 150 pages/min target
+
+With both changes one sync catches up at about 29 to 31 pages/min at 57 ms
+(about 2.7 times master, about 5.4 h for the 10k backlog). The plan's
+forecast for these phases was 36 to 40; the difference is prepare, which
+grew with group size (17.7 waves per page) and still sits between commits.
+Reaching 150 needs parallel publication (Phase 2, lanes), which waits for
+the owner's decision. A cheaper step that stays single-lane is to prepare
+the window group's members while the current group publishes (prepare is
+read-only and its results are re-validated in the publication
+transaction); at the measured costs that would remove about 2.5 s of the
+15 s cycle, for roughly 33 to 35 pages/min.
