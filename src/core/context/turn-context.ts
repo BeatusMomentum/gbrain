@@ -24,6 +24,7 @@
  * Postgres engines; nothing here touches engine-specific SQL.
  */
 
+import { appendRelationshipNotes } from '../link-relationship-notes.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -272,6 +273,7 @@ export async function assembleTurnContext(
     } catch {
       volunteered = [];
     }
+    await appendRelationshipNotes(engine, [...pointers, ...volunteered]);
     return { pointers, volunteered };
   })();
 

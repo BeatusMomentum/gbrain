@@ -76,9 +76,7 @@ export type CyclePhase =
   //  - calibration_profile: aggregates the resolved subset into 2-4
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
-  // Temporal typed edges: an LLM flags live relationships that cannot both
-  // hold; date arithmetic decides which ended (proposals by default).
-  | 'edge_contradictions'
+  | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
@@ -170,10 +168,7 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
-  // Temporal typed edges: proposes (or, for certified models, applies)
-  // closures for live relationships that cannot both hold. Runs after
-  // extract so it judges freshly derived relationship state.
-  'edge_contradictions',
+  'edge_contradictions', // temporal typed edges; after extract so it judges fresh relationship state
   // #2653 — drift detection. Default OFF (dream.drift.enabled). Runs AFTER
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
@@ -338,8 +333,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'calibration_profile',
   // #2653 — writes the reports/drift-<date> page.
   'drift',
-  // Temporal typed edges — writes proposals and (apply mode) closure lines.
-  'edge_contradictions',
+  'edge_contradictions', // writes proposals and (apply mode) closure lines
   // #5876 — writes event pages, projections and the chronicle ledger.
   'chronicle',
   // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
@@ -616,8 +610,6 @@ export interface CycleOpts {
  * cap's worth drains incrementally across cycles (staleRemaining reports it).
  */
 export const CYCLE_STALE_DRAIN_BUDGET_MS = 3 * 60 * 1000;
-/** Relationship-state rows refreshed per cycle by the extract phase sweep (temporal typed edges). */
-const RELATIONSHIP_SWEEP_LIMIT = 2000;
 
 const LEGACY_CYCLE_LOCK_ID = 'gbrain-cycle';
 // v0.41.19.0 (T2 of ops-fix-wave): dropped from 30 min to 5 min so a
@@ -1405,20 +1397,8 @@ async function runPhaseExtract(
     } catch (e) {
       staleDetails = { stale_drain_error: e instanceof Error ? e.message : String(e) };
     }
-    // Temporal typed edges: relationships whose state is missing or older than
-    // their newest evidence (writers that bypass the engine, rows from before
-    // the upgrade) converge here, bounded per cycle. Zero LLM.
-    try {
-      const { staleRelationshipKeys, refreshRelationships } = await import('./link-relationships.ts');
-      const { maintenanceTransaction } = await import('./persistence/attribution.ts');
-      const keys = await staleRelationshipKeys(engine, RELATIONSHIP_SWEEP_LIMIT);
-      if (keys.length) {
-        const refreshed = await maintenanceTransaction(engine, tx => refreshRelationships(tx, keys));
-        staleDetails = { ...staleDetails, relationships_swept: keys.length, relationships_changed: refreshed };
-      }
-    } catch (e) {
-      staleDetails = { ...staleDetails, relationship_sweep_error: e instanceof Error ? e.message : String(e) };
-    }
+    const { sweepStaleRelationships } = await import('./link-relationships.ts');
+    staleDetails = { ...staleDetails, ...(await sweepStaleRelationships(engine)) };
     return {
       phase: 'extract',
       status: 'ok',
@@ -2721,23 +2701,13 @@ export async function runCycle(
       }
     }
 
-    // ── Temporal typed edges: contradiction proposals ─────────────
+    // Temporal typed edges: proposes (or, certified, applies) closures for live relationships that cannot both hold.
     if (phases.includes('edge_contradictions')) {
       checkAborted(cycleSignal);
-      if (!engine) {
-        phaseResults.push({ phase: 'edge_contradictions', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
-      } else {
-        progress.start('cycle.edge_contradictions');
-        const { runPhaseEdgeContradictions } = await import('./cycle/edge-contradictions.ts');
-        const { result, duration_ms } = await timePhase(async (): Promise<PhaseResult> => {
-          const r = await runPhaseEdgeContradictions(engine, { dryRun });
-          const status: PhaseStatus = r.status === 'complete' ? 'ok' : r.status === 'partial' ? 'warn' : r.status === 'failed' ? 'fail' : 'skipped';
-          return { phase: 'edge_contradictions', status, duration_ms: 0, summary: r.detail, details: { ...(r.totals ?? {}) } };
-        }, 'edge_contradictions');
-        result.duration_ms = duration_ms;
-        phaseResults.push(result);
-        progress.finish();
-      }
+      progress.start('cycle.edge_contradictions');
+      const { edgeContradictionsCyclePhase } = await import('./cycle/edge-contradictions.ts');
+      const { result, duration_ms } = await timePhase(() => edgeContradictionsCyclePhase(engine, dryRun), 'edge_contradictions');
+      result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       await safeYield(opts.yieldBetweenPhases);
     }
 

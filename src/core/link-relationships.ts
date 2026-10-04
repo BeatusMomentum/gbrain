@@ -17,6 +17,7 @@
  * as live, the same as an unrefreshed relationship).
  */
 import { createHash } from 'node:crypto';
+import type { BrainEngine } from './engine.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { privatePagesFilterFragment } from './search/private-visibility.ts';
 import {
@@ -228,3 +229,20 @@ export async function staleRelationshipKeys(exec: RawExec, limit = 500): Promise
   return [...rows, ...orphans].map(r => ({ from_page_id: Number(r.from_page_id), to_page_id: Number(r.to_page_id), link_type: r.link_type }));
 }
 
+
+/**
+ * Extract-phase sweep: relationships whose state is missing, older than their
+ * newest evidence, or orphaned converge here, bounded per cycle. Zero LLM.
+ * Returns details for the phase result; never throws.
+ */
+export async function sweepStaleRelationships(engine: BrainEngine, limit = 2000): Promise<Record<string, unknown>> {
+  try {
+    const keys = await staleRelationshipKeys(engine, limit);
+    if (!keys.length) return {};
+    const { maintenanceTransaction } = await import('./persistence/attribution.ts');
+    const changed = await maintenanceTransaction(engine, tx => refreshRelationships(tx, keys));
+    return { relationships_swept: keys.length, relationships_changed: changed };
+  } catch (e) {
+    return { relationship_sweep_error: e instanceof Error ? e.message : String(e) };
+  }
+}

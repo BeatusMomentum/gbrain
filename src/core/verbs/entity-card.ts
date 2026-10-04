@@ -20,8 +20,9 @@
  * facts respect visibility for remote callers (world-only).
  */
 
-import { annotateTemporalRow, relationSemantics, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type TemporalAnnotation } from '../link-validity.ts';
+import { annotateTemporalRow, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type TemporalAnnotation } from '../link-validity.ts';
 import type { BrainEngine, FactRow } from '../engine.ts';
+import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
@@ -351,7 +352,8 @@ async function assembleCard(
     ...[...inCandidates].sort((a, b) => rank(a.status) - rank(b.status)),
   ].slice(0, EDGE_CAP);
   const summary = safeSynopsis(row, { keepVisibility: remote ? ['world'] : ['private', 'world'] });
-  const relationshipNote = await buildRelationshipNote(engine, sourceId, summary, outCandidates).catch(() => undefined);
+  const relationshipNote = await loadRelationshipNotes(engine, [{ slug: pageSlug, source_id: sourceId, summary }], { excludePrivate })
+    .then(m => m.get(relationshipNoteKey(sourceId, pageSlug))).catch(() => undefined);
 
   // Open threads (best-effort v1): open-loop rows first (v0.47 — richest:
   // direction, due, loop_id), then active commitment facts NOT already
@@ -437,40 +439,6 @@ async function assembleCard(
     active_fact_count: activeFactCount ?? facts.length,
     ...(relationshipNote ? { relationship_note: relationshipNote } : {}),
   };
-}
-
-const NOTE_ENDED_CAP = 3;
-
-/**
- * "now: works_at widget-co (since 2025-03-01); ended: works_at acme-example
- * (2025-03-01)". Ended relationships the summary still names always appear
- * (with a stale-summary warning); other ended ones are capped at the latest
- * three. Only state relations (works_at, advises, …) take part.
- */
-async function buildRelationshipNote(engine: BrainEngine, sourceId: string, summary: string, edges: EntityCardEdge[]): Promise<string | undefined> {
-  const state = edges.filter(e => relationSemantics(e.type) === 'state' && e.status);
-  if (state.length === 0) return undefined;
-  const live = state.filter(e => e.status === 'live' || e.status === 'disputed');
-  const ended = state.filter(e => e.status === 'ended' || e.status === 'ended_unknown_date');
-  if (ended.length === 0) return undefined;
-  const titles = new Map((await engine.executeRaw<{ slug: string; title: string | null }>(
-    `SELECT slug, title FROM pages WHERE source_id = $1 AND slug = ANY($2::text[])`, [sourceId, ended.map(e => e.slug)])).map(r => [r.slug, r.title ?? '']));
-  const lower = summary.toLowerCase();
-  const named = (e: EntityCardEdge) => {
-    const title = (titles.get(e.slug) ?? '').trim().toLowerCase();
-    const base = e.slug.split('/').pop()!.replace(/-/g, ' ');
-    return (title.length >= 3 && lower.includes(title)) || lower.includes(base);
-  };
-  const stale = ended.filter(named);
-  const others = ended.filter(e => !named(e)).sort((a, b) => (b.until ?? '').localeCompare(a.until ?? '')).slice(0, NOTE_ENDED_CAP);
-  const fmtLive = (e: EntityCardEdge) => `${e.type} ${e.slug.split('/').pop()}${e.since ? ` (since ${e.since})` : ''}`;
-  const fmtEnded = (e: EntityCardEdge) => `${e.type} ${e.slug.split('/').pop()} (${e.until ?? 'date unknown'})`;
-  const parts = [
-    ...(live.length ? [`now: ${live.map(fmtLive).join(', ')}`] : []),
-    `ended: ${[...stale, ...others].map(fmtEnded).join(', ')}`,
-  ];
-  if (stale.length) parts.push(`summary may be stale: it still names ${stale.map(e => e.slug.split('/').pop()).join(', ')}`);
-  return parts.join('; ');
 }
 
 /**

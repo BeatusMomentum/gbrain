@@ -112,11 +112,11 @@ Every non-localOnly operation on the MCP surface: 137 tools across 23 areas. **S
 |---|---|---|---|---|
 | `add_link` | Create a typed link (edge) from one page to another in the same source. | write |  |  |
 | `find_orphans` | Find disconnected pages. | read |  |  |
-| `get_backlinks` | List links pointing to a page, such as who works at a company. | read | yes |  |
+| `get_backlinks` | List links pointing to a page. | read | yes |  |
 | `get_links` | List a page's outgoing links (typed edges to other pages). | read |  |  |
 | `list_link_sources` | Link provenances in the brain (e.g. | read | yes |  |
 | `remove_link` | Remove a link between two pages (optionally only one link_type or link_source). | write |  |  |
-| `traverse_graph` | Walk the link graph from a page along relationships that are true today (status: "all" walks history, as_of a past date). | read | yes |  |
+| `traverse_graph` | Walk the link graph from a page. | read | yes |  |
 
 ## loops
 

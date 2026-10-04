@@ -90,6 +90,9 @@ relationships, "who worked at" / "used to" reads history, "former employees of" 
 ended ones. Entity cards and `context_pack` keep every edge with its status and add a
 relationship note, for example
 `now: works_at widget-co (since 2025-03-01); ended: works_at acme-example (2025-03-01); summary may be stale: it still names acme-example`.
+The same note follows a page into ambient turn context (appended to its synopsis) and into
+compiled context files (a `relationships:` line under the excerpt), so an agent reading any
+of them sees the ended relationship even when the summary has not been rewritten.
 
 ## The nightly relationship check
 

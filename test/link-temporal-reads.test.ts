@@ -14,6 +14,12 @@ import { resetGateway } from '../src/core/ai/gateway.ts';
 import { buildEntityCard } from '../src/core/verbs/entity-card.ts';
 import { renderCardLine } from '../src/core/context/turn-context.ts';
 import { buildRelationalArm } from '../src/core/search/relational-recall.ts';
+import { appendRelationshipNotes, loadRelationshipNotes, relationshipNoteKey } from '../src/core/link-relationship-notes.ts';
+import { compileView } from '../src/core/context/compile-view.ts';
+import { loadSensitivityConfig } from '../src/core/context/sensitivity-scan.ts';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 setDefaultTimeout(60_000);
 let engine: PGLiteEngine;
@@ -109,6 +115,26 @@ describe('entity cards and context_pack text', () => {
     expect(card.relationship_note).toContain('ended: works_at acme-example (2025-03-01)');
     expect(card.relationship_note).toContain('summary may be stale');
     expect(renderCardLine(card)).toContain('[now: works_at widget-co');
+  });
+});
+
+describe('relationship note on ambient and compiled context', () => {
+  test('one batched loader; ambient synopses and compiled entries carry the note, world scope only', async () => {
+    const notes = await loadRelationshipNotes(engine, [
+      { slug: 'people/alice-example', source_id: 'default', summary: 'Alice is CTO of Acme.' },
+      { slug: 'companies/widget-co', source_id: 'default', summary: 'Another company.' },
+    ], { excludePrivate: true });
+    expect(notes.get(relationshipNoteKey('default', 'people/alice-example'))).toContain('summary may be stale');
+    expect(notes.has(relationshipNoteKey('default', 'companies/widget-co'))).toBe(false);
+
+    const items = [{ slug: 'people/alice-example', source_id: 'default', synopsis: 'Alice is CTO of Acme.' }];
+    await appendRelationshipNotes(engine, items);
+    expect(items[0].synopsis).toMatch(/^Alice is CTO of Acme\. \[now: works_at widget-co .*ended: works_at acme-example \(2025-03-01\)/);
+
+    const tmp = mkdtempSync(join(tmpdir(), 'temporal-compile-'));
+    const scanConfig = loadSensitivityConfig({ workspaceRoot: tmp, blocklist: '', userPatternsPath: join(tmp, 'none.txt') });
+    const { text } = await compileView({ engine, sourceId: 'default', target: 'claude-code', budget: 4000, scanConfig });
+    expect(text).toContain('relationships: now: works_at widget-co');
   });
 });
 

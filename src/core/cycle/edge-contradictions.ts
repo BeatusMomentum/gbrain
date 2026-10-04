@@ -23,6 +23,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import type { PhaseResult } from '../cycle.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
 import { closeContradiction, parseMultirange, relationSemantics, utcToday, dateKey, type Stint } from '../link-validity.ts';
@@ -321,6 +322,14 @@ async function recordProposal(
 }
 
 // ─── Apply / undo / revert detection ─────────────────────────────────────
+
+/** Cycle adapter: maps the phase outcome onto the cycle's PhaseResult (duration filled by the caller). */
+export async function edgeContradictionsCyclePhase(engine: BrainEngine | null, dryRun: boolean): Promise<PhaseResult> {
+  if (!engine) return { phase: 'edge_contradictions', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } };
+  const r = await runPhaseEdgeContradictions(engine, { dryRun });
+  const status: PhaseResult['status'] = r.status === 'complete' ? 'ok' : r.status === 'partial' ? 'warn' : r.status === 'failed' ? 'fail' : 'skipped';
+  return { phase: 'edge_contradictions', status, duration_ms: 0, summary: r.detail, details: { ...(r.totals ?? {}) } };
+}
 
 export type ApplyOutcome = { status: 'applied' | 'stale' | 'not_found' | 'refused' | 'undone' | 'rejected'; reason?: string };
 
