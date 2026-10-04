@@ -547,7 +547,8 @@ async function runSyncAll(
   return;
 }
 
-async function dispatchSyncAll(input: {
+/** Runs every source (parallel or serial) and prints the aggregate; #5988: green sources still print their holds. */
+export async function dispatchSyncAll(input: {
   fanOutEligible: boolean;
   effectiveParallel: number;
   concurrency: number | undefined;
