@@ -87,6 +87,10 @@ test('refused caller writes replay once from their failed receipts; later writes
         const refused = await engine.executeRaw<{ operation: string; n: number }>(
           `SELECT operation, count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND state='failed' AND error_code='writer_coordinator_required' AND error_detail->>'origin'='database_guard' GROUP BY 1 ORDER BY 1`, [sourceId]);
         expect(refused).toEqual([{ operation: 'add_timeline_entry', n: 3 }, { operation: 'put_page', n: 4 }]);
+        // Receipts written before #5982 classified refusals carry the opaque storage_error shape; the selector still replays them.
+        await engine.executeRaw(`UPDATE persistence_requests SET error_code='storage_error',
+          error_message='Publication failed (P0001). Inspect owner diagnostics.', error_detail=NULL
+          WHERE id=(SELECT id FROM persistence_requests WHERE source_id=$1 AND slug='people/alice-example' AND state='failed')`, [sourceId]);
 
         await engine.executeRaw(MANAGED_WRITER_GUARD_FUNCTION_SQL);
         await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'people/carol-example', content: page('Carol Example', ['new'], 'New Carol.'), request_id: randomUUID() } });
