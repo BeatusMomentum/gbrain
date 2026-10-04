@@ -40,6 +40,8 @@ import { rawSessionId, scoreRecall, type SlugToRawMap } from './metrics.ts';
 
 export type FactExtractor = 'paper' | 'production';
 
+const FACT_EXTRACT_CONCURRENCY = 8;
+
 export interface FactKeyArm {
   assignment: FactKeyAssignment;
   extractor: FactExtractor;
@@ -171,8 +173,13 @@ export async function applyFactKeyArm(
   const column = quoteIdentifier(col.name);
   const cast = vectorCastSuffix(col);
   const out: FactKeyArmResult = { pages_keyed: 0, chunks_keyed: 0, items: 0 };
+  const extracted = new Map<string, string[]>();
+  const queue = [...pages];
+  await Promise.all(Array.from({ length: Math.min(FACT_EXTRACT_CONCURRENCY, queue.length) }, async () => {
+    for (let page = queue.shift(); page; page = queue.shift()) extracted.set(page.slug, await extractItems(engine, arm, bodyOf(page.content), spend));
+  }));
   for (const page of pages) {
-    const items = await extractItems(engine, arm, bodyOf(page.content), spend);
+    const items = extracted.get(page.slug) ?? [];
     if (items.length === 0) continue;
     const chunks = await engine.executeRaw<{ id: number; chunk_text: string; chunk_source: string | null; title: string | null }>(
       `SELECT c.id, c.chunk_text, c.chunk_source, p.title FROM content_chunks c JOIN pages p ON p.id = c.page_id
