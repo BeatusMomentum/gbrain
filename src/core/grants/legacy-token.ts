@@ -332,9 +332,10 @@ export async function migrateLegacyTokens(engine: BrainEngine, opts: { dryRun: b
  * migration has not run) is converted on this read: one guarded UPDATE writes
  * the columns `migrateLegacyTokens` would write and leaves `permissions` as
  * the mirror it already is. The guard (`source_grant IS NULL`) makes
- * concurrent first reads a no-op for the loser, and a failed write (a
- * read-only role, a lost race, a schema without the columns) falls back to
- * the same grant computed in memory. A malformed row is never converted; it
+ * concurrent first reads a no-op for the loser, SKIP LOCKED keeps a row lock
+ * held elsewhere from parking the request (#5730), and a skipped or failed
+ * write (a locked row, a read-only role, a schema without the columns) falls
+ * back to the same grant computed in memory. A malformed row is never converted; it
  * stays deny-all.
  */
 export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unknown>): Promise<PrincipalGrant> {
@@ -345,7 +346,7 @@ export async function resolveTokenGrant(sql: SqlQuery, row: Record<string, unkno
     const [converted] = await sql`
       UPDATE access_tokens SET source_grant = ${kind}, source_id = ${write}, federated_read = ${reads}::text[],
         allowed_operations = ${ops}::text[], takes_holders = ${holders}::text[], grant_revision = grant_revision + 1
-      WHERE id = ${String(row.id)}::uuid AND source_grant IS NULL
+      WHERE id IN (SELECT id FROM access_tokens WHERE id = ${String(row.id)}::uuid AND source_grant IS NULL FOR UPDATE SKIP LOCKED)
       RETURNING *
     `;
     if (converted) return grantFromTokenRow(converted);
