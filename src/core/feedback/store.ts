@@ -73,11 +73,11 @@ export async function insertRetrievalEvents(engine: BrainEngine, events: Retriev
   if (pages.length > 0) {
     await engine.executeRaw(
       `INSERT INTO retrieval_event_pages (event_id, source_id, slug, content_hash, rank, cited)
-       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int[], $6::boolean[])
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int[], $6::text[]::boolean[])
        ON CONFLICT DO NOTHING`,
       [
         pages.map(p => p.id), pages.map(p => p.source_id), pages.map(p => p.slug),
-        pages.map(p => p.content_hash), pages.map(p => p.rank), pages.map(p => p.cited),
+        pages.map(p => p.content_hash), pages.map(p => p.rank), pages.map(p => (p.cited ? 'true' : 'false')),
       ],
     );
   }
