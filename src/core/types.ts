@@ -919,6 +919,14 @@ export interface SearchResult {
   /** Shortest connecting slug path seed→…→result (for "how I know this"). */
   relational_path?: string[];
   /**
+   * Multi-hop chain evidence: why a chain put this page here. `role` is the
+   * page's place on the chain (a candidate answer, an intermediate page, or the
+   * page an edge was written on), not a correctness claim; `path_count` counts
+   * retained paths and is not corroboration. `edges` is the best path's
+   * evidence, at most three edges.
+   */
+  relational?: RelationalEvidence;
+  /**
    * Ranker wave — set when `pinRelationalRows` (relational-rerank-pin.ts)
    * re-pinned this relational-arm row above the reranked text rows. Autocut
    * preserves stamped rows and excludes them from its cliff computation (they
@@ -1535,6 +1543,22 @@ export interface RelationalFanoutOpts extends PageReadPolicy {
   sourceIds?: string[];
   /** Hard cap on returned candidate nodes. Default 50. */
   limit?: number;
+}
+
+/** Chain evidence carried on a search row (SearchResult.relational). */
+export interface RelationalEvidence {
+  role: 'answer' | 'support' | 'origin';
+  seed: string;
+  hop: number;
+  path_count: number;
+  edges: Array<{
+    link_type: string;
+    stored_from: string;
+    stored_to: string;
+    orientation: 'canonical' | 'stored' | 'flipped' | 'uncertain';
+    context: string | null;
+    origin: string | null;
+  }>;
 }
 
 /**

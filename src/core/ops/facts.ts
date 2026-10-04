@@ -561,6 +561,7 @@ const recall: Operation = {
               create_safety: r.create_safety,
               provenance: r.slug,
               ...(r.delivered ? { delivered: r.delivered } : {}),
+              ...(r.relational ? { relational: r.relational } : {}),
             })),
             ...(searchDegraded ? { search_degraded: searchDegraded } : {}),
           }

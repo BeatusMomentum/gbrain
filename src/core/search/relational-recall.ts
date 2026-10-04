@@ -209,6 +209,15 @@ async function hydrate(
 }
 
 /**
+ * Rows that may claim a relational guarantee (pin, page-1 slot): one-hop rows
+ * and chain answers. A chain's intermediate or origin page is evidence, not an
+ * answer, so it never satisfies a guarantee meant for the answer.
+ */
+export function answerRows(list: readonly SearchResult[]): SearchResult[] {
+  return list.filter(r => r.relational === undefined || r.relational.role === 'answer');
+}
+
+/**
  * #3995 — decision stamp for the guaranteed page-1 relational evidence slot.
  * Surfaced through HybridSearchMeta.relational_evidence_slot so `--explain`
  * consumers can audit why a low-fused-score row appears on the first page.
@@ -249,6 +258,7 @@ export function ensureRelationalEvidenceSlot(
   offset: number,
   evidenceOpts?: EvidenceOpts,
 ): { pool: SearchResult[]; decision?: RelationalEvidenceSlotDecision } {
+  relationalList = answerRows(relationalList);
   if (offset > 0 || limit <= 0 || relationalList.length === 0) return { pool };
   const pageKey = (r: SearchResult) => `${r.source_id ?? 'default'}:${r.slug}`;
   const relKeys = new Set(relationalList.map(pageKey));
