@@ -47,6 +47,7 @@ import { isUndefinedTableError } from '../core/utils.ts';
 import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import { resolveCandidateSources, resolveLinkFallbackDefault, loadLinkPageMetadata, capturedLinkEndpoints, fileLinkOwnership, replaceFileLinks, replacePageFileLinks, type LinkPageMetadata } from '../core/link-reconciliation.ts';
+import { collectWantedLinks, isWantedPagesEnabled } from '../core/wanted-links.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
 import {
@@ -1931,8 +1932,13 @@ async function extractLinksFromDB(
     }
     if (!dryRun) {
       try {
+        const wanted = await isWantedPagesEnabled(engine) ? collectWantedLinks({ candidates: extracted.candidates,
+          frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: source_id,
+          crossSourceAllowed: federatedSourceIds.has(source_id) || crossSource, resolve: c => resolveCandidateSources(c, slug, source_id,
+            allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
         const written = await engine.replaceDerivedLinks({ slug, sourceId: source_id, expectedRevision: snapshot.revision,
           sourceIncarnation: snapshot.sourceIncarnation }, batch, { includeFrontmatter,
+          wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] : ['body'], rows: wanted },
           expectedEndpoints: capturedLinkEndpoints(batch, targetMetadata) });
         created += written.created;
       } catch (error) {
@@ -2110,6 +2116,7 @@ export async function extractStaleFromDB(
   // from a genuinely missing target.
   let skippedCrossSource = 0;
 
+  const wantedEnabled = await isWantedPagesEnabled(engine);
   for (;;) {
     const rows = await engine.listStalePagesForExtraction({
       batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
@@ -2161,7 +2168,12 @@ export async function extractStaleFromDB(
         linkRows.push(resolvedLinkCandidate(c, page.slug, page.source_id, r));
       }
       const origin = { slug: page.slug, sourceId: page.source_id, expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation };
-      const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata) };
+      const wanted = wantedEnabled ? collectWantedLinks({ candidates: extracted.candidates,
+        frontmatterUnresolved: includeFrontmatter ? extracted.unresolved : [], originSourceId: page.source_id,
+        crossSourceAllowed: federatedSourceIds.has(page.source_id) || crossSource, resolve: c => resolveCandidateSources(c, page.slug,
+          page.source_id, allSlugs, slugToSources, federatedSourceIds.has(page.source_id), { crossSource, defaultSourceId: linkDefaultSourceId }) }) : [];
+      const linkOpts = { includeFrontmatter, expectedEndpoints: capturedLinkEndpoints(linkRows, targetMetadata),
+        wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted } };
       const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
       const written = await engine.replaceDerivedLinks(origin, linkRows, linkOpts);
       linksCreated += written.created;

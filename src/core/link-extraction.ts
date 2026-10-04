@@ -608,6 +608,21 @@ export interface LinkCandidate {
   originSlug?: string;
   /** Frontmatter field name (e.g. 'key_people'), for debug + unresolved report. */
   originField?: string;
+  /**
+   * The authored reference this candidate came from (a markdown link or a
+   * wikilink in the body). Candidates sharing a `key` are alternative
+   * resolutions of one reference; the reference is wanted when none of them
+   * resolves (src/core/wanted-links.ts). Bare prose paths carry none.
+   */
+  authoredRef?: AuthoredRef;
+}
+
+/** One authored body reference, as recorded in `wanted_links` when it does not resolve. */
+export interface AuthoredRef {
+  key: string;
+  kind: 'slug' | 'name';
+  target: string;
+  targetSourceId?: string;
 }
 
 /**
@@ -730,6 +745,7 @@ export async function extractPageLinks(
           ...typeFor(context, target, idx),
           context,
           linkSource: 'markdown',
+          authoredRef: { key: `ref:${idx}`, kind: 'slug', target },
         });
       }
       continue;
@@ -760,6 +776,7 @@ export async function extractPageLinks(
           ...typeFor(litContext, ref.slug, litIdx),
           context: litContext,
           linkSource: 'markdown',
+          authoredRef: { key: `ref:${litIdx}`, kind: 'slug', target: ref.slug },
         });
       }
       // #4062: a bare `[[name]]` (no slash) gets a direct verb-typed
@@ -818,11 +835,14 @@ export async function extractPageLinks(
       const uniquePerson = personTargets.length === 1;
       if (pageType === 'meeting' && opts.targetType && !uniquePerson
         && targets.filter(target => opts.targetType!(target) !== undefined).length > 1) attendanceAmbiguous.add(idx);
+      const authoredRef: AuthoredRef | undefined = slashIdx === -1
+        ? (normalizeBasename(ref.slug) ? { key: `ref:${idx}`, kind: 'name', target: normalizeBasename(ref.slug) } : undefined)
+        : { key: `ref:${idx}`, kind: 'slug', target: ref.slug };
       for (const target of bareDirect) {
         const inferred = typeFor(context, target, idx);
         candidates.push({ targetSlug: target,
           ...(inferred.canonicalAttendance && !uniquePerson ? { linkType: 'mentions' } : inferred),
-          context, linkSource: 'markdown' });
+          context, linkSource: 'markdown', ...(authoredRef ? { authoredRef } : {}) });
       }
       for (const matched of matches) {
         const inferred = typeFor(context, matched, idx);
@@ -831,6 +851,7 @@ export async function extractPageLinks(
           ...(inferred.canonicalAttendance && uniquePerson ? inferred : { linkType: WIKILINK_BASENAME_LINK_TYPE }),
           context,
           linkSource: 'wikilink-resolved',
+          ...(authoredRef ? { authoredRef } : {}),
         });
       }
       continue;
@@ -857,6 +878,7 @@ export async function extractPageLinks(
       ...typeFor(context, targetSlug, idx, ref.sourceId ?? undefined),
       context,
       linkSource: 'markdown',
+      authoredRef: { key: `ref:${idx}`, kind: 'slug', target: targetSlug, ...(ref.sourceId ? { targetSourceId: ref.sourceId } : {}) },
     });
   }
 

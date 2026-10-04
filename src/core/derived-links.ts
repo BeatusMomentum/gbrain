@@ -2,6 +2,7 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision } from './page-state/types.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
+import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-store.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -15,6 +16,8 @@ export interface DerivedLinkReplacementOptions {
   preserveExisting?: boolean;
   includeLegacyNullProducer?: boolean;
   expectedEndpoints?: Array<{ slug: string; sourceId: string; revision: string }>;
+  /** The origin's unresolved authored references, replaced in the same transaction (wanted pages). */
+  wanted?: WantedLinksReplacement;
 }
 
 export class DerivedLinkRepairRequiredError extends Error {
@@ -87,6 +90,7 @@ export async function replaceDerivedLinks(
       throw new Error('Derived link origin changed or was deleted');
     }
     const id = snapshot.page.id;
+    if (opts.wanted) await replaceWantedLinks(tx, { pageId: id, sourceId: origin.sourceId }, opts.wanted);
     if (opts.includeFrontmatter !== false && !opts.preserveExisting) {
       const ambiguous = await tx.executeRaw(`SELECT 1 FROM links WHERE link_source='frontmatter'
         AND origin_page_id IS NULL AND (from_page_id=$1 OR to_page_id=$1) LIMIT 1`, [id]);

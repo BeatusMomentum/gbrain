@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 196835,
-    "stdoutSha256": "7c6a8f58d1ecf9152a0bef45fe6b85d84ea6bc81c4610fc65b2a65eeec68370a",
+    "stdoutBytes": 198031,
+    "stdoutSha256": "1286e4a2fec89a92a17091deee6dee28d49823f587d066629978b452e7037f9e",
     "toolNames": [
       "remember",
       "entity",
@@ -38,6 +38,7 @@
       "get_backlinks",
       "list_link_sources",
       "traverse_graph",
+      "wanted_pages",
       "add_timeline_entry",
       "get_timeline",
       "get_stats",
@@ -1686,6 +1687,43 @@
           "required": [
             "slug"
           ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "wanted_pages",
+        "parameters": {
+          "count_only": "boolean?",
+          "limit": "number?",
+          "offset": "number?",
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "count_only": {
+              "description": "Return the total with no rows.",
+              "type": "boolean"
+            },
+            "limit": {
+              "description": "Rows per page (default 50, max 100).",
+              "type": "number"
+            },
+            "offset": {
+              "description": "Skip the first N targets.",
+              "type": "number"
+            },
+            "source_id": {
+              "description": "Only targets referenced from this source (must be inside your source grant).",
+              "type": "string"
+            }
+          },
+          "required": [],
           "type": "object"
         },
         "scope": "read"

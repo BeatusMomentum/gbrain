@@ -1569,6 +1569,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
   'auto_timeline',
+  // Wanted pages: record unresolved authored links and wake their origins
+  // when the target appears (src/core/wanted-links.ts). On by default; the
+  // off switch is `gbrain config set wanted_pages.enabled false`.
+  'wanted_pages.enabled',
   // #5584: skillopt optimizer output cap (default 32000 thinking / 4096 otherwise).
   'skillopt.reflect_max_tokens',
   // #5585: skillopt strict model provenance (true|1|yes|on; other values count as on).
