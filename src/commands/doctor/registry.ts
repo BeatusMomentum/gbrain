@@ -82,6 +82,7 @@ import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-time
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
 import { syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
+import { retrievalFeedbackEntry } from './checks/retrieval-feedback.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
@@ -154,6 +155,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   autoChronicleEntry,
   factTakeVectorsEntry,
   plannerStatsEntry,
+  retrievalFeedbackEntry,
   searchModeEntry,
 ];
 
