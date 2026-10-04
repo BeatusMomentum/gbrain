@@ -17,6 +17,7 @@ import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import { digest, requireUuid, sha256, stableJson } from './digest.ts';
 import { reconcileCanonical, strictReconcileKeys, validateReconcileJson, type ReconcileConflict, type ReconcileDecision } from './reconcile-merge.ts';
 import type { ParsedPage } from '../import-file.ts';
+import type { AutoDecision } from './reconcile-additive.ts';
 
 export interface ReconcilePins {
   brain_id: string; source_id: string; source_incarnation: string; slug: string; page_id: number;
@@ -24,10 +25,12 @@ export interface ReconcilePins {
   raw_file_hash: string; relative_path: string; policy_digest: string; withdrawals_digest: string; assessment_at: string;
 }
 export interface ReconcileArtifact {
-  format_version: 1; preview_id: string; preconditions: ReconcilePins;
+  /** 2 when the preview carries #5974 automatic decisions. */
+  format_version: 1 | 2; preview_id: string; preconditions: ReconcilePins;
   preimages: { file_base64: string; database: PageSnapshot; stored_page: Record<string, unknown> };
   decisions: ReconcileDecision[]; conflicts: ReconcileConflict[]; result: ParsedPage; result_digest: string;
   status: 'needs_resolution' | 'ready';
+  auto_decisions?: AutoDecision[];
 }
 export interface ReconcileState {
   binding: WorktreeBinding; root: string; path: string; raw: Buffer; snapshot: PageSnapshot;
@@ -141,7 +144,20 @@ export function assertReconcilePins(expected: ReconcilePins, actual: ReconcilePi
 }
 export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   validateReconcileJson(value);
-  strictReconcileKeys(value, ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status']);
+  const v2 = (value as Record<string, unknown> | null)?.format_version === 2;
+  strictReconcileKeys(value, ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
+    ...(v2 ? ['auto_decisions'] : [])], ['format_version', 'preview_id', 'preconditions', 'preimages', 'decisions', 'conflicts', 'result', 'result_digest', 'status',
+    ...(v2 ? ['auto_decisions'] : [])]);
+  if (v2) {
+    if (!Array.isArray(value.auto_decisions) || !value.auto_decisions.length || value.auto_decisions.length > 1000) throw new OperationError('invalid_params', 'Malformed automatic reconciliation decisions.');
+    for (const entry of value.auto_decisions as unknown[]) {
+      strictReconcileKeys(entry, ['path', 'rule', 'rule_version', 'evidence_digest']);
+      if (typeof entry.path !== 'string' || typeof entry.rule !== 'string' || !Number.isSafeInteger(entry.rule_version)
+        || typeof entry.evidence_digest !== 'string' || !/^[a-f0-9]{64}$/.test(entry.evidence_digest)) {
+        throw new OperationError('invalid_params', 'Malformed automatic reconciliation decisions.');
+      }
+    }
+  }
   strictReconcileKeys(value.preconditions, ['brain_id', 'source_id', 'source_incarnation', 'slug', 'page_id', 'worktree_id', 'binding_digest',
     'owner_epoch', 'revision', 'raw_file_hash', 'relative_path', 'policy_digest', 'withdrawals_digest', 'assessment_at']);
   strictReconcileKeys(value.preimages, ['file_base64', 'database', 'stored_page']);
@@ -154,7 +170,7 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     'content_hash', 'source_path', 'source_kind', 'source_uri', 'ingested_via', 'ingested_at', 'knowledge_revision', 'deleted_at']);
   strictReconcileKeys(value.result, ['type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'tags']);
   const result = value.result;
-  if (value.format_version !== 1 || typeof value.preview_id !== 'string' || !['ready', 'needs_resolution'].includes(String(value.status)) ||
+  if (value.format_version !== 1 && !v2 || typeof value.preview_id !== 'string' || !['ready', 'needs_resolution'].includes(String(value.status)) ||
     !Array.isArray(value.conflicts) || !Array.isArray(value.decisions) || !Array.isArray(value.preimages.database.tags) ||
     !Array.isArray(value.preimages.database.withdrawals) || !Array.isArray(value.result.tags) || value.result.tags.some(v => typeof v !== 'string') ||
     ['type', 'title', 'compiled_truth', 'timeline'].some(key => typeof result[key] !== 'string') ||

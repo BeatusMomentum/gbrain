@@ -9,7 +9,8 @@ import { currentVerifiedLocalWriter } from './identity.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
 import { digest, requireUuid, sha256, stableJson } from './digest.ts';
-import { reconcileCanonical, reconcileDecisions, strictReconcileKeys } from './reconcile-merge.ts';
+import { mergeReconcile, reconcileCanonical, reconcileDecisions, strictReconcileKeys } from './reconcile-merge.ts';
+import { additiveDecisions, assertAutoDecisions, classifyDrift, type AutoDecision, type DriftClassification } from './reconcile-additive.ts';
 import { assertReconcilePins, readReconcileState, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { prepareReconcileResult } from './reconcile-prepare.ts';
 import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups, retainReconcileBackup } from './reconcile-backup.ts';
@@ -49,11 +50,27 @@ function assertPreimages(artifact: ReconcileArtifact, state: ReconcileState): vo
   if (artifact.preimages.file_base64 !== state.raw.toString('base64') || digest(canonical(artifact.preimages.database)) !== digest(canonical(state.snapshot)) ||
     digest(artifact.preimages.stored_page) !== digest(state.storedPage)) staleReconcile('preimages changed or were edited');
 }
+/** Agent-facing next step for an --auto-additive preview. */
+function additiveNextAction(classification: DriftClassification, status: string): string {
+  if (classification.verdict === 'no_drift') return 'No drift: the file and database agree. Retry the original write with a new request ID.';
+  if (classification.verdict === 'review_required') return 'Some paths are not structurally additive (see drift_paths with class review). Do not apply this preview; '
+    + 'show the user the private preview file\'s conflicts and result, then resolve with --from <preview> --decisions <file> after they decide.';
+  if (status === 'ready') return `Apply with --apply <preview file> --request-id <new uuid>, then retry the original write with a new request ID.`;
+  if (classification.verdict !== 'additive_with_suggestions') return 'Resolve the remaining conflict_paths with --from <preview> --decisions <file>; no automatic rule covers them.';
+  return 'Inserted text is structurally additive but can still contradict existing text. Read the inserted lines in the private preview file '
+    + '(or show them to the user if the page is private or the claims matter), then rerun the preview with --auto-additive --accept-suggested.';
+}
 async function config(engine: BrainEngine): Promise<GBrainConfig> {
   return await loadConfigWithEngine(engine, loadConfig()) ?? { engine: engine.kind } as GBrainConfig;
 }
 export async function runReconcilePreview(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown> & { preview: ReconcileArtifact }> {
-  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path'], ['source_id', 'slug']);
+  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested'], ['source_id', 'slug']);
+  const auto = params.auto_additive === true;
+  if (params.auto_additive !== undefined && typeof params.auto_additive !== 'boolean'
+    || params.accept_suggested !== undefined && (typeof params.accept_suggested !== 'boolean' || !auto)) {
+    throw new OperationError('invalid_params', 'accept_suggested requires auto_additive; both are booleans.');
+  }
+  if (auto && params.decisions !== undefined) throw new OperationError('invalid_params', 'auto_additive computes its own decisions; omit decisions, or resolve manually without auto_additive.');
   const { sourceId, slug } = await authorize(engine, params.source_id, params.slug);
   if (params.output_path !== undefined) {
     if (typeof params.output_path !== 'string') throw new OperationError('invalid_params', 'output_path must be an absolute private file path.');
@@ -64,14 +81,26 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
   if (from && (from.preconditions.source_id !== sourceId || from.preconditions.slug !== slug)) throw new OperationError('invalid_params', 'The previous preview names a different page.');
   const state = await readReconcileState(engine, sourceId, slug, from?.preconditions.assessment_at);
   if (from) assertPreimages(from, state);
-  const decisions = reconcileDecisions(params.decisions ?? from?.decisions ?? []);
+  const database = reconcileCanonical(state.snapshot.page, state.snapshot.tags);
+  const classification = auto ? classifyDrift(state.file, database) : undefined;
+  let decisions = reconcileDecisions(params.decisions ?? from?.decisions ?? []);
+  let autoDecisions: AutoDecision[] = params.decisions === undefined ? from?.auto_decisions ?? [] : [];
+  if (classification) {
+    const chosen = additiveDecisions(classification, mergeReconcile(state.file, database, []).conflicts, state.file, database, params.accept_suggested === true);
+    decisions = reconcileDecisions(chosen.decisions);
+    autoDecisions = chosen.auto;
+  }
+  if (autoDecisions.length) assertAutoDecisions(autoDecisions, state.file, database, decisions);
   const prepared = await prepareReconcileResult(engine, state, decisions);
-  const preview: ReconcileArtifact = { format_version: 1, preview_id: from?.preview_id ?? randomUUID(), preconditions: state.pins,
+  const reviewRequired = classification?.verdict === 'review_required';
+  const preview: ReconcileArtifact = { format_version: autoDecisions.length ? 2 : 1, preview_id: from?.preview_id ?? randomUUID(), preconditions: state.pins,
     preimages: JSON.parse(stableJson({ file_base64: state.raw.toString('base64'), database: state.snapshot, stored_page: state.storedPage })),
     decisions, conflicts: prepared.conflicts, result: prepared.result, result_digest: digest(prepared.result),
-    status: prepared.conflicts.length ? 'needs_resolution' : 'ready' };
+    status: prepared.conflicts.length || reviewRequired ? 'needs_resolution' : 'ready', ...(autoDecisions.length ? { auto_decisions: autoDecisions } : {}) };
   await assertReconcileSize(engine, preview);
   return { source_id: sourceId, slug, preview_id: preview.preview_id, status: preview.status,
+    ...(classification ? { classification: classification.verdict, drift_paths: classification.paths,
+      auto_decided_paths: autoDecisions.map(d => d.path), next_action: additiveNextAction(classification, preview.status) } : {}),
     conflict_paths: prepared.conflicts.map(c => c.path), protected_paths: prepared.protectedPaths,
     migrated_scan_paths: prepared.scanPaths, relative_path: state.pins.relative_path,
     line_endings: state.raw.includes(Buffer.from('\r\n')) ? 'crlf' : 'lf',
@@ -105,6 +134,7 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
     await assertReconcileSize(engine, artifact);
     const state = await readReconcileState(engine, sourceId, slug, artifact.preconditions.assessment_at);
     assertPreimages(artifact, state);
+    assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
     const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
     if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('resolved content or canonical policy changed');
     const preparedReplay = await replay();
