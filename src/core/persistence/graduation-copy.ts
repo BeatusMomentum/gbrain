@@ -144,7 +144,7 @@ async function readSourceBatch(source: BrainEngine, plan: DigestPlan, extraWhere
  * happen before any transaction opens (PGLite serializes its one connection).
  */
 export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
-  opts: { bypass: TriggerBypass; batchBytes?: number; onBatch?: (rows: number) => void; runId: string }): Promise<{ rows: number }> {
+  opts: { bypass: TriggerBypass; batchBytes?: number; onBatch?: (rows: number) => void | Promise<void>; runId: string }): Promise<{ rows: number }> {
   if (entry.class !== 'carry' && entry.class !== 'rebind') throw new Error(`copyTable: ${entry.relation} is ${entry.class}, not carried`);
   const relation = entry.relation;
   const plan = await digestPlan(e.source, entry, true);
@@ -189,7 +189,7 @@ export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
     await scan(null, async batch => {
       await tx.executeRaw(insertSql, [JSON.stringify(batch)]);
       rows += batch.length;
-      opts.onBatch?.(batch.length);
+      await opts.onBatch?.(batch.length);
     });
     if (selfFk.length) {
       const fk = selfFk.map(name => ({ c: plan.columns.find(c => c.name === name)!, i: plan.columns.findIndex(c => c.name === name) }));

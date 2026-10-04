@@ -28,7 +28,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readF
 import { dirname, join } from 'node:path';
 import type { Tombstone } from '../../src/core/persistence/engine-graduation.types.ts';
 import {
-  codeOf, custodyPaths, DATABASE_URL, digestChanges, fixOf, freePort, gbrain, GRADUATION_LANDED, graduationTest, mcpStdioSession, olderReleaseBinary,
+  codeOf, custodyPaths, DATABASE_URL, digestChanges, fixOf, freePort, gbrain, graduationTest, mcpStdioSession, olderReleaseBinary,
   previousReleaseTags, release, REPO, startGbrain, stateDigest, TARGET_ENV, waitForEvent, type GbrainResult,
 } from '../helpers/graduation-e2e.ts';
 import { configuredEngine, expectGraduated, legacyCase, planAndRun, scratchRoot, targetRowState, withTarget, type Case } from '../helpers/graduation-scenarios.ts';
@@ -82,18 +82,6 @@ async function runFix(fix: Record<string, any>, home: string, c: Case): Promise<
 }
 
 /** The Tombstone contract written by hand (O_EXCL, 0600, fsync file + parent), for the pre-integration half. */
-function handTombstone(c: Case, runId: string): void {
-  const movedTo = `${c.fx.dataDir}.graduated-${runId}`;
-  renameSync(c.fx.dataDir, movedTo);
-  const tombstone: Tombstone = { kind: 'gbrain-engine-graduated', runId, brainId: c.before.brainId, movedTo,
-    target: { id: 'hand-written', host: '127.0.0.1', port: 5432, database: 'gbrain_test', user: 'postgres' },
-    targetDisplayUrl: 'postgresql://postgres@127.0.0.1:5432/gbrain_test', graduatedAt: new Date().toISOString(),
-    fixArgv: ['gbrain', 'config', 'set', 'database_url', '$GBRAIN_TARGET_URL'] };
-  const fd = openSync(c.fx.dataDir, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-  try { writeSync(fd, JSON.stringify(tombstone)); fsyncSync(fd); } finally { closeSync(fd); }
-  const parent = openSync(dirname(c.fx.dataDir), 'r');
-  try { fsyncSync(parent); } finally { closeSync(parent); }
-}
 
 async function olderRun(binary: string, home: string, argv: string[], stdin?: string): Promise<GbrainResult> {
   return gbrain(argv, { home, binary, stdin, timeoutMs: 120_000 });
@@ -104,12 +92,8 @@ describe.skipIf(!DATABASE_URL)('graduation: older released binaries', () => {
     expect(olderError).toBeNull();
     expect(older.length).toBe(2);
     const c = await fresh('older-tombstone');
-    if (GRADUATION_LANDED) {
-      const { argv, env } = await planAndRun(c);
-      expect((await gbrain(argv, { home: c.fx.home, env, timeoutMs: 900_000 })).code).toBe(0);
-    } else {
-      handTombstone(c, 'hand-run');
-    }
+    const { argv, env } = await planAndRun(c);
+    expect((await gbrain(argv, { home: c.fx.home, env, timeoutMs: 900_000 })).code).toBe(0);
     const home = staleHome(c);
     const tombstoneBytes = readFileSync(c.fx.dataDir);
     const retained = custodyPaths(c.fx.dataDir).graduated;

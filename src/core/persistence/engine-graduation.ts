@@ -38,7 +38,7 @@ import {
 } from './engine-graduation.types.ts';
 import {
   currentProcessIdentity, engineGraduatedFor, fsyncParent, graduatedPath, graduationDataDir, inspectGraduationPath, markerLiveness,
-  allowGraduationInspection, moveAsideHeld, readIntentMarker, readTombstone, registerGraduationRunInProcess, removeIntentMarker, removeTombstone, splitBrainFor,
+  allowGraduationInspection, moveAsideHeld, moveHeldDatastore, readIntentMarker, readTombstone, registerGraduationRunInProcess, removeIntentMarker, removeTombstone, splitBrainFor,
   TERMINAL_STATES, TombstonePathOccupiedError, writeFileDurably, writeIntentMarker, writeTombstone,
 } from './graduation-custody.ts';
 import {
@@ -50,7 +50,6 @@ import {
   dropGraduationFence, graduationFenceStatus, installGraduationFence, readGraduationRow, setSourceState, setTargetState,
   withGraduationRun,
 } from './graduation-schema.ts';
-import { moveHeldPglite } from './maintenance.ts';
 import { assertRelationSet, copyOrder, fkClosure, GRADUATION_INVENTORY } from './graduation-inventory.ts';
 import { digestTable } from './graduation-digest.ts';
 import { verifyGraduation } from './graduation-verify.ts';
@@ -171,6 +170,12 @@ export function defaultGraduationDeps(): GraduationDeps {
     hostId: () => localHostId(),
     mountsPath: () => process.env.GBRAIN_MOUNTS_PATH || join(homedir(), '.gbrain', 'mounts.json'),
   };
+}
+
+function withStdoutOnStderrSync(fn: () => void): void {
+  const log = console.log;
+  console.log = (...args: unknown[]) => console.error(...args);
+  try { fn(); } finally { console.log = log; }
 }
 
 async function withStdoutOnStderr<T>(fn: () => Promise<T>): Promise<T> {
@@ -540,6 +545,8 @@ export async function planGraduation(opts: GraduationOptions): Promise<Graduatio
   const input = planInputs(deps, opts);
   const dataDir = sourceDataDir(input.config);
   phase({ opts }, 'plan');
+  const recorded = readGraduationManifest(opts.manifestPath ?? graduationManifestPath());
+  if (recorded && !TERMINAL_STATES.has(recorded.state)) throw existingRunError(recorded);
   refuseOnPathState(inspectGraduationPath(dataDir));
   let source: GraduationSourceEngine | null = null;
   let targets: { main: BrainEngine; close(): Promise<void> } | null = null;
@@ -614,7 +621,7 @@ async function claimPause(run: Run): Promise<void> {
   if (run.resumePause) return;
   const resume = await run.deps.claimAutopilotPause();
   if (!resume) throw inProgressError({ runId: run.m.runId, state: run.m.state, dataDir: run.dataDir });
-  run.resumePause = resume;
+  run.resumePause = () => withStdoutOnStderrSync(resume);
 }
 
 function recordedRoutes(run: Run): Routes {
@@ -828,11 +835,11 @@ async function stepCopy(run: Run): Promise<void> {
     run.opts.progress?.table(entry.relation, sourceRows.get(entry.relation) ?? 0);
     let batches = 0;
     await run.deps.copyTable(engines, entry, { bypass: run.m.triggerBypass, batchBytes: run.m.batchSize, runId: run.m.runId,
-      onBatch: rows => {
+      onBatch: async rows => {
         batches += 1;
         run.opts.progress?.batch(entry.relation, rows);
         progress(run, { phase: 'copy', relation: entry.relation, rows, done, total: order.length });
-        void graduationBoundary('batch_copied', { runId: run.m.runId, relation: entry.relation, batch: batches });
+        await graduationBoundary('batch_copied', { runId: run.m.runId, relation: entry.relation, batch: batches });
         checkInterrupt(run);
       } });
     setCheckpoint(run, entry.relation, { state: 'copied', batches });
@@ -904,7 +911,7 @@ async function stepCutover(run: Run): Promise<void> {
   run.source = null;
   await source.disconnect();
   await boundary(run, 'source_closed');
-  moveAsideHeld(run.dataDir, run.lock, run.m.runId);
+  await moveAsideHeld(run.dataDir, run.lock, run.m.runId);
   await boundary(run, 'moved_aside');
   await tombstoneUnderLock(run);
 }
@@ -1124,7 +1131,13 @@ export async function resumeGraduation(opts: RunOptions = {}): Promise<Graduatio
   const run = loadRun(opts);
   try {
     await reconcileRun(run);
-    if (run.m.state === 'graduated') return await receiptOf(run);
+    // Reconciliation finishes an interrupted rollback (rolled_back) or returns the target to authority (graduated).
+    if (run.m.state === 'graduated' || run.m.state === 'rolled_back') return await receiptOf(run);
+    if (run.m.state === 'abandoned') {
+      throw opError('not_found', `Graduation run ${run.m.runId} was abandoned; there is nothing to resume.`,
+        'Start a new move from the plan (fix); the PGLite brain is authoritative.',
+        { fix: { argv: planArgv(run), consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows a fresh read-only plan.' } });
+    }
     if (STATE_RANK[run.m.state] >= STATE_RANK.rollback_fenced) throw existingRunError(run.m);
     return await continueRun(run, { force: run.m.force });
   } finally { await cleanup(run); }
@@ -1294,7 +1307,7 @@ async function finishRollback(run: Run): Promise<void> {
   if (readTombstone(run.dataDir)) { removeTombstone(run.dataDir, run.m.runId); await boundary(run, 'tombstone_removed'); }
   if (existsSync(movedTo)) {
     if (existsSync(run.dataDir)) throw splitBrainFor(inspectGraduationPath(run.dataDir));
-    moveHeldPglite(movedTo, run.dataDir, run.lock!);
+    await moveHeldDatastore(movedTo, run.dataDir, run.lock!);
     await boundary(run, 'renamed_back');
   }
   const source = await run.deps.newSourceEngine();

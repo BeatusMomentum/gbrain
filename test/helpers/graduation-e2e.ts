@@ -20,19 +20,11 @@ import { gbrain, planHashOf, REPO, type GbrainChild, type GbrainOpts, type Gbrai
 
 export * from '../../scripts/persistence/graduation-process.ts';
 
-/**
- * Graduation lands in parallel lanes (G2a orchestrator, G3 CLI). Until the
- * orchestrator module exists, suites that need it register as `test.todo`
- * (visible in every report, never silently skipped). Infrastructure checks
- * that need only Postgres run either way.
- */
-const ORCHESTRATOR = join(REPO, 'src', 'core', 'persistence', 'engine-graduation.ts');
-/** The CLI lane ships a throwing stub at this path until the orchestrator merges; the stub does not count as landed. */
-export const GRADUATION_LANDED = existsSync(ORCHESTRATOR) && !readFileSync(ORCHESTRATOR, 'utf8').includes('STUB (G3 CLI lane)');
-export const graduationTest: typeof test = GRADUATION_LANDED ? test : (test.todo as unknown as typeof test);
+/** Graduation E2E tests: plain `test`, kept as a named alias so suites read the same. */
+export const graduationTest: typeof test = test;
 /** `graduationTest` with an extra visible skip condition (e.g. Docker unavailable). */
 export function graduationTestIf(skip: boolean): typeof test {
-  return GRADUATION_LANDED ? test.skipIf(skip) as typeof test : graduationTest;
+  return test.skipIf(skip) as typeof test;
 }
 export const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -103,7 +95,8 @@ export async function hostedRoleTarget(adminUrl = DATABASE_URL!): Promise<Target
   let password = `hosted-${randomUUID()}`;
   const admin = postgres(adminUrl, { max: 1, prepare: false, onnotice: () => {} });
   try {
-    await admin.unsafe(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD '${password}'`);
+    // BYPASSRLS like a managed provider's application role (Supabase `postgres`): the schema's RLS backfill needs it.
+    await admin.unsafe(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE BYPASSRLS PASSWORD '${password}'`);
     await admin.unsafe(`CREATE DATABASE ${database} OWNER ${role}`);
   } finally { await admin.end(); }
   const owned = postgres(withDatabase(adminUrl, database), { max: 1, prepare: false, onnotice: () => {} });
@@ -111,6 +104,12 @@ export async function hostedRoleTarget(adminUrl = DATABASE_URL!): Promise<Target
     await owned.unsafe('CREATE EXTENSION IF NOT EXISTS vector');
     await owned.unsafe('CREATE EXTENSION IF NOT EXISTS pg_trgm');
     await owned.unsafe(`GRANT ALL ON SCHEMA public TO ${role}`);
+    // The auto-RLS event trigger is superuser-only; managed providers pre-create it with the function owned by the app role.
+    await owned.unsafe(`CREATE OR REPLACE FUNCTION public.auto_enable_rls() RETURNS event_trigger LANGUAGE plpgsql AS $f$ DECLARE obj record; BEGIN
+      FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands() WHERE object_type = 'table' AND schema_name = 'public' LOOP
+        EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity); END LOOP; END; $f$`);
+    await owned.unsafe(`ALTER FUNCTION public.auto_enable_rls() OWNER TO ${role}`);
+    await owned.unsafe(`CREATE EVENT TRIGGER auto_rls_on_create_table ON ddl_command_end WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO') EXECUTE FUNCTION public.auto_enable_rls()`);
   } finally { await owned.end(); }
   return {
     role, database, admin: adminUrl,

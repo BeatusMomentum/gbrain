@@ -16,6 +16,7 @@ import type { OperationError } from '../ops/contract.ts';
 import { engineGraduatedError, inProgressError, interruptedError, splitBrainError } from './graduation-errors.ts';
 import { inspectLockHolder, isProcessAlive, readBootId, readPidNs, type LockHandle } from '../pglite-lock.ts';
 import { moveHeldPglite } from './maintenance.ts';
+import { withFilesystemPublication } from './filesystem-guard.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import type { BrainEngine } from '../engine.ts';
 import { GRADUATION_RUN_SETTING, graduationTablePresent, readGraduationRow } from './graduation-schema.ts';
@@ -309,10 +310,19 @@ export function splitBrainFor(state: Pick<GraduationPathState, 'dataDir' | 'move
  * already-held kernel lock (no release, no gap) and retarget the lock
  * metadata into the moved dir. Returns the moved path.
  */
-export function moveAsideHeld(dataDir: string, lock: LockHandle, runId: string): string {
+export async function moveAsideHeld(dataDir: string, lock: LockHandle, runId: string): Promise<string> {
   const movedTo = graduatedPath(dataDir, runId);
-  moveHeldPglite(graduationDataDir(dataDir), movedTo, lock);
+  await moveHeldDatastore(graduationDataDir(dataDir), movedTo, lock);
   return movedTo;
+}
+
+/**
+ * The held-lock rename as a sanctioned filesystem publication: a managed
+ * brain registers its own datastore path as a managed root, and graduation
+ * (or its rollback) is the custody operation allowed to move it.
+ */
+export async function moveHeldDatastore(fromDir: string, toDir: string, lock: LockHandle): Promise<void> {
+  await withFilesystemPublication([fromDir, toDir], async () => { moveHeldPglite(fromDir, toDir, lock); });
 }
 
 

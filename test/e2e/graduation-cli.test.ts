@@ -121,7 +121,9 @@ describe.skipIf(!DATABASE_URL)('graduation: --plan and --status are zero-mutatio
       const status = await gbrain(['migrate', '--status', '--json'], { home: c.fx.home });
       expect({ label, code: status.code }).toEqual({ label, code: 0 });
       await gbrain(['migrate', '--to', 'postgres', '--url-env', TARGET_ENV, '--plan', '--json'], { home: c.fx.home, env });
-      const changes = digestChanges(before, await stateDigest(c.fx.dir, c.target.url)).filter(change => !change.includes('boundary-events.jsonl'));
+      // Not the poll's writes: the paused run's own kernel-lock heartbeat (.gbrain-lock/lock, every 30 s) and Bun's runtime install cache under the test HOME.
+      const changes = digestChanges(before, await stateDigest(c.fx.dir, c.target.url))
+        .filter(change => !change.includes('boundary-events.jsonl') && !change.includes('.gbrain-lock/lock') && !change.includes('/.bun/install/cache/'));
       expect({ label, changes }).toEqual({ label, changes: [] });
     };
     for (let ordinal = 1; ; ordinal++) {

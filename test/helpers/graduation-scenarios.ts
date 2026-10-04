@@ -142,7 +142,7 @@ export async function expectGraduated(c: Case, label: string): Promise<void> {
 /** Resubmit the queued request (recorded with its callerIntent) on the target: stored outcome back, no new row, counters unchanged. */
 export async function expectReplayReturnsStored(target: PostgresEngine, fx: GraduationFixture): Promise<void> {
   const admission = readQueuedAdmission(fx.root);
-  const counters = async () => (await target.executeRaw<Record<string, unknown>>('SELECT * FROM persistence_counters ORDER BY key COLLATE "C"')).map(r => JSON.stringify(r));
+  const counters = async () => (await target.executeRaw<Record<string, unknown>>('SELECT * FROM persistence_counters ORDER BY key COLLATE "C"')).map(r => JSON.stringify(r, (_k, v) => typeof v === 'bigint' ? v.toString() : v));
   const rows = async () => Number((await target.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests'))[0].n);
   const [stored] = await target.executeRaw<{ id: string; state: string; outcome: Record<string, unknown> | null }>(
     'SELECT id::text AS id,state,outcome FROM persistence_requests WHERE request_id=$1::uuid', [admission.requestId]);

@@ -132,7 +132,7 @@ describe('lock-retaining close and held-lock move-aside', () => {
       await engine.disconnect();
       expect(lock.acquired).toBe(true);
       await Bun.sleep(30);
-      const movedTo = moveAsideHeld(dataDir, lock, 'run-c');
+      const movedTo = await moveAsideHeld(dataDir, lock, 'run-c');
       expect(lock.lockDir).toBe(join(movedTo, '.gbrain-lock'));
       expect(existsSync(dataDir)).toBe(false);
       await Bun.sleep(30);
