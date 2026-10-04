@@ -31,7 +31,8 @@ import { localHostId } from './identity.ts';
 import { quiesceAutopilot } from '../../commands/migrate-engine.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import {
-  assertTransition, GRADUATION_MANIFEST_VERSION, MANIFEST_TRANSITIONS,
+  assertTransition, GRADUATION_MANIFEST_VERSION, graduationBoundary, MANIFEST_TRANSITIONS,
+  type GraduationBoundary, type GraduationBoundaryDetail,
   type GraduationBlocker, type GraduationErrorCode, type GraduationManifest, type GraduationPathState, type GraduationPlan,
   type GraduationReceipt, type GraduationStatusDoc, type IntentMarker, type Inventory, type InventoryEntry, type LossKind,
   type ManifestState, type TableCheckpoint, type TableReceipt, type TargetIdentity, type TargetProbe, type TargetRoutes, type TriggerBypass,
@@ -318,6 +319,16 @@ function advance(run: Run, to: ManifestState, patch: Partial<GraduationManifest>
 function save(run: Run): void {
   run.m.updatedAt = new Date().toISOString();
   writeGraduationManifest(run.m, run.path);
+}
+
+/**
+ * A custody boundary: announced right after the step's durable write
+ * (test hooks may SIGKILL here), then the GBRAIN_GRADUATION_PAUSE_AT seam
+ * under the same name.
+ */
+async function boundary(run: Run, name: GraduationBoundary, detail: GraduationBoundaryDetail = {}): Promise<void> {
+  await graduationBoundary(name, { runId: run.m.runId, ...detail });
+  await pauseSeam(run, name);
 }
 
 async function pauseSeam(run: Pick<Run, 'opts'>, step: string): Promise<void> {
@@ -709,12 +720,12 @@ async function lockGapRecheck(run: Run): Promise<void> {
 async function stepRecord(run: Run): Promise<void> {
   await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'quiesced', { sourceBrainId: run.m.source.brainId || null, sourceDataDir: run.dataDir }));
   advance(run, 'quiesced');
-  await pauseSeam(run, 'quiesced');
+  await boundary(run, 'quiesced');
 }
 
 async function stepDrain(run: Run): Promise<void> {
   if (run.m.state !== 'draining') advance(run, 'draining');
-  await pauseSeam(run, 'draining');
+  await boundary(run, 'drain_started');
   const started = Date.now();
   const timeoutMs = run.opts.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
   const { blockers } = await run.deps.drainForGraduation(run.source!, { timeoutMs, hostId: run.m.source.hostId, config: run.opts.config ?? loadConfigFileOnly() ?? ({ engine: 'pglite' } as GBrainConfig) });
@@ -725,6 +736,7 @@ async function stepDrain(run: Run): Promise<void> {
   run.m.sourceReceipts = receipts;
   run.m.timings = { ...run.m.timings, drain_ms: Date.now() - started };
   save(run);
+  await boundary(run, 'drained');
 }
 
 /** Step 4: route cross-check, read-only emptiness, schema, target row `copying`, fence, emptiness again under the fence. */
@@ -743,6 +755,7 @@ async function stepFenceTarget(run: Run, opts: { force?: boolean }): Promise<voi
     await installGraduationFence(ddl!, run.m.runId);
     if (!opts.force && !probeTargetEmpty(await run.deps.probeTarget(routes))) throw targetNotEmptyError(run, 'rows appeared while the schema was bootstrapped');
     if (opts.force) await wipeUncopiedTables(run);
+    await boundary(run, 'target_fenced');
     return;
   }
   if ((await graduationFenceStatus(ddl!)).unfenced.length && existing!.state !== 'authoritative') await installGraduationFence(ddl!, run.m.runId);
@@ -773,7 +786,6 @@ async function stepCopy(run: Run): Promise<void> {
   if (row?.state === 'verifying' || row?.state === 'verified' || row?.state === 'verify_failed') {
     await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'copying'));
   }
-  await pauseSeam(run, 'copying');
   const started = Date.now();
   const engines = { source: run.source!, target: run.main! };
   const order = await run.deps.copyOrder(run.source!, run.deps.inventory);
@@ -787,10 +799,14 @@ async function stepCopy(run: Run): Promise<void> {
     setCheckpoint(run, entry.relation, { state: 'copying', batches: 0, disabledTriggers: run.m.triggerBypass === 'disable_trigger' });
     let batches = 0;
     await run.deps.copyTable(engines, entry, { bypass: run.m.triggerBypass, batchBytes: run.opts.batchBytes, runId: run.m.runId,
-      onBatch: rows => { batches += 1; progress(run, { phase: 'copy', relation: entry.relation, rows, done, total: order.length }); } });
+      onBatch: rows => {
+        batches += 1;
+        progress(run, { phase: 'copy', relation: entry.relation, rows, done, total: order.length });
+        void graduationBoundary('batch_copied', { runId: run.m.runId, relation: entry.relation, batch: batches });
+      } });
     setCheckpoint(run, entry.relation, { state: 'copied', batches });
     done += 1;
-    await pauseSeam(run, 'copy_table');
+    await boundary(run, 'table_copied', { relation: entry.relation });
   }
   await run.deps.copySequences(engines, { runId: run.m.runId });
   await run.deps.buildDeferredIndexes(run.ddl!, { runId: run.m.runId, log: line => progress(run, { phase: 'index', message: line }) });
@@ -801,6 +817,7 @@ async function stepCopy(run: Run): Promise<void> {
   }
   run.m.timings = { ...run.m.timings, copy_ms: (run.m.timings.copy_ms ?? 0) + Date.now() - started };
   save(run);
+  await boundary(run, 'copied');
 }
 
 function setCheckpoint(run: Run, relation: string, patch: Partial<TableCheckpoint>): void {
@@ -813,7 +830,6 @@ async function stepVerify(run: Run): Promise<void> {
   const prior = run.m.verifyFailures ?? [];
   if (run.m.state !== 'verifying') advance(run, 'verifying');
   await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verifying'));
-  await pauseSeam(run, 'verifying');
   const started = Date.now();
   await run.deps.assertRelationSet(run.main!, 'postgres', run.deps.inventory);
   const result = await run.deps.verifyGraduation({ source: run.source!, target: run.main! }, {
@@ -839,7 +855,7 @@ async function stepVerify(run: Run): Promise<void> {
   await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verified', { tableReceipts: result.tables, replayProbe: result.replay, timings, triggerBypass: run.m.triggerBypass, doctor: { target: result.doctorFailingChecks } }));
   run.m.tables = run.m.tables.map(t => ({ ...t, state: 'verified' as const }));
   advance(run, 'verified', { verifyFailures: [], timings });
-  await pauseSeam(run, 'verified');
+  await boundary(run, 'verified');
 }
 
 /** Step 7a: re-apply sequences, fence the source (`cutover`), close it keeping the lock, move aside, tombstone. */
@@ -850,14 +866,14 @@ async function stepCutover(run: Run): Promise<void> {
   const row = await readGraduationRow(run.source!);
   if (row?.state !== 'cutover') await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'cutover', { cutoverSequence: seq?.s ?? '0' }));
   if (run.m.state !== 'cutover') advance(run, 'cutover', { sourceEnabled: brain?.enabled === true, cutoverSequence: seq?.s ?? '0' });
-  await pauseSeam(run, 'cutover');
+  await boundary(run, 'source_cutover');
   const source = run.source!;
   run.lock = await source.closeRetainingLock();
   run.source = null;
   await source.disconnect();
-  await pauseSeam(run, 'before_rename');
+  await boundary(run, 'source_closed');
   moveAsideHeld(run.dataDir, run.lock, run.m.runId);
-  await pauseSeam(run, 'after_rename');
+  await boundary(run, 'moved_aside');
   await tombstoneUnderLock(run);
 }
 
@@ -877,7 +893,7 @@ async function tombstoneUnderLock(run: Run): Promise<void> {
     }
   }
   advance(run, 'tombstoned', { graduatedAt: run.m.graduatedAt ?? new Date().toISOString() });
-  await pauseSeam(run, 'tombstoned');
+  await boundary(run, 'tombstoned');
 }
 
 /** Step 7b: one target transaction grants authority (persistence enabled as on the source) and drops the fence. */
@@ -891,7 +907,7 @@ async function stepAuthority(run: Run): Promise<void> {
     await setTargetState(tx, run.m.runId, 'authoritative', { cutoverSequence: run.m.cutoverSequence ?? '0', graduatedAt: 'now', timings: run.m.timings });
   });
   advance(run, 'authoritative');
-  await pauseSeam(run, 'authoritative');
+  await boundary(run, 'authoritative');
 }
 
 /** Step 8: routing flip, registry/mount rewrite, manifest `graduated`, then the caller releases lock and pause marker. */
@@ -900,10 +916,13 @@ async function stepFlip(run: Run): Promise<void> {
   const next = { ...file, engine: 'postgres' as const, database_url: run.m.targetUrls!.main };
   delete (next as { database_path?: string }).database_path;
   saveConfig(next as GBrainConfig);
+  await boundary(run, 'config_flipped');
   const mounts = rewriteMounts(run.deps.mountsPath(), mount => mount.engine === 'pglite' && !!mount.database_path && graduationDataDir(mount.database_path) === run.dataDir,
     mount => { const { database_path: _p, ...rest } = mount; return { ...rest, engine: 'postgres', database_url: run.m.targetUrls!.main }; });
-  await pauseSeam(run, 'routing_flipped');
-  advance(run, 'graduated', { rewrittenMounts: [...new Set([...(run.m.rewrittenMounts ?? []), ...mounts])] });
+  if (mounts.length) { run.m.rewrittenMounts = [...new Set([...(run.m.rewrittenMounts ?? []), ...mounts])]; save(run); }
+  await boundary(run, 'registry_rewritten');
+  advance(run, 'graduated');
+  await boundary(run, 'graduated');
 }
 
 interface MountRecord { id: string; engine: string; database_path?: string; database_url?: string; [key: string]: unknown }
@@ -1147,7 +1166,7 @@ async function rollbackAfterCutover(run: Run, opts: GraduationRollbackOptions): 
     });
   }
   advance(run, 'rollback_fenced', { rollbackFrom: from });
-  await pauseSeam(run, 'rollback_fenced');
+  await boundary(run, 'rollback_fenced');
   let losses: RollbackLoss[] = [];
   try {
     await claimPause(run);
@@ -1180,7 +1199,7 @@ async function approveAndRestore(run: Run): Promise<void> {
     await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'rollback_approved'));
   }
   advance(run, 'rollback_approved');
-  await pauseSeam(run, 'rollback_approved');
+  await boundary(run, 'rollback_approved');
   await finishRollback(run);
 }
 
@@ -1193,12 +1212,13 @@ async function finishRollback(run: Run): Promise<void> {
   const authorityPath = row?.run_id === run.m.runId && ['rollback_approved', 'source_restoring'].includes(row.state);
   if (authorityPath && row!.state === 'rollback_approved') await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'source_restoring'));
   if (run.m.state !== 'source_restoring') advance(run, 'source_restoring');
-  await pauseSeam(run, 'source_restoring');
+  await boundary(run, 'source_restoring');
   const movedTo = graduatedPath(run.dataDir, run.m.runId);
-  if (readTombstone(run.dataDir)) removeTombstone(run.dataDir, run.m.runId);
+  if (readTombstone(run.dataDir)) { removeTombstone(run.dataDir, run.m.runId); await boundary(run, 'tombstone_removed'); }
   if (existsSync(movedTo)) {
     if (existsSync(run.dataDir)) throw graduationSplitBrainError(inspectGraduationPath(run.dataDir));
     moveHeldPglite(movedTo, run.dataDir, run.lock!);
+    await boundary(run, 'renamed_back');
   }
   const source = await run.deps.newSourceEngine();
   await source.connectWithHeldLock({ engine: 'pglite', database_path: run.dataDir }, run.lock!);
@@ -1217,6 +1237,7 @@ async function finishRollback(run: Run): Promise<void> {
   const ids = new Set(run.m.rewrittenMounts ?? []);
   rewriteMounts(run.deps.mountsPath(), mount => ids.has(mount.id) && mount.engine === 'postgres',
     mount => { const { database_url: _u, ...rest } = mount; return { ...rest, engine: 'pglite', database_path: run.dataDir }; });
+  await boundary(run, 'config_restored');
   const target = await readGraduationRow(run.main!);
   if (target?.run_id === run.m.runId) {
     if (target.state === 'source_restoring') await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'rolled_back'));
@@ -1227,6 +1248,7 @@ async function finishRollback(run: Run): Promise<void> {
   }
   advance(run, 'rolled_back');
   fsyncParent(run.dataDir);
+  await boundary(run, 'rolled_back');
 }
 
 /** Any refusal, decline or timeout returns the target from `rollback_fenced` to authority, dropping the fence in the same transaction. */

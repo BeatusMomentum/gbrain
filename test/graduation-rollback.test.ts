@@ -169,12 +169,12 @@ for (const [label, postgresUrl] of targets) {
         expect(manifest().state).toBe('graduated');
         await assertTargetAuthoritative();
       });
-      for (const seam of ['rollback_approved', 'source_restoring']) {
+      for (const seam of ['rollback_approved', 'source_restoring', 'tombstone_removed', 'renamed_back', 'config_restored']) {
         await fresh();
         await h.inHome(async () => {
           await graduate();
           await expect(rollbackGraduation(rollbackOpts({ pauseAt: seam, pauseHook: crashAt(seam) }))).rejects.toThrow();
-          expect(manifest().state as string).toBe(seam);
+          expect(['rollback_approved', 'source_restoring']).toContain(manifest().state);
           const reconciled = await reconcileGraduation(rollbackOpts());
           expect(reconciled.actions).toContain('finished rollback');
           await assertRolledBack();

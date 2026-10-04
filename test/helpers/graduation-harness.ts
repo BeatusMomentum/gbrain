@@ -149,7 +149,8 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
     probeTarget: async () => ({
       reachable: true, auth: true, ddl: { reachable: true, auth: true }, serverVersion: '16.0', serverVersionNum: 160000,
       vector: { installed: '0.8.0', available: '0.8.0', halfvec: true }, createPrivilege: { database: true, schema: true },
-      replicaRole: true, ownsTables: true, triggerBypass: 'session_replication_role', gbrainSchema: true,
+      replicaRole: true, ownsTables: true, triggerBypass: 'session_replication_role',
+      gbrainSchema: (await target.executeRaw<{ ok: boolean }>(`SELECT to_regclass('config') IS NOT NULL AS ok`))[0]?.ok === true,
       empty: (await probeRows(target)).length === 0, nonEmptyTables: [], embeddingColumns: [], otherSessions: 0,
     }),
     crossCheckRoutes: async () => {},

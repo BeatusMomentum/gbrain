@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, lstatSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  assertTransition, MANIFEST_STATES, MANIFEST_TRANSITIONS, SOURCE_ROW_STATES, SOURCE_TRANSITIONS, TARGET_ROW_STATES, TARGET_TRANSITIONS,
+  assertTransition, GRADUATION_RUN_BOUNDARIES, MANIFEST_STATES, MANIFEST_TRANSITIONS, SOURCE_ROW_STATES, SOURCE_TRANSITIONS, TARGET_ROW_STATES, TARGET_TRANSITIONS,
   type GraduationManifest, type ManifestState,
 } from '../src/core/persistence/engine-graduation.types.ts';
 import {
@@ -192,7 +192,7 @@ for (const [label, postgresUrl] of targets) {
       await h.inHome(async () => {
         let observed: { write?: string; exempt?: boolean; respawn?: string } = {};
         const hash = await plan();
-        await runGraduation(runOpts(hash, { pauseAt: 'copy_table', pauseHook: async () => {
+        await runGraduation(runOpts(hash, { pauseAt: 'table_copied', pauseHook: async () => {
           const run = readGraduationManifest(join(h.gbrainDir, 'graduation-manifest.json'))!.runId;
           observed = {
             ...observed,
@@ -208,7 +208,7 @@ for (const [label, postgresUrl] of targets) {
       });
     }, 60_000);
 
-    const seams = ['quiesced', 'draining', 'copying', 'copy_table', 'verifying', 'verified', 'cutover', 'before_rename', 'after_rename', 'tombstoned', 'authoritative', 'routing_flipped'];
+    const seams = GRADUATION_RUN_BOUNDARIES.filter(b => b !== 'batch_copied' && b !== 'graduated');
     for (const seam of seams) {
       test(`a crash at ${seam} resumes to exactly one authoritative engine`, async () => {
         await fresh();
@@ -219,7 +219,7 @@ for (const [label, postgresUrl] of targets) {
           expect(status.live).toBe(false);
           expect(status.nextArgv).toEqual(['gbrain', 'migrate', '--resume']);
           const row = await readGraduationRow(h.target);
-          if (row) expect(row.state === 'authoritative' ? seam : 'non-authoritative').toBe(['authoritative', 'routing_flipped'].includes(seam) ? seam : 'non-authoritative');
+          if (row) expect(row.state === 'authoritative' ? seam : 'non-authoritative').toBe(['authoritative', 'config_flipped', 'registry_rewritten'].includes(seam) ? seam : 'non-authoritative');
           await resumeGraduation({ env: {}, deps: h.deps, handoffTimeoutMs: 1_000 });
           await assertGraduated();
         });
@@ -244,7 +244,7 @@ for (const [label, postgresUrl] of targets) {
       await fresh();
       await h.inHome(async () => {
         const hash = await plan();
-        await expect(runGraduation(runOpts(hash, { pauseAt: 'after_rename', pauseHook: crashAt('after_rename') }))).rejects.toThrow();
+        await expect(runGraduation(runOpts(hash, { pauseAt: 'moved_aside', pauseHook: crashAt('moved_aside') }))).rejects.toThrow();
         mkdirSync(h.dataDir);
         const refused = await refusal(resumeGraduation({ env: {}, deps: h.deps, handoffTimeoutMs: 1_000 }));
         expect(refused.code).toBe('graduation_split_brain');
@@ -258,7 +258,7 @@ for (const [label, postgresUrl] of targets) {
       await fresh();
       await h.inHome(async () => {
         const hash = await plan();
-        const refused = await refusal(runGraduation(runOpts(hash, { pauseAt: 'after_rename', pauseHook: async () => { mkdirSync(h.dataDir); } })));
+        const refused = await refusal(runGraduation(runOpts(hash, { pauseAt: 'moved_aside', pauseHook: async () => { mkdirSync(h.dataDir); } })));
         expect(refused.code).toBe('graduation_split_brain');
         expect((await readGraduationRow(h.target))?.state).toBe('verified');
         expect((await graduationFenceStatus(h.target)).unfenced).toEqual([]);
@@ -306,7 +306,7 @@ for (const [label, postgresUrl] of targets) {
         const stuck = { ...h.deps, drainForGraduation: async () => ({ drained: [], blockers: [{ kind: 'request' as const, id: 'req-1', detail: 'running', needsUser: false }] }) };
         const timeout = await refusal(runGraduation(runOpts(hash, { deps: stuck, drainTimeoutMs: 60_000 })));
         expect(timeout.code).toBe('graduation_drain_timeout');
-        expect(timeout.fix?.argv).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120']);
+        expect(timeout.fix?.argv).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120', '--json']);
         expect(readGraduationManifest(join(h.gbrainDir, 'graduation-manifest.json'))?.state).toBe('draining');
         const failing = { ...h.deps, verifyGraduation: async () => ({ ok: false, tables: [], failures: [{ relation: 'grad_probe', kind: 'digest' as const, detail: 'mismatch' }], replay: { status: 'not_available' as const, reason: 'no_caller_input' as const }, doctorFailingChecks: [] }) };
         const failed = await refusal(resumeGraduation({ env: {}, deps: failing, handoffTimeoutMs: 1_000 }));
@@ -324,7 +324,7 @@ for (const [label, postgresUrl] of targets) {
       await fresh();
       await h.inHome(async () => {
         const hash = await plan();
-        await expect(runGraduation(runOpts(hash, { pauseAt: 'cutover', pauseHook: crashAt('cutover') }))).rejects.toThrow();
+        await expect(runGraduation(runOpts(hash, { pauseAt: 'source_cutover', pauseHook: crashAt('source_cutover') }))).rejects.toThrow();
         const files = [join(h.gbrainDir, 'graduation-manifest.json'), `${h.dataDir}.gbrain-graduation.json`, join(h.gbrainDir, 'config.json')];
         const before = files.map(f => [readFileSync(f, 'utf8'), statSync(f).mtimeMs]);
         const status = await graduationStatus();
