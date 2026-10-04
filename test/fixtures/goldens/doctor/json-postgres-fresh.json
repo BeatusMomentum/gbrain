@@ -497,19 +497,19 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 103/103 public tables",
+          "message": "RLS enabled on 105/105 public tables",
           "name": "rls",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "Version 200 (latest: 200)",
+          "message": "Version 201 (latest: 201)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "859 column(s) verified against live schema",
+          "message": "884 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },

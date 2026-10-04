@@ -117,7 +117,7 @@ export interface ReviewProposalRow {
   receipt: string | null;
 }
 
-/** What accepting a duplicate-kind proposal does; registered by the subsystem that owns the merge or link. */
+/** What accepting a duplicate-kind proposal does; registered by the subsystem that owns the merge or link. Must be idempotent: a crashed accept resumes by calling it again. */
 export type ReviewAcceptHandler = (engine: BrainEngine, proposal: ReviewProposalRow) => Promise<{ status: 'accepted' | 'stale'; detail?: string }>;
 const acceptHandlers = new Map<ReviewKind, ReviewAcceptHandler>();
 export function registerReviewAcceptHandler(kind: Exclude<ReviewKind, 'withdraw'>, handler: ReviewAcceptHandler): void {
@@ -364,7 +364,7 @@ export async function runReviewLanes(engine: BrainEngine, sourceId: string, sign
 // Proposals store
 // ---------------------------------------------------------------------------
 
-export const REVIEW_PROPOSAL_STATUSES = ['pending', 'accepted', 'rejected', 'stale', 'accepted_no_action'] as const;
+export const REVIEW_PROPOSAL_STATUSES = ['pending', 'accepting', 'accepted', 'rejected', 'stale', 'accepted_no_action'] as const;
 
 export async function listReviewProposals(engine: BrainEngine, filter: { status?: string | 'all' } = {}): Promise<ReviewProposalRow[]> {
   const status = filter.status ?? 'pending';

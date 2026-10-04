@@ -9,6 +9,9 @@
  * same withdrawal instead of making a second one. The withdrawal ledger is
  * durable, so there is no undo. duplicate kinds: accepting runs the handler the
  * owning subsystem registered, or records the owner's verdict when none is.
+ * Accept claims the proposal (`pending` -> `accepting`) before acting, so a
+ * concurrent reject refuses; an `accepting` proposal (a concurrent or crashed
+ * accept) resumes, and only one accept records the outcome.
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -51,31 +54,31 @@ async function staleReason(engine: BrainEngine, p: ReviewProposalRow): Promise<s
 
 export async function acceptReviewProposal(engine: BrainEngine, id: number): Promise<ReviewActionResult> {
   const ref = `r${id}`;
-  const p = await getReviewProposal(engine, id);
+  let p = await getReviewProposal(engine, id);
   if (!p) return { id: ref, action: 'accept', status: 'not_found' };
-  if (p.status !== 'pending') return { id: ref, action: 'accept', status: 'refused', reason: `proposal is ${p.status}` };
+  // Claim first so a concurrent reject loses cleanly; an 'accepting' row (a concurrent or crashed accept) resumes.
+  if (p.status === 'pending' && !(await transitionReviewProposal(engine, id, 'pending', 'accepting'))) p = (await getReviewProposal(engine, id))!;
+  else if (p.status === 'pending') p = { ...p, status: 'accepting' };
+  if (p.status !== 'accepting') return { id: ref, action: 'accept', status: 'refused', reason: `proposal is ${p.status}` };
+  const finish = async (status: 'accepted' | 'accepted_no_action' | 'stale', reason?: string): Promise<ReviewActionResult> => {
+    if (!(await transitionReviewProposal(engine, id, 'accepting', status))) {
+      const now = await getReviewProposal(engine, id);
+      return { id: ref, action: 'accept', status: 'refused', reason: `proposal is ${now?.status ?? 'gone'}` };
+    }
+    return { id: ref, action: 'accept', status, ...(reason ? { reason } : {}) };
+  };
   if (p.kind !== 'withdraw') {
     const handler = reviewAcceptHandler(p.kind);
-    if (!handler) {
-      await transitionReviewProposal(engine, id, 'pending', 'accepted_no_action');
-      return { id: ref, action: 'accept', status: 'accepted_no_action', reason: 'verdict recorded; no merge or link handler is registered in this build' };
-    }
+    if (!handler) return finish('accepted_no_action', 'verdict recorded; no merge or link handler is registered in this build');
     const out = await handler(engine, p);
-    await transitionReviewProposal(engine, id, 'pending', out.status);
-    return { id: ref, action: 'accept', status: out.status, ...(out.detail ? { reason: out.detail } : {}) };
+    return finish(out.status, out.detail);
   }
   // A previous accept that withdrew the fact but stopped before the status change: finish it.
   const [done] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NOT NULL
       AND strpos(COALESCE(context, ''), $3) > 0`, [Number(p.b_ref), p.source_id, `(review r${id})`]);
-  if (done) {
-    await transitionReviewProposal(engine, id, 'pending', 'accepted');
-    return { id: ref, action: 'accept', status: 'accepted' };
-  }
+  if (done) return finish('accepted');
   const stale = await staleReason(engine, p);
-  if (stale) {
-    await transitionReviewProposal(engine, id, 'pending', 'stale');
-    return { id: ref, action: 'accept', status: 'stale', reason: stale };
-  }
+  if (stale) return finish('stale', stale);
   const { submitForgetMutation } = await import('../persistence/memory-mutations.ts');
   const { runMemoryWrite } = await import('../persistence/verb-errors.ts');
   await runMemoryWrite(() => submitForgetMutation({
@@ -83,8 +86,7 @@ export async function acceptReviewProposal(engine: BrainEngine, id: number): Pro
     logger: { info: () => {}, warn: () => {}, error: () => {} },
   } as never, 'forget', { id: p.b_ref, request_id: reviewRequestId(id), semantic_review: false,
     reason: `paraphrase of withdrawn fact #${p.a_ref} (review r${id})` }));
-  await transitionReviewProposal(engine, id, 'pending', 'accepted');
-  return { id: ref, action: 'accept', status: 'accepted' };
+  return finish('accepted');
 }
 
 export async function rejectReviewProposal(engine: BrainEngine, id: number): Promise<ReviewActionResult> {
