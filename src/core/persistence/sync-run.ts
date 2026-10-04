@@ -8,14 +8,14 @@ import { throwIfAborted } from '../abort-check.ts';
 import { digest, sha256 } from './digest.ts';
 import { getWriteRequest, admitWriteInTransaction, receiptFor } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
-import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenceConsumer, waitForWrite } from './service.ts';
+import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import { prepareManagedSyncMutation, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
-import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noop-kernel.ts';
-import type { GBrainConfig } from '../config.ts';
-import { join, resolve } from 'node:path';
+import { screeningRequest } from './noop-kernel.ts';
+import { waiveNoopEntry, type NoopWaiver } from './sync-waivers.ts';
+import { resolve } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -48,7 +48,9 @@ interface Cursor extends SyncDiscovery { runId: string; index: number; authority
   processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions; overtaken?: true;
   counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number;
     /** #5751: unchanged working-tree files skipped only because a no-op publication could never resolve their admit reason. */
-    skippedContextualMode?: number; skippedCanonicalBytes?: number }; }
+    skippedContextualMode?: number; skippedCanonicalBytes?: number;
+    /** DX-A7: entries advanced without an admission because their publication would change nothing. */
+    waived?: { imports: number; deletes: number } }; }
 const OP = 'managed-sync';
 type CursorHeader = Omit<Cursor, 'entries' | 'companyPlan'> & { total: number };
 const header = ({ entries, companyPlan: _plan, ...value }: Cursor): CursorHeader => ({ ...value, total: entries.length });
@@ -81,19 +83,49 @@ async function saveCursor(engine: BrainEngine, key: string, before: Cursor | nul
         return current;
       }
     }
-    if (before === null) {
-      await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
-      await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [OP, key, JSON.stringify([header(next)])]);
-    } else {
-      await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
-        WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]);
-      await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
-    }
-    const current = await readCursor(tx, key, next);
-    if (!current) throw new OperationError('storage_error', 'The durable sync cursor disappeared.');
+    const current = await writeCursor(tx, key, before, next);
     assertActive?.();
     return current;
   });
+}
+/** Compare-and-swap inside the caller's transaction; a lost swap returns the cursor that won. */
+async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, next: Cursor): Promise<Cursor> {
+  if (before === null) {
+    await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
+    await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [OP, key, JSON.stringify([header(next)])]);
+  } else {
+    await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]);
+    await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
+  }
+  return currentCursor(tx, key, next);
+}
+async function currentCursor(engine: BrainEngine, key: string, cached?: Cursor): Promise<Cursor> {
+  const current = await readCursor(engine, key, cached);
+  if (!current) throw new OperationError('storage_error', 'The durable sync cursor disappeared.');
+  return current;
+}
+/** The cursor after a waived entry: counted under `waived`, plus the #5751 kernel breakdown kept for `legacySkips`. */
+function waivedCursor(cursor: Cursor, waived: NoopWaiver): Cursor {
+  const prior = cursor.counts.waived ?? { imports: 0, deletes: 0 };
+  const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts,
+    waived: { imports: prior.imports + (waived.kind === 'import' ? 1 : 0), deletes: prior.deletes + (waived.kind === 'delete' ? 1 : 0) } } };
+  delete next.pending;
+  if (waived.kernel.includes('contextual_mode')) next.counts.skippedContextualMode = (next.counts.skippedContextualMode ?? 0) + 1;
+  if (waived.kernel.includes('canonical_file_differs')) next.counts.skippedCanonicalBytes = (next.counts.skippedCanonicalBytes ?? 0) + 1;
+  return next;
+}
+/** The rollback signal of an admission whose cursor no longer holds the frozen entry (ENG-A7). */
+class CursorMoved extends Error {}
+/** DX-A3 / ENG-A12: how the wait for a still-unfinished sync write ended, with its request ID kept. */
+export type ManagedSyncWriteWait = { status: 'pending'; request_id: string }
+  | { status: 'blocked'; request_id: string; cause: string; command: string }
+  | { status: 'read_failed'; request_id: string; reason: string; transient: boolean; sqlstate?: string; attempts: number; message: string; remediation: string };
+function writeWaitOf(wait: WriteWait): ManagedSyncWriteWait {
+  if (wait.kind === 'blocked') return { status: 'blocked', request_id: wait.request_id, cause: wait.cause, command: wait.command };
+  if (wait.kind !== 'read_failed') return { status: 'pending', request_id: wait.row.request_id };
+  const { kind: _kind, row: _row, ...failure } = wait;
+  return { status: 'read_failed', ...failure };
 }
 async function replaceCursor(engine: BrainEngine, key: string, before: CursorHeader, next: Cursor, assertActive: () => void): Promise<Cursor> {
   return engine.transaction(async tx => {
@@ -120,6 +152,7 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
     ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}),
+    waived: { imports: cursor.counts.waived?.imports ?? 0, deletes: cursor.counts.waived?.deletes ?? 0 },
     filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
     ...(cursor.counts.skippedContextualMode || cursor.counts.skippedCanonicalBytes ? { legacySkips: {
       contextualMode: cursor.counts.skippedContextualMode ?? 0, canonicalBytes: cursor.counts.skippedCanonicalBytes ?? 0 } } : {}) };
@@ -128,7 +161,7 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   const terminal = isTerminalWriteState(row.state);
   const code = terminal ? row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error') : 'write_pending';
   const blockedReason = ['writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'recovery_required', 'writer_lock_unavailable',
-    'database_contention', 'consumer_stopping', 'revision_changed_repreparing'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
+    'database_contention', 'consumer_stopping', 'revision_changed_repreparing', 'unexpected_file_bytes', 'unexpected_staging_bytes'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
   const detail = terminal ? writeFailureDiagnostic(code, row.error_message) : {
     reason: blockedReason, message: 'The write is accepted but not committed; the sync checkpoint has not advanced.',
     suggestion: 'Re-run the same sync options to resume this request. Do not submit a replacement request or skip the pending write.',
@@ -424,17 +457,16 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         cursor = await saveCursor(engine, key, cursor, { ...cursor, ...(frozen.rebound ? { overtaken: true as const } : {}), pending: frozen }, false, assertActive);
       }
       if (!cursor.pending) continue; // another owner-loop advanced the cursor
-      const pending = cursor.pending;
+      const pending: Pending = cursor.pending;
       phase = 'admission';
       const prior = await getWriteRequest(engine, cursor.authority.writer.principal, pending.requestId);
       assertActive();
-      // #5470: a frozen import whose publication would change nothing advances the cursor without an admission.
-      const waived = prior ? null : await unchangedSyncImport(engine, cursor, pending, config);
+      // #5470/#5984: a frozen entry whose publication would change nothing advances the cursor without an admission.
+      const screened: Cursor = cursor;
+      const waived: Cursor | null = prior ? null : await waiveNoopEntry(engine, screened, pending, config, key,
+        (tx, noop) => writeCursor(tx, key, screened, waivedCursor(screened, noop)), tx => currentCursor(tx, key, screened));
       if (waived) {
-        const skipped: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete skipped.pending;
-        if (waived.includes('contextual_mode')) skipped.counts.skippedContextualMode = (skipped.counts.skippedContextualMode ?? 0) + 1;
-        if (waived.includes('canonical_file_differs')) skipped.counts.skippedCanonicalBytes = (skipped.counts.skippedCanonicalBytes ?? 0) + 1;
-        cursor = await saveCursor(engine, key, cursor, skipped);
+        cursor = waived;
         opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
         assertActive();
         // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
@@ -450,18 +482,24 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
           sourceId: admitting.sourceId, sourceIncarnation: admitting.incarnation, slug: pending.slug, pageId: pending.pageId,
           worktreeId: admitting.binding.worktree_id, topologyGeneration: admitting.binding.topology_generation,
           principal: admitting.authority.writer.principal, authority: admitting.authority.writer, callerIntent: pending.intent, intent: pending.intent });
+        // ENG-A7: after the counter locks (the publication lock order), admit only while the cursor still holds this entry.
+        const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id
+          FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
+        if (held?.request_id !== pending.requestId) throw new CursorMoved();
         assertActive();
         return accepted;
-      }));
+      })).catch(error => { if (error instanceof CursorMoved) return null; throw error; });
+      if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();
       // #5762: a checkpoint's validation runs under the coordinator's 5 s statement timeout, so its wait outlasts that
       // budget; a timed-out checkpoint then reports its terminal refusal and hint in this run instead of the next.
-      const done = await waitForWrite(engine, row, config, pending.intent.kind === 'managed_sync_checkpoint' ? 8000 : 5000);
+      const waited = await awaitWrite(engine, row, config, { waitMs: pending.intent.kind === 'managed_sync_checkpoint' ? 8000 : 5000 });
+      const done = waited.row;
       assertSyncDispatchActive();
       if (!isTerminalWriteState(done.state)) {
         return { ...result(cursor, 'partial', signal?.aborted ? 'timeout' : 'writer_pending'),
-          ...(authority.writer.remote ? {} : { managedWrite: writeDiagnostic(cursor, pending, done) }) };
+          ...(authority.writer.remote ? {} : { managedWrite: writeDiagnostic(cursor, pending, done), writeWait: writeWaitOf(waited) }) };
       }
       if (done.state !== 'committed') {
         const { failure, ledgerRecorded } = await recordManagedSyncFailure(engine, { source_id: cursor.sourceId, source_incarnation: cursor.incarnation, path: pending.intent.path ?? '<checkpoint>',
@@ -530,35 +568,5 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }
     }
     throw error;
-  }
-}
-
-/**
- * #5470 no-op screen for working-tree and company-profile sync: runs the sync
- * preparer on the frozen, unadmitted entry. A rename or a canonical overlay is
- * always admitted. Returns null to admit, or the kernel waivers the skip used.
- * #5751: a managed working-tree entry waives the two admit reasons its no-op
- * publication can never resolve (a pending contextual-mode stamp, and file
- * bytes that differ from the prepared content yet parse to the same page), so
- * an unchanged legacy file stops taking a request ID on every run.
- */
-async function unchangedSyncImport(engine: BrainEngine, cursor: Cursor, pending: Pending, config: GBrainConfig): Promise<NoopKernelWaiver[] | null> {
-  const intent = pending.intent;
-  if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
-  try {
-    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
-    const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
-      worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
-    const prepared = await prepareManagedSyncMutation(engine, row, config);
-    if (prepared.file || prepared.target === 'skill_bundle') return null;
-    const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
-    const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
-      embeddingRequested: !prepared.deferEmbedding && !config.embedding_disabled && !!config.embedding_model?.trim(),
-      waive: intent.working === true ? ['contextual_mode', 'canonical_file_differs'] : undefined });
-    if (inspected.admitReason) return null;
-    await prepared.validate?.(engine);
-    return inspected.waived ?? [];
-  } catch {
-    return null;
   }
 }
