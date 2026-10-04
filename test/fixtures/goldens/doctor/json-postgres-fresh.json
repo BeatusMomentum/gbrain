@@ -8,9 +8,9 @@
     ],
     "exit_code": 0,
     "report": {
-      "brain_checks_score": 85,
+      "brain_checks_score": 80,
       "category_scores": {
-        "brain": 85,
+        "brain": 80,
         "meta": 100,
         "ops": 95,
         "skill": 95
@@ -416,7 +416,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 101/101 public tables",
+          "message": "RLS enabled on 103/103 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -428,7 +428,7 @@
         },
         {
           "category": "meta",
-          "message": "834 column(s) verified against live schema",
+          "message": "859 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1130,11 +1130,15 @@
         {
           "category": "brain",
           "details": {
-            "enabled": false
+            "cause": "auto_chronicle has no reader in this version",
+            "code": "auto_chronicle_no_effect",
+            "docs": "docs/guides/troubleshooting.md#auto_chronicle-has-no-effect",
+            "enabled": true,
+            "fix": "gbrain chronicle-backfill --dry-run"
           },
-          "message": "auto_chronicle is off.",
+          "message": "auto_chronicle=true currently has no effect: no write or cycle step enqueues chronicle extraction, so new meetings are not swept into events. Fix: run `gbrain chronicle-backfill --dry-run`, then `gbrain chronicle-backfill`; `gbrain config unset auto_chronicle` clears the setting.",
           "name": "auto_chronicle",
-          "status": "ok"
+          "status": "warn"
         },
         {
           "category": "brain",
@@ -1297,13 +1301,14 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 9,
+              "global": 10,
               "mixed": 2,
               "source": 12
             },
             "phase_scope_map": {
               "backlinks": "source",
               "calibration_profile": "global",
+              "chronicle": "global",
               "consolidate": "source",
               "conversation_facts_backfill": "source",
               "drift": "global",
@@ -1327,7 +1332,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 9 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 10 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, chronicle, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },
@@ -1376,10 +1381,16 @@
       ],
       "db_url_source": null,
       "engine": "postgres",
-      "health_score": 75,
+      "health_score": 70,
       "schema_version": 2,
       "status": "warnings",
       "top_issues": [
+        {
+          "fix": "auto_chronicle=true currently has no effect: no write or cycle step enqueues chronicle extraction, so new meetings are not swept into events. Fix: run `gbrain chronicle-backfill --dry-run`, then `gbrain chronicle-backfill`; `gbrain config unset auto_chronicle` clears the setting.",
+          "name": "auto_chronicle",
+          "status": "warn",
+          "tier": "symptom"
+        },
         {
           "fix": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
           "name": "backup_coverage",
