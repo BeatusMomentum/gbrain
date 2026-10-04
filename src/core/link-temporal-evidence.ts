@@ -24,6 +24,7 @@ import {
   relationSemantics, normalizePartialDate, type AssertionTense, type DatePrecision,
   type TransitionKind, type TransitionProducer,
 } from './link-validity.ts';
+import { KNOWN_LINK_TYPES } from './search/relational-intent.ts';
 
 export interface OwnedRow {
   from_slug: string;
@@ -155,7 +156,13 @@ const DATED_LINE_RE = /^\s*(?:[-*]\s*)?\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]
 const DATED_HEADING_RE = /^\s*###\s+(\d{4}-\d{2}-\d{2})\s*[-–—]+\s*(.+?)\s*$/;
 const EXPLICIT_RE = /\b(Started|Ended)\s+([a-z][a-z0-9_]*)\s+(?:\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]|\[[^\]\n]*\]\(([^)\s]+)\))/g;
 
-const EXPLICIT_TEST = new RegExp(EXPLICIT_RE.source);
+/**
+ * "Started at [Acme]" is prose, not the grammar: the token after Started/Ended
+ * must name a relation (a known link type, a temporal type, or a snake_case
+ * identifier; non-temporal ones are reported).
+ */
+const isRelationToken = (token: string) => token.includes('_') || KNOWN_LINK_TYPES.has(token) || relationSemantics(token) !== 'reference';
+const hasExplicit = (text: string) => [...text.matchAll(EXPLICIT_RE)].some(m => isRelationToken(m[2]));
 
 interface DatedLine { date: string; text: string; dream: boolean }
 
@@ -201,6 +208,7 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
   for (const line of lines) {
     for (const m of line.text.matchAll(EXPLICIT_RE)) {
       const linkType = m[2];
+      if (!isRelationToken(linkType)) continue;
       const target = normalizeLinkTarget(m[3] ?? m[4] ?? '');
       const semantics = relationSemantics(linkType);
       if (!target) { unmatched.push({ line: line.text, reason: 'no_target' }); continue; }
@@ -219,17 +227,17 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
   //    qualified ("Acme's round", "Acme alumni"). "Left/moved from [A] to/for
   //    [B]" also starts B.
   for (const line of lines) {
-    if (EXPLICIT_TEST.test(line.text)) continue;
+    if (hasExplicit(line.text)) continue;
     const refs = referencesIn(line.text);
     const eventLine = EVENT_CONTEXT.test(line.text.replace(/\[[^\]\n]*\]\([^)\s]*\)|\[\[[^\]\n]*\]\]/g, ' '));
     let prevEnd = 0;
-    let prevEndedOnLine = false;
+    let prevEnded = new Set<string>();
     for (const ref of refs) {
       const window = windowBefore(line.text, ref.index, prevEnd);
-      const between = window.replace(/^[^)\]]*(?:\)|\]\])/, '');
+      const between = window.replace(/^.*?(?:\]\([^)]*\)|\]\])/, '');
       const qualified = QUALIFIED_AFTER.test(line.text.slice(ref.end));
       prevEnd = ref.index + 2;
-      let endedHere = false;
+      const endedHere = new Set<string>();
       for (const r of temporalRows) {
         if (!refersTo(ref.target, other(r)) || !r.link_type) continue;
         const cues = cuesFor(r.link_type);
@@ -241,14 +249,14 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
             kind = /\b(?:left|stepped\s+(?:down|off|away)\s+from|resigned\s+from)\s*$/i.test(window) ? 'end'
               : /\b(?:(?:re-?)?joined|was\s+(?:added|named|appointed)\s+to)\s*$/i.test(window) ? 'start' : null;
           } else kind = cues.end.test(window) ? 'end'
-            : cues.start.test(window) || (prevEndedOnLine && /^\s*(?:to|for)\s*$/i.test(between)) ? 'start' : null;
+            : cues.start.test(window) || (prevEnded.has(r.link_type) && /^\s*(?:to|for)\s*$/i.test(between)) ? 'start' : null;
         } else if (EVENT_START[r.link_type]?.test(window)) kind = 'start';
         if (!kind) continue;
-        if (kind === 'end') endedHere = true;
+        if (kind === 'end') endedHere.add(r.link_type);
         push({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type, kind, occurred_on: line.date,
           date_precision: 'day', producer: line.dream ? 'dream' : 'timeline', line_hash: lineHash(line.text) });
       }
-      prevEndedOnLine = endedHere;
+      prevEnded = endedHere;
     }
   }
 
@@ -297,7 +305,9 @@ function stripDatedLines(text: string): string {
 function stringish(v: unknown): string | null {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (typeof v === 'number') return String(v);
-  return typeof v === 'string' ? v : null;
+  if (typeof v !== 'string') return null;
+  // A YAML date (`since: 2021-04-09`) round-trips through page storage as a UTC-midnight timestamp.
+  return /^\d{4}-\d{2}-\d{2}T00:00:00(?:\.0+)?Z$/.test(v) ? v.slice(0, 10) : v;
 }
 
 function nameMatches(name: string, slug: string): boolean {
