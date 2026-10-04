@@ -378,3 +378,37 @@ export const GRADUATION_ERROR_CODES = [
   'engine_graduated',
 ] as const;
 export type GraduationErrorCode = typeof GRADUATION_ERROR_CODES[number];
+
+/**
+ * Custody boundaries, in run order, that the orchestrator announces with
+ * `graduationBoundary(name)` right after the step's durable write commits.
+ * The crash suite (test/e2e/graduation-crash.test.ts) SIGKILLs the real CLI
+ * at each one, and the zero-mutation suite pauses there to poll --status.
+ * `table_copied` fires after each table's copy transaction commits and
+ * `batch_copied` after each committed batch inside a table, both with
+ * `detail.relation`.
+ */
+export const GRADUATION_RUN_BOUNDARIES = [
+  'quiesced', 'drain_started', 'drained', 'target_fenced', 'batch_copied', 'table_copied', 'copied', 'verified',
+  'source_cutover', 'source_closed', 'moved_aside', 'tombstoned', 'authoritative', 'config_flipped', 'registry_rewritten', 'graduated',
+] as const;
+/** Rollback substeps after cutover, in order (§13 rollback custody). */
+export const GRADUATION_ROLLBACK_BOUNDARIES = [
+  'rollback_fenced', 'rollback_approved', 'source_restoring', 'tombstone_removed', 'renamed_back', 'config_restored', 'rolled_back',
+] as const;
+export type GraduationBoundary = typeof GRADUATION_RUN_BOUNDARIES[number] | typeof GRADUATION_ROLLBACK_BOUNDARIES[number];
+export interface GraduationBoundaryDetail { runId?: string; relation?: string; batch?: number }
+export interface GraduationHooks {
+  boundary?(name: GraduationBoundary, detail: GraduationBoundaryDetail): Promise<void> | void;
+}
+/**
+ * Test-only registration point: a crash-test preload (test/helpers/graduation-hooks-preload.ts)
+ * stores hooks under this symbol before the CLI starts. Production code never sets it.
+ */
+export const GRADUATION_HOOKS = Symbol.for('gbrain.graduation.hooks');
+
+/** Announce a custody boundary; a no-op unless a test registered hooks. */
+export async function graduationBoundary(name: GraduationBoundary, detail: GraduationBoundaryDetail = {}): Promise<void> {
+  const hooks = (globalThis as Record<symbol, GraduationHooks | undefined>)[GRADUATION_HOOKS];
+  await hooks?.boundary?.(name, detail);
+}
