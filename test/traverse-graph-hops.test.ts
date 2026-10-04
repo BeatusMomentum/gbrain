@@ -15,6 +15,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operationsByName, type AuthInfo, type OperationContext } from '../src/core/operations.ts';
 import { dispatchToolCall, type DispatchOpts } from '../src/mcp/dispatch.ts';
 import type { Notice } from '../src/core/agent-output.ts';
+import { buildRelationalArm } from '../src/core/search/relational-recall.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
 
 let engine: PGLiteEngine;
 
@@ -107,5 +109,36 @@ describe('traverse_graph hops', () => {
   test('without hops the op keeps its existing shape', async () => {
     const res = await runLocal({ slug: 'people/alice-example', link_type: 'invested_in', direction: 'out' });
     expect(Array.isArray(res)).toBe(true);
+  });
+});
+
+describe('traverse_graph hops: relationship validity', () => {
+  test('an ended state relationship is not walked by default; status "all" walks it', async () => {
+    await engine.putPage('people/carol-example', { type: 'person', title: 'carol', compiled_truth: 'carol', timeline: '' });
+    await engine.putPage('companies/old-example', { type: 'company', title: 'old', compiled_truth: 'old', timeline: '' });
+    await engine.addLink('companies/old-example', 'people/bob-example', 'founded by bob', 'founded', 'markdown');
+    await operationsByName.add_link.handler(localCtx(), {
+      from: 'people/carol-example', to: 'companies/old-example', link_type: 'advises', valid_from: '2019-01-01', valid_until: '2021-06-30',
+    });
+    const hops = [{ link_type: 'advises', toward: 'object' }, { link_type: 'founded', toward: 'subject' }];
+    const live = await runLocal({ slug: 'people/carol-example', hops });
+    expect(live.answers).toEqual([]);
+    expect(live.diagnostics.status).toBe('no_edges');
+    const all = await runLocal({ slug: 'people/carol-example', hops, status: 'all' });
+    expect(all.answers.map((a: { slug: string }) => a.slug)).toEqual(['people/bob-example']);
+    const then = await runLocal({ slug: 'people/carol-example', hops, as_of: '2020-03-01' });
+    expect(then.answers.map((a: { slug: string }) => a.slug)).toEqual(['people/bob-example']);
+
+    // The search arm: present tense walks live relationships, "formerly" walks the ended one.
+    for (const slug of ['people/bob-example', 'companies/old-example']) {
+      await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_source: 'compiled_truth', chunk_text: `${slug} body` }]);
+    }
+    const arm = async (q: string) => {
+      let meta: any;
+      const list = await buildRelationalArm(engine, q, { planner: true, onMeta: m => { meta = m; } });
+      return { answers: list.filter(r => r.relational?.role === 'answer').map(r => r.slug), status: meta.plan?.status };
+    };
+    expect(await arm('Who founded the companies Carol Example advises?')).toEqual({ answers: [], status: 'no_edges' });
+    expect(await arm('Who founded the companies Carol Example formerly advised?')).toEqual({ answers: ['people/bob-example'], status: 'fired' });
   });
 });

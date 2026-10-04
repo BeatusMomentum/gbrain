@@ -29,7 +29,9 @@
  *
  * Refused as `unsupported` (never answered with a one-hop guess): coordination
  * or disjunction of relations (an "and" followed by a back-reference is a
- * sequence, not coordination), negation, time constraints, comparatives,
+ * sequence, not coordination), negation, dates and time windows (a tense
+ * marker right before a relation that can end, "formerly advised", sets that
+ * hop's relationship status instead), comparatives,
  * counting, quoted names, more than one candidate anchor, more than three
  * hops, type-incoherent chains.
  *
@@ -38,6 +40,7 @@
 
 import { LINK_SIGNATURES, linkFamily, MAX_CHAIN_HOPS, type ChainHop } from './relational-chain.ts';
 import { parseRelationalQuery } from './relational-intent.ts';
+import { relationSemantics, type EdgeStatusFilter } from '../link-validity.ts';
 
 export interface RelationalPlan {
   /** Raw anchor phrase, resolved to a page later (scope-aware). */
@@ -116,6 +119,14 @@ const RELATIVE = new Set(['that', 'which', 'who', 'whom']);
 const HEAD_LEAD = new Set(['among', 'of', 'our', 'my']);
 const PREPS = new Set(['of', 'in', 'at', 'behind', 'for', 'to', 'into', 'with']);
 const POLITE = new Set(['list', 'show', 'name', 'find', 'give', 'me', 'tell', 'please', 'us', 'could', 'can', 'would', 'you', 'i', 'know', 'want', 'like', 'wondering', 'curious', 'see']);
+/**
+ * Tense markers right before a state relation pick which relationships that
+ * hop walks under relationship validity ("formerly advised" → ended, "used to
+ * work at" → all). Dates and other time words stay refused.
+ */
+const TENSE: Readonly<Record<string, EdgeStatusFilter>> = {
+  former: 'ended', formerly: 'ended', previously: 'ended', past: 'ended', current: 'live', currently: 'live',
+};
 /** Pronouns pointing back at the previous step's pages ("..., who founded THEM"). */
 const BACKREF = new Set(['them', 'those', 'these', 'they']);
 /** Head nouns that name no page type ("which other PARTIES invested ..."). */
@@ -130,8 +141,8 @@ const HEAD_TYPES: Readonly<Record<string, string>> = {
 const REFUSE: Readonly<Record<string, string>> = {
   and: 'coordination', or: 'coordination', nor: 'coordination', but: 'coordination',
   not: 'negation', never: 'negation', no: 'negation', without: 'negation', except: 'negation', "n't": 'negation',
-  before: 'time', after: 'time', since: 'time', during: 'time', until: 'time', ago: 'time', currently: 'time',
-  previously: 'time', recently: 'time', formerly: 'time', former: 'time', current: 'time', year: 'time', years: 'time',
+  before: 'time', after: 'time', since: 'time', during: 'time', until: 'time', ago: 'time',
+  recently: 'time', year: 'time', years: 'time',
   most: 'comparative', more: 'comparative', least: 'comparative', fewest: 'comparative', top: 'comparative',
   many: 'count', count: 'count', number: 'count',
 };
@@ -204,7 +215,23 @@ export function parseRelationalPlan(query: string): PlanResult {
     const why = REFUSE[t.lower] ?? (/^(1[89]|20)\d\d$/.test(t.lower) ? 'time' : undefined);
     if (why) return { kind: 'unsupported', reason: `${why} constraints are not planned ("${t.text}")` };
   }
-  if (toks.some((t, i) => t.lower === 'used' && toks[i + 1]?.lower === 'to')) return { kind: 'unsupported', reason: 'time constraints are not planned ("used to")' };
+  const tenseOf = new Map<Rel, EdgeStatusFilter>();
+  const tenseTok = new Set<number>();
+  for (let i = 0; i < toks.length; i++) {
+    const usedTo = toks[i].lower === 'used' && toks[i + 1]?.lower === 'to';
+    const status = usedTo ? 'all' : TENSE[toks[i].lower];
+    if (!status) continue;
+    const marker = query.slice(toks[i].start, toks[usedTo ? i + 1 : i].end);
+    let j = i + (usedTo ? 2 : 1);
+    while (j < toks.length && DETERMINERS.has(toks[j].lower)) j++;
+    const rel = rels.find(r => r.from === j);
+    if (!rel) return { kind: 'unsupported', reason: `time constraints are not planned ("${marker}")` };
+    if (relationSemantics(rel.entry.rel) !== 'state') return { kind: 'unsupported', reason: `${rel.entry.rel} does not end, so "${marker}" is not planned` };
+    tenseOf.set(rel, status);
+    tenseTok.add(i);
+    if (usedTo) tenseTok.add(i + 1);
+  }
+  for (const r of rels) if (!tenseOf.has(r) && toks[r.from].lower === 'worked' && r.entry.rel === 'works_at') tenseOf.set(r, 'all');
   if (relCount > MAX_CHAIN_HOPS) return { kind: 'unsupported', reason: `more than ${MAX_CHAIN_HOPS} relations` };
 
   // Classify every non-relation token; leftovers form the anchor.
@@ -212,7 +239,7 @@ export function parseRelationalPlan(query: string): PlanResult {
   let excludeAnchor = false;
   const leftover: number[] = [];
   for (let i = 0; i < toks.length; i++) {
-    if (used[i]) continue;
+    if (used[i] || tenseTok.has(i)) continue;
     const l = toks[i].lower;
     if (OTHER_MARKERS.has(l)) { excludeAnchor = true; continue; }
     if (l === "'s" || l === 'and' || GENERIC_HEADS.has(l)) continue;
@@ -239,7 +266,7 @@ export function parseRelationalPlan(query: string): PlanResult {
   // "which companies DID ... back") is always outermost; the rest order by
   // how many content tokens separate them from the anchor, nouns binding
   // tighter than verbs at equal distance.
-  const scaffold = (l: string) => WH.has(l) || AUX.has(l) || DETERMINERS.has(l) || POLITE.has(l) || OTHER_MARKERS.has(l) || GENERIC_HEADS.has(l) || HEAD_TYPES[l] !== undefined;
+  const scaffold = (l: string) => TENSE[l] !== undefined || WH.has(l) || AUX.has(l) || DETERMINERS.has(l) || POLITE.has(l) || OTHER_MARKERS.has(l) || GENERIC_HEADS.has(l) || HEAD_TYPES[l] !== undefined;
   const isVerb = (r: Rel) => r.entry.form === 'verb' || r.entry.form === 'passive';
   const startsWithWh = lead < toks.length && WH.has(toks[lead].lower);
   // "which companies DID alice back": the auxiliary is followed by its subject,
@@ -250,7 +277,7 @@ export function parseRelationalPlan(query: string): PlanResult {
     (startsWithWh && toks.slice(0, r.from).every(t => scaffold(t.lower))) ||
     (auxInverted && r === lastRel && r.to === toks.length - 1)
   );
-  const skip = (l: string) => DETERMINERS.has(l) || PREPS.has(l) || RELATIVE.has(l) || AUX.has(l) || OTHER_MARKERS.has(l) || l === "'s" || l === 'by' || l === 'whose';
+  const skip = (l: string) => TENSE[l] !== undefined || l === 'used' || DETERMINERS.has(l) || PREPS.has(l) || RELATIVE.has(l) || AUX.has(l) || OTHER_MARKERS.has(l) || l === "'s" || l === 'by' || l === 'whose';
   const dist = (r: Rel) => {
     const [a, b] = r.to < aStart ? [r.to + 1, aStart] : [aEnd + 1, r.from];
     return toks.slice(a, b).filter((t, k) => !used[a + k] && !skip(t.lower)).length + toks.slice(a, b).filter((_, k) => used[a + k]).length;
@@ -279,7 +306,8 @@ export function parseRelationalPlan(query: string): PlanResult {
       case 'agent': toward = 'subject'; break;
       case 'out': toward = 'object'; break;
     }
-    hops.push({ linkTypes: lts, toward });
+    const status = tenseOf.get(r);
+    hops.push({ linkTypes: lts, toward, ...(status ? { status } : {}) });
     phrases.push(phrase);
   }
   if (hops.length > MAX_CHAIN_HOPS) return { kind: 'unsupported', reason: `more than ${MAX_CHAIN_HOPS} relations` };

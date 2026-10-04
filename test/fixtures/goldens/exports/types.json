@@ -310,6 +310,7 @@
           "sourceIds?: string[] | undefined",
           "subjectTypes: string[]",
           "takesHoldersAllowList?: string[] | undefined",
+          "temporal?: EdgeTemporalOpts | undefined",
           "toward: \"object\" | \"subject\""
         ],
         "name": "ChainHopOpts"
@@ -7495,6 +7496,7 @@
           "sourceIds?: string[] | undefined",
           "subjectTypes: string[]",
           "takesHoldersAllowList?: string[] | undefined",
+          "temporal?: EdgeTemporalOpts | undefined",
           "toward: \"object\" | \"subject\""
         ],
         "name": "ChainHopOpts"

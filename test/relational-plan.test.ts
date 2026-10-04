@@ -71,12 +71,47 @@ describe('parseRelationalPlan: plans', () => {
   });
 });
 
+describe('parseRelationalPlan: tense markers on relations that can end', () => {
+  const statuses = (q: string) => {
+    const r = parseRelationalPlan(q);
+    return r.kind === 'plan' ? r.plan.hops.map(h => [h.linkTypes[0], h.toward, h.status ?? null]) : r;
+  };
+  test('"formerly advised" walks ended advisory relationships; the founding hop keeps the default', () => {
+    expect(statuses('Who founded the companies Alice Example formerly advised?'))
+      .toEqual([['advises', 'object', 'ended'], ['founded', 'subject', null]]);
+  });
+  test('"used to work at" walks every employment; "worked at" too', () => {
+    expect(statuses('Who advises the companies Bob Example used to work at?'))
+      .toEqual([['works_at', 'object', 'all'], ['advises', 'subject', null]]);
+    expect(statuses('Who founded the companies Bob Example worked at?'))
+      .toEqual([['works_at', 'object', 'all'], ['founded', 'subject', null]]);
+  });
+  test('a marker attaches to the relation right after it', () => {
+    expect(statuses("Which companies did Carol Example's former employees found?"))
+      .toEqual([['works_at', 'subject', 'ended'], ['founded', 'object', null]]);
+    expect(statuses('Who currently works at the companies founded by Dave Example?'))
+      .toEqual([['founded', 'object', null], ['works_at', 'subject', 'live']]);
+  });
+  test('events do not end, and dates stay refused', () => {
+    for (const [q, reason] of [
+      ['Who founded the companies Alice Example formerly invested in?', 'does not end'],
+      ['Who previously founded the companies Bob Example backed?', 'does not end'],
+      ['Who advised the companies Bob Example funded in 2021?', 'time'],
+      ['Who founded the companies Alice Example advised before 2020?', 'time'],
+      ['Formerly, who founded the companies Alice Example advises?', 'time'],
+    ] as const) {
+      const r = parseRelationalPlan(q);
+      expect(r.kind).toBe('unsupported');
+      expect(r.kind === 'unsupported' && r.reason).toContain(reason);
+    }
+  });
+});
+
 describe('parseRelationalPlan: refusals', () => {
   for (const [q, reason] of [
     ['Which companies did Alice Example found and invest in?', 'coordination'],
     ['Who advised the companies that Bob Example funded in 2021?', 'time'],
     ['Who founded companies that Alice Example did not invest in?', 'negation'],
-    ['Who used to work at companies backed by fund-a?', 'time'],
     ['How many founders of companies backed by fund-a are there?', 'count'],
     ['Who founded the companies "Alice" invested in?', 'quoted'],
   ] as const) {

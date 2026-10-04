@@ -465,9 +465,11 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
       `Fix ${parsed.path} and retry; omit hops to walk the graph without a chain.`);
   }
   const { policy } = await resolveLinkReadScope(ctx, p, 'traverse_graph');
+  const temporal = await resolveEdgeTemporal(ctx, p, 'traverse_graph');
+  reportTemporal(ctx, 'traverse_graph', p, temporal, null);
   const anchors = await resolveChainAnchors(ctx.engine, slug, policy);
   const plan: ChainPlan = { hops: parsed.hops, excludeAnchor: false };
-  const { rows, diagnostics } = await runRelationalChain(ctx.engine, anchors, plan, policy);
+  const { rows, diagnostics } = await runRelationalChain(ctx.engine, anchors, plan, temporal.disabled ? policy : { ...policy, temporal });
   const remote = ctx.remote !== false;
   const edge = (e: ChainEvidenceEdge) => ({ ...e, context: presentEdgeContext(e.context, remote) });
   const answers = rows.filter(r => r.role === 'answer');

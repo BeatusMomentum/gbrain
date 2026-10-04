@@ -23,6 +23,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { ChainHopEdge, PageReadPolicy } from '../types.ts';
+import type { EdgeStatusFilter, EdgeTemporalOpts } from '../link-validity.ts';
 import { hubWeight } from './hub-dampening.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -58,6 +59,8 @@ export interface ChainHop {
   toward: 'object' | 'subject';
   /** Page type the landing node must have, when the question names one. */
   nodeType?: string | null;
+  /** Which relationships this hop walks when relationship validity is on ("formerly advised" → ended); default: the call's policy. */
+  status?: EdgeStatusFilter;
 }
 
 export interface ChainPlan {
@@ -186,7 +189,7 @@ export async function runRelationalChain(
   engine: Pick<BrainEngine, 'relationalChainHop'>,
   anchors: ChainAnchor[],
   plan: ChainPlan,
-  policy: PageReadPolicy,
+  policy: PageReadPolicy & { temporal?: EdgeTemporalOpts },
   limits: ChainLimits = DEFAULT_CHAIN_LIMITS,
 ): Promise<{ rows: RelationalChainRow[]; diagnostics: ChainDiagnostics }> {
   const diagnostics: ChainDiagnostics = { status: 'fired', per_hop: [], cap_hit: null };
@@ -212,6 +215,7 @@ export async function runRelationalChain(
     const sig = signatureFor(hop.linkTypes);
     const edges = await engine.relationalChainHop(nodes.map(n => n.id), {
       ...policy,
+      ...(hop.status && policy.temporal ? { temporal: { ...policy.temporal, status: hop.status } } : {}),
       linkTypes: hop.linkTypes, toward: hop.toward,
       subjectTypes: [...sig.subject], objectTypes: [...sig.object],
       degreeLinkTypes, neighborCap: limits.neighborCap,

@@ -100,8 +100,8 @@ function inlineIds(ids: number[], label: string): string {
  * attendance) keep stored direction; body-extracted rows are read by the
  * relation's type signature: forward fit = stored, reverse fit = flipped,
  * both = uncertain (stored direction), neither = not a hop. Every endpoint,
- * origin and degree contributor passes the read policy before anything is
- * returned; edge context is returned only when the evidence page's text is
+ * origin and degree contributor passes the read policy (and, with `temporal`,
+ * the relationship-validity predicate) before anything is returned; edge context is returned only when the evidence page's text is
  * readable under the policy.
  */
 export async function readChainHop(query: ReadQuery, frontier: number[], opts: ChainHopOpts): Promise<ChainHopEdge[]> {
@@ -118,6 +118,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
     const pt = pageReadFilter(`${a}t`, policy, params, true);
     const og = pageReadFilter(`${a}g`, policy, params, true);
     const origin = `(${a}l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM ${byId(`${a}l.origin_page_id`)} ${a}g WHERE ${og}))`;
+    const live = opts.temporal ? `AND ${relationshipFilterSql(`${a}l`, { ...opts.temporal, excludePrivate: opts.excludePrivate })}` : '';
     return `SELECT f.id AS fid, ${a}l.id AS lid, ${a}l.link_type, ${a}l.from_page_id, ${a}l.to_page_id, ${a}l.origin_page_id,
         ${a}l.link_source, ${a}f.type AS from_type, ${a}t.type AS to_type, ${a}f.source_id
       FROM f CROSS JOIN LATERAL (
@@ -127,7 +128,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
       ) ${a}l
       CROSS JOIN LATERAL ${byId(`${a}l.from_page_id`)} ${a}f
       CROSS JOIN LATERAL ${byId(`${a}l.to_page_id`)} ${a}t
-      WHERE ${a}f.source_id = ${a}t.source_id AND ${pf} AND ${pt} AND ${origin}`;
+      WHERE ${a}f.source_id = ${a}t.source_id AND ${pf} AND ${pt} AND ${origin} ${live}`;
   };
   // The LATERAL link scan is fenced the same way, so the walk always starts
   // from the frontier's links.
@@ -135,6 +136,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
   const inBranch = branch('to_page_id', 'i');
   const nb = pageReadFilter('nb', policy, params, true);
   const dg = pageReadFilter('dg', policy, params, true);
+  const degreeLive = opts.temporal ? `AND ${relationshipFilterSql('dl', { ...opts.temporal, excludePrivate: opts.excludePrivate })}` : '';
   const ev = pageReadFilter('ev', policy, params, true);
   const textGate = requiresSafeChunks(policy) ? `AND ${safeChunksFilter('ev')} AND NOT ${protectedBodyFilter('ev')}` : '';
   params.push(opts.toward);
@@ -183,7 +185,7 @@ export async function readChainHop(query: ReadQuery, frontier: number[], opts: C
           SELECT CASE WHEN dl.from_page_id = f.id THEN dl.to_page_id ELSE dl.from_page_id END AS nb_id, dl.id AS lid, dl.origin_page_id
           FROM links dl
           WHERE (dl.from_page_id = f.id OR dl.to_page_id = f.id) AND dl.from_page_id <> dl.to_page_id
-            AND dl.link_type = ANY($4::text[]) AND dl.link_source IS DISTINCT FROM 'mentions'
+            AND dl.link_type = ANY($4::text[]) AND dl.link_source IS DISTINCT FROM 'mentions' ${degreeLive}
           OFFSET 0
         ) dn
         CROSS JOIN LATERAL ${byId('dn.nb_id')} nb

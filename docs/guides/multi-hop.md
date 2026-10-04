@@ -94,8 +94,9 @@ the hops run outward from it. Questions it does not plan, and says so in a
 - two relationships joined by "and" / "or" ("companies Alice founded and
   invested in" is an intersection, not a chain), unless what follows "and"
   points back with "them" / "those";
-- negation ("did not invest"), time ("in 2021", "used to"), counting and
-  superlatives;
+- negation ("did not invest"), dates and time windows ("in 2021", "before
+  2020"), a tense marker on a relationship that does not end ("formerly
+  invested in"), counting and superlatives;
 - two named entities, quoted names, or relationships whose page types do not
   chain.
 
@@ -119,6 +120,15 @@ Chains read typed links only. Meeting attendance counts when the meeting page
 lists attendees in an `Attendees:` or `Participants:` section (see
 [attendance evidence](attendance-evidence.md)); a person merely mentioned in a
 meeting's notes is not an attendee.
+
+Chains walk relationships that are true today, the same rule every graph read
+follows ([temporal edges](temporal-edges.md)): an advisory role or job that
+ended is skipped, while events such as founding and investing stay true after
+they happen. A tense marker right before a relationship that can end sets
+that hop alone: "the companies Alice formerly advised" walks ended advisory
+roles, "used to work at" and "worked at" walk every job, "currently works at"
+walks live ones; the other hops keep the default. `traverse_graph` with `hops` takes `status` and `as_of` like a
+plain walk, and `graph.edge_validity off` turns the rule off.
 
 ## Direction and evidence
 

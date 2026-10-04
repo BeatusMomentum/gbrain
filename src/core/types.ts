@@ -1581,6 +1581,7 @@ export interface ChainHopOpts extends PageReadPolicy {
   degreeLinkTypes: string[];
   /** Max logical edges returned per frontier node (deterministic: lowest link id first). */
   neighborCap: number;
+  temporal?: import('./link-validity.ts').EdgeTemporalOpts; // relationship-validity policy per link row; absent = every edge
 }
 
 /**

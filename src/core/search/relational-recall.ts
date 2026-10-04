@@ -34,7 +34,7 @@ import { buildVisibilityClause } from './sql-ranking.ts';
 import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
-import { edgeValidityEnabled } from '../link-validity.ts';
+import { edgeValidityEnabled, type EdgeTemporalOpts } from '../link-validity.ts';
 import { stampEvidence, type EvidenceOpts } from './evidence.ts';
 import { parseRelationalPlan } from './relational-plan.ts';
 import { LINK_SIGNATURES, presentEdgeContext, resolveChainAnchors, runRelationalChain, type ChainAnchor, type ChainDiagnostics, type ChainStatus, type RelationalChainRow } from './relational-chain.ts';
@@ -447,7 +447,7 @@ export async function buildRelationalArm(
     });
     if (opts.orientOneHop && parsed.kind === 'who_rel' && parsed.direction !== 'both'
         && parsed.linkTypes?.length && parsed.linkTypes.every(lt => LINK_SIGNATURES[lt])) {
-      rows = await withOrientedOneHop(engine, rows, resolved, parsed, opts);
+      rows = await withOrientedOneHop(engine, rows, resolved, parsed, temporal ? { ...opts, temporal } : opts);
     }
     const list = await hydrate(engine, rows, resolved[0].slug, opts);
     meta.fired = list.length > 0;
@@ -488,7 +488,9 @@ async function planChain(
     const anchors: ChainAnchor[] = [];
     for (const ref of refs) anchors.push(...await resolveChainAnchors(engine, ref.slug, { ...opts, sourceIds: undefined, sourceId: ref.source_id }));
     meta.seeds_resolved = anchors.length;
-    const { rows, diagnostics } = await runRelationalChain(engine, anchors, { hops: plan.hops, excludeAnchor: plan.excludeAnchor }, opts);
+    // Live relationships by default; a tense marker on one relation ("formerly advised") sets that hop's status.
+    const temporal = await edgeValidityEnabled(engine) ? { status: 'live' as const } : undefined;
+    const { rows, diagnostics } = await runRelationalChain(engine, anchors, { hops: plan.hops, excludeAnchor: plan.excludeAnchor }, temporal ? { ...opts, temporal } : opts);
     meta.plan = {
       status: diagnostics.status, anchor: plan.anchor, anchor_slugs: anchors.map(a => a.slug),
       hops: diagnostics.per_hop, answers: rows.filter(r => r.role === 'answer').length,
@@ -547,7 +549,7 @@ async function withOrientedOneHop(
   rows: RelationalFanoutRow[],
   seeds: Array<{ source_id: string; slug: string }>,
   parsed: RelationalQuery,
-  opts: RelationalArmOpts,
+  opts: RelationalArmOpts & { temporal?: EdgeTemporalOpts },
 ): Promise<RelationalFanoutRow[]> {
   const anchors: ChainAnchor[] = [];
   for (const s of seeds) anchors.push(...await resolveChainAnchors(engine, s.slug, { ...opts, sourceIds: undefined, sourceId: s.source_id }));
