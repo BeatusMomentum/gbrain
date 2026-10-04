@@ -16,6 +16,7 @@ import type { OperationError } from '../ops/contract.ts';
 import { engineGraduatedError, inProgressError, interruptedError, splitBrainError } from './graduation-errors.ts';
 import { inspectLockHolder, isProcessAlive, readBootId, readPidNs, type LockHandle } from '../pglite-lock.ts';
 import { moveHeldPglite } from './maintenance.ts';
+import { flushDirectory } from '../fs-durable.ts';
 import type { BrainEngine } from '../engine.ts';
 import { GRADUATION_RUN_SETTING, graduationTablePresent, readGraduationRow } from './graduation-schema.ts';
 import type { GraduationPathState, IntentMarker, ManifestState, TargetIdentity, Tombstone } from './engine-graduation.types.ts';
@@ -53,13 +54,7 @@ export function graduatedPath(dataDir: string, runId: string): string {
 
 // ── durable writes ─────────────────────────────────────────────────────────
 
-function fsyncDirectory(dir: string): void {
-  let fd: number | undefined;
-  try { fd = openSync(dir, 'r'); fsyncSync(fd); }
-  catch (error) { if (process.platform !== 'win32') throw error; }
-  finally { if (fd !== undefined) closeSync(fd); }
-}
-export function fsyncParent(path: string): void { fsyncDirectory(dirname(path)); }
+export function fsyncParent(path: string): void { flushDirectory(dirname(path)); }
 
 /** tmp + fsync + rename + fsync(parent), mode 0600. */
 export function writeFileDurably(path: string, content: string): void {
@@ -320,10 +315,6 @@ export function moveAsideHeld(dataDir: string, lock: LockHandle, runId: string):
   return movedTo;
 }
 
-/** Display form of a target identity: never the password. */
-export function targetDisplayUrl(target: TargetIdentity): string {
-  return `postgres://${encodeURIComponent(target.user)}@${target.host}:${target.port}/${encodeURIComponent(target.database)}`;
-}
 
 // ── database connect and admission checks ──────────────────────────────────
 

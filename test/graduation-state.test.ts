@@ -32,7 +32,8 @@ import { crashAt, makeHarness, openPglite, probeRows, TARGET_URL, type Harness }
 /** Another process opening the datastore (a respawned serve): its refusal code, or 'opened'. */
 function openInChild(dataDir: string): string {
   const script = `import { PGLiteEngine } from ${JSON.stringify(join(import.meta.dir, '../src/core/pglite-engine.ts'))};
-const e = new PGLiteEngine();
+const Engine = PGLiteEngine;
+const e = new Engine();
 try { await e.connect({ engine: 'pglite', database_path: ${JSON.stringify(dataDir)} }); console.log('opened'); await e.disconnect(); }
 catch (err) { console.log(err?.code ?? String(err)); }`;
   const child = Bun.spawnSync([process.execPath, '-e', script], { stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });

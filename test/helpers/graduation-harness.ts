@@ -25,6 +25,9 @@ const PROBE_DDL = 'CREATE TABLE IF NOT EXISTS grad_probe (id integer PRIMARY KEY
 export const TARGET_URL = 'postgres://alice-example:secret-pw@db.example.test:5432/brain';
 export const SOURCE_TOKEN_ID = '00000000-0000-4000-8000-0000000000a1';
 
+/** An unconnected PGLite engine for held-lock opens (callers disconnect it). */
+export function newPgliteEngine(): PGLiteEngine { return new PGLiteEngine(); }
+
 /** Open a disk-backed PGLite engine (callers disconnect it). */
 export async function openPglite(dataDir: string): Promise<PGLiteEngine> {
   const engine = new PGLiteEngine();

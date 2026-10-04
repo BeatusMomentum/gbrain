@@ -24,7 +24,7 @@ import {
 import type { IntentMarker, ManifestState, Tombstone } from '../src/core/persistence/engine-graduation.types.ts';
 import { acquireKernelLockOnly, acquireLock, PgliteBusyError, releaseLock, type LockHandle } from '../src/core/pglite-lock.ts';
 import { moveHeldPglite } from '../src/core/persistence/maintenance.ts';
-import { openPglite } from './helpers/graduation-harness.ts';
+import { newPgliteEngine, openPglite } from './helpers/graduation-harness.ts';
 
 const target = { id: 'target-id', host: 'db.example.test', port: 5432, database: 'brain', user: 'alice-example' };
 function marker(runId: string, state: ManifestState, identity: Partial<IntentMarker> = {}): IntentMarker {
@@ -165,8 +165,7 @@ describe('lock-retaining close and held-lock move-aside', () => {
     moveHeldPglite(dataDir, moved, lock);
     moveHeldPglite(moved, dataDir, lock);
     await expect(acquireLock(dataDir, { timeoutMs: 0 })).rejects.toBeInstanceOf(PgliteBusyError);
-    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
-    const adopted = new PGLiteEngine();
+    const adopted = newPgliteEngine();
     await adopted.connectWithHeldLock({ engine: 'pglite', database_path: dataDir }, lock);
     try { expect(await adopted.executeRaw('SELECT 1 AS one')).toEqual([{ one: 1 }]); } finally { await adopted.disconnect(); }
     const after = await openPglite(dataDir);

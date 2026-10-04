@@ -39,7 +39,7 @@ import {
 import {
   currentProcessIdentity, engineGraduatedFor, fsyncParent, graduatedPath, graduationDataDir, inspectGraduationPath, markerLiveness,
   allowGraduationInspection, moveAsideHeld, readIntentMarker, readTombstone, registerGraduationRunInProcess, removeIntentMarker, removeTombstone, splitBrainFor,
-  targetDisplayUrl, TERMINAL_STATES, TombstonePathOccupiedError, writeFileDurably, writeIntentMarker, writeTombstone,
+  TERMINAL_STATES, TombstonePathOccupiedError, writeFileDurably, writeIntentMarker, writeTombstone,
 } from './graduation-custody.ts';
 import {
   drainTimeoutError, embeddingDimensionMismatchError, foreignHostBindingError, inProgressError, interruptedError, planArgv as planArgvOf,
@@ -916,7 +916,7 @@ async function tombstoneUnderLock(run: Run): Promise<void> {
     try {
       writeTombstone(run.dataDir, {
         kind: 'gbrain-engine-graduated', runId: run.m.runId, brainId: run.m.source.brainId, movedTo, target: run.m.target,
-        targetDisplayUrl: targetDisplayUrl(run.m.target), graduatedAt: new Date().toISOString(),
+        targetDisplayUrl: run.m.routes.main, graduatedAt: new Date().toISOString(),
         fixArgv: ['gbrain', 'config', 'set', 'database_url', '<GBRAIN_TARGET_URL>'],
       });
     } catch (error) {

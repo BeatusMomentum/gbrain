@@ -1,4 +1,5 @@
-import { closeSync, existsSync, fsyncSync, lstatSync, openSync, realpathSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, renameSync } from 'node:fs';
+import { flushDirectory } from '../fs-durable.ts';
 import { dirname, join } from 'node:path';
 import { acquireLock, releaseLock, type LockHandle } from '../pglite-lock.ts';
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
@@ -65,8 +66,5 @@ export function moveHeldPglite(fromDir: string, toDir: string, lock: LockHandle)
   renameSync(fromDir, toDir);
   lock.lockDir = join(toDir, '.gbrain-lock');
   if (lock.lockPath) lock.lockPath = join(lock.lockDir, 'lock');
-  let fd: number | undefined;
-  try { fd = openSync(dirname(toDir), 'r'); fsyncSync(fd); }
-  catch (error) { if (process.platform !== 'win32') throw error; }
-  finally { if (fd !== undefined) closeSync(fd); }
+  flushDirectory(dirname(toDir));
 }
