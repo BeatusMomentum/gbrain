@@ -65,24 +65,37 @@ export function resolveExtractAtomsCostGate(
 /** Config key holding the last refusal for a source; doctor's extract_health reads every one. */
 export const ATOMS_NO_PRICING_KEY_PREFIX = 'cycle.extract_atoms.no_pricing.';
 
+/** Who settles a gate: the phase name, its log label and where its refusal is recorded for doctor. */
+export interface CostGateTarget {
+  phase: 'extract_atoms' | 'chronicle';
+  /** Config key prefix of the recorded refusal; the source id is appended. */
+  keyPrefix: string;
+  /** extract_atoms also counts the refusal in its extraction rollup. */
+  rollup: boolean;
+}
+
+const ATOMS_TARGET: CostGateTarget = { phase: 'extract_atoms', keyPrefix: ATOMS_NO_PRICING_KEY_PREFIX, rollup: true };
+
 /**
  * Act on the gate before any work item. Default-cap drop: warn and return
  * null (the run proceeds uncapped). Refusal: record it for doctor, count the
  * run as an expected limit (not a halt), and return the `warn` phase result
  * the caller returns as-is — no model call. Any run past the gate clears the
- * source's recorded refusal. A dry run records nothing.
+ * source's recorded refusal. A dry run records nothing. extract_atoms and the
+ * Life Chronicle phase share this policy through `target`.
  */
 export async function settleExtractAtomsCostGate(
   engine: BrainEngine,
   sourceId: string,
   gate: ExtractAtomsCostGate,
   run: { budgetCap: number; extractModel: string; dryRun: boolean },
+  target: CostGateTarget = ATOMS_TARGET,
 ): Promise<PhaseResult | null> {
-  const key = `${ATOMS_NO_PRICING_KEY_PREFIX}${sourceId}`;
+  const key = `${target.keyPrefix}${sourceId}`;
   if (!gate.refusal) {
     if (!gate.enforceCap) {
       console.error(
-        `[extract_atoms] ${gate.unpricedKind} model "${gate.unpricedModel}" is not in the pricing maps; ` +
+        `[${target.phase}] ${gate.unpricedKind} model "${gate.unpricedModel}" is not in the pricing maps; ` +
           `running without a cost gate (a default cap cannot be enforced on an unpriced model). Look up its per-token price and register it to restore the cap: ` +
           `${pricingSetCommand(gate.unpricedModel!, gate.unpricedKind ?? 'chat')} (--rate 0 for local inference).`,
       );
@@ -91,21 +104,21 @@ export async function settleExtractAtomsCostGate(
     return null;
   }
   const message = noPricingMessage(gate.refusal, { capUsd: run.budgetCap });
-  console.error(`[extract_atoms] ${message}`);
+  console.error(`[${target.phase}] ${message}`);
   if (!run.dryRun) {
     await engine.setConfig(key, JSON.stringify({ ...gate.refusal, at: new Date().toISOString() })).catch(() => {});
-    await upsertExtractRollup(engine, { kind: 'atoms', source_id: sourceId, cost_delta: 0, ...classifyRunStop({ budget_exhausted: true }) });
+    if (target.rollup) await upsertExtractRollup(engine, { kind: 'atoms', source_id: sourceId, cost_delta: 0, ...classifyRunStop({ budget_exhausted: true }) });
   }
   return {
-    phase: 'extract_atoms',
+    phase: target.phase,
     status: 'warn',
     duration_ms: 0,
-    summary: `extract_atoms: ${message}`,
+    summary: `${target.phase}: ${message}`,
     details: {
       reason: 'no_pricing',
       source_id: sourceId,
       no_pricing: gate.refusal,
-      atoms_extracted: 0,
+      ...(target.phase === 'extract_atoms' ? { atoms_extracted: 0 } : {}),
       budget_usd: run.budgetCap,
       budget_exhausted: true,
       model: run.extractModel,

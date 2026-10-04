@@ -12,6 +12,7 @@ import { runThink } from '../../src/core/think/index.ts';
 import { prepareMarkdownChunks } from '../../src/core/markdown-chunks.ts';
 import { installFixtureChunks } from './page-projection.ts';
 import { withEnv } from './with-env.ts';
+import { leanRow } from '../../src/core/search/lean-rows.ts';
 
 export const OFF_PATH_PAGES: Array<{ slug: string; body: string; timeline?: string; frontmatter?: Record<string, unknown> }> = [
   {
@@ -74,6 +75,33 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
   });
   out['think-prompt'] = prompts[0];
   return out;
+}
+
+const leanRetrieval = (meta: Record<string, unknown>) => ({ ...meta, rows: 'lean' });
+
+/**
+ * The cost wave changes remote output on purpose: C1 projects remote
+ * search/query rows to lean rows (and reports `rows: "lean"` in the retrieval
+ * meta), and C2 serializes MCP content[0] as compact JSON. The frozen
+ * pre-feature bytes stay as captured; this applies exactly those two declared
+ * transforms to them, so every other byte of the capture is still compared.
+ */
+export function withCostWave(key: string, frozen: string): string {
+  const base = key.replace(/:chunk$/, '');
+  if (base === 'search-remote') {
+    const v = JSON.parse(frozen) as { result: Record<string, unknown>[]; meta: Array<{ key: string; value: Record<string, unknown> }> };
+    return JSON.stringify({
+      result: v.result.map(leanRow),
+      meta: v.meta.map(m => m.key === 'retrieval' ? { key: m.key, value: leanRetrieval(m.value) } : m),
+    });
+  }
+  if (!base.startsWith('mcp-')) return frozen;
+  const res = JSON.parse(frozen) as { content: Array<{ type: string; text: string }>; _meta?: Record<string, Record<string, unknown>> };
+  const body = JSON.parse(res.content[0].text);
+  const lean = base === 'mcp-search' || base === 'mcp-query';
+  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(leanRow) : body);
+  if (lean && res._meta?.retrieval) res._meta.retrieval = leanRetrieval(res._meta.retrieval);
+  return JSON.stringify(res);
 }
 
 export async function seedOffPath(engine: BrainEngine, pages = OFF_PATH_PAGES): Promise<void> {

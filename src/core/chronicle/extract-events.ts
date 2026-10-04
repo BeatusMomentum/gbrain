@@ -6,12 +6,12 @@
 //   →  write event pages (content-addressed, idempotent)  →  project to timeline
 //
 // The judge is injectable so the deterministic write path is testable without a
-// real gateway. The default judge calls the chat gateway; when no gateway is
-// configured it returns zero events (auto-emit is a no-op, never an error).
+// real gateway. The default judge calls the chat gateway and classifies every
+// failure (no provider, provider error, refusal, truncation, unparseable
+// output) so none is ever recorded as a genuine no_events answer.
 import type { BrainEngine } from '../engine.ts';
-import { computeContentHash } from '../ingestion/types.ts';
-import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
-import { serializeMarkdown } from '../markdown.ts';
+import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
+import { buildChronicleEvent, pinDepth, publishChronicleGeneration, type BuiltChronicleEvent } from './publish.ts';
 
 export interface ChronicleEventProposal {
   when: string;            // ISO datetime or YYYY-MM-DD
@@ -36,8 +36,11 @@ export interface ChronicleJudgeResult {
    *   - 'truncated': the model hit the output-token cap (stopReason 'length');
    *     the JSON array was cut mid-stream and must not be parsed as complete.
    *   - 'parse_failed': the model returned text but no valid JSON array.
+   *   - 'chat_error': the provider call failed (#5876 E2: never `no_events`).
+   *   - 'refused': refusal or content filter.
+   * Only a parsed empty array is a genuine no-events answer.
    */
-  failure?: 'truncated' | 'parse_failed' | 'llm_unavailable';
+  failure?: 'truncated' | 'parse_failed' | 'llm_unavailable' | 'chat_error' | 'refused';
 }
 export type ChronicleJudge = (input: ChronicleJudgeInput) => Promise<ChronicleJudgeResult>;
 
@@ -46,6 +49,8 @@ export interface ChronicleExtractResult {
   status: 'extracted' | 'no_events' | 'skipped';
   events_written: number;
   reason?: string;
+  /** Owned events of an earlier generation this run retired. */
+  events_retired?: number;
 }
 
 const KIND_VOCAB = new Set([
@@ -56,12 +61,6 @@ const KIND_VOCAB = new Set([
 function normalizeKind(k: string): string {
   const n = (k || '').trim().toLowerCase();
   return KIND_VOCAB.has(n) ? n : 'event';
-}
-
-/** Parse a when string to a Date, or null when unparseable (for effective_date). */
-function safeDate(s: string): Date | null {
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 /** Resolve a when value to a stable YYYY-MM-DD at the pinned timezone. */
@@ -103,20 +102,15 @@ function collectAttendees(fm: Record<string, unknown>): string[] {
   return [...out];
 }
 
-/**
- * Run the chronicle extractor for one depth page. Idempotent: event slugs are
- * content-addressed (re-run upserts the same pages) and the projection upserts
- * on (event_page_id, date). A crash between writes re-runs to the same state.
- */
-export async function runChronicleExtract(
-  engine: BrainEngine,
-  opts: { slug: string; sourceId?: string; judge?: ChronicleJudge; tz?: string; signal?: AbortSignal },
-): Promise<ChronicleExtractResult> {
-  const sourceId = opts.sourceId ?? 'default';
-  const tz = opts.tz ?? 'UTC';
-  const page = await engine.getPage(opts.slug, { sourceId });
-  if (!page) return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'page_not_found' };
+export interface ChronicleJudgeContext {
+  input: ChronicleJudgeInput;
+  effectiveDate: string | null;
+  attendees: string[];
+}
 
+/** The judge input for one immutable depth snapshot (E5: the judge never re-reads the page). */
+export function chronicleJudgeContext(page: { slug: string; type: string; title: string; compiled_truth?: string | null;
+  effective_date?: unknown; frontmatter?: Record<string, unknown> | null }): ChronicleJudgeContext {
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
   const edRaw = page.effective_date as unknown;
   const effectiveDate: string | null =
@@ -125,6 +119,38 @@ export async function runChronicleExtract(
     : typeof fm.date === 'string' ? fm.date
     : null;
   const attendees = collectAttendees(fm);
+  return {
+    effectiveDate, attendees,
+    input: { slug: page.slug, type: page.type, title: page.title, body: page.compiled_truth ?? '', effectiveDate, attendees },
+  };
+}
+
+/** Proposals → event pages for one depth snapshot. */
+export function buildChronicleEvents(proposals: ChronicleEventProposal[], ctx: ChronicleJudgeContext,
+  depth: { slug: string; visibility: 'private' | 'world'; contentHash: string }, tz: string): BuiltChronicleEvent[] {
+  return proposals.map((ev) => buildChronicleEvent(ev, {
+    depthSlug: depth.slug, attendees: ctx.attendees, effectiveDate: ctx.effectiveDate, tz,
+    visibility: depth.visibility, depthHash: depth.contentHash, isoDay, normalizeKind,
+  }));
+}
+
+/**
+ * Run the chronicle extractor for one depth page. Idempotent: event slugs are
+ * content-addressed (re-run upserts the same pages) and the projection upserts
+ * on (event_page_id, date). A crash between writes re-runs to the same state.
+ * The judge reads one snapshot; publication re-validates it and reconciles the
+ * previous generation (publish.ts). Direct callers keep this result shape; the
+ * `chronicle` phase classifies failures itself (cycle/chronicle.ts).
+ */
+export async function runChronicleExtract(
+  engine: BrainEngine,
+  opts: { slug: string; sourceId?: string; judge?: ChronicleJudge; tz?: string; signal?: AbortSignal },
+): Promise<ChronicleExtractResult> {
+  const sourceId = opts.sourceId ?? 'default';
+  const tz = opts.tz ?? 'UTC';
+  const snapshot = await engine.readPageSnapshot(opts.slug, { sourceId });
+  if (!snapshot) return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'page_not_found' };
+  const ctx = chronicleJudgeContext(snapshot.page);
   // #5523: a managed brain refuses the legacy putPage/projection writers.
   // Claim maintenance authority before judge spend; null when unmanaged.
   const maintenance = await maintenancePreflight(engine, sourceId);
@@ -132,10 +158,7 @@ export async function runChronicleExtract(
   const judge = opts.judge ?? defaultJudge(engine);
   let result: ChronicleJudgeResult;
   try {
-    result = await judge({
-      slug: opts.slug, type: page.type, title: page.title,
-      body: page.compiled_truth ?? '', effectiveDate, attendees,
-    });
+    result = await judge(ctx.input);
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') throw e;
     return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'judge_error' };
@@ -148,49 +171,21 @@ export async function runChronicleExtract(
     return { slug: opts.slug, status: 'skipped', events_written: 0, reason: `judge_${result.failure}` };
   }
   const proposals = Array.isArray(result?.events) ? result.events : [];
-  if (proposals.length === 0) return { slug: opts.slug, status: 'no_events', events_written: 0 };
   // PARSE BARRIER — reject the WHOLE batch on any malformed proposal; no partial writes.
   if (!proposals.every(isValidProposal)) {
     return { slug: opts.slug, status: 'skipped', events_written: 0, reason: 'malformed_proposal' };
   }
-
-  let written = 0;
-  for (const ev of proposals) {
-    if (opts.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-    const who = ev.who.length ? ev.who : attendees;
-    const when = ev.when || effectiveDate || isoDay(new Date(0).toISOString(), tz);
-    const day = isoDay(when, tz);
-    const hash = computeContentHash(`${who.join(',')}|${ev.what}|${opts.slug}`).slice(0, 8);
-    const eventSlug = `life/events/${day}-${hash}`;
-    const title = ev.what.slice(0, 120);
-    const compiledTruth = `${ev.what} — see [[${opts.slug}]].`;
-    const event = { when, who, what: ev.what, where: ev.where ?? null, kind: normalizeKind(ev.kind), depth: opts.slug };
-    if (maintenance) {
-      // Database-only: life/events/ is derived machine output. event_date feeds
-      // the importer's effective_date, matching the legacy column.
-      const snapshot = await engine.readPageSnapshot(eventSlug, { sourceId, includeDeleted: true });
-      if (snapshot?.page.deleted_at) continue; // an operator deleted this event; never resurrect it
-      await publishMaintenancePage(engine, maintenance, eventSlug,
-        serializeMarkdown({ event, event_date: when, captured_via: 'life-chronicle:auto' }, compiledTruth, '',
-          { type: 'event', title, tags: [] }),
-        { expectedRevision: snapshot?.revision ?? null, file: false,
-          eventProjection: { depth_slug: opts.slug, date: day, summary: ev.what } });
-      written++;
-      continue;
-    }
-    await engine.putPage(eventSlug, {
-      type: 'event',
-      title,
-      compiled_truth: compiledTruth,
-      frontmatter: { type: 'event', event, captured_via: 'life-chronicle:auto' },
-      effective_date: safeDate(when),
-    }, { sourceId });
-    await engine.upsertEventProjection({
-      depthSlug: opts.slug, eventSlug, date: day, summary: ev.what, sourceId,
-    });
-    written++;
+  const pin = pinDepth(snapshot);
+  const generation = await publishChronicleGeneration(engine, {
+    sourceId, pin, maintenance, decisionRequestId: null, signal: opts.signal,
+    events: buildChronicleEvents(proposals, ctx, { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, tz),
+  });
+  if (generation.superseded) {
+    return { slug: opts.slug, status: 'skipped', events_written: generation.written.length, reason: generation.superseded,
+      events_retired: generation.retired.length };
   }
-  return { slug: opts.slug, status: 'extracted', events_written: written };
+  return { slug: opts.slug, status: proposals.length === 0 ? 'no_events' : 'extracted',
+    events_written: generation.written.length, events_retired: generation.retired.length };
 }
 
 const JUDGE_SYSTEM = `You segment a meeting/transcript page into discrete timeline EVENTS.
@@ -204,7 +199,7 @@ Prefer the page's known date for "when" when the text gives no explicit time. Us
  */
 const DEFAULT_JUDGE_MAX_TOKENS = 4000;
 
-function defaultJudge(engine: BrainEngine): ChronicleJudge {
+export function defaultJudge(engine: BrainEngine): ChronicleJudge {
   return async (input) => {
     const { isAvailable, chat } = await import('../ai/gateway.ts');
     // #2608: a missing chat provider used to return a bare `{events: []}` —
@@ -233,14 +228,16 @@ function defaultJudge(engine: BrainEngine): ChronicleJudge {
         }],
         maxTokens,
       });
-      if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') return { events: [] };
+      if (res.stopReason === 'refusal' || res.stopReason === 'content_filter') return { events: [], failure: 'refused' };
       // #2606: output hit the token cap — the JSON array is cut mid-stream.
       // Do NOT feed it to the parser as if complete; surface the truncation.
       if (res.stopReason === 'length') return { events: [], failure: 'truncated' };
       text = res.text;
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err;
-      return { events: [] };
+      // A budget refusal is the caller's to classify (no_pricing / cap), not a provider failure.
+      if ((err as { tag?: string })?.tag === 'BUDGET_EXHAUSTED') throw err;
+      return { events: [], failure: 'chat_error' };
     }
     const parsed = parseJudgeJson(text);
     // #2606: non-empty model text with no parseable JSON array is a parse

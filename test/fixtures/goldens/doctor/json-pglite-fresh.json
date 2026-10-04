@@ -416,13 +416,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 198 (latest: 198)",
+          "message": "Version 199 (latest: 199)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "828 column(s) verified against live schema",
+          "message": "853 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1115,10 +1115,98 @@
         {
           "category": "brain",
           "details": {
-            "enabled": false
+            "auto_calls_24h": 0,
+            "chat_available": false,
+            "daily_limit": 200,
+            "docs": "docs/guides/life-chronicle.md",
+            "enabled": true,
+            "job_budget_usd": 0.25,
+            "last_7d": {
+              "extracted": 0,
+              "failed": 0,
+              "failedReasons": {},
+              "reasons": {},
+              "skipped": 0
+            },
+            "ledger_available": true,
+            "pending": 0,
+            "principals_24h": [],
+            "readiness": "missing",
+            "run_now": [
+              "gbrain",
+              "dream",
+              "--phase",
+              "chronicle"
+            ],
+            "severity": "info",
+            "source": "default",
+            "spend_7d": {
+              "incompleteRecords": 0,
+              "knownUsd": 0,
+              "unpricedCalls": 0
+            }
           },
-          "message": "auto_chronicle is off.",
+          "message": "auto_chronicle is on (default). Last 24 h: 0 of 200 automatic extraction calls. Last 7 days: 0 extracted, 0 failed, 0 skipped; $0.00 known spend. 0 page(s) pending. No chat provider is configured, so nothing will be extracted until one is.",
           "name": "auto_chronicle",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "chronicle.* settings are valid.",
+          "name": "chronicle_config_invalid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ask_user": true,
+            "code": "auto_chronicle_default_on",
+            "decisions": [
+              {
+                "argv": [
+                  "gbrain",
+                  "config",
+                  "set",
+                  "auto_chronicle",
+                  "true"
+                ],
+                "id": "keep",
+                "label": "Keep automatic extraction on"
+              },
+              {
+                "argv": [
+                  "gbrain",
+                  "config",
+                  "set",
+                  "auto_chronicle",
+                  "false"
+                ],
+                "id": "opt_out",
+                "label": "Turn automatic extraction off"
+              }
+            ],
+            "default": "keep",
+            "docs": "docs/guides/life-chronicle.md",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "auto_chronicle",
+                "true"
+              ],
+              "consent": [
+                "paid",
+                "egress"
+              ],
+              "requires_exclusive": false,
+              "why": "Keeping the default records that the user accepted the per-page cost; the alternative is the opt-out."
+            },
+            "severity": "info"
+          },
+          "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
+          "name": "auto_chronicle_default_on",
           "status": "ok"
         },
         {
@@ -1282,13 +1370,14 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 9,
+              "global": 10,
               "mixed": 2,
               "source": 12
             },
             "phase_scope_map": {
               "backlinks": "source",
               "calibration_profile": "global",
+              "chronicle": "global",
               "consolidate": "source",
               "conversation_facts_backfill": "source",
               "drift": "global",
@@ -1312,7 +1401,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 9 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 10 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, chronicle, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

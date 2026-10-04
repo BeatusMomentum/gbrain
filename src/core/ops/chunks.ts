@@ -15,13 +15,12 @@ import { federatedSearchScope, parseSourceIdParam } from './context.ts';
 const resolve_slugs: Operation = {
   name: 'resolve_slugs',
   outputRedaction: 'no_stored_text',
-  description: 'Fuzzy-resolve a partial slug to matching page slugs',
+  description: 'Fuzzy-match a partial slug or title to page slugs.',
   params: {
-    partial: { type: 'string', required: true, description: "Partial slug or title text to match, e.g. 'alice-ex' or 'meeting notes'. This is the search text param — there is no `text` param." },
+    partial: { type: 'string', required: true, description: "Partial slug or title, e.g. 'alice-ex'." },
     source_id: {
       type: 'string',
-      description:
-        "Scope resolution to a single source. Defaults to OperationContext.sourceId; when unset, an unqualified resolve spans every federated source (matching search/get_page). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+      description: "One source, or '__all__'.",
     },
   },
   handler: async (ctx, p) => {

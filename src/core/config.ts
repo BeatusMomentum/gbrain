@@ -549,6 +549,8 @@ export interface GBrainConfig {
      * over this file slot. Always bounded by the server ceiling (D2).
      */
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
+    /** Search/query row shape for remote MCP callers: 'lean' (default) | 'full'. Dual-plane, DB > file. */
+    result_rows?: 'lean' | 'full';
   };
 }
 
@@ -1530,6 +1532,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // WP3 — unknown tool-call argument posture ('warn' default | 'reject').
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',
+  'mcp.result_rows', // C1 row shape, read dual-plane by src/mcp/result-rows.ts
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
@@ -1552,11 +1555,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // set` accepts them directly. See docs/operations/spend-controls.md.
   'spend.posture',
   'pricing.overrides',
-  // Life Chronicle (v0.42.56.0, #2390). The release notes' enable command is
-  // `gbrain config set auto_chronicle true`, but the key was never registered
-  // — so the documented command failed with "Unknown config key" and the
-  // operator had to discover --force by reading source. Same class as the
-  // spend-controls registration above.
+  // Life Chronicle (#2390, #5876): automatic event extraction, on by default
+  // (unset = on). The documented opt-out is `gbrain config set auto_chronicle
+  // false`; read by core/chronicle/config.ts.
   'auto_chronicle',
   // Auto-link toggle read by the put_page post-hook (link-extraction.ts),
   // reconcile-links, and sweep. The documented off-switch is `gbrain config
@@ -1574,6 +1575,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // pages overflowed the old hardcoded 1500 and were misrecorded as
   // no_events; the cap is now configurable and truncation is surfaced.
   'chronicle.judge_max_tokens',
+  'chronicle.job_budget_usd', 'chronicle.auto_daily_limit', 'chronicle.auto_recent_days', 'chronicle.auto_settle_seconds', // #5876 rails (chronicle/config.ts validates)
   // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
@@ -1654,7 +1656,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'content_sanity.',    // v0.41 content-sanity tunables
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
-  'chronicle.',         // chronicle.tz + future Life Chronicle knobs (#2390)
+  'chronicle.',         // Life Chronicle knobs; config set refuses leaves outside CHRONICLE_CONFIG_KEYS (#5876)
   'self_upgrade.',      // v0.42 self-upgrade (mode, quiet_hours, state)
   // Queue admission control (per-name sub-keys):
   //   minions.coalesce_params.<name>, minions.ttl_waiting_hours.<name>,

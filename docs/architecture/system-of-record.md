@@ -208,6 +208,7 @@ or a physical projection that leaves attribution untouched):
 
 <!-- write-attribution-covered:start -->
 - `src/commands/migrate-engine.ts` (5): engine copy keeps the source rows' attribution values verbatim.
+- `src/core/chronicle/publish.ts` (3): Life Chronicle event generations: maintenance requests on managed brains; the unmanaged event write, retirement soft delete and retired stamp run in `maintenanceTransaction`.
 - `src/core/cycle/extract-takes.ts` (2): coordinated per page on managed brains; the unmanaged batch upsert runs in `maintenanceTransaction`.
 - `src/core/embed-facts.ts` (1): embedding columns only (physical projection).
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
@@ -243,7 +244,6 @@ these write with `NULL` attribution):
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
 - `src/commands/sync/renames.ts` (1): legacy sync rename (`updateSlug`).
 - `src/core/calibration/undo-wave.ts` (1): calibration wave undo of take resolutions.
-- `src/core/chronicle/extract-events.ts` (1): event page write.
 - `src/core/company-brain/profile.ts` (1): company-brain sync soft deletes.
 - `src/core/cycle/dream-provenance.ts` (1): dream provenance frontmatter stamp.
 - `src/core/cycle/drift.ts` (1): drift report page.
