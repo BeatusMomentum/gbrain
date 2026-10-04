@@ -21,10 +21,10 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ColumnMeta, TriggerBypass } from '../src/core/persistence/engine-graduation.types.ts';
 import {
-  buildDeferredIndexes, columnContract, copySequences, copyTable, deferIndexes, detectTriggerBypass, GRADUATION_DEFERRED_INDEXES_KEY, reenableTriggers,
+  buildDeferredIndexes, columnContract, copySequences, copyTable, deferIndexes, detectTriggerBypass, GRADUATION_DEFERRED_INDEXES_KEY, recopyClosure, reenableTriggers,
 } from '../src/core/persistence/graduation-copy.ts';
 import { tableColumns } from '../src/core/persistence/graduation-digest.ts';
-import { GRADUATION_INVENTORY } from '../src/core/persistence/graduation-inventory.ts';
+import { fkClosure, GRADUATION_INVENTORY } from '../src/core/persistence/graduation-inventory.ts';
 import { digestMismatches, inventoryEntry as entry, rowCount } from './helpers/graduation-copy-harness.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -143,6 +143,26 @@ for (const backend of testBackends()) {
         }
         const disabled = await target.executeRaw("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'D'");
         expect(disabled).toEqual([]);
+      }, 120_000);
+    }
+
+    for (const bypass of ['session_replication_role', 'disable_trigger'] as TriggerBypass[]) {
+      test(`${bypass}: a changed table is re-copied with its whole FK closure`, async () => {
+        const e = { source, target };
+        const first = await recopyClosure(e, 'sources', { bypass, runId: 'r' });
+        const closure = (await fkClosure(target, 'sources')).filter(name => name in first);
+        expect(Object.keys(first)).toEqual(closure);
+        expect(closure).toEqual(expect.arrayContaining(['sources', 'pages', 'facts']));
+        expect(closure.indexOf('sources')).toBeLessThan(closure.indexOf('pages'));
+        await source.transaction(async tx => {
+          await tx.executeRaw('SET LOCAL session_replication_role = replica');
+          await tx.executeRaw("UPDATE sources SET name = 'renamed again' WHERE id = 'history-a'");
+          await tx.executeRaw("INSERT INTO facts (id, fact, source, source_id, superseded_by) VALUES (9, 'later', 'test', 'history-a', 2)");
+        });
+        const second = await recopyClosure(e, 'sources', { bypass, runId: 'r' });
+        expect(second.facts).toBe(4);
+        expect(await digestMismatches(e, closure.map(name => entry(name)))).toEqual([]);
+        expect(await target.executeRaw("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'D'")).toEqual([]);
       }, 120_000);
     }
 

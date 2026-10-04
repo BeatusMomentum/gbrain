@@ -28,8 +28,9 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { ANN_BUILD_MESSAGE, buildDeferredAnnIndexes, type DeferredAnnIndex } from '../embedding-ann-build.ts';
-import type { ColumnMeta, GraduationEngines, InventoryEntry, TriggerBypass } from './engine-graduation.types.ts';
+import type { ColumnMeta, GraduationEngines, Inventory, InventoryEntry, TriggerBypass } from './engine-graduation.types.ts';
 import { digestPlan, quoteIdent, tableColumns, withDigestSession, type DigestPlan } from './graduation-digest.ts';
+import { fkClosure, GRADUATION_INVENTORY } from './graduation-inventory.ts';
 import { graduationError } from './graduation-target.ts';
 
 /** Target-owned config row holding the deferred index list; the config copy never deletes it. */
@@ -205,6 +206,39 @@ export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
     for (const trigger of disabled) await tx.executeRaw(`ALTER TABLE ${table} ${ENABLE_BY_MODE[trigger.enabled] ?? 'ENABLE TRIGGER'} ${trigger.ident}`);
     return { rows };
   });
+}
+
+/**
+ * Re-copies a table together with every table that references it
+ * transitively (its FK closure): all closure tables are emptied children
+ * first in one fenced transaction (a parent delete would otherwise cascade
+ * into, or be refused by, children still holding rows under DISABLE TRIGGER),
+ * then each carried closure table is copied parents first.
+ */
+export async function recopyClosure(e: GraduationEngines, relation: string,
+  opts: { bypass: TriggerBypass; runId: string; batchBytes?: number; inventory?: Inventory; onBatch?: (relation: string, rows: number) => void }): Promise<Record<string, number>> {
+  const inventory = opts.inventory ?? GRADUATION_INVENTORY;
+  const byName = new Map(inventory.entries.filter(x => x.class === 'carry' || x.class === 'rebind').map(x => [x.relation, x]));
+  const closure = (await fkClosure(e.target, relation)).filter(name => byName.has(name));
+  const disabled = new Map<string, Awaited<ReturnType<typeof userTriggers>>>();
+  if (opts.bypass === 'disable_trigger') for (const name of closure) disabled.set(name, await userTriggers(e.target, name, true));
+  await e.target.transaction(async tx => {
+    await setFence(tx, opts.runId);
+    if (opts.bypass === 'session_replication_role') await tx.executeRaw('SET LOCAL session_replication_role = replica');
+    for (const name of [...closure].reverse()) {
+      const table = quoteIdent(name);
+      const filter = [byName.get(name)!.rowFilter ? `(${byName.get(name)!.rowFilter})` : '', name === 'config' ? `key <> '${GRADUATION_DEFERRED_INDEXES_KEY}'` : ''].filter(Boolean);
+      for (const trigger of disabled.get(name) ?? []) await tx.executeRaw(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger.ident}`);
+      await tx.executeRaw(`DELETE FROM ${table}${filter.length ? ` WHERE ${filter.join(' AND ')}` : ''}`);
+      for (const trigger of disabled.get(name) ?? []) await tx.executeRaw(`ALTER TABLE ${table} ${ENABLE_BY_MODE[trigger.enabled] ?? 'ENABLE TRIGGER'} ${trigger.ident}`);
+    }
+  });
+  const counts: Record<string, number> = {};
+  for (const name of closure) {
+    counts[name] = (await copyTable(e, byName.get(name)!, { bypass: opts.bypass, runId: opts.runId, batchBytes: opts.batchBytes,
+      onBatch: rows => opts.onBatch?.(name, rows) })).rows;
+  }
+  return counts;
 }
 
 export interface SequencePosition { sequence: string; value: string; isCalled: boolean; raisedToColumnMax: boolean }
