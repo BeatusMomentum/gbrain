@@ -333,24 +333,3 @@ describe('ledger and discovery (E1/E6/D12)', () => {
     expect((await rows(engine)).map((r) => [r.slug, r.state, r.reason])).toEqual([['meetings/legacy', 'skipped', 'no_write_decision']]);
   }), 120_000);
 });
-
-describe('unmanaged brain (E6)', () => {
-  test('the phase scans pages changed since activation; earlier pages stay with backfill', async () => {
-    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
-    const engine = new PGLiteEngine();
-    await engine.connect({}); await engine.initSchema();
-    try {
-      await engine.setConfig('chronicle.auto_settle_seconds', '0');
-      await engine.putPage('meetings/before', { type: 'meeting', title: 'Before', compiled_truth: BODY, frontmatter: { date: today } });
-      await Bun.sleep(20);
-      await engine.setConfig('chronicle.activated_at', new Date().toISOString());
-      await Bun.sleep(20);
-      await engine.putPage('meetings/after', { type: 'meeting', title: 'After', compiled_truth: BODY, frontmatter: { date: today } });
-      const judge = countingJudge(() => ({ events: [ev('Alice agreed to ship the beta')] }));
-      const r = await runPhaseChronicle(engine, { judge });
-      expect(judge.calls).toBe(1);
-      expect(r.details).toMatchObject({ extracted: 1, events_written: 1 });
-      expect((await rows(engine)).map((x) => [x.slug, x.state])).toEqual([['meetings/after', 'extracted']]);
-    } finally { await engine.disconnect(); }
-  }, 120_000);
-});

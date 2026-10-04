@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 209860,
-    "stdoutSha256": "1ec5b407e08b2b2333a2f5fe2c24561fa47447bb9303de69902a0bfe562610df",
+    "stdoutBytes": 210736,
+    "stdoutSha256": "e58c7525a0234ce0d695669f80e52ea2e454c41b605f61c2727562d9cbe6d567",
     "toolNames": [
       "remember",
       "entity",
@@ -4076,26 +4076,41 @@
         }
       },
       {
-        "description": "Life Chronicle: sweep existing meeting/conversation/calendar pages into timeline events by enqueuing chronicle_extract jobs (one per eligible page). A page whose current content was already enqueued is skipped (already_enqueued), so repeat runs move on to pages not yet swept. --dry-run counts without enqueuing. Local-only bulk op. CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--limit N] [--dry-run]`.",
+        "description": "Life Chronicle: queue existing meeting/conversation/calendar pages (by type or under meetings/, conversations/, cal/, calendar/) for timeline-event extraction. One paid chat call per page, so it needs --yes; --dry-run reports the candidates, an estimated cost and skip reasons. The chronicle_page_state ledger skips content already extracted or queued, so repeats never pay twice. Queued pages run in the `chronicle` cycle phase (`gbrain dream --phase chronicle`), exempt from the daily limit. Local-only bulk op. CLI: `gbrain chronicle-backfill [--since YYYY-MM-DD] [--dated-since YYYY-MM-DD] [--recent] [--limit N] [--dry-run | --yes]`.",
         "name": "chronicle_backfill",
         "parameters": {
+          "dated_since": "string?",
           "dry_run": "boolean?",
           "limit": "number?",
-          "since": "string?"
+          "recent": "boolean?",
+          "since": "string?",
+          "yes": "boolean?"
         },
         "schema": {
           "properties": {
+            "dated_since": {
+              "description": "Only pages whose own date (authored effective date, else frontmatter date/start) is on/after this date (YYYY-MM-DD).",
+              "type": "string"
+            },
             "dry_run": {
-              "description": "Count eligible pages without enqueuing.",
+              "description": "Count candidates, estimate cost and report skip reasons without queuing.",
               "type": "boolean"
             },
             "limit": {
-              "description": "Max pages per type to enqueue in this run (default 1000); pages already enqueued for their current content do not count.",
+              "description": "Max pages queued in this run, across all types and sources (default 1000).",
               "type": "number"
             },
+            "recent": {
+              "description": "Only pages within chronicle.auto_recent_days (the automatic path's window).",
+              "type": "boolean"
+            },
             "since": {
-              "description": "Only pages updated on/after this date (YYYY-MM-DD).",
+              "description": "Only pages UPDATED on/after this date (YYYY-MM-DD). Use --dated-since for the page's own date.",
               "type": "string"
+            },
+            "yes": {
+              "description": "Consent to queue paid extraction (one chat call per page). Ask the user first.",
+              "type": "boolean"
             }
           },
           "required": [],
