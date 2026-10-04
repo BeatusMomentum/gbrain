@@ -341,6 +341,7 @@ describe('ledger and discovery (E1/E6/D12)', () => {
   }), 120_000);
 
   test('a managed page written without a decision is left to backfill (no_write_decision)', () => brain(async ({ engine }) => {
+    await engine.setConfig('chronicle.activated_at', new Date(Date.now() - 1000).toISOString());
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.putPage('meetings/legacy', { type: 'meeting', title: 'Legacy', compiled_truth: BODY, frontmatter: { date: today } });
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');

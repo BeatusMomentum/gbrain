@@ -2929,8 +2929,8 @@
         "idempotent": true,
         "name": "chronicle_page_state",
         "sql": {
-          "length": 2184,
-          "sha256": "34b7295ead460e8a342489a896eed604753a5ead983ebbfb3100d8bc191d5958"
+          "length": 2006,
+          "sha256": "61460c4cefdcc4a6552ee0fe5595d1bb72a3f15012d89d01cf363cc62ab6f18b"
         },
         "sqlFor": "absent",
         "transaction": "absent",

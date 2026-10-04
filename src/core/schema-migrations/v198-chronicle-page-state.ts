@@ -8,7 +8,7 @@ import type { Migration } from './types.ts';
 // outcome; it, not minion idempotency keys (pruned with their jobs), is the
 // record of what was extracted. chronicle_judge_reservations holds one row
 // per automatic judge call for the rolling daily limit. The activation stamp
-// keeps the automatic path off revisions written before this release.
+// (config chronicle.activated_at) is stamped by the first write decision or chronicle phase run.
 export const v198: Migration = {
   version: 198,
   name: 'chronicle_page_state',
@@ -48,8 +48,6 @@ export const v198: Migration = {
         content_hash TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS chronicle_judge_reservations_at_idx ON chronicle_judge_reservations (reserved_at);
-      INSERT INTO config (key, value) VALUES ('chronicle.activated_at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
-        ON CONFLICT (key) DO NOTHING;
       DO $rls$ BEGIN
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname=current_user AND rolbypassrls) THEN
           ALTER TABLE chronicle_page_state ENABLE ROW LEVEL SECURITY;

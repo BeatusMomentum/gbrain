@@ -9,7 +9,7 @@ import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
 import { derivedExtractionSkip } from '../persistence/derived-extraction-gate.ts';
 import { autoChronicleSetting, chronicleSettings, type ChronicleSettings } from './config.ts';
 import {
-  CHRONICLE_EXTRACTOR_VERSION, CHRONICLE_REASONS, RUN_NOW_COMMAND,
+  CHRONICLE_CONFIG, CHRONICLE_EXTRACTOR_VERSION, CHRONICLE_REASONS, RUN_NOW_COMMAND,
   type ChronicleBackstopReceipt, type ChronicleLedgerRow, type ChronicleReason, type ChronicleTrigger,
 } from './contract.ts';
 import { chroniclePageDate, isChronicleEligible, isChronicleShaped } from './eligibility.ts';
@@ -191,6 +191,10 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   const processing = row.intent?.processingOptions as { noExtract?: unknown } | undefined;
   const noExtract = processing?.noExtract === true;
   const [enabledRaw, settings] = await Promise.all([tx.getConfig('auto_chronicle').catch(() => null), chronicleSettings(tx)]);
+  // The first decision after the upgrade activates the automatic path; earlier revisions stay history.
+  if (!settings.activatedAt) {
+    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [CHRONICLE_CONFIG.activatedAt, new Date().toISOString()]);
+  }
   const decision = decideChronicle({ page, authority: row.authority ?? null, noExtract,
     enabled: autoChronicleSetting(enabledRaw) === 'on', settings, now: new Date() });
   if (decision.state === 'skipped') await recordSkip(tx, { ...base, noExtract }, String(decision.reason));

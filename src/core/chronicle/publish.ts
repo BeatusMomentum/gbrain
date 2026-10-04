@@ -22,7 +22,8 @@
  *     nothing.
  *
  * Managed brains publish through two maintenance intents (database-only);
- * unmanaged brains write directly inside one transaction per event.
+ * unmanaged brains write directly inside one attributed maintenance
+ * transaction per event.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -34,6 +35,7 @@ import { computeContentHash } from '../ingestion/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
 import { authorizeFactsBackstop } from '../persistence/effect-facts.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { effectiveVisibility, type Visibility } from '../search/private-visibility.ts';
@@ -186,7 +188,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
         await submitDatabaseMaintenanceIntent(engine, maintenance, ev.slug, intent,
           requestIdFor({ writer: maintenance.writer.principal, slug: ev.slug, intent }));
       } else {
-        await engine.transaction(async (tx) => {
+        await maintenanceTransaction(engine, async (tx) => {
           const reason = await depthPinBroken(tx, sourceId, pin, null);
           if (reason) throw supersededError(reason);
           const again = judgeTarget(await tx.readPageSnapshot(ev.slug, { sourceId, includeDeleted: true }), owned);
@@ -224,7 +226,7 @@ export async function publishChronicleGeneration(engine: BrainEngine, opts: {
         await submitDatabaseMaintenanceIntent(engine, maintenance, event.slug, intent,
           requestIdFor({ writer: maintenance.writer.principal, slug: event.slug, intent }));
       } else {
-        await engine.transaction(async (tx) => {
+        await maintenanceTransaction(engine, async (tx) => {
           const reason = await depthPinBroken(tx, sourceId, pin, null);
           if (reason) throw supersededError(reason);
           const live = await tx.readPageSnapshot(event.slug, { sourceId });

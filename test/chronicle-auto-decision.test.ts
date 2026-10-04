@@ -44,8 +44,10 @@ async function rows(engine: BrainEngine) {
 
 describe('managed put_page', () => {
   test('an eligible meeting records one pending row with the writer; a no-op re-put changes nothing', () => brain(async ({ engine, ctx }) => {
+    expect(await engine.getConfig('chronicle.activated_at')).toBeNull();
     const receipt = await put(ctx, 'meetings/sync', meeting());
     expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200, next_command: 'gbrain dream --phase chronicle' });
+    expect(await engine.getConfig('chronicle.activated_at')).not.toBeNull(); // the first decision activates the automatic path
     const [row] = await rows(engine);
     const [request] = await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE request_id=$1', [receipt.request_id]);
     expect(row).toMatchObject({ slug: 'meetings/sync', state: 'pending', reason: null, trigger: 'auto', principal_kind: 'local_cli', request_id: request.id });

@@ -70,7 +70,7 @@ export const CHRONICLE_CONFIG = {
   dailyLimit: 'chronicle.auto_daily_limit',
   recentDays: 'chronicle.auto_recent_days',
   settleSeconds: 'chronicle.auto_settle_seconds',
-  /** ISO timestamp the automatic path activated on this brain (written by the migration). */
+  /** ISO timestamp the automatic path activated on this brain (stamped by the first write decision or `chronicle` phase run). */
   activatedAt: 'chronicle.activated_at',
 } as const;
 

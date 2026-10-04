@@ -153,7 +153,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
   "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
-  "src/core/search/private-visibility.ts": ["test/e2e/derived-page-visibility.test.ts", "test/e2e/derived-visibility-repair.test.ts"],
+  "src/core/search/private-visibility.ts": ["test/e2e/derived-page-visibility.test.ts", "test/e2e/derived-visibility-repair.test.ts", "test/e2e/chronicle-event-privacy-postgres.test.ts"],
   "src/core/search/**": [
     "test/e2e/unsupported-embedding-identity-postgres.test.ts",
     "test/e2e/projection-statistics-postgres.test.ts",
@@ -493,12 +493,18 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/chronicle/**": [
     "test/e2e/ontology-merge-parity.test.ts",
     "test/e2e/chronicle-event-projection-parity.test.ts",
+    "test/e2e/chronicle-auto-decision-postgres.test.ts",
+    "test/e2e/chronicle-auto-phase-postgres.test.ts",
+    "test/e2e/chronicle-event-privacy-postgres.test.ts",
   ],
   "src/core/ops/chronicle.ts": [
     "test/e2e/ontology-merge-parity.test.ts",
     "test/e2e/chronicle-event-projection-parity.test.ts",
     "test/e2e/managed-ontology-propose-postgres.test.ts",
   ],
+  // #5876: the Life Chronicle automatic path (phase, write decision, origin privacy) on Postgres.
+  "src/core/cycle/chronicle.ts": ["test/e2e/chronicle-auto-phase-postgres.test.ts"],
+  "src/core/persistence/derived-extraction-gate.ts": ["test/e2e/chronicle-auto-decision-postgres.test.ts"],
   // Eval-category wave lane C: coordinated database-only writes (manual links,
   // ontology observations) and the per-stint ontology dedup key.
   "src/core/persistence/database-write.ts": ["test/e2e/managed-ontology-propose-postgres.test.ts", "test/e2e/managed-writers-w3.test.ts"],
