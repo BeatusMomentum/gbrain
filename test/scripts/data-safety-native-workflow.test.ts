@@ -211,13 +211,13 @@ describe('data-safety native CI coverage', () => {
     ]);
   });
 
-  test('pull requests run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
+  test('pull requests and merge-queue runs run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
     const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { invariants: { steps: Step[] } };
     };
     const step = persistence.jobs.invariants.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
     expect(step).toBeDefined();
-    expect(step!.env?.SOAK_OPERATIONS).toBe("${{ github.event_name == 'pull_request' && '2500' || '10000' }}");
+    expect(step!.env?.SOAK_OPERATIONS).toBe("${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '2500' || '10000' }}");
     for (const operations of ['2500', '10000']) {
       const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
         bun() { printf '%s\\n' "$@"; }

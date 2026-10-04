@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Merge queue (inert until the queue is enabled on master): the PR profile.
+  # select-e2e diffs the queued merge commit against origin/master, which is
+  # exactly the queued change. docs/RELEASING.md#merge-queue.
+  merge_group:
   schedule:
     - cron: '0 6 * * *'  # Nightly at 6am UTC
   workflow_dispatch:

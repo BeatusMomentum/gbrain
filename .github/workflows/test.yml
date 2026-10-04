@@ -5,6 +5,9 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Merge queue (inert until the queue is enabled on master): the PR profile,
+  # run against the queued merge commit. docs/RELEASING.md#merge-queue.
+  merge_group:
   # Nightly full matrix: every Bun version and native target, like a push to master.
   schedule:
     - cron: '23 7 * * *'
@@ -49,7 +52,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
-          sparse-checkout: scripts/ci-native-scope.sh
+          sparse-checkout: |
+            scripts/ci-native-scope.sh
+            scripts/ci-manifest-diff.sh
           sparse-checkout-cone-mode: false
       - id: scope
         env:
@@ -58,9 +63,14 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" != pull_request ]; then
+          if [ "$EVENT" = merge_group ]; then
+            # PR profile for the queue: every native target on the primary Bun.
+            scope=primary
+          elif [ "$EVENT" != pull_request ]; then
             scope=full
           elif ! [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] || [ "$CHANGED_FILES" -ge 3000 ]; then
             # The PR files API returns at most 3000 files. An unknown or
@@ -71,7 +81,14 @@ jobs:
             if [ "$listed" -ne "$CHANGED_FILES" ]; then
               scope=primary
             else
-              scope=$(printf '%s' "$files" | bash scripts/ci-native-scope.sh) || scope=primary
+              # A version-only package.json / openclaw.plugin.json diff (every
+              # release PR) cannot change native behavior (C11).
+              kept=$(printf '%s\n' "$files" | bash scripts/ci-manifest-diff.sh drop-version-only) || kept=$files
+              if [ -z "$kept" ]; then
+                scope=smoke
+              else
+                scope=$(printf '%s' "$kept" | bash scripts/ci-native-scope.sh) || scope=primary
+              fi
             fi
           else
             scope=primary
@@ -119,6 +136,8 @@ jobs:
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            RANGE="${{ github.event.merge_group.base_sha }}..${{ github.event.merge_group.head_sha }}"
           else
             BEFORE="${{ github.event.before }}"
             case "$BEFORE" in
@@ -140,7 +159,7 @@ jobs:
         bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version on every OS; pushes,
         # schedules and manual runs add the oldest supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -156,21 +175,62 @@ jobs:
       - name: Windows durability, skill bundles and local-writer flags (#5595, #5475)
         run: bun test --timeout 60000 test/fs-durable.test.ts test/persistence-windows-flush-5595.test.ts test/bundle-files-windows-5475.test.ts test/init-packaged-skills-native.test.ts test/auth-local-writer-dry-run.test.ts test/scripts/durable-flush-guard.test.ts test/binary-self-update-durable-download.test.ts
 
+  # bun audit blocks on pushes, schedules, manual runs, and pull requests or
+  # merge-queue entries that change bun.lock, admin/bun.lock, patches/ or a
+  # package.json dependency field (or carry the `dependency-audit` label).
+  # Elsewhere a new upstream advisory is a warning, so it cannot turn every
+  # open PR red at once; the push and nightly runs still fail on it (B11).
   dependency-audit:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
+            printf 'blocking=true\nreason=%s runs always block\n' "$EVENT" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$LABELS" | grep -q '"dependency-audit"'; then
+            printf 'blocking=true\nreason=the dependency-audit label is set\n' >> "$GITHUB_OUTPUT"
+          else
+            files=''
+            if [ "$EVENT" = pull_request ]; then
+              if [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] && [ "$CHANGED_FILES" -lt 3000 ] \
+                && listed=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename') \
+                && [ "$(printf '%s\n' "$listed" | awk 'NF { n++ } END { print n+0 }')" -eq "$CHANGED_FILES" ]; then
+                files=$listed
+              fi
+            elif listed=$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq 'if (.files | length) >= 300 then error("capped") else .files[].filename end'); then
+              files=$listed
+            fi
+            # An unknown or capped diff stays empty, which classifies as blocking.
+            printf '%s' "$files" | bash scripts/ci-manifest-diff.sh dependency-scope >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun audit
       - run: bun install --frozen-lockfile --ignore-scripts
         working-directory: admin
-      - run: bun audit
-        working-directory: admin
+      - name: bun audit (root + admin)
+        env:
+          BLOCKING: ${{ steps.scope.outputs.blocking }}
+          REASON: ${{ steps.scope.outputs.reason }}
+        run: bash scripts/ci-dependency-audit.sh
 
   verify:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
@@ -500,7 +560,7 @@ jobs:
       # manual runs keep the 100,001-page scale (~4-10 minutes, one core).
       - run: bun test test/export-scale.slow.test.ts --timeout=900000 --coverage --coverage-reporter=lcov --coverage-dir=${{ runner.temp }}/coverage/perf-c
         env:
-          GBRAIN_TEST_EXPORT_SCALE_PAGES: ${{ github.event_name == 'pull_request' && '10001' || '100001' }}
+          GBRAIN_TEST_EXPORT_SCALE_PAGES: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '10001' || '100001' }}
       - name: Write coverage lane manifest
         run: |
           printf '{"lane":"slowperf","sha":"%s","lcovCount":%s,"complete":true}\n' \
