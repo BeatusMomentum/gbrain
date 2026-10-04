@@ -214,6 +214,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
 - `src/core/facts/relink-publish.ts` (2): `relink_facts` request preparer.
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
+- `src/core/import-file.ts` (11): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/versions.ts` (1): `createVersion` itself; the caller's scope supplies the actor.
 - `src/core/persistence/atom-maintenance.ts` (1): request preparer.
@@ -265,7 +266,6 @@ these write with `NULL` attribution):
 - `src/core/facts/forget.ts` (4): legacy forget expiry and fence strike-through.
 - `src/core/facts/proposal-supersede.ts` (4): unmanaged `decide` proposal accept and undo (facts and page body).
 - `src/core/facts/write-single.ts` (2): legacy single-fact insert and supersession.
-- `src/core/import-file.ts` (11): remaining sites: the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp of an unchanged body. Direct import writes are attributed.
 - `src/core/minions/handlers/ingest-capture.ts` (1): capture ingest soft delete.
 - `src/core/ops/extraction.ts` (2): extraction review promote (frontmatter) and reject (soft delete).
 - `src/core/output/writer.ts` (4): synthesize-phase BrainWriter pages and timeline.

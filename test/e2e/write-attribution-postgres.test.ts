@@ -4,10 +4,12 @@ import { hasDatabase } from './helpers.ts';
 // Foundations 1 write attribution on Postgres: the transaction-local actor
 // settings and BEFORE ROW triggers, run direct and through transaction-mode
 // PgBouncer (scripts/e2e-backend-matrix.txt). The legacy file covers the
-// unmanaged transactional writers (F1c).
+// unmanaged transactional writers (F1c); the write-attribution-<family> files
+// cover the writers Foundations 2 routed (Lane C).
 if (hasDatabase()) {
   await import('../write-attribution.test.ts');
   await import('../write-attribution-legacy.test.ts');
+  await import('../write-attribution-import.test.ts');
 } else {
   test.skip('write attribution on Postgres requires DATABASE_URL', () => {});
 }
