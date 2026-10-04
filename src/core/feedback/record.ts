@@ -225,10 +225,10 @@ export function _resetFeedbackRecordingForTests(): void {
   answersSinceHint = new Map();
 }
 
-/** Additive response-meta fields for an answer (none when feedback is off). */
+/** Additive response-meta fields: present only on a rateable answer, so readers see no change. */
 export function feedbackMetaFields(meta: AnswerFeedbackMeta | null): Record<string, unknown> {
-  if (!meta) return {};
-  return { ...(meta.answer_id ? { answer_id: meta.answer_id } : {}), feedback: meta.feedback };
+  if (!meta?.answer_id) return {};
+  return { answer_id: meta.answer_id, feedback: meta.feedback };
 }
 
 /** Typed edges on the representative relational path of each returned relational-arm row. */

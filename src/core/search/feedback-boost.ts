@@ -22,6 +22,13 @@ export interface FeedbackStageMeta {
   errored: boolean;
 }
 
+let stageErrors = 0;
+
+/** Fail-open errors of the stage in this process (shown by `gbrain feedback status`). */
+export function feedbackStageErrors(): number {
+  return stageErrors;
+}
+
 export function feedbackMultiplier(weight: number, influence: number): number {
   return 1 + influence * 2 * (weight - NEUTRAL_WEIGHT);
 }
@@ -92,6 +99,7 @@ export async function applyFeedbackStage(
     scored.sort((a, b) => (b.key! - a.key!) || (a.index - b.index));
     return [...scored, ...unscored].map(k => k.r);
   } catch {
+    stageErrors++;
     meta = { applied: false, boosted: 0, errored: true };
     return results;
   } finally {
