@@ -7,6 +7,8 @@ export interface PreparedContentImport {
   parsedPage: ParsedPage;
   observedRevision: string | null;
   noop: boolean;
+  /** The imported content hash, when apply writes the page (`coordinated` callers verify their read-back against it). */
+  contentHash?: string;
   result: ImportResult;
   validate(tx: BrainEngine): Promise<void>;
   apply(tx: BrainEngine): Promise<void>;

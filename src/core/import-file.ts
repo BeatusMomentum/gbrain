@@ -224,6 +224,14 @@ export async function importFromContent(
   opts: {
     /** Coordinator seam: prepare without publishing, then commit under its guarded transaction. */
     prepare?: (prepared: import('./persistence/prepared-import.ts').PreparedContentImport) => Promise<ImportResult>;
+    /**
+     * #5984, with `prepare`: the publication coordinator proves the page's base
+     * revision under its page guard before apply, and the caller reads the page
+     * once after apply, seals its text projection from that read and checks the
+     * read-back against `contentHash`. apply then skips its own base re-read,
+     * text-projection seal and read-back.
+     */
+    coordinated?: boolean;
     /** Internal canonical metadata, after protected-body overlays and before hashing. */
     prepareFrontmatter?: (page: ParsedPage) => void;
     noEmbed?: boolean;
@@ -823,7 +831,7 @@ export async function importFromContent(
   let persistedProjection: ProjectionSnapshot | null = null;
   const timeZone = await loadBrainTimeZone(engine);
   const applyPrepared = async (tx: BrainEngine) => {
-    await assertImportBase(tx, slug, txOpts.sourceId, existing);
+    if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing);
     await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
     if (existing) await tx.createVersion(slug, txOpts);
 
@@ -904,7 +912,9 @@ export async function importFromContent(
     if (chunks.length > 0) {
       const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
         { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
-      await tx.upsertChunks(slug, chunks, embeddingColumn ? { ...txOpts, embeddingColumn } : txOpts);
+      // A complete replacement of the chunks deleted above: the full-body seal
+      // (`chunker_version`) is stamped by the same upsert, after its insert.
+      await tx.upsertChunks(slug, chunks, { ...txOpts, ...(embeddingColumn ? { embeddingColumn } : {}), sealChunkerVersion: MARKDOWN_CHUNKER_VERSION });
       // v0.41.31: stamp embedding provenance when this import actually
       // embedded (not --no-embed), so a later model/dims swap is detectable
       // as stale via embed --stale. The deferred/backfill + per-slug embed
@@ -920,12 +930,12 @@ export async function importFromContent(
     } else {
       // Content is empty — delete stale chunks so they don't ghost in search results
       await tx.deleteChunks(slug, txOpts);
+      // Seal only the completed, full-body sanitized replacement. A body-only
+      // write or a failed transaction must never certify old stored fragments.
+      await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
+        [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
     }
-    // Seal only the completed, full-body sanitized replacement. A body-only
-    // write or a failed transaction must never certify old stored fragments.
-    await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
-      [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
-    await sealPageTextProjection(tx, slug, txOpts.sourceId);
+    if (!opts.coordinated) await sealPageTextProjection(tx, slug, txOpts.sourceId);
 
     // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
     // (e.g. 'src/core/sync.ts:42'), create bidirectional edges to the code
@@ -966,7 +976,7 @@ export async function importFromContent(
     // Alias projection and readback share the page commit. A later writer can
     // no longer turn a successful import into a postcommit verification error.
     await tx.setPageAliases(slug, sourceId ?? 'default', normalizeAliasList(parsed.frontmatter.aliases));
-    await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
+    if (!opts.coordinated) await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
     await opts.beforeCommit?.(tx, slug);
     if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {
       // Capture the complete installed projection before releasing the page
@@ -976,7 +986,7 @@ export async function importFromContent(
   };
   if (opts.prepare) return opts.prepare({
     slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
-    noop: false, result: { slug, status: 'imported', chunks: chunks.length, parsedPage,
+    noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: chunks.length, parsedPage,
       ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}) },
     validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
     apply: applyPrepared,
@@ -1036,14 +1046,16 @@ export async function importFromContent(
  * This is the write-then-verify guard on the sync/write path: a write is not
  * "done" until it is readable back.
  */
-async function verifyPageReadable(
+export async function verifyPageReadable(
   engine: BrainEngine,
   slug: string,
   expectedHash: string,
   sourceId: string | undefined,
   caller: string,
+  /** The caller's own read of the live page after the write (null: not found); read here when omitted. */
+  read?: Pick<Page, 'content_hash'> | null,
 ): Promise<void> {
-  const readBack = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
+  const readBack = read !== undefined ? read : await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
   if (!readBack) {
     // Log to ingest_log before throwing so the failure is durable and
     // agent-inspectable, not just a transient stderr message.

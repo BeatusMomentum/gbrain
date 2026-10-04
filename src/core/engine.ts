@@ -1151,8 +1151,11 @@ export interface BrainEngine {
    * resolveWriteColumnFromConfigRows — the same registry the read side
    * searches — falling back to the legacy `embedding`::vector column on
    * pre-registry brains. `embedding_image` routing is unaffected.
+   * `sealChunkerVersion` (#5984): the caller deleted every chunk of the page
+   * earlier in this transaction; the stale-row work is skipped and the page is
+   * sealed at that chunker version after the insert.
    */
-  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string } & BatchOpts): Promise<void>;
+  upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number } & BatchOpts): Promise<void>;
   /**
    * Read every chunk for a page. Scope precedence mirrors getPage (#2555):
    * a federated grant (`sourceIds[]`) wins over scalar `sourceId`; with
