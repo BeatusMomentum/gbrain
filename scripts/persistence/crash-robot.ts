@@ -117,14 +117,14 @@ export async function runSchedule(world: World, schedule: Schedule): Promise<Sch
 /* Process-separated crash mode: the worker side.                            */
 /* ------------------------------------------------------------------------ */
 
-export type ProcessFault = 'stale_index_lock' | 'hung_git' | 'pooler_disconnect';
+export type ProcessFault = 'stale_index_lock' | 'hung_git' | 'pooler_disconnect' | 'facts_absorb_kill';
 export interface RobotConfig {
   kind: 'pglite' | 'postgres'; root: string; dataDir: string; databaseUrl?: string;
   /** Direct (unpooled) URL of the run database, for administrative fault injection. */
   directUrl?: string;
   schedule: Schedule; worktrees: number; statePath: string;
-  /** SIGKILL at the nth time this seam is reached (1-based). */
-  fault?: { point: FaultPoint; nth: number };
+  /** SIGKILL at the nth time this seam is reached (1-based), optionally counting only one operation's requests. */
+  fault?: { point: FaultPoint; nth: number; operation?: string };
   process?: ProcessFault;
 }
 interface RobotState {
@@ -196,6 +196,39 @@ exec '${real}' "$@"
   return { marker, release: () => rmSync(marker, { force: true }) };
 }
 
+const ABSORB_SLUG = 'meetings/robot-review';
+const ABSORB_FACTS = ['Robot review ships the crash gate weekly.', 'Robot review keeps withdrawn facts out of recall.'];
+
+/** Deterministic providers for facts extraction: a chat stub that names two facts about the review, a constant embedding. */
+async function stubFactsProviders(): Promise<void> {
+  const gateway = await import('../../src/core/ai/gateway.ts');
+  gateway.configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: { OPENAI_API_KEY: 'synthetic-local-fixture' } } as never);
+  gateway.__setChatTransportForTests((async () => ({ text: JSON.stringify({ facts: ABSORB_FACTS.map(fact => ({ fact, kind: 'fact', entity: ABSORB_SLUG, confidence: 0.9, notability: 'high' })) }),
+    blocks: [], stopReason: 'end', usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' })) as never);
+  gateway.__setEmbedTransportForTests((async ({ values }: { values: string[] }) => ({ embeddings: values.map(() => [1, ...Array(1535).fill(0)]) })) as never);
+}
+
+/** Run the queued facts-absorb job through its registered handler, as a worker does after claiming it. */
+async function runAbsorbJob(engine: BrainEngine, attempts: number): Promise<unknown> {
+  const [job] = await retryingRead(() => engine.executeRaw<{ id: number; data: Record<string, unknown> }>("SELECT id,data FROM minion_jobs WHERE name='facts-absorb' ORDER BY id LIMIT 1"));
+  if (!job) throw new Error('facts_absorb_kill: no facts-absorb job was queued');
+  const { MinionWorker } = await import('../../src/core/minions/worker.ts');
+  const { registerBuiltinHandlers } = await import('../../src/commands/jobs.ts');
+  const worker = new MinionWorker(engine, { queue: 'crash-robot' });
+  await registerBuiltinHandlers(worker, engine, { quiet: true });
+  const signal = new AbortController().signal;
+  return worker.getHandler('facts-absorb')!({ id: Number(job.id), name: 'facts-absorb', data: job.data, attempts_made: attempts, signal, deadlineAtMs: null,
+    shutdownSignal: signal, updateProgress: async () => {}, updateTokens: async () => {}, log: async () => {}, isActive: async () => true, readInbox: async () => [] } as never);
+}
+
+/** Every absorbed fact is active exactly once. */
+async function checkAbsorbedOnce(model: ReferenceModel, stage: string): Promise<void> {
+  const rows = await model.q<{ fact: string; n: number }>(`SELECT fact,count(*)::int AS n FROM facts WHERE fact = ANY($1::text[])
+    AND expired_at IS NULL GROUP BY fact`, [ABSORB_FACTS]);
+  for (const row of rows) if (row.n > 1) model.violate({ class: 'duplicate_apply', detail: `${stage}: "${row.fact}" is active ${row.n} times` });
+  if (rows.length !== ABSORB_FACTS.length) model.violate({ class: 'lost_write', detail: `${stage}: ${rows.length}/${ABSORB_FACTS.length} absorbed facts are active` });
+}
+
 /**
  * Process faults SIGKILL cannot model. Each must end in a terminal state or a
  * typed, agent-facing error, never a wedge, and must clear once the fault does.
@@ -230,6 +263,22 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
     }
     shim.release();
     await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git' AND state='queued'");
+  } else if (config.process === 'facts_absorb_kill') {
+    // A substantive meeting page queues facts-backstop work; the worker runs the facts-absorb job and is
+    // SIGKILLed right after its extraction commits, before the job completes (config.fault).
+    await stubFactsProviders();
+    const source = world.remotes[0].sourceId;
+    const body = 'The robot review covered the crash gate, its seams and the withdrawal checks in detail. '.repeat(4);
+    const put = await executeOp(world, { v: 1, id: 'absorb-page', kind: 'put_page', actor: 'local', source, requestId: crypto.randomUUID(),
+      args: { slug: ABSORB_SLUG, content: `---\ntype: meeting\ntitle: Robot review\n---\n\n${body}\n` } });
+    if (put.status !== 'committed') throw new Error(`facts_absorb_kill: the meeting page did not commit (${put.code})`);
+    const deadline = Date.now() + 30_000;
+    while (!(await retryingRead(() => engine.executeRaw("SELECT 1 FROM minion_jobs WHERE name='facts-absorb'"))).length) {
+      if (Date.now() > deadline) throw new Error('facts_absorb_kill: the facts-backstop effect never queued a facts-absorb job');
+      await Bun.sleep(100);
+    }
+    await runAbsorbJob(engine, 0);
+    await checkAbsorbedOnce(model, 'facts_absorb_kill (no crash reached)');
   } else if (config.process === 'pooler_disconnect') {
     // Every 400 ms the server drops every other session of this database, as a pooler or failover does.
     const admin = postgres(config.directUrl!, { max: 1, onnotice() {} });
@@ -276,7 +325,7 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
     if (role === 'run' && config.fault) {
       let seen = 0; const fault = config.fault;
       installFaultHook((point, detail) => {
-        if (point !== fault.point || ++seen !== fault.nth) return;
+        if (point !== fault.point || (fault.operation && detail.operation !== fault.operation) || ++seen !== fault.nth) return;
         freeze({ event: 'fault', point, nth: seen, detail });
       });
     }
@@ -313,6 +362,14 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
       for (let k = 0; k < inFlight.length; k++) await model.observe(inFlight[k], observed[k], inFlight[k].replayOf ? world.observations.get(inFlight[k].replayOf!) : undefined);
       await model.settleLate(inFlight, observed);
       await model.checkGlobal('after resubmission');
+    }
+    if (config.process === 'facts_absorb_kill') {
+      // The job's lease expired with its owner; a worker runs it again.
+      await stubFactsProviders();
+      await runAbsorbJob(engine, 1);
+      await checkAbsorbedOnce(model, 'facts-absorb re-run after SIGKILL');
+      await finish(world, model, `${config.schedule.label}+facts_absorb_kill`);
+      return finalize(config, model, { crashed: true, fault: config.fault, process: config.process });
     }
     await runSteps(world, model, config.schedule, state!.next + inFlight.length);
     await finish(world, model, config.schedule.label);

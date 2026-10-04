@@ -149,6 +149,9 @@ export async function runRobotPhase(o: RobotOptions) {
     if (fault === 'pooler_disconnect' && !o.admin) continue;
     record(await execute(fixed[1], 'run', { process: fault }));
   }
+  // serve killed right after the facts-absorb job's extraction commits; the job then runs again.
+  record(await execute({ ...fixed[1], ops: [], groups: [] }, 'run', { process: 'facts_absorb_kill',
+    fault: { point: 'publication:after_commit', nth: 1, operation: 'extract_facts' } }));
   // Random sequences fill the rest of the budget.
   for (let i = 0; !over(); i++) {
     const schedule = randomSchedule(ROBOT_TOPOLOGY, (o.seed + 1 + i) >>> 0, 24);

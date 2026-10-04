@@ -12,8 +12,6 @@ Context: `scripts/persistence/README.md` ("Crash robot"), `scripts/persistence/{
   **What:** report the robot's kill rate against seeded mutants (a dropped receipt update, a double-applied effect, a skipped withdrawal fence). **Effort:** M. **Priority:** P1.
 - [ ] **P1 — Source add/remove/refresh and writer activate/deactivate ops.**
   **What:** the generator drives page, memory, takes, timeline, sync, connector and revocation ops; topology and writer-lifecycle ops are not in the protocol yet, so the existing `topology-clone.ts`, `topology-recovery.ts`, `worktree-refresh.ts` and `bundle-files.ts` boundary hooks are not crashed. **Effort:** M. **Priority:** P1.
-- [ ] **P1 — Kill `serve` mid `facts-absorb` job.**
-  **What:** keyless robot brains never queue facts-backstop work, so the `effect:facts-backstop:mid` seam and the facts-absorb job lease are not crashed. **Fix:** a robot topology with facts extraction on through a deterministic chat stub; SIGKILL mid job, lease expiry, re-run; assert no duplicate facts. Builds on the Lane D drain. **Effort:** M. **Priority:** P1.
 - [ ] **P2 — CI check that every mutating operation is registered in the generator.**
   **What:** `MODEL` is a `Record<OpKind, Fold>` and `EFFECT_SEAMS` a `Record<EffectKind, …>`, so a new op kind or effect kind without a fold or seam fails typecheck; a new mutating operation in `operations.ts` is not forced into `OP_KINDS`. **Fix:** a test listing every `mutating: true` operation as either a robot op or an explicit exclusion with its reason. **Effort:** S. **Priority:** P2.
 - [ ] **P2 — Pre-activation claim lock order.**

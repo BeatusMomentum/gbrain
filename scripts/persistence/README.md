@@ -102,8 +102,11 @@ fresh worker checks the state left behind, drains, resubmits the interrupted
 requests with their original request ids and finishes the sequence. Random
 sequences fill the rest of the budget. Process faults run once per engine:
 a stale `index.lock`, a hung `git commit` that holds `index.lock` (it releases
-the lock on SIGTERM, not on SIGKILL), and, on Postgres, every session of the
-run database dropped every 400 ms.
+the lock on SIGTERM, not on SIGKILL), on Postgres every session of the run
+database dropped every 400 ms, and the owner killed right after a
+`facts-absorb` job's extraction commits (deterministic chat and embedding
+stubs); the job then runs again and every absorbed fact must be active
+exactly once.
 
 The reference model (`model.ts`) checks: a committed receipt is visible at
 once and later revisions move only through committed ops; a late receipt
