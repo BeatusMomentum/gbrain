@@ -42,7 +42,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 async function freshBrain(name: string): Promise<string> {
   const home = join(dir, name, 'home');
   const init = await runCli(['init', '--pglite', '--no-embedding'], { home, env: KEYS, timeoutMs: 120_000 });
-  expect(init.exitCode).toBe(0);
+  expect(init.exitCode, init.stderr).toBe(0);
   return home;
 }
 
@@ -51,7 +51,8 @@ describe('large-brain ceilings (CLI)', () => {
     const home = await freshBrain('sync');
     const repo = join(dir, 'sync', 'repo');
     commitWorktree(repo, 150);
-    expect((await runCli(['sources', 'add', 'notes', '--path', repo], { home, env: KEYS, timeoutMs: 120_000 })).exitCode).toBe(0);
+    const add = await runCli(['sources', 'add', 'notes', '--path', repo], { home, env: KEYS, timeoutMs: 120_000 });
+    expect(add.exitCode, add.stderr).toBe(0);
 
     const sync = await runCli(['sync', '--source', 'notes', '--no-pull'], {
       home, timeoutMs: 180_000,
@@ -60,7 +61,7 @@ describe('large-brain ceilings (CLI)', () => {
     expect(sync.stderr).toContain('extends while the sync keeps progressing');
     expect(sync.stderr).toContain('still progressing');
     expect(sync.stdout).not.toContain('sync_deadline_stop');
-    expect(sync.exitCode).toBe(0);
+    expect(sync.exitCode, sync.stderr).toBe(0);
     expect(sync.stdout).toContain('150 file(s) imported');
   }, 300_000);
 
@@ -70,7 +71,7 @@ describe('large-brain ceilings (CLI)', () => {
     commitWorktree(repo, 20_000);
     const add = await runCli(['sources', 'add', 'big', '--path', repo], { home, env: KEYS, timeoutMs: 180_000 });
     expect(add.stderr).not.toContain('request_too_large');
-    expect(add.exitCode).toBe(0);
+    expect(add.exitCode, add.stderr).toBe(0);
     expect(JSON.parse(add.stdout.slice(add.stdout.indexOf('{')))).toMatchObject({ source_id: 'big', state: 'committed' });
   }, 300_000);
 });

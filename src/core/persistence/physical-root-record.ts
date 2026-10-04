@@ -79,7 +79,12 @@ export function reservePhysicalRootRecord(root: string, identity: Omit<PhysicalR
   createPrivate(physicalRootReservationPath(root), value);
   return readPhysicalRootReservation(root)!;
 }
-/** Every contender reserves before this scan, so racing ancestor/child claims cannot both succeed. */
+/**
+ * Every contender reserves before this scan, so racing ancestor/child claims cannot both succeed.
+ * The walk includes `.git` (another brain may reserve a path there). A subdirectory that vanishes
+ * or becomes a file mid-walk (git's auto-gc pruning `.git/objects`) holds no reservation and is
+ * skipped; errors on the root itself, and every other error such as EACCES, still refuse.
+ */
 export function assertNoPhysicalRootOverlap(root: string): void {
   for (let parent = dirname(root); parent !== root; parent = dirname(parent)) {
     if (readPhysicalRootReservation(parent) || existsSync(join(parent, PHYSICAL_ROOT_MARKER))) throw physicalRootError('This path lies inside another reserved canonical root.');
@@ -87,7 +92,14 @@ export function assertNoPhysicalRootOverlap(root: string): void {
   }
   if (!existsSync(root)) return;
   const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    let entries;
+    try { entries = readdirSync(directory, { withFileTypes: true }); }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (directory !== root && (code === 'ENOENT' || code === 'ENOTDIR')) return;
+      throw error;
+    }
+    for (const entry of entries) {
       if (entry.name.startsWith(RESERVATION_PREFIX) && entry.name.endsWith('.json') || directory !== root && entry.name === PHYSICAL_ROOT_MARKER) {
         throw physicalRootError('This root contains another reserved canonical root.');
       }
