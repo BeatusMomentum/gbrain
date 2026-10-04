@@ -350,6 +350,12 @@ export async function assertGraduationConnectAllowed(engine: BrainEngine, env: N
   throw cutoverSourceRefusal(row.run_id, row.source_data_dir);
 }
 
+/** The CLI connect gate: a refused connection is closed before the refusal propagates. */
+export async function gateGraduationConnect(engine: BrainEngine): Promise<void> {
+  try { await assertGraduationConnectAllowed(engine); }
+  catch (error) { await engine.disconnect().catch(() => {}); throw error; }
+}
+
 function cutoverSourceRefusal(runId: string, sourceDataDir: string | null): OperationError {
   const path = sourceDataDir ? inspectGraduationPath(sourceDataDir) : null;
   if (path?.state === 'graduated') return engineGraduatedFor(path, 'cli');

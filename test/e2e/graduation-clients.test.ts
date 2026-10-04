@@ -28,7 +28,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readF
 import { dirname, join } from 'node:path';
 import type { Tombstone } from '../../src/core/persistence/engine-graduation.types.ts';
 import {
-  codeOf, custodyPaths, DATABASE_URL, digestChanges, fixOf, freePort, gbrain, graduationTest, mcpStdioSession, olderReleaseBinary,
+  codeOf, custodyPaths, leakNeedle, passwordOf, DATABASE_URL, digestChanges, fixOf, freePort, gbrain, graduationTest, mcpStdioSession, olderReleaseBinary,
   previousReleaseTags, release, REPO, startGbrain, stateDigest, TARGET_ENV, waitForEvent, type GbrainResult,
 } from '../helpers/graduation-e2e.ts';
 import { configuredEngine, expectGraduated, legacyCase, planAndRun, scratchRoot, targetRowState, withTarget, type Case } from '../helpers/graduation-scenarios.ts';
@@ -266,7 +266,7 @@ describe.skipIf(!DATABASE_URL)('graduation: stale clients recover in one step', 
     expect(codeOf(refused.json)).toBe('engine_graduated');
     const fix = fixOf(refused.json)!;
     expect(['run', 'tell_user_to_run']).toContain(fix.next);
-    expect(JSON.stringify(fix)).not.toContain(new URL(c.target.url).password);
+    expect(JSON.stringify(fix)).not.toContain(leakNeedle(passwordOf(c.target.url)));
     const fixed = await runFix(fix, home, c);
     expect({ code: fixed.code, stderr: fixed.code === 0 ? '' : fixed.stderr.slice(-1500) }).toEqual({ code: 0, stderr: '' });
     const retried = await gbrain(['get', 'people/alice-example', '--source', 'default'], { home });

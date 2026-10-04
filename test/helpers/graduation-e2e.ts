@@ -204,12 +204,22 @@ export async function graduateViaAgentFlow(home: string, url: string, opts: { ex
   return { plan, hash, run };
 }
 
+/**
+ * The byte pattern that proves a password leaked. A distinctive password is searched for raw; a short or
+ * common one (CI's `postgres:postgres`) appears legitimately in redacted URLs and paths, so only its
+ * URL-credential form `:<password>@` counts.
+ */
+export function leakNeedle(password: string): string {
+  return password.length >= 12 && !/^(postgres|test|password)/i.test(password) ? password : `:${encodeURIComponent(password)}@`;
+}
+
 /** Assert no output byte names the target password (stdout, stderr, files under the fixture except the 0600 manifest and config). */
 export function passwordLeaks(password: string, results: GbrainResult[], fixtureDir: string): string[] {
   const leaks: string[] = [];
+  const needle = leakNeedle(password);
   for (const [i, r] of results.entries()) {
-    if (r.stdout.includes(password)) leaks.push(`result ${i} stdout`);
-    if (r.stderr.includes(password)) leaks.push(`result ${i} stderr`);
+    if (r.stdout.includes(needle)) leaks.push(`result ${i} stdout`);
+    if (r.stderr.includes(needle)) leaks.push(`result ${i} stderr`);
   }
   const allowed = new Set(['graduation-manifest.json', 'config.json']);
   const walk = (dir: string) => {
@@ -219,7 +229,7 @@ export function passwordLeaks(password: string, results: GbrainResult[], fixture
       const info = lstatSync(path);
       if (info.isDirectory()) { if (!name.endsWith('.pglite') && !name.includes('.graduated-') && name !== '.git') walk(path); continue; }
       if (!info.isFile() || info.size > 4 * 1024 * 1024 || allowed.has(name)) continue;
-      if (readFileSync(path).includes(password)) leaks.push(path);
+      if (readFileSync(path).includes(needle)) leaks.push(path);
     }
   };
   walk(fixtureDir);

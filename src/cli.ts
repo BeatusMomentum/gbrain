@@ -2811,8 +2811,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   const { connectWithRetry } = await import('./core/db.ts');
   await exitOnRepairFailed(() => connectWithRetry(engine, toEngineConfig(config), { noRetry }));
   // Engine graduation: a fenced target or a cut-over source refuses every connect but the run's own.
-  try { await (await import('./core/persistence/graduation-custody.ts')).assertGraduationConnectAllowed(engine); }
-  catch (error) { await engine.disconnect().catch(() => {}); throw error; }
+  await (await import('./core/persistence/graduation-custody.ts')).gateGraduationConnect(engine);
 
   // v0.30.1 (Codex X1 / C2): probeOnly skips both hasPendingMigrations() probe
   // AND initSchema(). Used by `get_health` MCP op + `gbrain upgrade --status`
