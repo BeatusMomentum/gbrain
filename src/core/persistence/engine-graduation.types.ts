@@ -169,6 +169,10 @@ export interface TargetProbe {
   embeddingColumns: readonly EmbeddingColumn[];
   /** Other sessions on the target database (informational). */
   otherSessions: number;
+  /** The connecting role: initSchema needs superuser, or BYPASSRLS plus a pre-created auto-RLS event trigger it owns the function of. */
+  role?: { name: string; superuser: boolean; bypassRls: boolean };
+  /** The v35 `auto_rls_on_create_table` event trigger and the owner of `public.auto_enable_rls()` (null when absent). */
+  autoRls?: { eventTrigger: boolean; functionOwner: string | null };
 }
 
 export interface SourceIdentity {
@@ -333,7 +337,7 @@ export interface GraduationReceipt {
   /** True when a live serve handed the source over through the intent marker. */
   serveHandoff?: boolean;
   /** Failing doctor check names on each side; the cutover gate is `target` empty. */
-  doctor?: { source: readonly string[]; target: readonly string[] };
+  doctor?: { source: readonly string[]; target: readonly string[]; /** Checks the verify-step doctor exempted, with the run's reason. */ exempted?: readonly string[] };
 }
 
 // ── CLI <-> orchestrator (src/commands/migrate-graduation.ts consumes; engine-graduation.ts implements) ──

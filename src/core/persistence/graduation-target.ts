@@ -207,6 +207,14 @@ export async function probeTarget(routes: ResolvedTargetRoutes, opts: { timeoutS
       const [owned] = await query<{ ok: boolean }>(`SELECT COALESCE(bool_and(pg_has_role(current_user, c.relowner, 'USAGE')), true) AS ok
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')`);
       probe.ownsTables = owned?.ok === true;
+      const [role] = await query<{ name: string; superuser: boolean; bypass: boolean; trigger: boolean; owner: string | null }>(`SELECT current_user AS name,
+          (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser,
+          EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) AS bypass,
+          EXISTS (SELECT 1 FROM pg_event_trigger WHERE evtname = 'auto_rls_on_create_table') AS trigger,
+          (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public' AND p.proname = 'auto_enable_rls' LIMIT 1) AS owner`);
+      probe.role = { name: role!.name, superuser: role!.superuser === true, bypassRls: role!.bypass === true };
+      probe.autoRls = { eventTrigger: role!.trigger === true, functionOwner: role!.owner ?? null };
       Object.assign(probe, await targetEmptiness(query));
       probe.embeddingColumns = await embeddingColumns(query);
       await query('SAVEPOINT gbrain_replica_probe');
@@ -253,13 +261,32 @@ export function targetProbeBlockers(probe: TargetProbe, routes: Pick<TargetRoute
   if (!probe.vector.installed && !probe.vector.available) blockers.push(unsupported('vector_extension', 'the vector extension is neither installed nor available'));
   else if (!probe.vector.halfvec) blockers.push(unsupported('vector_halfvec', `vector ${probe.vector.installed ?? probe.vector.available} predates halfvec (needs ${MIN_VECTOR_HALFVEC_VERSION} or newer)`));
   if (!probe.createPrivilege.schema) blockers.push(unsupported('create_privilege', `role cannot CREATE in schema public on ${routes.main}`));
-  if (!probe.vector.installed && !probe.createPrivilege.database) blockers.push(unsupported('create_extension', 'vector is not installed and the role lacks CREATE on the database to install it'));
+  const superuser = probe.role?.superuser === true;
+  const role = probe.role ? `"${probe.role.name.replace(/"/g, '""')}"` : 'CURRENT_USER';
+  if (!probe.vector.installed && (!superuser || !probe.createPrivilege.database)) {
+    blockers.push(unsupported('vector_extension', 'the vector extension is not installed and only a superuser can install it; a DBA runs in the target database: CREATE EXTENSION IF NOT EXISTS vector;'));
+  }
+  if (probe.role && !superuser && !probe.role.bypassRls) {
+    blockers.push(unsupported('bypassrls', `role ${probe.role.name} lacks BYPASSRLS, which the schema's RLS backfill needs; a DBA runs: ALTER ROLE ${role} BYPASSRLS;`));
+  }
+  if (probe.autoRls && !superuser && !probe.autoRls.eventTrigger) {
+    blockers.push(unsupported('auto_rls_event_trigger', `the auto-RLS event trigger is missing and only a superuser can create it; a DBA runs in the target database: ${AUTO_RLS_DBA_SQL(role)}`));
+  } else if (probe.autoRls && !superuser && probe.autoRls.functionOwner && probe.role && probe.autoRls.functionOwner !== probe.role.name) {
+    blockers.push(unsupported('auto_rls_owner', `public.auto_enable_rls() is owned by ${probe.autoRls.functionOwner}, so schema setup fails with "must be owner of function"; a DBA runs: ALTER FUNCTION public.auto_enable_rls() OWNER TO ${role};`));
+  }
   if (!probe.triggerBypass) blockers.push(unsupported('trigger_bypass', 'the role may neither set session_replication_role = replica nor owns the existing tables (needed for DISABLE TRIGGER)'));
   if (!probe.empty) blockers.push({ kind: 'target_not_empty', id: 'target', detail: `target already holds rows in ${probe.nonEmptyTables.slice(0, 10).join(', ')}`, argv, needsUser: true });
   for (const m of embeddingLayoutMismatches(sourceColumns, probe.embeddingColumns)) {
     blockers.push({ kind: 'embedding_dimension', id: `${m.relation}.${m.column}`, detail: `source ${m.source}, target ${m.target}`, argv, needsUser: true });
   }
   return blockers;
+}
+
+/** What a DBA runs once on a target whose gbrain role is not a superuser (the v35 objects, owned by that role). */
+function AUTO_RLS_DBA_SQL(role: string): string {
+  return `CREATE OR REPLACE FUNCTION public.auto_enable_rls() RETURNS event_trigger LANGUAGE plpgsql AS $f$ DECLARE obj record; BEGIN FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands() WHERE object_type = 'table' AND schema_name = 'public' LOOP EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity); END LOOP; END; $f$; `
+    + `ALTER FUNCTION public.auto_enable_rls() OWNER TO ${role}; `
+    + `CREATE EVENT TRIGGER auto_rls_on_create_table ON ddl_command_end WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO') EXECUTE FUNCTION public.auto_enable_rls();`;
 }
 
 /** Throws the typed refusal when either route is unreachable or refuses authentication. */

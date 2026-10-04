@@ -175,7 +175,7 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
     connectTargets: async () => ({ main: borrowed(target), ddl: borrowed(target), close: async () => {} }),
     initTargetSchema: async t => { await t.initSchema(); await t.executeRaw(PROBE_DDL); },
     claimAutopilotPause: async () => () => { count('pause_released'); },
-    runTargetDoctor: async () => [],
+    runTargetDoctor: async () => ({ failing: [], exempted: [] }),
     runSourceDoctor: async () => [],
     hostId: () => '00000000-0000-4000-8000-00000000beef',
     mountsPath: () => mountsPath,

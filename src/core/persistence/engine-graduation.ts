@@ -113,7 +113,7 @@ export interface GraduationDeps {
   initTargetSchema(target: BrainEngine, source: BrainEngine): Promise<void>;
   claimAutopilotPause(): Promise<(() => void) | null>;
   /** Failing check names of `gbrain doctor --no-migrate --json` against the fenced target. */
-  runTargetDoctor(runId: string, mainUrl: string): Promise<readonly string[]>;
+  runTargetDoctor(runId: string, mainUrl: string): Promise<{ failing: readonly string[]; exempted: readonly string[] }>;
   /** Failing source checks, measured with the source open under the run's lock. */
   runSourceDoctor(source: BrainEngine): Promise<readonly string[]>;
   hostId(): string;
@@ -156,7 +156,18 @@ export function defaultGraduationDeps(): GraduationDeps {
     },
     claimAutopilotPause: () => withStdoutOnStderr(() => quiesceAutopilot()),
     async runTargetDoctor(runId, mainUrl) { return spawnTargetDoctor(runId, mainUrl); },
-    async runSourceDoctor() { return []; },
+    async runSourceDoctor(source) {
+      // In process, on the engine this run (or plan) already opened; GBRAIN_GRADUATION_RUN keeps doctor read-only.
+      const { buildChecks } = await import('../../commands/doctor.ts');
+      const prior = process.env.GBRAIN_GRADUATION_RUN;
+      process.env.GBRAIN_GRADUATION_RUN = prior || 'source-doctor';
+      try {
+        const checks = await buildChecks(source, ['--json', '--scope=brain']);
+        return checks.filter(c => c.status === 'fail').map(c => c.name);
+      } finally {
+        if (prior === undefined) delete process.env.GBRAIN_GRADUATION_RUN; else process.env.GBRAIN_GRADUATION_RUN = prior;
+      }
+    },
     hostId: () => localHostId(),
     mountsPath: () => process.env.GBRAIN_MOUNTS_PATH || join(homedir(), '.gbrain', 'mounts.json'),
   };
@@ -168,23 +179,29 @@ async function withStdoutOnStderr<T>(fn: () => Promise<T>): Promise<T> {
   try { return await fn(); } finally { console.log = log; }
 }
 
-function spawnTargetDoctor(runId: string, mainUrl: string): readonly string[] {
+function spawnTargetDoctor(runId: string, mainUrl: string): { failing: readonly string[]; exempted: readonly string[] } {
   const script = process.argv[1] && /\.(ts|js|mjs)$/.test(process.argv[1]) ? [process.argv[1]] : [];
-  const child = spawnSync(process.execPath, [...script, 'doctor', '--no-migrate', '--json'], {
+  const child = spawnSync(process.execPath, [...script, 'doctor', '--no-migrate', '--json', '--scope=brain'], {
     env: { ...process.env, GBRAIN_DATABASE_URL: mainUrl, GBRAIN_GRADUATION_RUN: runId },
     encoding: 'utf8', timeout: 600_000, maxBuffer: 64 * 1024 * 1024,
   });
   try {
-    const doc = JSON.parse(child.stdout) as { checks?: Array<{ name?: string; status?: string }> };
-    if (!Array.isArray(doc.checks)) return ['doctor_output_unreadable'];
-    return doc.checks.filter(c => c.status === 'fail').map(c => String(c.name ?? 'unnamed'));
-  } catch { return ['doctor_unavailable']; }
+    const doc = JSON.parse(child.stdout) as { checks?: Array<{ name?: string; status?: string; details?: { graduation_exempt?: boolean } }> };
+    if (!Array.isArray(doc.checks)) return { failing: ['doctor_output_unreadable'], exempted: [] };
+    return { failing: doc.checks.filter(c => c.status === 'fail').map(c => String(c.name ?? 'unnamed')),
+      exempted: doc.checks.filter(c => c.details?.graduation_exempt === true).map(c => String(c.name ?? 'unnamed')) };
+  } catch { return { failing: ['doctor_unavailable'], exempted: [] }; }
 }
 
 function mapTargetConnectError(error: unknown, routes: Routes): unknown {
   const e = error as { code?: string; message?: string };
   if (e?.code === '28P01' || /password authentication failed/i.test(e?.message ?? '')) {
     return targetAuthFailedError({ host: routes.main, ...(routes.urlEnv ? { urlEnv: routes.urlEnv } : {}) });
+  }
+  if (/unsupported startup parameter/i.test(e?.message ?? '')) {
+    return targetUnsupportedError({ requirement: 'pooler_startup_parameters', host: routes.main,
+      detail: 'the connection pooler refuses the statement_timeout and idle_in_transaction_session_timeout startup parameters gbrain sends; add both to ignore_startup_parameters in pgbouncer.ini, or point --url-env (and GBRAIN_DIRECT_DATABASE_URL) at a direct or session-mode connection',
+      ...(routes.urlEnv ? { spelling: { urlEnv: routes.urlEnv } } : {}) });
   }
   return error;
 }
@@ -848,19 +865,25 @@ async function stepVerify(run: Run): Promise<void> {
   const started = Date.now();
   await run.deps.assertRelationSet(run.main!, 'postgres', run.deps.inventory);
   phase(run, 'verify');
+  let exempted: readonly string[] = [];
   const result = await run.deps.verifyGraduation({ source: run.source!, target: run.main! }, {
     inventory: run.deps.inventory, sourceReceipts: run.m.sourceReceipts ?? [], replayRequestId: run.m.replayRequestId ?? undefined,
     runId: run.m.runId, expectFence: true,
-    runDoctor: () => { phase(run, 'doctor'); return run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main); },
+    runDoctor: async () => {
+      phase(run, 'doctor');
+      const doctor = await run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main);
+      exempted = doctor.exempted;
+      return doctor.failing;
+    },
   });
   const timings = { ...run.m.timings, verify_ms: Date.now() - started };
   if (!result.ok) {
-    await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verify_failed', { tableReceipts: result.tables, replayProbe: result.replay, timings, doctor: { target: result.doctorFailingChecks } }));
+    await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verify_failed', { tableReceipts: result.tables, replayProbe: result.replay, timings, doctor: { source: [], target: result.doctorFailingChecks, exempted } }));
     advance(run, 'verify_failed', { verifyFailures: result.failures, timings });
     const repeated = result.failures.some(f => prior.some(p => p.relation === f.relation && p.kind === f.kind));
     throw verifyFailedError({ failures: result.failures, repeated });
   }
-  await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verified', { tableReceipts: result.tables, replayProbe: result.replay, timings, triggerBypass: run.m.triggerBypass, doctor: { target: result.doctorFailingChecks } }));
+  await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verified', { tableReceipts: result.tables, replayProbe: result.replay, timings, triggerBypass: run.m.triggerBypass, doctor: { source: [], target: result.doctorFailingChecks, exempted } }));
   run.m.tables = run.m.tables.map(t => ({ ...t, state: 'verified' as const }));
   advance(run, 'verified', { verifyFailures: [], timings });
   await boundary(run, 'verified');
@@ -949,11 +972,11 @@ function rewriteMounts(path: string, match: (m: MountRecord) => boolean, rewrite
 async function receiptOf(run: Run): Promise<GraduationReceipt> {
   if (!run.main) await openTargets(run);
   const row = await readGraduationRow(run.main!);
-  const doctor = (row?.doctor ?? {}) as { source?: readonly string[]; target?: readonly string[] };
+  const doctor = (row?.doctor ?? {}) as { source?: readonly string[]; target?: readonly string[]; exempted?: readonly string[] };
   return { runId: run.m.runId, state: (row?.state ?? 'authoritative') as GraduationReceipt['state'], tables: row?.table_receipts ?? [],
     triggerBypass: run.m.triggerBypass, replay: row?.replay_probe ?? { status: 'not_available', reason: 'no_uncompacted_request' }, timings: run.m.timings,
     targetDisplayUrl: run.m.routes.main, retainedPath: graduatedPath(run.dataDir, run.m.runId), serveHandoff: run.serveHandoff,
-    doctor: { source: doctor.source ?? [], target: doctor.target ?? [] } };
+    doctor: { source: doctor.source ?? [], target: doctor.target ?? [], exempted: doctor.exempted ?? [] } };
 }
 
 async function takeKernelLock(run: Run): Promise<void> {
@@ -1109,6 +1132,17 @@ export async function resumeGraduation(opts: RunOptions = {}): Promise<Graduatio
 
 // ── reconciliation ─────────────────────────────────────────────────────────
 
+/** A crash under the DISABLE TRIGGER fallback can leave user triggers off: re-enable every table the manifest recorded. */
+async function repairDisabledTriggers(run: Run): Promise<boolean> {
+  const disabled = run.m.tables.filter(t => t.disabledTriggers).map(t => t.relation);
+  if (!disabled.length) return false;
+  await openTargets(run);
+  await run.deps.reenableTriggers(run.main!, disabled, { runId: run.m.runId });
+  run.m.tables = run.m.tables.map(t => ({ ...t, disabledTriggers: false }));
+  save(run);
+  return true;
+}
+
 export interface ReconcileResult { state: ManifestState | 'none'; actions: readonly string[]; detail: string }
 
 async function reconcileRun(run: Run): Promise<ReconcileResult> {
@@ -1128,6 +1162,7 @@ async function reconcileRun(run: Run): Promise<ReconcileResult> {
       await installGraduationFence(run.ddl!, run.m.runId);
       actions.push('re-installed target fence');
     }
+    if (await repairDisabledTriggers(run)) actions.push('re-enabled user triggers left disabled');
   }
   return { state: run.m.state, actions, detail: actions.join('; ') };
 }
@@ -1186,6 +1221,7 @@ async function rollbackBeforeCutover(run: Run): Promise<GraduationRollbackResult
       await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'abandoned'));
       await installGraduationFence(run.ddl!, run.m.runId);
     }
+    if (row?.role === 'target' && row.run_id === run.m.runId) await repairDisabledTriggers(run);
   }
   advance(run, 'abandoned');
   return { state: 'abandoned', restoredPath: null, dropped: [] };
