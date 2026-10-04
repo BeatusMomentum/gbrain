@@ -45,3 +45,4 @@ they need the user's confirmation (documented legacy; changing it is a v2 item).
 | `gbrain doctor --remediate` without a terminal and without `--yes` | 0 (it ran) | 3 | paid and destructive work waits for the user |
 | `gbrain autopilot --interval`, `serve --port`, `dream --phase`, `init --mcp-only` missing flags, `delta --since` with a bad value | 1 | 2 | invalid input |
 | `gbrain jobs submit` on PGLite without `--follow` or `--queue-only` | 0 (queued, no worker) | 1 (`no_worker`) | the job would wait for a worker that is not running |
+| `gbrain migrate --to postgres` on a PGLite brain with write history | 1 (`writer_coordinator_required`) | 3 (plan; run with `--yes --expect`) | graduation carries the history; the bare command shows the plan and asks |
