@@ -14,7 +14,7 @@ import { shrinkRun } from './shrink.ts';
 export interface ValidationOptions {
   engine: 'pglite' | 'postgres'; schedules?: number; operations?: number; seed?: number;
   crashes?: boolean; databaseUrl?: string; manifest?: string;
-  /** Crash-robot time budget in seconds; 0 skips the phase. */
+  /** Crash-robot time budget in seconds; omitted or 0 skips the phase (the CLI defaults to 300). */
   robotSeconds?: number;
   /** Re-run a recorded manifest's failing crash-robot runs (and nothing else). */
   replay?: string;
@@ -123,7 +123,7 @@ export async function runValidation(options: ValidationOptions) {
     }
     function start(path: string, role: string, ...args: string[]) { const child = spawnWorker(path, home, role, args); children.push(child); return child; }
     const robotOptions = (extra: Partial<Parameters<typeof runRobotPhase>[0]> = {}) => ({ engine: options.engine, seed: options.seed ?? 5105,
-      seconds: options.robotSeconds ?? 300, scratch, home, admin, databaseUrl: options.databaseUrl, databases,
+      seconds: options.robotSeconds ?? 0, scratch, home, admin, databaseUrl: options.databaseUrl, databases,
       pooledUrl: options.engine === 'postgres' ? process.env.GBRAIN_PGBOUNCER_URL || undefined : undefined,
       spawn: spawnWorker, track: (child: ReturnType<typeof spawnWorker>) => { children.push(child); }, ...extra });
     if (options.replay || options.shrink) {
@@ -142,7 +142,7 @@ export async function runValidation(options: ValidationOptions) {
       if (manifest.robot.violations.length) throw new Error(robotFailure(manifest.robot.failing_runs, options));
       return manifest;
     }
-    if (options.robotSeconds !== 0) {
+    if (options.robotSeconds) {
       manifest.robot = await runRobotPhase(robotOptions());
       process.stderr.write(`[persistence] ${options.engine}: crash robot ran ${manifest.robot.sequences_x_crash_points} sequence x crash point runs over ${manifest.robot.schedules} schedules\n`);
       if (manifest.robot.violations.length) throw new Error(robotFailure(manifest.robot.failing_runs, options));
@@ -195,7 +195,7 @@ export async function runValidation(options: ValidationOptions) {
     manifest.status = 'passed';
     const executedBoundaries = manifest.crash_cases.map((entry: { boundary: string }) => entry.boundary);
     if (options.crashes !== false) assert.deepEqual(executedBoundaries, [...CRASH_BOUNDARIES]);
-    if (manifest.robot) manifest.robot_full_gate = (options.robotSeconds ?? 300) >= FULL_ROBOT_SECONDS && manifest.robot.violations.length === 0
+    if (manifest.robot) manifest.robot_full_gate = (options.robotSeconds ?? 0) >= FULL_ROBOT_SECONDS && manifest.robot.violations.length === 0
       && (manifest.robot.lease_bound_seams_skipped ?? []).length === 0;
     manifest.full_gate = counts.schedules >= 1000 && counts.operations >= 10_000
       && executedBoundaries.length === CRASH_BOUNDARIES.length && CRASH_BOUNDARIES.every((boundary, index) => executedBoundaries[index] === boundary)
