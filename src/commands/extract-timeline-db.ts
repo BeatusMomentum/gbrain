@@ -136,10 +136,11 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   }
 
   for (const { slug, source_id } of refs) {
-    if (analyzeEvery > 0 && ++walked % analyzeEvery === 0) {
+    if (analyzeEvery > 0 && walked > 0 && walked % analyzeEvery === 0) {
       await flush();
       await maybeRefreshPlannerStats(engine, 'extract', { throttle: false }).catch(() => undefined);
     }
+    walked++;
     if (managed) {
       try {
         const outcome = await publishPageTimeline(engine, await authorityFor(source_id), slug, source_id, opts);
