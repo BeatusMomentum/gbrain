@@ -37,6 +37,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   calibration_profile: { class: 'no_coordinated_write', reason: 'Writes the calibration_profiles side table only.' },
   drift: { class: 'writes', reason: 'The drift report page publishes through the maintenance coordinator.' },
   chronicle: { class: 'writes', reason: 'Life Chronicle event pages and their projections publish through the maintenance coordinator, re-validated against the judged depth revision.' },
+  facts_drain: { class: 'writes', reason: 'Queued facts-absorb jobs publish facts through the same coordinated write path as the job worker.' },
   conversation_facts_backfill: { class: 'writes', reason: 'Backfilled conversation facts publish through coordinated writes.' },
   enrich_thin: { class: 'writes', reason: 'Enriched pages publish through the maintenance coordinator.' },
   skillopt: { class: 'no_coordinated_write', reason: 'Writes skill files and proposals outside the brain database.' },

@@ -31,6 +31,9 @@ import { runChronicleBackfill } from '../src/core/chronicle/backfill.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { claimPersistenceEffect } from '../src/core/persistence/effect-journal.ts';
+import { dispatchFactsBackstopEffect } from '../src/core/persistence/effect-facts.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
@@ -284,6 +287,26 @@ const MATRIX: Record<CyclePhase, Entry> = {
       const [event] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND type='event'", [sourceId]);
       expect(await committed(engine, sourceId, event.slug)).not.toHaveLength(0);
       expect(await engine.executeRaw("SELECT state FROM chronicle_page_state WHERE source_id=$1", [sourceId])).toEqual([{ state: 'extracted' }]);
+    },
+  },
+  facts_drain: {
+    config: { embedding_disabled: 'true' },
+    seed: async ({ engine, sourceId }) => {
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      await put(engine, sourceId, 'notes/drain-example', page('note', 'Field notes', 'Carol Example founded Widget Co in 2019 and leads its design team. '.repeat(3)));
+      const held = await engine.executeRaw<{ id: number; next_attempt_at: string | null }>(
+        "SELECT id, next_attempt_at::text FROM persistence_effects WHERE kind<>'facts-backstop'");
+      await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour' WHERE kind<>'facts-backstop'");
+      const effect = await claimPersistenceEffect(engine, localHostId());
+      for (const h of held) await engine.executeRaw('UPDATE persistence_effects SET next_attempt_at=$2::timestamptz WHERE id=$1', [h.id, h.next_attempt_at]);
+      expect(effect?.kind).toBe('facts-backstop');
+      await dispatchFactsBackstopEffect(engine, effect!, localHostId());
+    },
+    reply: () => JSON.stringify({ facts: [{ fact: 'Carol founded Widget Co in 2019', kind: 'fact', entity: 'people/carol-example', confidence: 0.9, notability: 'high' }] }),
+    assert: async ({ engine, sourceId, result }) => {
+      if (engine.kind !== 'pglite') { expect(result.details.reason).toBe('not_applicable'); return; }
+      expect(result.details).toMatchObject({ outcome: 'drained', completed: 1, backlog_after: 0 });
+      expect(await engine.executeRaw("SELECT fact FROM facts WHERE source_id=$1 AND fact LIKE '%Widget Co%'", [sourceId])).not.toHaveLength(0);
     },
   },
   conversation_facts_backfill: {

@@ -62,8 +62,8 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
 
 ## auto_chronicle wave follow-ups (filed 2026-10-04, follow-up from v0.60.45.0, #5876)
 
-- [ ] **P1 — facts-backstop jobs have no executor on PGLite.**
-  **What:** `facts_backstop` effects enqueue jobs that `gbrain jobs work` refuses to run on PGLite (`commands/jobs/work.ts`), the same root cause the chronicle cycle phase fixed for events. **Fix:** run them from a cycle phase or the inline drain, bounded per run. **Effort:** M. **Priority:** P1.
+- [x] **P1 — facts-backstop jobs have no executor on PGLite.** **Completed:** the automatic facts drain (`src/core/facts/drain.ts`) runs them inside `gbrain serve`, `serve --http` and the `facts_drain` cycle phase, bounded per run and per day; doctor `facts_drain` reports it.
+  **What:** `facts_backstop` effects enqueue jobs that nothing ran on PGLite unless someone typed `gbrain jobs work`.
 - [ ] **P2 — Drop future-dated events extracted from past pages.**
   **What:** the measured run wrote 2 not-yet-happened events per 24 judged pages (a planned offsite date and a leave start date mentioned in past meetings) and 2 events for a launch plan stated in a chat. **Fix:** refuse proposals dated after the extraction time (or after the page's own date plus a margin) before publication, and tell the judge prompt to emit only what already happened; re-measure on the labeled fixture described in `docs/fix-wave-notes/capy-fix-wave-chronicle.md`. **Effort:** S. **Priority:** P2.
 - [ ] **P2 — Event slug identity collapses distinct same-day proposals.**
