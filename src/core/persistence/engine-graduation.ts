@@ -16,9 +16,9 @@
  * Graduation is CLI-only: no operations.ts entry, no remote caller.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -197,6 +197,7 @@ export function readGraduationManifest(path = graduationManifestPath()): Graduat
 
 /** Atomic write + fsync, mode 0600 (it holds the full target URLs). */
 export function writeGraduationManifest(manifest: GraduationManifest, path = graduationManifestPath()): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileDurably(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
