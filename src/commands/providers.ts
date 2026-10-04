@@ -273,6 +273,7 @@ async function runTest(args: string[]): Promise<void> {
       const result = await gwChat({
         messages: [{ role: 'user', content: 'Reply with just the word: pong' }],
         maxTokens: 16,
+        allowFallback: false,
       });
       const ms = Date.now() - start;
       const preview = (result.text || '<empty>').replace(/\s+/g, ' ').slice(0, 80);

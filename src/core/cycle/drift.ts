@@ -174,6 +174,7 @@ export async function defaultDriftJudge(input: {
     messages: [{ role: 'user', content: buildDriftPrompt(input.candidate, input.evidence) }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: input.maxOutputTokens ?? resolveSynthMaxOutputTokens(input.modelHint ?? ''),
+    allowFallback: false,
   });
   const parsed = parseDriftOutput(result.text);
   if (!parsed) {
