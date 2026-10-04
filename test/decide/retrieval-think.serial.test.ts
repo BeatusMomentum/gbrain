@@ -12,6 +12,7 @@
  * Serial: mutates GBRAIN_HOME and the process-global gateway.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { waitFor } from '../helpers/wait-for.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -159,6 +160,9 @@ describe('S2 in think', () => {
     __setDecideTransportForTests(async () => new Response('x', { status: 503 }));
     const failed = await startThinkDecide(engine, { question: 'alpha keyword', remote: false }, 'temporal');
     expect(await failed!.trajectoryIntent('temporal')).toBe('temporal');
+    // The late answer still lands after the test body returns; wait for its
+    // receipt so it cannot leak into the next test's receipt count.
+    await waitFor(async () => (await receipts()).some((r) => r.error_reason === 'late'), { label: 'late intent receipt' });
   });
 
   test('all-off: no decide work at all', async () => {
