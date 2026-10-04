@@ -37,11 +37,11 @@ export const MANIFEST_TRANSITIONS: Readonly<Record<ManifestState, readonly Manif
   planned: ['quiesced', 'abandoned'],
   quiesced: ['draining', 'abandoned'],
   draining: ['copying', 'abandoned'],
-  copying: ['verifying', 'abandoned'],
-  verifying: ['verified', 'verify_failed', 'abandoned'],
-  verify_failed: ['copying', 'abandoned'],
-  verified: ['cutover', 'abandoned'],
-  cutover: ['tombstoned', 'rollback_fenced'],
+  copying: ['verifying', 'abandoned', 'draining'],
+  verifying: ['verified', 'verify_failed', 'abandoned', 'draining'],
+  verify_failed: ['copying', 'abandoned', 'draining'],
+  verified: ['cutover', 'abandoned', 'draining'],
+  cutover: ['tombstoned', 'rollback_fenced', 'draining'],
   tombstoned: ['authoritative', 'rollback_fenced'],
   authoritative: ['graduated', 'rollback_fenced'],
   graduated: ['rollback_fenced'],
@@ -54,9 +54,9 @@ export const MANIFEST_TRANSITIONS: Readonly<Record<ManifestState, readonly Manif
 
 export const TARGET_TRANSITIONS: Readonly<Record<TargetRowState, readonly TargetRowState[]>> = {
   copying: ['verifying', 'abandoned'],
-  verifying: ['verified', 'verify_failed', 'abandoned'],
+  verifying: ['verified', 'verify_failed', 'abandoned', 'copying'],
   verify_failed: ['copying', 'abandoned'],
-  verified: ['authoritative', 'abandoned'],
+  verified: ['authoritative', 'abandoned', 'copying'],
   authoritative: ['rollback_fenced'],
   rollback_fenced: ['rollback_approved', 'authoritative'],
   rollback_approved: ['source_restoring'],
@@ -67,7 +67,7 @@ export const TARGET_TRANSITIONS: Readonly<Record<TargetRowState, readonly Target
 
 export const SOURCE_TRANSITIONS: Readonly<Record<SourceRowState, readonly SourceRowState[]>> = {
   quiesced: ['cutover', 'rolled_back'],
-  cutover: ['rolled_back'],
+  cutover: ['rolled_back', 'quiesced'],
   rolled_back: ['quiesced'],
 };
 
@@ -166,6 +166,25 @@ export interface GraduationManifest {
   timings: Record<string, number>;
   startedAt: string;
   updatedAt: string;
+  /** Full target URLs (main and DDL route). Only this 0600 file holds them; never printed. */
+  targetUrls?: { main: string; ddl: string };
+  /** The `--to` spelling the user typed; every emitted command echoes it. */
+  invokedAs?: 'postgres' | 'supabase';
+  /** Source snapshot receipts taken after the drain; the lock-gap re-check compares against them. */
+  sourceReceipts?: readonly TableReceipt[];
+  /** The request pending at run start, used by the replay probe. */
+  replayRequestId?: string | null;
+  /** Source persistence_brain.enabled, granted to the target in the authority transaction. */
+  sourceEnabled?: boolean;
+  graduatedAt?: string;
+  /** Manifest state a rollback started from; reconciliation returns to it before approval. */
+  rollbackFrom?: ManifestState;
+  /** Failures of the last verify, re-copied (with their FK closure) by --resume. */
+  verifyFailures?: readonly VerifyFailure[];
+  /** The run was approved with --force (its plan hash bound the target's destructive snapshot). */
+  force?: boolean;
+  /** Mount ids whose database_path named the source, rewritten at the routing flip. */
+  rewrittenMounts?: readonly string[];
 }
 
 /** Sibling intent marker `<dataDir>.gbrain-graduation.json` (mode 0600). */
@@ -253,6 +272,33 @@ export interface GraduationReceipt {
   triggerBypass: TriggerBypass;
   replay: ReplayProbeResult;
   timings: Record<string, number>;
+}
+
+/** What `inspectGraduationPath` sees at a PGLite data dir path, without opening or locking it. */
+export interface GraduationPathState {
+  kind: 'none' | 'in_progress' | 'interrupted' | 'graduated' | 'split_brain';
+  dataDir: string;
+  marker: IntentMarker | null;
+  tombstone: Tombstone | null;
+  /** Liveness of the marker's requesting process; null without a non-terminal marker. */
+  liveness: 'alive' | 'dead' | 'unknown' | null;
+  /** The `<dataDir>.graduated-<run_id>` directory when it exists. */
+  movedTo: string | null;
+  detail: string;
+}
+
+/** `gbrain migrate --status --json`: read-only, never reconciles. */
+export interface GraduationStatusDoc {
+  state: ManifestState | 'none';
+  runId: string | null;
+  /** The manifest without its secret URLs. */
+  manifest: Omit<GraduationManifest, 'targetUrls'> | null;
+  path: GraduationPathState | null;
+  targetDisplayUrl: string | null;
+  /** A live process owns the run (marker liveness). */
+  live: boolean;
+  nextArgv: readonly string[] | null;
+  detail: string;
 }
 
 export interface GraduationEngines {
