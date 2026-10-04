@@ -5,6 +5,8 @@ import { slog, withSourcePrefix } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { msysToNativePath } from '../../core/path-confine.ts';
 import { syncFailureJsonFields, readManagedSyncFailures } from '../../core/persistence/sync-failures.ts';
+import { syncHoldJsonFields } from '../../core/persistence/sync-holds.ts';
+import { printHoldNotes } from '../sync-diagnostics.ts';
 import { getDefaultSourcePath } from '../../core/source-resolver.ts';
 import {
   resolveSyncAllEmbedPlan,
@@ -591,6 +593,7 @@ async function dispatchSyncAll(input: {
       if (r.status === 'fulfilled') {
         writeHuman(`  ${r.value.result.managedWrite || r.value.result.status === 'blocked_by_failures' ? '✗' : '✓'} ${src.name}: ${r.value.result.status} (added=${r.value.result.added}, modified=${r.value.result.modified}, deleted=${r.value.result.deleted})`);
         if (r.value.result.managedWrite || r.value.result.status === 'blocked_by_failures') printSyncResult(r.value.result, humanSink);
+        else printHoldNotes(r.value.result, writeHuman);
         perSourceResults.push({
           sourceId: src.id,
           sourceName: src.name,
@@ -658,6 +661,7 @@ function emitSyncAllEnvelope(input: {
       ...(r.localPath ? { local_path: r.localPath } : {}),
       ...(r.result ? {
         ...syncFailureJsonFields(r.result),
+        ...syncHoldJsonFields(r.result),
         sync_status: r.result.status,
         // #3068: surface the partial reason (e.g. pull_failed) so JSON
         // consumers can distinguish a self-healing timeout from a wedge.
