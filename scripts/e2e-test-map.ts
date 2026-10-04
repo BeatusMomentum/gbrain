@@ -501,6 +501,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/chronicle-auto-decision-postgres.test.ts",
     "test/e2e/chronicle-auto-phase-postgres.test.ts",
     "test/e2e/chronicle-event-privacy-postgres.test.ts",
+    "test/e2e/chronicle-event-identity-postgres.test.ts",
     "test/e2e/chronicle-surfaces-postgres.test.ts",
   ],
   // #5876: doctor auto_chronicle + the chronicle advisor read the ledger rollups.
