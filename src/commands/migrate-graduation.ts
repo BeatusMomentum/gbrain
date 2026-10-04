@@ -389,6 +389,11 @@ export async function runMigrateGraduation(args: readonly string[], deps: Gradua
     }
     const receipt = a.mode === 'resume' ? await api.resumeGraduation(opts) : await api.runGraduation(opts);
     done();
+    if (receipt.state === 'rolled_back') {
+      emit({ schema_version: 1, status: 'rolled_back', state: 'rolled_back', run_id: receipt.runId, receipt },
+        `Rolled back (run ${receipt.runId}): the interrupted rollback finished and the PGLite brain is authoritative again.\n`);
+      return 0;
+    }
     emit(successDoc(receipt), successLines(receipt));
     return 0;
   } catch (e) {

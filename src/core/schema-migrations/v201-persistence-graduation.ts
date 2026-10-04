@@ -8,8 +8,8 @@ import { PERSISTENCE_GRADUATION_SCHEMA_SQL } from '../persistence/graduation-sch
 // target table until the authority transaction. DDL in
 // src/core/persistence/graduation-schema.ts. The table is schema-owned: never
 // copied, digested or compared.
-export const v203: Migration = {
-  version: 203,
+export const v201: Migration = {
+  version: 201,
   name: 'persistence_graduation',
   idempotent: true,
   sql: PERSISTENCE_GRADUATION_SCHEMA_SQL,
