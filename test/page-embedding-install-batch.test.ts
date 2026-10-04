@@ -1,8 +1,7 @@
 /**
- * #6007: installPageEmbeddings writes every chunk's vector, image, model,
- * input hash and embedded stamps in one set-based UPDATE. Each case pins the
- * per-chunk semantics the old one-UPDATE-per-chunk loop had, on PGLite and
- * (with DATABASE_URL) an isolated Postgres database.
+ * installPageEmbeddings per-chunk semantics: each chunk's vector, image,
+ * model, input hash and embedded stamps, on PGLite and (with DATABASE_URL) an
+ * isolated Postgres database.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -21,7 +20,7 @@ interface Row { chunk_index: number; chunk_text: string; embedding: string | nul
   embedded_at: string | null; embedded_text_hash: string | null; embedding_input_hash: string | null; text_md5: string }
 
 for (const kind of testBackends()) {
-  describe(`set-based embedding install (${kind})`, () => {
+  describe(`embedding install per chunk (${kind})`, () => {
     let engine: BrainEngine;
     let closePostgres: (() => Promise<void>) | undefined;
     beforeAll(async () => {

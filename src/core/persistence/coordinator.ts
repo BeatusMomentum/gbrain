@@ -13,7 +13,7 @@ import { authorizeStoredRequest } from './authority.ts';
 import { localHostId } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
 import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
-import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type RecoveryRecord, type WriteRequest } from './model.ts';
+import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
@@ -141,6 +141,29 @@ export function decoratePublicationOutcome(row: WriteRequest, prepared: Prepared
  * The root lock spans all file effects; the DB guards span authorization and
  * publication. A rejected/ambiguous commit is recovered before releasing FIFO.
  */
+/**
+ * The recovery record of one page file publication (its before bytes, hashes,
+ * mode and reserved staging names) and the recovery bytes it reserves. Read
+ * while holding the worktree's native lock, before any file is touched.
+ */
+export function pageRecoveryRecord(row: WriteRequest, file: PageMutationFile, binding: WorktreeBinding): { record: FileRecoveryRecord; bytes: number } {
+  const before = existsSync(file.path) ? readFileSync(file.path) : null;
+  const record: FileRecoveryRecord = {
+    version: 1, path: file.path, root: file.root,
+    before: before?.toString('base64') ?? null, beforeHash: before ? sha256(before) : null,
+    afterHash: file.content === null ? null : sha256(file.content),
+    mode: before ? statSync(file.path).mode & 0o7777 : null,
+    ownerEpoch: String(binding.owner_epoch), attempt: row.execution_token!,
+    staging: {
+      ...(file.content === null ? {} : { publication: recoveryStagingFile(file.path, file.content) }),
+      ...(before === null ? {} : { restoration: recoveryStagingFile(file.path, before) }),
+    },
+  };
+  const nextBytes = file.content === null ? 0 : typeof file.content === 'string' ? Buffer.byteLength(file.content) : file.content.byteLength;
+  const beforeBytes = before?.byteLength ?? 0;
+  return { record, bytes: Math.max(beforeBytes * 3 + nextBytes * 2, Buffer.byteLength(JSON.stringify(record)) + beforeBytes + nextBytes) + 4096 };
+}
+
 export async function publishMutation(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation,
   hostId = localHostId(), hooks: PublicationHooks = {}): Promise<WriteRequest> {
   let lock: NativeLockHandle | null = null;
@@ -208,18 +231,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       if (!binding || !lock || !isWriteTargetContained(prepared.file.path, prepared.file.root)) throw opError('storage_error', 'Filesystem publication requires a confined canonical owner.',
         `This host does not hold source ${row.source_id}'s canonical worktree, or the file of ${row.slug} resolves outside it, so request ${row.request_id} wrote no file. Inspect the owner; the write publishes only on the host that owns the source.`,
         { fix: ownerStatusFix(row.source_id) });
-      const before = existsSync(prepared.file.path) ? readFileSync(prepared.file.path) : null;
-      const record: RecoveryRecord = {
-        version: 1, path: prepared.file.path, root: prepared.file.root,
-        before: before?.toString('base64') ?? null, beforeHash: before ? sha256(before) : null,
-        afterHash: prepared.file.content === null ? null : sha256(prepared.file.content),
-        mode: before ? statSync(prepared.file.path).mode & 0o7777 : null,
-        ownerEpoch: String(binding.owner_epoch), attempt: row.execution_token!,
-        staging: {
-          ...(prepared.file.content === null ? {} : { publication: recoveryStagingFile(prepared.file.path, prepared.file.content) }),
-          ...(before === null ? {} : { restoration: recoveryStagingFile(prepared.file.path, before) }),
-        },
-      };
+      const { record, bytes } = pageRecoveryRecord(row, prepared.file, binding);
       if (prepared.file.expectedBeforeHash !== undefined && record.beforeHash !== prepared.file.expectedBeforeHash) {
         // A coordinated writer (a withdrawal mirror) also advanced the page:
         // reprepare against it. Bytes changed at an unchanged revision are an
@@ -230,11 +242,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         }
         throw localEditRefusal('The canonical file changed after preparation.', row, skill, 'after the write was prepared, at an unchanged page revision');
       }
-      const nextBytes = prepared.file.content === null ? 0 : typeof prepared.file.content === 'string'
-        ? Buffer.byteLength(prepared.file.content) : prepared.file.content.byteLength;
-      const beforeBytes = before?.byteLength ?? 0;
-      await prepareRecovery(engine, row, record, Math.max(beforeBytes * 3 + nextBytes * 2,
-        Buffer.byteLength(JSON.stringify(record)) + beforeBytes + nextBytes) + 4096);
+      await prepareRecovery(engine, row, record, bytes);
       recovery = record;
       await hooks.boundary?.('prepared', row);
     }

@@ -277,11 +277,23 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
  * stopping at the first row that is not a queued member of the group. A member
  * is never claimed past an unfinished non-member, so the FIFO order holds.
  */
+/**
+ * The publication group key of a request: a bulk sync's `intent.group`, or the
+ * batch id of a `put_pages` child (`intent.page_batch.id`, #6007). Null when it
+ * publishes alone.
+ */
+export function publicationGroupKey(row: Pick<WriteRequest, 'operation' | 'intent'>): string | null {
+  if (typeof row.intent?.group === 'string') return `sync:${row.intent.group}`;
+  const batch = row.intent?.page_batch as { id?: unknown } | undefined;
+  return row.operation === 'put_page' && !row.intent?.kind && typeof batch?.id === 'string' ? `batch:${batch.id}` : null;
+}
+const GROUP_KEY_SQL = `CASE WHEN intent ? 'group' THEN 'sync:'||(intent->>'group')
+  WHEN operation='put_page' AND NOT (intent ? 'kind') AND jsonb_typeof(intent->'page_batch'->'id')='string' THEN 'batch:'||(intent->'page_batch'->>'id') END`;
 export async function claimGroupFollowers(engine: BrainEngine, head: WriteRequest, group: string, max: number, leaseMs = 30_000): Promise<WriteRequest[]> {
   if (!head.worktree_id || max <= 0) return [];
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean }>(`SELECT id,state,intent->>'group' AS grp,recovery IS NOT NULL AS recovering
+    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean }>(`SELECT id,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering
       FROM persistence_requests WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL)
       ORDER BY sequence LIMIT $3 FOR UPDATE`, [head.worktree_id, head.sequence, max]);
     const members: string[] = [];
@@ -380,20 +392,20 @@ export async function hasClaimableWrite(engine: SqlEngine, hostId: string, exclu
   return row?.claimable === true;
 }
 
-/**
- * Claims commit before OS-lock waits. An unresolved head blocks its entire
- * root. #6007: one autocommit statement on the direct route selects, locks
- * (skipping locked rows) and claims the head.
- */
+/** Claims commit before OS-lock waits. An unresolved head blocks its entire root. */
 export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseMs = 30_000, excludeRoots: string[] = []): Promise<WriteRequest | null> {
-  const [claimed] = await engine.executeRawDirect<WriteRequest>(`UPDATE persistence_requests SET state='running',
-      execution_token=$3::uuid,claim_expires_at=now()+($4::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL
-    WHERE id=(SELECT r.id FROM persistence_requests r
+  return engine.transactionDirect(async tx => {
+    await declarePersistenceProtocol(tx);
+    const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
       LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
       WHERE ${CLAIMABLE_WRITE_SQL}
-      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED) AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [hostId, excludeRoots, randomUUID(), leaseMs]);
-  return claimed ?? null;
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, excludeRoots]);
+    if (!row) return null;
+    const [claimed] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='running',
+      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
+      updated_at=now(),blocked_reason=NULL WHERE id=$1::uuid RETURNING *`, [row.id, randomUUID(), leaseMs]);
+    return claimed;
+  });
 }
 export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
@@ -442,6 +454,64 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
       UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
       WHERE id=$1::uuid AND execution_token=$2::uuid`, [row.id, row.execution_token, JSON.stringify(recovery), bytes, counters.map(c => c.key)]);
   });
+}
+
+/**
+ * #6007 grouped publication: records every member's recovery record in one
+ * transaction, before any of their files is touched. All or nothing: a member
+ * whose claim moved, or that already holds a record, fails the whole call and
+ * nothing is recorded.
+ */
+export async function prepareRecoveries(engine: BrainEngine, members: { row: WriteRequest; record: RecoveryRecord; bytes: number }[]): Promise<void> {
+  if (!members.length) return;
+  const worktree = members[0]!.row.worktree_id;
+  if (!worktree || members.some(member => member.row.worktree_id !== worktree)) throw new TypeError('Grouped filesystem recovery requires one worktree.');
+  const limits = await readJournalLimits(engine);
+  const total = members.reduce((sum, member) => sum + member.bytes, 0);
+  if (members.some(member => member.bytes > limits.worktreeRecoveryBytes || member.bytes > limits.brainRecoveryBytes)) {
+    throw new OperationError('request_too_large', 'This request exceeds the configured recovery capacity.', 'Increase recovery capacity before submitting a new request.');
+  }
+  await engine.transaction(async tx => {
+    await declareDurablePersistence(tx);
+    const counters = await lockCounters(tx, ['brain', `worktree:${worktree}`]);
+    for (const c of counters) if (Number(c.recovery_bytes) + total > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
+    const recorded = await tx.executeRaw(`WITH recorded AS (UPDATE persistence_requests r SET recovery=t.record,recovery_bytes=t.bytes,updated_at=now()
+        FROM jsonb_to_recordset($1::text::jsonb) AS t(id uuid,token uuid,record jsonb,bytes bigint)
+        WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND r.recovery IS NULL RETURNING r.id),
+      reserved AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=ANY($3::text[]) AND (SELECT count(*) FROM recorded)=$4)
+      SELECT id FROM recorded`, [JSON.stringify(members.map(member => ({ id: member.row.id, token: member.row.execution_token, record: member.record, bytes: member.bytes }))),
+      total, counters.map(c => c.key), members.length]);
+    if (recorded.length !== members.length) throw opError('write_claim_lost', 'A grouped write claim changed before its recovery was recorded.',
+      'Another owner pass holds one of the grouped requests; the group publishes nothing and its members publish one at a time.');
+  });
+}
+
+/** Clears the resolved recovery records of a committed group in one transaction; a record that changed is cleared on its own. */
+export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRequest[]): Promise<void> {
+  const resolved = rows.filter(row => row.recovery && isTerminal(row));
+  if (resolved.length < 2) { for (const row of resolved) await clearResolvedRecovery(engine, row.id, row); return; }
+  for (const row of resolved) for (const file of recoveryFiles(row.recovery!)) assertRecoveryStagingAbsent(file);
+  const worktree = resolved[0]!.worktree_id;
+  const cleared = new Set((await engine.transaction(async tx => {
+    await declareDurablePersistence(tx);
+    const keys = ['brain', ...(worktree ? [`worktree:${worktree}`] : [])];
+    await lockCounters(tx, keys);
+    return tx.executeRaw<{ id: string }>(`WITH locked AS (SELECT r.id,r.recovery_bytes FROM persistence_requests r
+        JOIN jsonb_to_recordset($1::text::jsonb) AS t(id uuid,record jsonb) ON t.id=r.id
+        WHERE r.recovery=t.record AND r.worktree_id IS NOT DISTINCT FROM $3::uuid AND r.state IN ('committed','conflict','failed','cancelled') FOR UPDATE OF r),
+      released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-(SELECT COALESCE(SUM(recovery_bytes),0) FROM locked) WHERE key=ANY($2::text[]))
+      UPDATE persistence_requests r SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL FROM locked WHERE r.id=locked.id RETURNING r.id`,
+    [JSON.stringify(resolved.map(row => ({ id: row.id, record: row.recovery }))), keys, worktree]);
+  })).map(row => row.id));
+  for (const row of resolved) if (!cleared.has(row.id)) await clearResolvedRecovery(engine, row.id);
+}
+
+/** #6007: claims again a request this owner pass released to the queue itself, while it still holds the worktree's native lock. */
+export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leaseMs = 30_000): Promise<WriteRequest | null> {
+  const [claimed] = await engine.executeRawDirect<WriteRequest>(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL
+    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, randomUUID(), leaseMs]);
+  return claimed ?? null;
 }
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */

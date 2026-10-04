@@ -33,12 +33,12 @@ const CRITICAL: Phase[] = ['admission', 'claim', 'prepare', 'recovery_record', '
 
 /**
  * Per-phase statement budgets, about 10% above the measured counts (#6007
- * measured admission 25, claim 2, prepare 19, recovery record 6, publication
- * 52, completion 6: 110 on the critical path, and an 8-statement receipt; the
+ * measured admission 25, claim 9, prepare 19, recovery record 6, publication
+ * 54, completion 6: 119 on the critical path, and an 8-statement receipt; the
  * code before #6007 measured 29, 9, 21, 9, 61, 10: 139, and 10).
  */
 const BUDGET: Record<string, number> = {
-  admission: 28, claim: 3, prepare: 21, recovery_record: 7, publication: 57, completion: 7, critical_path: 121, receipt: 9,
+  admission: 28, claim: 10, prepare: 21, recovery_record: 7, publication: 60, completion: 7, critical_path: 131, receipt: 9,
 };
 
 const SCAN = [

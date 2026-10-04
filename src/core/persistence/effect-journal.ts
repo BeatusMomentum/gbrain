@@ -21,7 +21,9 @@ import { pageBatchChildRequestIds } from './page-batch-id.ts';
  * nothing while `auto_link` or `mcp.remote_auto_links` is off (unset is on).
  */
 export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'operation' | 'intent' | 'authority' | 'principal_kind' | 'principal_id'>>, snapshot: PageSnapshot | null,
-  outcome: Record<string, unknown>, prepared?: PreparedMutation): Promise<void> {
+  outcome: Record<string, unknown>, prepared?: PreparedMutation,
+  /** A grouped publication completes its members after queueing all of them, then calls `reconcileFinishedBatch` itself. */
+  opts: { deferBatchReconcile?: boolean } = {}): Promise<void> {
   if (prepared?.noop || prepared?.target === 'skill_bundle') return;
   await declarePersistenceProtocol(tx);
   const revision = snapshot?.revision;
@@ -44,15 +46,14 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
     }
-    if (row.authority && row.operation && REMOTE_MENTION_OPERATIONS.includes(row.operation)
-      && !(row.authority.autoLinkTrusted ?? !row.authority.remote)) {
+    if (queuesMentionLinks(row)) {
       const queued = await tx.executeRaw(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
         SELECT $1::uuid,'links',$2::uuid,$3::text::jsonb,$4,$5::uuid,$6::uuid WHERE NOT EXISTS (SELECT 1 FROM config
           WHERE key IN ('auto_link',$7) AND lower(btrim(value,E' \\t\\r\\n')) IN ('false','0','no','off'))
         ON CONFLICT(request_id,kind) DO NOTHING RETURNING id`,
       [row.id, revision ?? null, JSON.stringify(data), row.source_id, row.source_incarnation, row.worktree_id, REMOTE_AUTO_LINKS_KEY]);
       if (queued.length) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
-      await reconcileFinishedBatch(tx, row);
+      if (!opts.deferBatchReconcile) await reconcileFinishedBatch(tx, row);
     }
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
@@ -63,12 +64,18 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   [row.id, revision ?? null, row.source_id, row.source_incarnation, row.worktree_id, JSON.stringify(queued)]);
 }
 
+/** Whether a publication of this request queues a mention `links` effect: a remote page write without trusted auto-linking. */
+export function queuesMentionLinks(row: Partial<Pick<WriteRequest, 'operation' | 'authority'>>): boolean {
+  return !!row.authority && !!row.operation && REMOTE_MENTION_OPERATIONS.includes(row.operation)
+    && !(row.authority.autoLinkTrusted ?? !row.authority.remote);
+}
+
 /**
  * #6007: when the last unfinished page of a `put_pages` batch publishes, its
  * earlier pages' links effects may have run before this page existed; re-arm
  * them once so forward references inside the batch resolve, with no client poll.
  */
-async function reconcileFinishedBatch(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'intent' | 'principal_kind' | 'principal_id'>>): Promise<void> {
+export async function reconcileFinishedBatch(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'intent' | 'principal_kind' | 'principal_id'>>): Promise<void> {
   const batch = row.intent?.page_batch as { id?: unknown; size?: unknown } | undefined;
   if (!batch || typeof batch.id !== 'string' || typeof batch.size !== 'number' || batch.size < 2 || !row.principal_kind || !row.principal_id) return;
   const siblings = await tx.executeRaw<{ id: string; state: string }>(`SELECT id,state FROM persistence_requests

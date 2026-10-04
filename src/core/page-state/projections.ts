@@ -217,28 +217,21 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
       built?.corpusGeneration !== undefined ? built.corpusGeneration : context.corpusGeneration, stored);
     // This is deliberately UPDATE-only: a late embed can never replace text,
     // chunk identity, metadata, or membership in the installed projection.
-    // #6007: one set-based statement for every chunk with a vector or image;
-    // a repeated chunk index keeps its last entry, as sequential updates would.
-    const updates = new Map<number, { id: number; vector: string | null; image: string | null; model: string | null; chunk_text: string; input_hash: string }>();
     for (const chunk of chunks) {
       if (!chunk.embedding && !chunk.embedding_image) continue;
       const original = byIndex.get(chunk.chunk_index)!;
       const vector = chunk.embedding ? `[${Array.from(chunk.embedding).join(',')}]` : null;
-      updates.set(chunk.chunk_index, { id: original.id, vector, image: chunk.embedding_image ? `[${Array.from(chunk.embedding_image).join(',')}]` : null,
-        // Bind the full provider:model captured before the provider call. Keeping
-        // an old label on a new vector prevents provenance-complete migration.
-        model: chunk.model ?? (vector ? prepared.embeddingModel : null) ?? null, chunk_text: original.chunk_text,
-        input_hash: embeddingInputHash(provenance, tier, original) });
-    }
-    if (updates.size) {
-      const target = quoteIdentifier(column.name);
-      await tx.executeRaw(`UPDATE content_chunks c SET
-        ${target}=CASE WHEN u.vector IS NULL THEN c.${target} ELSE u.vector${vectorCastSuffix(column)} END,
-        embedding_image=CASE WHEN u.image IS NULL THEN c.embedding_image ELSE u.image::vector END,
-        embedding_input_hash=CASE WHEN u.vector IS NULL THEN c.embedding_input_hash ELSE u.input_hash END,
-        embedded_at=now(),embedded_text_hash=md5(c.chunk_text),model=COALESCE(u.model,c.model)
-        FROM jsonb_to_recordset($1::text::jsonb) AS u(id bigint,vector text,image text,model text,chunk_text text,input_hash text)
-        WHERE c.id=u.id AND c.page_id=$2 AND c.chunk_text=u.chunk_text`, [JSON.stringify([...updates.values()]), snapshot.page.id]);
+      const image = chunk.embedding_image ? `[${Array.from(chunk.embedding_image).join(',')}]` : null;
+      await tx.executeRaw(`UPDATE content_chunks SET
+        ${quoteIdentifier(column.name)}=CASE WHEN $2::text IS NULL THEN ${quoteIdentifier(column.name)} ELSE $2${vectorCastSuffix(column)} END,
+        embedding_image=CASE WHEN $3::text IS NULL THEN embedding_image ELSE $3::vector END,
+        embedding_input_hash=CASE WHEN $2::text IS NULL THEN embedding_input_hash ELSE $7 END,
+        embedded_at=now(),embedded_text_hash=md5(chunk_text),model=COALESCE($4,model)
+        WHERE id=$1 AND page_id=$5 AND chunk_text=$6`,
+      // Bind the full provider:model captured before the provider call. Keeping
+      // an old label on a new vector prevents provenance-complete migration.
+      [original.id, vector, image, chunk.model ?? (vector ? prepared.embeddingModel : null), snapshot.page.id, original.chunk_text,
+        embeddingInputHash(provenance, tier, original)]);
     }
     if (signature) await tx.setPageEmbeddingSignature(slug, { sourceId, signature });
     return true;

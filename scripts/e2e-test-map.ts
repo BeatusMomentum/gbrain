@@ -71,6 +71,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 5 #5401: projection drain CLI and the budgeted resident drain.
   "src/commands/projections.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   "src/core/persistence/consumer.ts": ["test/e2e/projection-drain-postgres.test.ts"],
+  "src/core/persistence/group-publish.ts": ["test/e2e/put-pages-group-postgres.test.ts"],
   "src/core/persistence/effect-links.ts": ["test/e2e/persistence-links-effect-postgres.test.ts"],
   "src/core/page-state/guards.ts": ["test/e2e/page-guards-postgres.test.ts"],
   "src/core/persistence/protocol.ts": ["test/e2e/persistence-statement-budget.test.ts"],

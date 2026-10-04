@@ -1,9 +1,9 @@
 /**
- * #6007: set-based page guards and counter locks on real Postgres, with
- * concurrent transactions on separate pooled connections. lockPageKeys takes
- * the source share locks, the guard rows and the pages rows in three
- * statements; a transaction (and its savepoints) never re-acquires a key it
- * holds; lockCounters creates and locks a counter set in one statement.
+ * #6007: page guards and counter locks on real Postgres, with concurrent
+ * transactions on separate pooled connections. A transaction (and its
+ * savepoints) never re-acquires a key it holds, including a key whose pages
+ * row is absent: the only pages INSERT runs after putPage takes the same
+ * guard. lockCounters creates and locks counter sets in key order.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase } from './helpers.ts';
@@ -35,7 +35,7 @@ function holdTransaction(engine: BrainEngine, body: (tx: BrainEngine) => Promise
   return { entered, release, done };
 }
 
-d('#6007 set-based page guards on Postgres', () => {
+d('#6007 page guards on Postgres', () => {
   let engine: PostgresEngine;
   let close: () => Promise<void>;
   beforeAll(async () => {
@@ -137,7 +137,7 @@ d('#6007 set-based page guards on Postgres', () => {
   });
 });
 
-d('#6007 one-statement counter locks on Postgres', () => {
+d('#6007 counter locks on Postgres', () => {
   let engine: PostgresEngine;
   let close: () => Promise<void>;
   beforeAll(async () => { ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!)); }, 120_000);
