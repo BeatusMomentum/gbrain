@@ -24,6 +24,14 @@ export const ROBOT_TOPOLOGY: GeneratorTopology = { sources: ['robot-0', 'robot-1
 export const PROCESS_FAULTS: ProcessFault[] = ['stale_index_lock', 'hung_git', 'pooler_disconnect'];
 
 /** One executed run, enough to replay it exactly: `--replay` re-injects this entry. */
+/**
+ * Seams whose recovery on Postgres waits out a dead owner's claim lease
+ * (requests 30 s, effects 2 minutes). A Postgres run with a budget under
+ * FULL_ROBOT_SECONDS skips them; full runs (master, nightly) crash every seam.
+ */
+export const FULL_ROBOT_SECONDS = 300;
+export function leaseBoundSeam(point: FaultPoint): boolean { return point.startsWith('effect:') || point === 'consumer:prepared'; }
+
 export interface RobotRun {
   schedule: string; seed: number; length: number; fault?: { point: FaultPoint; nth: number }; process?: ProcessFault;
   ops?: string[]; crashed: boolean; violations: RobotOutcome['violations']; duration_ms: number; trace?: string[];
@@ -118,9 +126,14 @@ export async function runRobotPhase(o: RobotOptions) {
   // seams first covered across sequences (a seam no run has crashed yet goes first).
   const fixed = crossBoundarySequences(ROBOT_TOPOLOGY, o.seed);
   const plan: { schedule: Schedule; point: FaultPoint; count: number }[] = [];
+  const skipLease = o.engine === 'postgres' && o.seconds < FULL_ROBOT_SECONDS;
+  const skipped = new Set<string>();
   for (const schedule of fixed) {
     const counted = await execute(schedule, 'count'); record(counted);
-    for (const [point, count] of Object.entries(counted.counts ?? {}) as [FaultPoint, number][]) plan.push({ schedule, point, count });
+    for (const [point, count] of Object.entries(counted.counts ?? {}) as [FaultPoint, number][]) {
+      if (skipLease && leaseBoundSeam(point)) { skipped.add(point); continue; }
+      plan.push({ schedule, point, count });
+    }
   }
   // The seed rotates which sequence covers each seam first.
   const turn = (x: (typeof plan)[number]) => (fixed.indexOf(x.schedule) + o.seed) % fixed.length;
@@ -140,12 +153,12 @@ export async function runRobotPhase(o: RobotOptions) {
   for (let i = 0; !over(); i++) {
     const schedule = randomSchedule(ROBOT_TOPOLOGY, (o.seed + 1 + i) >>> 0, 24);
     const counted = await execute(schedule, 'count'); record(counted);
-    const points = Object.entries(counted.counts ?? {}) as [FaultPoint, number][];
+    const points = (Object.entries(counted.counts ?? {}) as [FaultPoint, number][]).filter(([point]) => !(skipLease && leaseBoundSeam(point)));
     if (!points.length || over()) continue;
     const [point, count] = points[Math.floor(rand() * points.length)];
     record(await execute(schedule, 'run', { fault: { point, nth: 1 + Math.floor(rand() * count) } }));
   }
-  return summarize(runs, started, o);
+  return { ...summarize(runs, started, o), lease_bound_seams_skipped: [...skipped].sort() };
 }
 
 function summarize(runs: RobotRun[], started: number, o: RobotOptions) {

@@ -79,8 +79,14 @@ async function measure(fix: Fix | null): Promise<FixResult> {
   }
 }
 
-const queue: (Fix | null)[] = [null, ...fixes];
-const results: FixResult[] = [];
+// The control runs alone first: a gate that fails without any revert measures nothing.
+const control = await measure(null);
+if (control.current?.caught || control.robot?.caught) {
+  process.stderr.write(`[would-have-caught] control failed on HEAD; fix the gate or its environment first: ${control.current?.first_failure ?? control.robot?.first_failure}\n`);
+  process.exit(2);
+}
+const queue: Fix[] = [...fixes];
+const results: FixResult[] = [control];
 await Promise.all(Array.from({ length: Math.max(1, jobs) }, async () => {
   for (;;) { const next = queue.shift(); if (next === undefined) return; results.push(await measure(next)); }
 }));

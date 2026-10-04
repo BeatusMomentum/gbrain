@@ -8,7 +8,7 @@ import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import { distribution, type HarnessConfig } from './harness.ts';
 import { keylessBrainEnv } from '../../test/helpers/provider-env.ts';
 import { boundedDiagnostic, diagnosticError, retentionMetadata } from './failure-diagnostics.ts';
-import { replayEntries, runDigest, runRobotPhase, type RobotRun } from './robot-driver.ts';
+import { FULL_ROBOT_SECONDS, replayEntries, runDigest, runRobotPhase, type RobotRun } from './robot-driver.ts';
 import { shrinkRun } from './shrink.ts';
 
 export interface ValidationOptions {
@@ -195,7 +195,9 @@ export async function runValidation(options: ValidationOptions) {
     manifest.status = 'passed';
     const executedBoundaries = manifest.crash_cases.map((entry: { boundary: string }) => entry.boundary);
     if (options.crashes !== false) assert.deepEqual(executedBoundaries, [...CRASH_BOUNDARIES]);
-    manifest.full_gate = counts.schedules >= 1000 && counts.operations >= 10_000 && manifest.robot?.violations.length === 0
+    if (manifest.robot) manifest.robot_full_gate = (options.robotSeconds ?? 300) >= FULL_ROBOT_SECONDS && manifest.robot.violations.length === 0
+      && (manifest.robot.lease_bound_seams_skipped ?? []).length === 0;
+    manifest.full_gate = counts.schedules >= 1000 && counts.operations >= 10_000
       && executedBoundaries.length === CRASH_BOUNDARIES.length && CRASH_BOUNDARIES.every((boundary, index) => executedBoundaries[index] === boundary)
       && manifest.crash_cases.every((entry: { staging_cleanup_verified?: boolean }) => entry.staging_cleanup_verified === true)
       && manifest.crash_cases.find((entry: { boundary: string }) => entry.boundary === 'staging_flushed')?.flushed_before_rename_verified === true
