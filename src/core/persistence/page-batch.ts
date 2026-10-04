@@ -12,7 +12,10 @@
  */
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { admitWrites, type WriteAdmission } from './journal.ts';
+import { admitWriteGroupInTransaction, type WriteAdmission } from './journal.ts';
+import { retryWriteAdmission } from './admission-retry.ts';
+import { declareDurablePersistence } from './protocol.ts';
+import { digest } from './digest.ts';
 import { queueLinksReconcile } from './effect-journal.ts';
 import { pageBatchChildRequestId, pageBatchChildRequestIds } from './page-batch-id.ts';
 
@@ -132,6 +135,28 @@ function batchReceipt(ctx: OperationContext, batchId: string, sourceId: string, 
     ...(retryAfterMs !== null ? { retry_after_ms: retryAfterMs } : {}), next, links, pages };
 }
 
+/**
+ * Every new page of the batch in ONE transaction, so capacity is reserved for
+ * all of them or none. Pages whose stored authority differs (for example one
+ * page is database-only) are admitted as separate groups inside it.
+ */
+async function admitBatch(ctx: OperationContext, batchId: string, admissions: WriteAdmission[]): Promise<WriteRequest[]> {
+  const groups = new Map<string, number[]>();
+  admissions.forEach((admission, index) => {
+    const key = digest(admission.authority);
+    groups.set(key, [...(groups.get(key) ?? []), index]);
+  });
+  return retryWriteAdmission(`batch ${batchId}`, remaining => ctx.engine.transaction(async tx => {
+    await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
+    const rows: WriteRequest[] = new Array(admissions.length);
+    for (const indexes of groups.values()) {
+      const admitted = await admitWriteGroupInTransaction(tx, indexes.map(index => admissions[index]!));
+      indexes.forEach((index, position) => { rows[index] = admitted[position]!; });
+    }
+    return rows;
+  }), BATCH_ADMISSION_BUDGET_MS);
+}
+
 async function prepareAll(ctx: OperationContext, batchId: string, sourceId: string, pages: BatchPage[]) {
   const prepared: (Awaited<ReturnType<typeof preparePageAdmission>> | OperationError)[] = new Array(pages.length);
   const prepareOne = async (index: number) => {
@@ -206,8 +231,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   if (admissions.length) {
     let admitted: WriteRequest[];
     try {
-      admitted = await admitWrites(ctx.engine, admissions.map(entry => entry.admission), undefined,
-        { budgetMs: BATCH_ADMISSION_BUDGET_MS, retryLabel: `batch ${batchId}` });
+      admitted = await admitBatch(ctx, batchId, admissions.map(entry => entry.admission));
     } catch (error) {
       if (error instanceof OperationError && error.code === 'queue_capacity') {
         throw new OperationError('queue_capacity', `${error.message} No page of batch ${batchId} was admitted (it needs ${admissions.length} new write slots).`,

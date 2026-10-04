@@ -32,7 +32,7 @@ import { requestAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
-import { declarePersistenceProtocol } from './protocol.ts';
+import { declareDurablePersistence } from './protocol.ts';
 import { classifyMirrorPage } from './mirror-read-only.ts';
 import { decoratePublicationOutcome, finishUnpublishedFailure, publishMutation, type PreparedMutation } from './coordinator.ts';
 
@@ -58,8 +58,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     releaseCapacity = tryAcquirePublicationCapacity(engine);
     if (!releaseCapacity) return null;
     return await engine.transaction(async tx => {
-      await declarePersistenceProtocol(tx);
-      await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+      await declareDurablePersistence(tx);
       const live = await guardOwnership(tx, head, hostId);
       if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.', 'Inspect the source owner with gbrain sources writer status; do not claim or transfer the source to push this write.');
       await tx.lockPageKeys(rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug }, ...(prepared[i]!.additionalPageKeys ?? [])]));

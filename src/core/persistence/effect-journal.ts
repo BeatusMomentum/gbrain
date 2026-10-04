@@ -26,24 +26,23 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   await declarePersistenceProtocol(tx);
   const revision = snapshot?.revision;
   const data = { slug: row.slug, page_id: snapshot?.page.id };
-  const queue = async (kind: EffectKind, extra: Record<string, unknown> = {}) => tx.executeRaw(`INSERT INTO persistence_effects
-    (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
-    VALUES($1::uuid,$2,$3::uuid,$4::text::jsonb,$5,$6::uuid,$7::uuid) ON CONFLICT(request_id,kind) DO NOTHING`,
-  [row.id, kind, revision ?? null, JSON.stringify({ ...data, ...extra }), row.source_id, row.source_incarnation, row.worktree_id]);
+  // #6007: the effects are inserted together, in queue order, by one statement at the end.
+  const queued: { kind: EffectKind; data: Record<string, unknown> }[] = [];
+  const queue = (kind: EffectKind, extra: Record<string, unknown> = {}) => { queued.push({ kind, data: { ...data, ...extra } }); };
   if (prepared?.file && row.worktree_id) {
     const [binding] = await tx.executeRaw<{ local_path: string }>(`SELECT h.local_path FROM persistence_host_bindings h
       JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [row.worktree_id]);
     if (!binding?.local_path) throw new OperationError('owner_unavailable', 'Cannot record the canonical Git target without its owner binding.');
-    await queue('git', { relative_path: relative(binding.local_path, prepared.file.path).split(sep).join('/'),
+    queue('git', { relative_path: relative(binding.local_path, prepared.file.path).split(sep).join('/'),
       expected_hash: prepared.file.content === null ? null : sha256(prepared.file.content) });
     if (outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
   }
   if (snapshot && !snapshot.page.deleted_at) {
-    if (!prepared?.deferEmbedding) await queue('embedding');
+    if (!prepared?.deferEmbedding) queue('embedding');
     outcome.embedding_state = await embeddingDisabled(tx) ? 'disabled' : prepared?.deferEmbedding ? 'deferred' : 'queued';
     if ((outcome.facts_backstop as { queued?: boolean } | undefined)?.queued) {
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
-      else await queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
+      else queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
     }
     if (row.authority && row.operation && REMOTE_MENTION_OPERATIONS.includes(row.operation)
       && !(row.authority.autoLinkTrusted ?? !row.authority.remote)) {
@@ -58,6 +57,10 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
   }
+  if (queued.length) await tx.executeRaw(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+    SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING`,
+  [row.id, revision ?? null, row.source_id, row.source_incarnation, row.worktree_id, JSON.stringify(queued)]);
 }
 
 /**

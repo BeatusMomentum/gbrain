@@ -13,7 +13,7 @@ import { writerStamp } from './writer-versions.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
-import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import {
   isTerminal, principalKey, requestPrincipal, recoveryFiles,
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
@@ -126,125 +126,74 @@ export function assertReplayIntent(row: WriteRequest, expectedDigest: string): W
   return row;
 }
 export async function admitWrite(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
-  const { requestIds, apply } = await prepareAdmissions(engine, [input], overrides);
-  return admissionTransaction(engine, requestIds[0]!, async tx => (await apply(tx))[0]!);
-}
-/**
- * #6007: admit several writes for one principal, source and worktree in ONE
- * transaction: every new row is accepted or none is, with capacity reserved
- * for the whole set. Rows that already exist replay (identical intent) or
- * refuse with idempotency_conflict.
- */
-export async function admitWrites(engine: BrainEngine, inputs: readonly WriteAdmission[], overrides?: Partial<JournalLimits>,
-  opts: { budgetMs?: number; retryLabel?: string } = {}): Promise<WriteRequest[]> {
-  const { requestIds, apply } = await prepareAdmissions(engine, inputs, overrides);
-  return admissionTransaction(engine, opts.retryLabel ?? requestIds.join(', '), apply, opts.budgetMs);
-}
-function admissionTransaction<T>(engine: BrainEngine, label: string, apply: (tx: BrainEngine) => Promise<T>, budgetMs?: number): Promise<T> {
-  return retryWriteAdmission(label, remaining => engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
-      [`${Math.min(100, remaining)}ms`, `${remaining}ms`]);
+  const { requestId, apply } = await prepareAdmission(engine, input, overrides);
+  return retryWriteAdmission(requestId, remaining => engine.transaction(async tx => {
+    await declareDurablePersistence(tx, `${Math.min(100, remaining)}ms`, `${remaining}ms`);
     return apply(tx);
-  }), budgetMs);
+  }));
 }
 /** Caller owns the transaction and retries its entire unit of work after rollback. */
 export async function admitWriteInTransaction(tx: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
-  return (await (await prepareAdmissions(tx, [input], overrides)).apply(tx))[0]!;
+  return (await prepareAdmission(tx, input, overrides)).apply(tx);
 }
-async function prepareAdmissions(engine: BrainEngine, inputs: readonly WriteAdmission[], overrides?: Partial<JournalLimits>) {
-  const first = inputs[0];
-  if (!first) throw new TypeError('Admission requires at least one write.');
-  for (const input of inputs) {
-    if (input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || (input.worktreeId ?? null) !== (first.worktreeId ?? null)
-      || String(input.topologyGeneration ?? '') !== String(first.topologyGeneration ?? '')
-      || principalKey(input.principal) !== principalKey(first.principal)) throw new TypeError('A batched admission shares one principal, source and worktree binding.');
-  }
+async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>) {
   const limits = await readJournalLimits(engine,overrides);
-  const rows = inputs.map(input => {
-    const requestId = requireUuid(input.requestId ?? randomUUID());
-    const terminalBytes = input.terminalReservation ?? Math.max(16_384,jsonBytes(input.authority)+8192);
-    if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
-    return { input, requestId, fingerprint: intentDigest(input), bytes: jsonBytes(input.intent) + jsonBytes(input.authority), terminalBytes };
-  });
-  if (new Set(rows.map(row => row.requestId)).size !== rows.length) throw new TypeError('A batched admission repeats a request_id.');
+  const requestId = requireUuid(input.requestId ?? randomUUID());
+  const fingerprint = intentDigest(input);
+  const bytes = jsonBytes(input.intent) + jsonBytes(input.authority);
+  const terminalBytes = input.terminalReservation ?? Math.max(16_384,jsonBytes(input.authority)+8192);
+  if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
   const stamp = writerStamp();
-  return { requestIds: rows.map(row => row.requestId), apply: async (tx: BrainEngine): Promise<WriteRequest[]> => {
+  return { requestId, apply: async (tx: BrainEngine): Promise<WriteRequest> => {
     await declarePersistenceProtocol(tx);
-    for (const { input } of rows) assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
-    if (first.worktreeId) {
-      await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [first.worktreeId]);
-      for (const { input } of rows) await assertWorktreeNotRefreshing(tx, input);
-      const binding = await tx.executeRaw(`SELECT source_id FROM persistence_source_bindings WHERE source_id=$1
-        AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4`,
-      [first.sourceId, first.sourceIncarnation, first.worktreeId, first.topologyGeneration]);
-      if (!binding.length) throw opError('source_changed', 'The source binding changed during admission.',
-        `Source ${first.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
-        { fix: ownerStatusFix(first.sourceId) });
-    }
+    assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
+    if (input.worktreeId) await assertWorktreeAdmission(tx, input);
     // Source membership is locked before principal/counter/request guards. A
     // deleted/recreated source never receives work accepted for its old identity.
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
-      'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [first.sourceId]);
-    if (!source || source.archived || source.incarnation !== first.sourceIncarnation) {
+      'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [input.sourceId]);
+    if (!source || source.archived || source.incarnation !== input.sourceIncarnation) {
       throw new OperationError('source_changed', 'The write source is missing, archived, or was replaced.', 'Resolve the source again and submit a new request.');
     }
-    for (const { input } of rows) await authorizeWrite(tx, input.authority, input.operation, input.slug, true);
-    const counters = await lockCounters(tx, ['brain', principalKey(first.principal)]);
-    if(first.principal.kind==='local_cli') {
-      const topology=await tx.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=ANY($2::uuid[])',
-        [first.principal.id, rows.map(row => row.requestId)]);
-      if(topology.length) throw lifecycleIdConflict(String(topology[0]!.request_id));
+    await authorizeWrite(tx, input.authority, input.operation, input.slug, true);
+    const counters = await lockCounters(tx, ['brain', principalKey(input.principal)]);
+    if(input.principal.kind==='local_cli') {
+      const topology=await tx.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',[input.principal.id,requestId]);
+      if(topology.length) throw lifecycleIdConflict(requestId);
     }
-    const priors = rows.length === 1
-      ? [await getWriteRequest(tx, first.principal, rows[0]!.requestId)].filter((row): row is WriteRequest => row !== null)
-      : await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
-        [first.principal.kind, first.principal.id, rows.map(row => row.requestId)]);
-    const priorById = new Map(priors.map(row => [String(row.request_id), row]));
-    const result: (WriteRequest | null)[] = [];
-    const fresh: typeof rows = [];
-    for (const row of rows) {
-      const prior = priorById.get(row.requestId);
-      if (!prior) { result.push(null); fresh.push(row); continue; }
-      if ((prior.target_kind ?? 'page') !== (row.input.targetKind ?? 'page') || (prior.protocol_version ?? 1) !== (row.input.protocolVersion ?? 1)) {
+    const prior = await getWriteRequest(tx, input.principal, requestId);
+    if (prior) {
+      if ((prior.target_kind ?? 'page') !== (input.targetKind ?? 'page') || (prior.protocol_version ?? 1) !== (input.protocolVersion ?? 1)) {
         throw opError('idempotency_conflict', 'This request_id belongs to a different mutation target or protocol.',
-          `Request ID ${row.requestId} was already accepted for a ${prior.target_kind ?? 'page'} write (protocol ${prior.protocol_version ?? 1}), so this ${row.input.targetKind ?? 'page'} write was not admitted. Read the original request${prior.principal_kind === 'local_cli' ? ' with the command in fix' : ' with get_write_request'} if you meant to replay it; otherwise submit this write with a new request_id.`,
+          `Request ID ${requestId} was already accepted for a ${prior.target_kind ?? 'page'} write (protocol ${prior.protocol_version ?? 1}), so this ${input.targetKind ?? 'page'} write was not admitted. Read the original request${prior.principal_kind === 'local_cli' ? ' with the command in fix' : ' with get_write_request'} if you meant to replay it; otherwise submit this write with a new request_id.`,
           prior.principal_kind === 'local_cli' ? { fix: requestInspectFix(prior) } : {});
       }
-      result.push(assertReplayIntent(prior, row.fingerprint));
+      return assertReplayIntent(prior, fingerprint);
     }
-    if (!fresh.length) return result as WriteRequest[];
-    for (const { input } of fresh) if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
-    const count = fresh.length;
-    const bytes = fresh.reduce((sum, row) => sum + row.bytes, 0);
-    const terminalBytes = fresh.reduce((sum, row) => sum + row.terminalBytes, 0);
+    if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      if (Number(row.outstanding_count) + count > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
+      if (Number(row.outstanding_count) + 1 > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
-      if (Number(row.lifetime_ids) + count > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
+      if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
       if (Number(row.terminal_bytes) + terminalBytes > limits[`${scope}TerminalBytes`]) throw await cumulativeCapacityError(tx, `${scope} reserved receipt bytes`,
         row.key, `${scope}TerminalBytes`, Number(row.terminal_bytes), limits[`${scope}TerminalBytes`]);
     }
-    let next = 0;
-    for (const { input, requestId, fingerprint, bytes: rowBytes, terminalBytes: rowTerminal } of fresh) {
-      const [inserted] = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
-        (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
-         worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-         admitter_version,admitter_host_id)
-        VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid)
-        RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
-        input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
-        fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), rowBytes, rowTerminal, input.targetKind ?? 'page', input.protocolVersion ?? 1,
-        stamp.version, stamp.hostId]);
-      while (result[next] !== null) next++;
-      result[next++] = inserted!;
-    }
-    await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+$4,
-      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+$4,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
-    [counters.map(c => c.key), bytes, terminalBytes, count]);
-    return result as WriteRequest[];
+    // The request row and its counter reservation in one statement; the counters are already locked.
+    const [row] = await tx.executeRaw<WriteRequest>(`WITH reserved AS (UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
+      intent_bytes=intent_bytes+$14,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$15 WHERE key=ANY($20::text[]))
+      INSERT INTO persistence_requests
+      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
+       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
+       admitter_version,admitter_host_id)
+      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid)
+      RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
+      input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
+      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1,
+      stamp.version, stamp.hostId, counters.map(c => c.key)]);
+    return row;
   } };
 }
 
@@ -269,16 +218,7 @@ export async function admitWriteGroupInTransaction(tx: BrainEngine, inputs: Writ
     bytes: jsonBytes(input.intent) + jsonBytes(input.authority), terminalBytes: input.terminalReservation ?? Math.max(16_384, jsonBytes(input.authority) + 8192) }));
   await declarePersistenceProtocol(tx);
   assertMutationProtocol({ target_kind: 'page', protocol_version: 1 });
-  if (first.worktreeId) {
-    await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [first.worktreeId]);
-    await assertWorktreeNotRefreshing(tx, first);
-    const binding = await tx.executeRaw(`SELECT source_id FROM persistence_source_bindings WHERE source_id=$1
-      AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4`,
-    [first.sourceId, first.sourceIncarnation, first.worktreeId, first.topologyGeneration]);
-    if (!binding.length) throw opError('source_changed', 'The source binding changed during admission.',
-      `Source ${first.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
-      { fix: ownerStatusFix(first.sourceId) });
-  }
+  if (first.worktreeId) await assertWorktreeAdmission(tx, first);
   const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [first.sourceId]);
   if (!source || source.archived || source.incarnation !== first.sourceIncarnation) {
     throw new OperationError('source_changed', 'The write source is missing, archived, or was replaced.', 'Resolve the source again and submit a new request.');
@@ -374,10 +314,26 @@ export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], 
  * own writes are admitted; a `syncing` refresh whose members all reached the
  * target is completed here, so a later cycle sync converges a crashed refresh.
  */
-async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission): Promise<void> {
-  const [refresh] = await tx.executeRaw<{ id: string; state: string; source_ids: string[] }>(`SELECT id,state,source_ids FROM persistence_worktree_refreshes
-    WHERE worktree_id=$1::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL}`, [input.worktreeId]);
-  if (!refresh) return;
+/**
+ * Share-locks the worktree, then checks its refresh fence and the source
+ * binding (#6007: both read in one statement after the lock; the fence is
+ * judged first, as before).
+ */
+async function assertWorktreeAdmission(tx: BrainEngine, input: WriteAdmission): Promise<void> {
+  await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]);
+  const [state] = await tx.executeRaw<{ refresh: { id: string; state: string; source_ids: string[] } | string | null; bound: boolean }>(`SELECT
+      (SELECT row_to_json(f) FROM (SELECT id,state,source_ids FROM persistence_worktree_refreshes
+        WHERE worktree_id=$3::uuid AND state IN ${ACTIVE_REFRESH_STATES_SQL} LIMIT 1) f) AS refresh,
+      EXISTS (SELECT 1 FROM persistence_source_bindings WHERE source_id=$1
+        AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4) AS bound`,
+  [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]);
+  const refresh = typeof state?.refresh === 'string' ? JSON.parse(state.refresh) as { id: string; state: string; source_ids: string[] } : state?.refresh ?? null;
+  if (refresh) await assertWorktreeNotRefreshing(tx, input, refresh);
+  if (!state?.bound) throw opError('source_changed', 'The source binding changed during admission.',
+    `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
+    { fix: ownerStatusFix(input.sourceId) });
+}
+async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmission, refresh: { id: string; state: string; source_ids: string[] }): Promise<void> {
   const managedSync = input.operation === 'submit_job' && String(input.intent.kind ?? '').startsWith('managed_sync_');
   if (refresh.state === 'syncing' && managedSync) return;
   if (refresh.state === 'syncing') {
@@ -424,20 +380,20 @@ export async function hasClaimableWrite(engine: SqlEngine, hostId: string, exclu
   return row?.claimable === true;
 }
 
-/** Claims commit before OS-lock waits. An unresolved head blocks its entire root. */
+/**
+ * Claims commit before OS-lock waits. An unresolved head blocks its entire
+ * root. #6007: one autocommit statement on the direct route selects, locks
+ * (skipping locked rows) and claims the head.
+ */
 export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseMs = 30_000, excludeRoots: string[] = []): Promise<WriteRequest | null> {
-  return engine.transactionDirect(async tx => {
-    await declarePersistenceProtocol(tx);
-    const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+  const [claimed] = await engine.executeRawDirect<WriteRequest>(`UPDATE persistence_requests SET state='running',
+      execution_token=$3::uuid,claim_expires_at=now()+($4::double precision*interval '1 millisecond'),
+      updated_at=now(),blocked_reason=NULL
+    WHERE id=(SELECT r.id FROM persistence_requests r
       LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
       WHERE ${CLAIMABLE_WRITE_SQL}
-      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, excludeRoots]);
-    if (!row) return null;
-    const [claimed] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='running',
-      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL WHERE id=$1::uuid RETURNING *`, [row.id, randomUUID(), leaseMs]);
-    return claimed;
-  });
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED) AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [hostId, excludeRoots, randomUUID(), leaseMs]);
+  return claimed ?? null;
 }
 export async function renewWriteClaim(engine: SqlEngine, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal): Promise<boolean> {
   const rows = await engine.executeRaw(`UPDATE persistence_requests SET
@@ -458,11 +414,19 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
   if (!row.worktree_id) throw new TypeError('Filesystem recovery requires a worktree.');
   if (bytes > limits.worktreeRecoveryBytes || bytes > limits.brainRecoveryBytes) throw new OperationError('request_too_large', 'This request exceeds the configured recovery capacity.', 'Increase recovery capacity before submitting a new request.');
   await engine.transaction(async tx => {
-    await declarePersistenceProtocol(tx);
     // A crash after rename must never lose the earlier recovery reservation,
     // even when the deployment defaults ordinary transactions to async commit.
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+    await declareDurablePersistence(tx);
     const counters = await lockCounters(tx, ['brain', `worktree:${row.worktree_id}`]);
+    const fits = counters.every(c => Number(c.recovery_bytes) + bytes <= (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes));
+    // #6007: the common case records the reservation in one statement; any other state takes the checked path below.
+    if (fits) {
+      const [reserved] = await tx.executeRaw(`WITH recorded AS (UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
+          WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL RETURNING id),
+        reserved AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$4 WHERE key=ANY($5::text[]) AND EXISTS (SELECT 1 FROM recorded))
+        SELECT id FROM recorded`, [row.id, row.execution_token, JSON.stringify(recovery), bytes, counters.map(c => c.key)]);
+      if (reserved) return;
+    }
     const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
     if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'The write execution claim was superseded.',
       `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its recovery, so this pass stopped without publishing; the current claim finishes or recovers it. Inspect the request with the command in fix instead of resubmitting it.`,
@@ -474,9 +438,9 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
       return;
     }
     for (const c of counters) if (Number(c.recovery_bytes) + bytes > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
-    await tx.executeRaw(`UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
-      WHERE id=$1::uuid AND execution_token=$2::uuid`, [row.id, row.execution_token, JSON.stringify(recovery), bytes]);
-    await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=ANY($1::text[])', [counters.map(c => c.key), bytes]);
+    await tx.executeRaw(`WITH reserved AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$4 WHERE key=ANY($5::text[]))
+      UPDATE persistence_requests SET recovery=$3::text::jsonb,recovery_bytes=$4,updated_at=now()
+      WHERE id=$1::uuid AND execution_token=$2::uuid`, [row.id, row.execution_token, JSON.stringify(recovery), bytes, counters.map(c => c.key)]);
   });
 }
 
@@ -501,37 +465,55 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
   if (row.execution_token !== current.execution_token) throw opError('write_claim_lost', 'Write claim changed before completion.',
     `Another owner pass claimed request ${row.request_id} in source ${row.source_id} before this pass recorded its outcome, so this pass's completion was discarded; the current claim records the final outcome. Inspect the request with the command in fix instead of resubmitting it.`,
     { fix: requestInspectFix(row) });
-  const [effects] = await tx.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0)::text AS bytes
-    FROM persistence_effects WHERE request_id=$1::uuid`,[row.id]);
-  if (jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0) + Number(effects.bytes) > Number(current.terminal_reservation)) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
   // Only publication stamps the consumer; failures, cancellations and conflicts leave it unset.
   const stamp = writerStamp();
-  const [done] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
-    error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
-    consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
-    consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
-    published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END
-    WHERE id=$1::uuid RETURNING *`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
-      error?.detail ? JSON.stringify(error.detail) : null]);
-  await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$2
-    WHERE key=ANY($1::text[])`, [['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
+  // #6007: one statement sizes the queued effects, checks the terminal reservation, completes the row and
+  // releases its outstanding counters; no row means the encoding exceeds the reservation and nothing changed.
+  const resultBytes = jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0);
+  const [done] = await tx.executeRaw<WriteRequest>(`WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes
+      FROM persistence_effects WHERE request_id=$1::uuid),
+    done AS (UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
+      error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
+      consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
+      consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
+      published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END
+      WHERE id=$1::uuid AND $9::bigint+(SELECT bytes FROM effects)<=terminal_reservation RETURNING *),
+    released AS (UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$11
+      WHERE key=ANY($10::text[]) AND EXISTS (SELECT 1 FROM done))
+    SELECT * FROM done`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
+      error?.detail ? JSON.stringify(error.detail) : null, resultBytes, ['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
+  if (!done) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
   // Recovery bytes remain reserved until physical cleanup has been verified.
   return done;
 }
 
-export async function clearResolvedRecovery(engine: BrainEngine, id: string): Promise<void> {
-  const row = await getWriteRequestById(engine, id);
+/**
+ * `known` is the row a publication just completed, passed while it still
+ * holds the worktree's native lock, so neither its recovery record nor its
+ * staging files can change: its staging is checked first and the record is
+ * cleared in one statement when it is still exactly that record.
+ */
+export async function clearResolvedRecovery(engine: BrainEngine, id: string, known?: WriteRequest): Promise<void> {
+  const row = known ?? await getWriteRequestById(engine, id);
   if (!row?.recovery || !isTerminal(row)) return;
+  if (known) for (const file of recoveryFiles(row.recovery)) assertRecoveryStagingAbsent(file);
   await engine.transaction(async tx => {
-    await declarePersistenceProtocol(tx);
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+    await declareDurablePersistence(tx);
     const keys = ['brain', ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
     await lockCounters(tx, keys);
+    if (known) {
+      const [cleared] = await tx.executeRaw(`WITH locked AS (SELECT id,recovery_bytes FROM persistence_requests WHERE id=$1::uuid AND recovery=$3::text::jsonb
+          AND state IN ('committed','conflict','failed','cancelled') FOR UPDATE),
+        released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-(SELECT recovery_bytes FROM locked) WHERE key=ANY($2::text[]) AND EXISTS (SELECT 1 FROM locked))
+        UPDATE persistence_requests r SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL FROM locked WHERE r.id=locked.id RETURNING r.id`,
+      [id, keys, JSON.stringify(row.recovery)]);
+      if (cleared) return;
+    }
     const [locked] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
     if (!locked?.recovery || !isTerminal(locked)) return;
     for (const file of recoveryFiles(locked.recovery)) assertRecoveryStagingAbsent(file);
-    await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=ANY($1::text[])', [keys, Number(locked.recovery_bytes)]);
-    await tx.executeRaw('UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid', [id]);
+    await tx.executeRaw(`WITH released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$3 WHERE key=ANY($2::text[]))
+      UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid`, [id, keys, Number(locked.recovery_bytes)]);
   });
 }
 export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
