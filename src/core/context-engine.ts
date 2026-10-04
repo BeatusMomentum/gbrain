@@ -790,7 +790,7 @@ export function sanitizeEngineSessionId(raw: unknown): string | null {
  */
 async function recordOpenclawSeat(dir: string, sessionId: string, sessionFile: string): Promise<void> {
   try {
-    const { resolveSeat, seatReasonHint, writeSeatSidecar } = await import('./context/seat.ts');
+    const { resolveSeat, writeSeatSidecar } = await import('./context/seat.ts');
     let reasons: string[];
     try {
       const seat = resolveSeat({ env: process.env, harness: 'openclaw', transcriptPath: sessionFile });
@@ -800,11 +800,9 @@ async function recordOpenclawSeat(dir: string, sessionId: string, sessionFile: s
     }
     const reason = reasons[0];
     if (!reason) return;
-    const hint = seatReasonHint(reason);
     const { writeHeartbeat } = await import('./context/hook-heartbeat.ts');
-    // trim:false: the gateway process is long-lived; only short-lived hooks trim the heartbeat file.
-    await writeHeartbeat({ ts: new Date().toISOString(), event: 'compact', outcome: 'degraded', reason, duration_ms: 0, ...(hint ? { hint } : {}) },
-      { trim: false });
+    // trim:false: the gateway process is long-lived; only short-lived hooks trim the heartbeat file. The entry gets the reason's hint.
+    await writeHeartbeat({ ts: new Date().toISOString(), event: 'compact', outcome: 'degraded', reason, duration_ms: 0 }, { trim: false });
   } catch { /* provenance and telemetry never fail the checkpoint */ }
 }
 
