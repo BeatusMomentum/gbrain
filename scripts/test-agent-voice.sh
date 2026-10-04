@@ -10,6 +10,8 @@
 #
 # Run: bun run test:agent-voice   (CI: test.yml verify job)
 # Needs: node + npm on PATH and registry access for the pinned install.
+# --legacy-peer-deps: npm 10 (the CI runner image) crashes resolving vitest 4's
+# optional peer set ("reading 'edgesOut'"); the unit tests load no peer package.
 set -euo pipefail
 
 VITEST_VERSION=4.1.4
@@ -30,7 +32,7 @@ trap cleanup EXIT
 
 printf '{"name":"gbrain-agent-voice-tests","private":true,"dependencies":{"vitest":"%s","ws":"%s"}}\n' \
   "$VITEST_VERSION" "$WS_VERSION" > "$PREFIX/package.json"
-(cd "$PREFIX" && npm install --no-audit --no-fund --ignore-scripts --no-package-lock --loglevel=error >/dev/null)
+(cd "$PREFIX" && npm install --no-audit --no-fund --ignore-scripts --no-package-lock --legacy-peer-deps --loglevel=error >/dev/null)
 ln -sfn "$PREFIX/node_modules" "$RECIPE/node_modules"
 cd "$RECIPE"
 "$PREFIX/node_modules/.bin/vitest" run tests/unit
