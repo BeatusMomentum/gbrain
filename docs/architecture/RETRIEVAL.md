@@ -194,7 +194,8 @@ hybrid recall + fusion:
    ├── vector  (HNSW on chunk embeddings, per-page max-pool)
    ├── keyword (BM25 via tsvector)
    ├── title-phrase arm
-   ├── relational (typed-edge recall arm — relational queries only)
+   ├── relational (typed-edge recall arm — relational queries only; triplet-scored
+   │   when search.triplet_scoring is on — src/core/search/triplet-score.ts)
    ├── source-aware re-rank (CASE in SQL)
    ├── role-tagged arms; variant/clause lists weighted by search.expansion_variant_budget INSIDE the fusion (fusion-lists.ts)
    └── page-grain RRF fusion → cosine re-score → post-fusion boosts
@@ -211,6 +212,10 @@ deduplication (4-layer: per-page cap, same-page Jaccard, type diversity)
        │
        ▼
 reranker (cross-encoder — balanced/tokenmax; fail-open)
+       │
+       ▼
+feedback (use-attributed page weights × the ordering score, bounded ±λ;
+   no-op when no page was rated — src/core/search/feedback-boost.ts)
        │
        ▼
 relational re-pin (relational-arm rows back above the reranked text rows, in
@@ -282,6 +287,23 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   `crag.ts`), so default-shape callers never pay a second expansion call for
   a near-identical candidate set. `search.crag_think=true` (local callers)
   escalates a still-weak result to `think`.
+
+### Use-attributed feedback and triplet scoring
+
+Answers from `query`, `search`, `think`, `synthesize` and `recall` record the
+pages they used (with the revision read) and the typed edges on their
+relational paths. A rating (`rate_answer`, or a `think` citation for the brain
+owner) moves each element's weight `w` by `w + α·(r − w)`; the feedback stage
+then multiplies the ordering score by `1 + λ·2·(w − 0.5)`. It runs after the
+reranker, on the reranker's score when it reordered the list, because a boost
+applied before the cross-encoder would be erased; raw scores stay untouched,
+so autocut and evidence grading are unchanged. Triplet scoring orders the
+relational arm by how close each (page, edge, page) triplet is to the query,
+over a wider candidate fetch, so a seed with many neighbors is no longer cut
+alphabetically. Neither ever runs a query-language string: the relational arm
+and `traverse_graph` take only typed parameters into fixed SQL, and
+`test/raw-query-routing-guard.test.ts` pins that no op accepts query text as
+SQL or graph syntax. Guide: [retrieval feedback](../guides/retrieval-feedback.md).
 
 ### Relational re-pin: edge answers bypass reranker demotion
 

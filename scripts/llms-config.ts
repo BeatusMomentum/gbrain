@@ -143,6 +143,13 @@ export const SECTIONS: DocSection[] = [
         includeInFull: false,
       },
       {
+        title: "docs/guides/retrieval-feedback.md",
+        description:
+          "Use-attributed retrieval feedback: answer ids, `rate_answer` / `gbrain rate` (whole answer or single pages), how ratings move page weights and ranking (bounded ±λ), citation learning, revision handling, who may teach the brain, `gbrain feedback status|reset`, config keys and every refusal code.",
+        path: "docs/guides/retrieval-feedback.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/live-sync.md",
         description: "Incremental markdown sync setup.",
         path: "docs/guides/live-sync.md",
