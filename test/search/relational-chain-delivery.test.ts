@@ -76,3 +76,28 @@ describe('budget and lean rows', () => {
     expect(lean.relational).toBeDefined();
   });
 });
+
+describe('chain slots', () => {
+  const answer = row('people/bob-example', 1, { relational: evidence('answer') });
+  const support = row('companies/acme-example', 2, { relational: evidence('support') });
+
+  test('a fired chain leads page 1 in arm order (answers, then evidence pages); the rest follows', () => {
+    const pool = [row('a', 10, { score: 0.9 }), row('b', 11, { score: 0.8 }), { ...support, score: 0.1 }];
+    const r = ensureRelationalEvidenceSlot(pool, [answer, support], 3, 0, undefined, 10);
+    expect(r.pool.map(x => x.slug)).toEqual(['people/bob-example', 'companies/acme-example', 'a', 'b']);
+    expect(r.decision).toMatchObject({ action: 'chain_pinned', count: 2 });
+    expect(r.pool[0].score).toBeGreaterThan(r.pool[1].score);
+    expect(r.pool[1].score).toBeGreaterThanOrEqual(r.pool[2].score);
+  });
+
+  test('no chain rows (one-hop arm): the single evidence slot applies as before', () => {
+    const oneHop = row('people/carol-example', 3, { relational_seed: 'companies/acme-example' });
+    const r = ensureRelationalEvidenceSlot([row('a', 10), row('b', 11)], [oneHop], 2, 0, undefined, 10);
+    expect(r.decision?.action).toBe('injected');
+  });
+
+  test('later pages are untouched', () => {
+    const pool = [row('a', 10)];
+    expect(ensureRelationalEvidenceSlot(pool, [answer], 1, 1, undefined, 10).pool).toBe(pool);
+  });
+});

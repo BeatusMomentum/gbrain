@@ -1407,6 +1407,12 @@ export interface SearchOpts extends PageReadPolicy {
    * Eval A/B gates drive it here.
    */
   relationalRerankPin?: number;
+  /** Per-call override for `search.relational_planner` (multi-hop chains; eval A/B). */
+  relationalPlanner?: boolean;
+  /** Per-call override for `search.relational_orient_onehop` (typed one-hop orientation; eval A/B). */
+  relationalOrientOneHop?: boolean;
+  /** Per-call override for `search.relational_chain_slots` (0..10; eval A/B). */
+  relationalChainSlots?: number;
 }
 
 /**
@@ -2076,6 +2082,8 @@ export interface HybridSearchMeta {
    * and every reranker fail-open path. Surfaced for `gbrain search --explain`.
    */
   relational_rerank_pin?: import('./search/relational-rerank-pin.ts').RelationalRerankPinDecision;
+  /** Multi-hop planner outcome for a 2-3 relation question (status, anchor, per-hop counts, cap). */
+  relational_plan?: import('./search/relational-recall.ts').RelationalPlanMeta;
   /**
    * Ranker wave (Phase E2, Cat 13) — keyword-arm confidence decision:
    * `margin_ratio` (scale-free `top / (top + second)` over the keyword arm's

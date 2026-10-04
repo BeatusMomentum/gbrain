@@ -64,7 +64,7 @@ export async function searchWithoutEmbeddings(
   if (relationalList.length > 0) {
     const r = ensureRelationalEvidenceSlot(noEmbedGated, relationalList, limit, offset, {
       cosineFloor: resolvedMode.evidence_cosine_floor,
-    });
+    }, resolvedMode.relational_chain_slots);
     noEmbedPool = r.pool;
     noEmbedRelSlot = r.decision;
   }
@@ -161,7 +161,7 @@ export async function searchVectorFallback(
   let kwPool = kwGated;
   let kwRelSlot: RelationalEvidenceSlotDecision | undefined;
   if (relationalList.length > 0) {
-    const r = ensureRelationalEvidenceSlot(kwGated, relationalList, limit, offset, { cosineFloor: resolvedMode.evidence_cosine_floor });
+    const r = ensureRelationalEvidenceSlot(kwGated, relationalList, limit, offset, { cosineFloor: resolvedMode.evidence_cosine_floor }, resolvedMode.relational_chain_slots);
     kwPool = r.pool;
     kwRelSlot = r.decision;
   }

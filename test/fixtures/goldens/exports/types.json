@@ -172,6 +172,7 @@
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
           "registerBeforeDisconnect: (stop: () => Promise<void>) => () => void",
+          "relationalChainHop: (frontierPageIds: number[], opts: ChainHopOpts) => Promise<ChainHopEdge[]>",
           "relationalFanout: (seeds: string[], opts?: RelationalFanoutOpts) => Promise<RelationalFanoutRow[]>",
           "removeLink: (from: string, to: string, linkType?: string, linkSource?: string, opts?: { fromSourceId?: string; toSourceId?: string; }) => Promise<number>",
           "removeLinksByPagesAndSource: (pages: Array<{ slug: string; source_id: string; }>, opts: { linkSource: string; keepTypedNerPairs?: Array<{ from_slug: string; from_source_id: string; to_slug: string; to_source_id: string; }>; }) => Promise<number>",
@@ -273,6 +274,45 @@
         "signature": [
           "readonly [\"none\", \"title\", \"per_chunk_synopsis\"]"
         ]
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "canonical_chunk_id: number | null",
+          "context: string | null",
+          "from_degree: number",
+          "from_page_id: number",
+          "link_ids: number[]",
+          "link_type: string",
+          "neighbor_cap_hit: boolean",
+          "orientation: \"canonical\" | \"stored\" | \"flipped\" | \"uncertain\"",
+          "origin_page_id: number | null",
+          "origin_slug: string | null",
+          "source_id: string",
+          "stored_from_slug: string",
+          "stored_to_slug: string",
+          "to_page_id: number",
+          "to_slug: string",
+          "to_type: string"
+        ],
+        "name": "ChainHopEdge"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "degreeLinkTypes: string[]",
+          "excludePrivate?: boolean | undefined",
+          "linkTypes: string[]",
+          "neighborCap: number",
+          "objectTypes: string[]",
+          "requireSafeChunks?: boolean | undefined",
+          "sourceId?: string | undefined",
+          "sourceIds?: string[] | undefined",
+          "subjectTypes: string[]",
+          "takesHoldersAllowList?: string[] | undefined",
+          "toward: \"object\" | \"subject\""
+        ],
+        "name": "ChainHopOpts"
       },
       {
         "kind": "interface",
@@ -676,6 +716,7 @@
           "metadata_boost_gate?: MetadataBoostGateDecision | undefined",
           "mode?: \"conservative\" | \"balanced\" | \"tokenmax\" | undefined",
           "relational_evidence_slot?: RelationalEvidenceSlotDecision | undefined",
+          "relational_plan?: RelationalPlanMeta | undefined",
           "relational_rerank_pin?: RelationalRerankPinDecision | undefined",
           "relaxed_dropped?: number | undefined",
           "rerank?: { model_resolved: string; } | undefined",
@@ -1111,6 +1152,7 @@
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
           "registerBeforeDisconnect: (stop: () => Promise<void>) => () => void",
+          "relationalChainHop: (frontierPageIds: number[], opts: ChainHopOpts) => Promise<ChainHopEdge[]>",
           "relationalFanout: (seeds: string[], opts?: RelationalFanoutOpts) => Promise<RelationalFanoutRow[]>",
           "removeLink: (from: string, to: string, linkType?: string, linkSource?: string, opts?: { fromSourceId?: string; toSourceId?: string; }) => Promise<number>",
           "removeLinksByPagesAndSource: (pages: Array<{ slug: string; source_id: string; }>, opts: { linkSource: string; keepTypedNerPairs?: Array<{ from_slug: string; from_source_id: string; to_slug: string; to_source_id: string; }>; }) => Promise<number>",
@@ -1181,6 +1223,17 @@
           "source: string"
         ],
         "name": "RawData"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "edges: { link_type: string; stored_from: string; stored_to: string; orientation: \"canonical\" | \"stored\" | \"flipped\" | \"uncertain\"; context: string | null; origin: string | null; }[]",
+          "hop: number",
+          "path_count: number",
+          "role: \"answer\" | \"support\" | \"origin\"",
+          "seed: string"
+        ],
+        "name": "RelationalEvidence"
       },
       {
         "kind": "interface",
@@ -1280,6 +1333,9 @@
           "orFallback?: boolean | undefined",
           "recency?: \"on\" | \"off\" | \"strong\" | undefined",
           "recencyBoost?: 0 | 1 | 2 | undefined",
+          "relationalChainSlots?: number | undefined",
+          "relationalOrientOneHop?: boolean | undefined",
+          "relationalPlanner?: boolean | undefined",
           "relationalRerankPin?: number | undefined",
           "relationalRetrieval?: boolean | undefined",
           "relationalRetrievalDepth?: number | undefined",
@@ -1338,6 +1394,7 @@
           "modality?: \"image\" | \"text\" | undefined",
           "page_id: number",
           "recency_boost?: number | undefined",
+          "relational?: RelationalEvidence | undefined",
           "relational_hop?: number | undefined",
           "relational_path?: string[] | undefined",
           "relational_pinned?: boolean | undefined",
@@ -3162,6 +3219,7 @@
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
           "registerBeforeDisconnect: (stop: () => Promise<void>) => () => void",
+          "relationalChainHop: (frontierPageIds: number[], opts: ChainHopOpts) => Promise<ChainHopEdge[]>",
           "relationalFanout: (seeds: string[], opts?: RelationalFanoutOpts) => Promise<RelationalFanoutRow[]>",
           "removeLink: (from: string, to: string, linkType?: string, linkSource?: string, opts?: { fromSourceId?: string; toSourceId?: string; }) => Promise<number>",
           "removeLinksByPagesAndSource: (pages: Array<{ slug: string; source_id: string; }>, opts: { linkSource: string; keepTypedNerPairs?: Array<{ from_slug: string; from_source_id: string; to_slug: string; to_source_id: string; }>; }) => Promise<number>",
@@ -4573,7 +4631,7 @@
         "kind": "type",
         "name": "LinkExtractionPack",
         "signature": [
-          "Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"event\" | \"state\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"format\" | \"subtype\" | \"legacy_type\" | \"origin\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"link_types\" | \"frontmatter_links\"> & Partial<Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"event\" | \"state\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"format\" | \"subtype\" | \"legacy_type\" | \"origin\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"page_types\">>"
+          "Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"event\" | \"state\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"origin\" | \"format\" | \"subtype\" | \"legacy_type\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"link_types\" | \"frontmatter_links\"> & Partial<Pick<{ api_version: \"gbrain-schema-pack-v1\"; name: string; version: string; description: string; gbrain_min_version: string; extends: string | null; borrow_from: { pack: string; types?: string[] | undefined; link_types?: string[] | undefined; }[]; page_types: { name: string; primitive: \"entity\" | \"temporal\" | \"concept\" | \"media\" | \"annotation\"; path_prefixes: string[]; aliases: string[]; extractable: boolean | { eval_dimensions: string[]; prompt_template?: string | undefined; fixture_corpus?: string | undefined; benchmark_min_recall?: number | undefined; verifier_path?: string | undefined; }; expert_routing: boolean; subtypes?: { name: string; when: { path_pattern?: string | undefined; frontmatter_field?: string | undefined; frontmatter_value?: string | number | boolean | undefined; }; }[] | undefined; }[]; link_types: { name: string; inverse?: string | undefined; inference?: { regex?: string | undefined; page_type?: string | undefined; target_type?: string | undefined; ner_only?: boolean | undefined; } | undefined; temporal?: \"event\" | \"state\" | undefined; }[]; frontmatter_links: { page_type: string; fields: string[]; link_type: string; }[]; takes_kinds: string[]; enrichable_types: { type: string; rubric?: string | undefined; }[]; filing_rules: { kind: string; directory: string; examples: string[]; description?: string | undefined; }[]; author?: string | undefined; license?: string | undefined; homepage?: string | undefined; phases?: string[] | undefined; calibration_domains?: { name: string; aggregator: \"scalar_brier\" | \"weighted_brier\" | \"count_based\" | \"cluster_summary\"; page_types: string[]; }[] | undefined; migration_from?: { pack: string; version: string; } | undefined; mapping_rules?: ({ kind: \"retype\"; from_type: string; to_type: string; subtype_field: \"kind\" | \"origin\" | \"format\" | \"subtype\" | \"legacy_type\" | \"period\" | \"domain\"; subtype?: string | undefined; path_filter?: string | undefined; slug_filter?: string | undefined; } | { kind: \"page_to_link\"; from_type: string; link_type: string; source_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; target_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; inverse?: string | undefined; preserve_notes?: boolean | undefined; } | { kind: \"page_to_alias\"; from_type: string; canonical_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; alias_slug_from: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; }; notes_from?: \"slug\" | \"frontmatter\" | \"body_first_link\" | \"body_excerpt\" | { frontmatter_field: string; } | undefined; })[] | undefined; }, \"page_types\">>"
         ]
       },
       {
@@ -5986,6 +6044,7 @@
           "reconnect: (_ctx?: { error?: unknown; }) => Promise<void>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
           "registerBeforeDisconnect: (stop: () => Promise<void>) => () => void",
+          "relationalChainHop: (frontierPageIds: number[], opts: ChainHopOpts) => Promise<ChainHopEdge[]>",
           "relationalFanout: (seeds: string[], opts?: RelationalFanoutOpts) => Promise<RelationalFanoutRow[]>",
           "removeLink: (from: string, to: string, linkType?: string, linkSource?: string, opts?: { fromSourceId?: string; toSourceId?: string; }) => Promise<number>",
           "removeLinksByPagesAndSource: (pages: Array<{ slug: string; source_id: string; }>, opts: { linkSource: string; keepTypedNerPairs?: Array<{ from_slug: string; from_source_id: string; to_slug: string; to_source_id: string; }>; }) => Promise<number>",
@@ -6789,6 +6848,9 @@
           "queryEmbedFn?: ((text: string) => Float32Array | Promise<Float32Array>) | undefined",
           "recency?: \"on\" | \"off\" | \"strong\" | undefined",
           "recencyBoost?: 0 | 1 | 2 | undefined",
+          "relationalChainSlots?: number | undefined",
+          "relationalOrientOneHop?: boolean | undefined",
+          "relationalPlanner?: boolean | undefined",
           "relationalRerankPin?: number | undefined",
           "relationalRetrieval?: boolean | undefined",
           "relationalRetrievalDepth?: number | undefined",
@@ -7401,6 +7463,45 @@
       {
         "kind": "interface",
         "members": [
+          "canonical_chunk_id: number | null",
+          "context: string | null",
+          "from_degree: number",
+          "from_page_id: number",
+          "link_ids: number[]",
+          "link_type: string",
+          "neighbor_cap_hit: boolean",
+          "orientation: \"canonical\" | \"stored\" | \"flipped\" | \"uncertain\"",
+          "origin_page_id: number | null",
+          "origin_slug: string | null",
+          "source_id: string",
+          "stored_from_slug: string",
+          "stored_to_slug: string",
+          "to_page_id: number",
+          "to_slug: string",
+          "to_type: string"
+        ],
+        "name": "ChainHopEdge"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "degreeLinkTypes: string[]",
+          "excludePrivate?: boolean | undefined",
+          "linkTypes: string[]",
+          "neighborCap: number",
+          "objectTypes: string[]",
+          "requireSafeChunks?: boolean | undefined",
+          "sourceId?: string | undefined",
+          "sourceIds?: string[] | undefined",
+          "subjectTypes: string[]",
+          "takesHoldersAllowList?: string[] | undefined",
+          "toward: \"object\" | \"subject\""
+        ],
+        "name": "ChainHopOpts"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "excludePrivate?: boolean | undefined",
           "kind?: string | undefined",
           "limit?: number | undefined",
@@ -7800,6 +7901,7 @@
           "metadata_boost_gate?: MetadataBoostGateDecision | undefined",
           "mode?: \"conservative\" | \"balanced\" | \"tokenmax\" | undefined",
           "relational_evidence_slot?: RelationalEvidenceSlotDecision | undefined",
+          "relational_plan?: RelationalPlanMeta | undefined",
           "relational_rerank_pin?: RelationalRerankPinDecision | undefined",
           "relaxed_dropped?: number | undefined",
           "rerank?: { model_resolved: string; } | undefined",
@@ -8094,6 +8196,17 @@
       {
         "kind": "interface",
         "members": [
+          "edges: { link_type: string; stored_from: string; stored_to: string; orientation: \"canonical\" | \"stored\" | \"flipped\" | \"uncertain\"; context: string | null; origin: string | null; }[]",
+          "hop: number",
+          "path_count: number",
+          "role: \"answer\" | \"support\" | \"origin\"",
+          "seed: string"
+        ],
+        "name": "RelationalEvidence"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "depth?: number | undefined",
           "direction?: \"both\" | \"in\" | \"out\" | undefined",
           "excludePrivate?: boolean | undefined",
@@ -8189,6 +8302,9 @@
           "orFallback?: boolean | undefined",
           "recency?: \"on\" | \"off\" | \"strong\" | undefined",
           "recencyBoost?: 0 | 1 | 2 | undefined",
+          "relationalChainSlots?: number | undefined",
+          "relationalOrientOneHop?: boolean | undefined",
+          "relationalPlanner?: boolean | undefined",
           "relationalRerankPin?: number | undefined",
           "relationalRetrieval?: boolean | undefined",
           "relationalRetrievalDepth?: number | undefined",
@@ -8247,6 +8363,7 @@
           "modality?: \"image\" | \"text\" | undefined",
           "page_id: number",
           "recency_boost?: number | undefined",
+          "relational?: RelationalEvidence | undefined",
           "relational_hop?: number | undefined",
           "relational_path?: string[] | undefined",
           "relational_pinned?: boolean | undefined",

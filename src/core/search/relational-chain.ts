@@ -273,22 +273,28 @@ export async function runRelationalChain(
       canonical_chunk_id: chunkIds.get(nodeKey(a.source_id, a.id)) ?? null,
     });
   }
-  for (const a of answers) {
-    const best = a.paths[0];
-    best.ids.slice(1, -1).forEach((id, j) => push({
-      source_id: a.source_id, slug: best.slugs[j + 1], page_id: id, role: 'support', hop: j + 1,
-      path_count: 0, score: 0,
-      best_path: { nodes: best.slugs.slice(0, j + 2), edges: best.edges.slice(0, j + 1).map(evidence) },
-      canonical_chunk_id: chunkIds.get(nodeKey(a.source_id, id)) ?? null,
-    }));
-    best.edges.forEach((e, j) => {
-      if (e.origin_page_id == null || e.origin_slug == null || best.ids.includes(e.origin_page_id)) return;
-      push({
-        source_id: a.source_id, slug: e.origin_slug, page_id: e.origin_page_id, role: 'origin', hop: j + 1,
-        path_count: 0, score: 0, best_path: { nodes: [e.stored_from_slug, e.stored_to_slug], edges: [evidence(e)] },
-        canonical_chunk_id: null,
+  // Evidence pages: every retained path of every answer (best paths first),
+  // so each answer's supporting pages are all present, not only its best path's.
+  const maxPaths = Math.max(...answers.map(a => a.paths.length));
+  for (let k = 0; k < maxPaths; k++) {
+    for (const a of answers) {
+      const path = a.paths[k];
+      if (!path) continue;
+      path.ids.slice(1, -1).forEach((id, j) => push({
+        source_id: a.source_id, slug: path.slugs[j + 1], page_id: id, role: 'support', hop: j + 1,
+        path_count: 0, score: 0,
+        best_path: { nodes: path.slugs.slice(0, j + 2), edges: path.edges.slice(0, j + 1).map(evidence) },
+        canonical_chunk_id: chunkIds.get(nodeKey(a.source_id, id)) ?? null,
+      }));
+      path.edges.forEach((e, j) => {
+        if (e.origin_page_id == null || e.origin_slug == null || path.ids.includes(e.origin_page_id)) return;
+        push({
+          source_id: a.source_id, slug: e.origin_slug, page_id: e.origin_page_id, role: 'origin', hop: j + 1,
+          path_count: 0, score: 0, best_path: { nodes: [e.stored_from_slug, e.stored_to_slug], edges: [evidence(e)] },
+          canonical_chunk_id: null,
+        });
       });
-    });
+    }
   }
   if (diagnostics.cap_hit) diagnostics.status = 'truncated';
   return { rows, diagnostics };
@@ -351,3 +357,10 @@ export function validateChainHops(raw: unknown): { ok: true; hops: ChainHop[] } 
 }
 
 export const MAX_CHAIN_HOPS = 3;
+
+/** Chain slots: an integer 0..10 (number or numeric string; `off` = 0); anything else → undefined (fall through). */
+export function normalizeChainSlots(v: unknown): number | undefined {
+  if (v === 'off' || v === false) return 0;
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= 0 && n <= 10 ? n : undefined;
+}
