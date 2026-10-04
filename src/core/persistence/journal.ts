@@ -301,14 +301,18 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
 export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
-  outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown }): Promise<WriteRequest> {
+  outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
+  /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
+  locked?: WriteRequest): Promise<WriteRequest> {
   // Every acknowledged terminal state survives a crash, including cancellation
   // and pre-publication failures that do not enter the file coordinator.
-  await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-  await declarePersistenceProtocol(tx);
-  const keys = ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])];
-  await lockCounters(tx, keys);
-  const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+  let current = locked;
+  if (!current) {
+    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    await declarePersistenceProtocol(tx);
+    await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
+    [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+  }
   if (!current) throw new OperationError('not_found', 'Write request not found.');
   if (isTerminal(current)) return current;
   if (row.execution_token !== current.execution_token) throw new OperationError('write_claim_lost', 'Write claim changed before completion.');

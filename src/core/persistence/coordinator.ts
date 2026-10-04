@@ -257,7 +257,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       }
       await queuePublicationEffects(tx, row, final, outcome, prepared);
       await hooks.boundary?.('before_commit', row);
-      const committed = await completeWrite(tx, current, 'committed', outcome);
+      const committed = await completeWrite(tx, current, 'committed', outcome, undefined, current);
       transactionBodyCompleted = true;
       return committed;
     });
