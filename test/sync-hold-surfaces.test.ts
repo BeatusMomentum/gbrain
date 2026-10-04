@@ -21,7 +21,7 @@ import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { prepareFileTarget } from '../src/core/persistence/page-prepare.ts';
 import { heldFileMessage, writeFailureDiagnostic } from '../src/core/persistence/verb-errors.ts';
-import { readGitHold, readGitHoldRetryPaths, writeGitHold, type GitHoldRecord } from '../src/core/persistence/sync-holds.ts';
+import { readGitHold, readGitHoldListing, readGitHoldRetryPaths, writeGitHold, type GitHoldRecord } from '../src/core/persistence/sync-holds.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { writerAdminState } from '../src/core/persistence/admin-intent.ts';
 import { carryLegacyFailCounts } from '../src/core/connectors/item-holds.ts';
@@ -101,6 +101,20 @@ describe('sources status and retry-held on Git sources', () => {
     expect(text).toContain('gbrain sync --source notes-git');
     expect(text).toContain('gbrain sources retry-held notes-git');
     expect(text).not.toContain('other-git');
+  });
+
+  test('sources status lists at most sync.hold_cap holds per source, limited in SQL, with the outstanding count from the summary row', async () => {
+    const listing = await readGitHoldListing(engine, ['notes-git', 'other-git', 'default'], 1);
+    expect(listing.map(source => [source.sourceId, source.count, source.holds.map(record => record.path)])).toEqual([
+      ['notes-git', 2, ['notes/huge.md']], ['other-git', 1, ['other/a.md']]]);
+    await engine.setConfig('sync.hold_cap', '1');
+    try {
+      const doc = JSON.parse(await captured(() => runSources(engine, ['status', 'notes-git', '--json'])));
+      expect(doc.sources[0].git_holds).toMatchObject({ count: 2, truncated: true });
+      expect(doc.sources[0].git_holds.items.map((item: { path: string }) => item.path)).toEqual(['notes/huge.md']);
+      const text = await captured(() => runSources(engine, ['status', 'notes-git']));
+      expect(text).toContain('notes-git: 2 held file(s)');
+    } finally { await engine.unsetConfig('sync.hold_cap'); }
   });
 
   test('sources status <unknown id> refuses with not_found and the list command', async () => {

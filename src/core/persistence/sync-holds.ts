@@ -30,6 +30,10 @@ export const GIT_HOLD_OP = 'sync-hold';
 export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
 export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
 export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
+/** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
+export const SYNC_CONVERSION_OP = 'sync-conversions';
+/** How many conversions the log keeps per source. */
+export const SYNC_CONVERSION_KEEP = 20;
 /** Default for `sync.hold_cap`: how many holds a result lists in detail. Storage is never capped. */
 export const GIT_HOLD_CAP = 500;
 export const GIT_HOLD_ESCALATE_COUNT = 50;
@@ -200,6 +204,31 @@ export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: strin
   return [...out.values()];
 }
 
+/**
+ * A bounded listing for status views: each listed source's outstanding count
+ * (its summary row) and its first `limit` holds in path order, limited in SQL
+ * so a source with 20k holds never loads them all.
+ */
+export async function readGitHoldListing(engine: Exec, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
+  if (!sourceIds.length) return [];
+  const rows = await engine.executeRaw<{ source_id: string; incarnation: string; count: number | string; record: GitHoldRecord | null }>(`SELECT s.id AS source_id,
+      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
+    FROM sources s
+    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
+    LEFT JOIN LATERAL (SELECT x.fingerprint, x.completed_keys->0 AS record FROM op_checkpoints x
+      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+      ORDER BY x.fingerprint LIMIT $4) h ON true
+    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
+    ORDER BY s.id, h.fingerprint`, [GIT_HOLD_SUMMARY_OP, GIT_HOLD_OP, sourceIds, Math.max(0, Math.floor(limit))]);
+  const out = new Map<string, GitSourceHolds>();
+  for (const row of rows) {
+    const entry = out.get(row.source_id) ?? { sourceId: row.source_id, incarnation: row.incarnation, count: Number(row.count), holds: [] };
+    if (row.record) entry.holds.push(row.record);
+    out.set(row.source_id, entry);
+  }
+  return [...out.values()];
+}
+
 /** The exact next step for one hold: the repair preview for frontmatter, the split or exclude for size. */
 export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'code' | 'meta'>): Action {
   const source = record.source_id;
@@ -239,6 +268,30 @@ export function gitHoldItem(record: GitHoldRecord): GitHoldItem {
     ...(record.meta.key ? { key: record.meta.key } : {}), ...(record.meta.line !== undefined ? { line: record.meta.line } : {}),
     message: record.message, slug: record.slug, stale: record.page_id !== null, held_since: record.held_at,
     fix: gitHoldFix(record), docs: gitHoldDocs(record.code, record.meta.reason) };
+}
+
+/** A blocked sync request a run converted in place: held (the file is refused) or re-frozen (the file now imports). */
+export interface SyncConversion { request_id: string; path: string | null; slug: string | null; run_id: string; outcome: 'held' | 'refrozen'; converted_at: string }
+
+/** Appends a conversion to the source's log (newest first, bounded); call it in the transaction that saves the converted cursor. */
+export async function recordSyncConversion(tx: Exec, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
+  const entry = JSON.stringify([{ ...conversion, converted_at: new Date().toISOString() }]);
+  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
+      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
+        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`,
+  [SYNC_CONVERSION_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation, entry, SYNC_CONVERSION_KEEP]);
+}
+
+/** The conversion log of each listed source's current incarnation, newest first (sources with none are absent). */
+export async function readSyncConversions(engine: Exec, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
+  const out = new Map<string, SyncConversion[]>();
+  if (!sourceIds.length || limit <= 0) return out;
+  const rows = await engine.executeRaw<{ source_id: string; conversions: SyncConversion[] | null }>(`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
+    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`, [SYNC_CONVERSION_OP, sourceIds]);
+  for (const row of rows) if (Array.isArray(row.conversions) && row.conversions.length) out.set(row.source_id, row.conversions.slice(0, limit));
+  return out;
 }
 
 /** `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. */

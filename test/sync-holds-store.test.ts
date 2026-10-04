@@ -10,8 +10,9 @@ import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import {
   GIT_HOLD_OP, buildHoldReport, clearGitHold, commonPathPrefix, countGitHolds, gitHoldFingerprint, gitHoldItem, holdsEscalated,
   readGitHold, readGitHoldRetryPaths, readGitSourceHolds, readSyncHoldPolicy, requestGitHoldRetry, clearGitHoldRetryPaths, writeGitHold,
-  recordSyncImportProvenance, readSyncImportProvenance, type GitHoldRecord,
+  recordSyncImportProvenance, readSyncImportProvenance, recordSyncConversion, readSyncConversions, SYNC_CONVERSION_KEEP, type GitHoldRecord,
 } from '../src/core/persistence/sync-holds.ts';
+import { readHeldCoverage } from '../src/core/persistence/held-reads.ts';
 
 let engine: BrainEngine;
 let incarnation: string;
@@ -125,6 +126,35 @@ describe('git hold store', () => {
     expect(Object.keys(remote).sort()).toEqual(['held_count', 'holds_fix']);
     expect(remote.holds_fix).toMatchObject({ actor: 'host_admin' });
     expect(JSON.stringify(remote)).not.toContain('notes/');
+  });
+
+  test('the summary row counts holds whose page exists as stale, through updates and clears', async () => {
+    await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES('holds-c','holds-c','{}')");
+    const inc = (await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text FROM sources WHERE id='holds-c'"))[0].incarnation;
+    const at = (path: string, observed: string, page_id: number | null) => ({ ...hold(path, observed), source_id: 'holds-c', incarnation: inc, page_id });
+    await writeGitHold(engine, at('n/new.md', '2026-01-01T00:00:00.000Z', null));
+    await writeGitHold(engine, at('n/mod.md', '2026-01-01T00:00:00.000Z', 41));
+    expect(await readHeldCoverage(engine, { sourceId: 'holds-c' })).toEqual([{ source_id: 'holds-c', missing: 1, stale: 1 }]);
+    await writeGitHold(engine, at('n/new.md', '2026-01-02T00:00:00.000Z', 42));
+    expect(await readHeldCoverage(engine, { sourceId: 'holds-c' })).toEqual([{ source_id: 'holds-c', missing: 0, stale: 2 }]);
+    await clearGitHold(engine, { sourceId: 'holds-c', incarnation: inc, path: 'n/mod.md', observedAt: '2026-01-03T00:00:00.000Z' });
+    expect(await readHeldCoverage(engine, { sourceId: 'holds-c' })).toEqual([{ source_id: 'holds-c', missing: 0, stale: 1 }]);
+    await clearGitHold(engine, { sourceId: 'holds-c', incarnation: inc, path: 'n/new.md', observedAt: '2026-01-03T00:00:00.000Z' });
+    expect(await readHeldCoverage(engine, { sourceId: 'holds-c' })).toEqual([]);
+  });
+
+  test('the conversion log keeps the newest conversions, bounded, and survives the checkpoint purge', async () => {
+    for (let i = 0; i < SYNC_CONVERSION_KEEP + 3; i++) {
+      await recordSyncConversion(engine, 'holds-a', incarnation, { request_id: `req-${i}`, path: `notes/${i}.md`, slug: `notes/${i}`, run_id: 'run-9', outcome: i % 2 ? 'held' : 'refrozen' });
+    }
+    const all = (await readSyncConversions(engine, ['holds-a', 'holds-b'], 100)).get('holds-a')!;
+    expect(all).toHaveLength(SYNC_CONVERSION_KEEP);
+    expect(all[0]).toMatchObject({ request_id: `req-${SYNC_CONVERSION_KEEP + 2}`, outcome: 'refrozen' });
+    expect(all.at(-1)!.request_id).toBe('req-3');
+    expect((await readSyncConversions(engine, ['holds-a'], 2)).get('holds-a')!.map(c => c.request_id)).toEqual([`req-${SYNC_CONVERSION_KEEP + 2}`, `req-${SYNC_CONVERSION_KEEP + 1}`]);
+    await engine.executeRaw("UPDATE op_checkpoints SET updated_at=now()-interval '8 days' WHERE op='sync-conversions'");
+    await purgeStaleCheckpoints(engine, 7);
+    expect((await readSyncConversions(engine, ['holds-a'], 100)).get('holds-a')).toHaveLength(SYNC_CONVERSION_KEEP);
   });
 
   test('import provenance round-trips and the common prefix names the generator directory', async () => {

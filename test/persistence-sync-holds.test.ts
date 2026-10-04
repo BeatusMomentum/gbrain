@@ -18,6 +18,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { GIT_HOLD_OP, SYNC_IMPORT_PROVENANCE_OP, readGitSourceHolds, requestGitHoldRetry } from '../src/core/persistence/sync-holds.ts';
 import { printSyncResult, type SyncOpts, type SyncResult } from '../src/commands/sync.ts';
+import { gitHoldStatusLines, readGitHoldStatuses } from '../src/core/persistence/connector-status.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -218,6 +219,11 @@ test('a cursor blocked by a pre-upgrade failed receipt converts in place: held w
   expect(converted).toMatchObject({ status: 'first_sync', held_count: 1 });
   expect(converted.held?.[0]?.path).toBe('notes/broken.md');
   expect(await engine.getPage('notes/ok', { sourceId: s.id })).not.toBeNull();
+  // sources status keeps the conversion as history after later runs.
+  await s.sync();
+  const status = (await readGitHoldStatuses(engine, [s.id])).get(s.id)!;
+  expect(status.recent_conversions).toMatchObject([{ request_id: failed!.request_id, path: 'notes/broken.md', outcome: 'held' }]);
+  expect(gitHoldStatusLines(s.id, status).join('\n')).toContain(`${failed!.request_id} (notes/broken.md): held`);
 
   // Already fixed: a working-tree cursor re-freezes the fixed bytes in place under a new request and imports them.
   await engine.setConfig('sync.holds', 'fail');
@@ -232,6 +238,9 @@ test('a cursor blocked by a pre-upgrade failed receipt converts in place: held w
   expect(fixed.status).not.toBe('blocked_by_failures');
   expect((await engine.getPage('notes/draft', { sourceId: t.id }))?.title).toBe('Payments roundup');
   expect(await t.holds()).toEqual([]);
+  // No hold remains, but the conversion still shows in sources status.
+  expect((await readGitHoldStatuses(engine, [t.id])).get(t.id)).toMatchObject({ count: 0, items: [],
+    recent_conversions: [{ request_id: draft!.request_id, path: 'notes/draft.md', outcome: 'refrozen' }] });
 }), 240_000);
 
 test('a flagless sync converts a --no-embed cursor with its stored options, and the loop guard mints no receipt per run', () => each(async engine => {
