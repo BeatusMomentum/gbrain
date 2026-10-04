@@ -9,6 +9,8 @@ export const AUTO_CHRONICLE_KEEP_ARGV = ['gbrain', 'config', 'set', 'auto_chroni
 export const CHRONICLE_ACK_KEY = 'chronicle.default_on_acknowledged';
 /** Stamped when the one-shot post-upgrade notice prints. */
 export const CHRONICLE_NOTICE_SHOWN_KEY = 'chronicle.default_on_notice_shown';
+/** Written by the ledger migration: automatic extraction covers revisions decided after it. */
+export const CHRONICLE_ACTIVATED_AT_KEY = 'chronicle.activated_at';
 
 const TRUE_WORDS = ['true', '1', 'yes', 'on'];
 const FALSE_WORDS = ['false', '0', 'no', 'off'];
@@ -83,6 +85,7 @@ export type ChronicleNumericKey = keyof typeof CHRONICLE_NUMERIC_KEYS;
 export const CHRONICLE_CONFIG_KEYS: readonly string[] = [
   ...Object.keys(CHRONICLE_NUMERIC_KEYS),
   'chronicle.tz',
+  CHRONICLE_ACTIVATED_AT_KEY,
   CHRONICLE_ACK_KEY,
   CHRONICLE_NOTICE_SHOWN_KEY,
 ];

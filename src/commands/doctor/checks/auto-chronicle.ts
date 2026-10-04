@@ -12,12 +12,11 @@ import {
   readAutoChronicle, readChronicleSettings,
 } from '../../../core/chronicle/config.ts';
 import { describeChronicleActivity, readChronicleLedgerStats } from '../../../core/chronicle/ledger-stats.ts';
-import { CHRONICLE_REASONS, chronicleBackfillArgv, type ChronicleAction } from '../../../core/chronicle/reasons.ts';
+import { CHRONICLE_REASONS, CHRONICLE_RUN_NOW_ARGV, chronicleBackfillArgv, type ChronicleAction } from '../../../core/chronicle/reasons.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 export const AUTO_CHRONICLE_DOCS = 'docs/guides/life-chronicle.md';
-const RUN_NOW_ARGV = ['gbrain', 'dream', '--phase', 'chronicle'];
 
 const command = (argv: readonly string[]) => argv.join(' ');
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -60,9 +59,8 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
     const summary = { enabled: true, source: setting.source, daily_limit: settings.autoDailyLimit,
       job_budget_usd: settings.jobBudgetUsd, ledger_available: stats.available, pending: stats.pending,
       auto_calls_24h: stats.autoCalls24h, principals_24h: stats.principals24h, last_7d: stats.last7d, spend_7d: stats.spend7d,
-      chat_available: chat, run_now: RUN_NOW_ARGV };
-    const failures = Object.entries(stats.last7d.reasons)
-      .filter(([reason]) => reason in CHRONICLE_REASONS && CHRONICLE_REASONS[reason as keyof typeof CHRONICLE_REASONS].stage === 'execution');
+      chat_available: chat, run_now: [...CHRONICLE_RUN_NOW_ARGV] };
+    const failures = Object.entries(stats.last7d.failedReasons).filter(([reason]) => reason in CHRONICLE_REASONS);
     if (!chat && stats.pending > 0) {
       checks.push({ name: 'auto_chronicle', ...warn('judge_llm_unavailable',
         `auto_chronicle is on, but no chat provider is configured, so ${stats.pending} pending page(s) cannot be extracted. ${activity} ` +
@@ -78,7 +76,10 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
         `auto_chronicle is on; ${stats.last7d.failed} automatic extraction(s) failed in 7 days, most often ${reason}: ${entry.meaning(ctxFix)} ${activity}`,
         fix, { ...summary, readiness: 'degraded' }) });
     } else {
-      const runNow = stats.pending > 0 ? ` Pending pages run in the next autopilot cycle; to run them now: \`${command(RUN_NOW_ARGV)}\` (paid).` : '';
+      const limited = stats.pending > 0 && stats.autoCalls24h >= settings.autoDailyLimit
+        ? ' The daily limit is used up, so pending pages wait for a free slot; raising chronicle.auto_daily_limit needs the user\'s agreement.' : '';
+      const runNow = stats.pending > 0 && !limited
+        ? ` Pending pages run in the next autopilot cycle; to run them now: \`${command(CHRONICLE_RUN_NOW_ARGV)}\` (paid).` : limited;
       const noChat = chat ? '' : ' No chat provider is configured, so nothing will be extracted until one is.';
       checks.push({ name: 'auto_chronicle', status: 'ok',
         message: `auto_chronicle is on${setting.source === 'default' ? ' (default)' : ''}. ${activity}${runNow}${noChat}`,

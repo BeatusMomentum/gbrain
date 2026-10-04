@@ -18,8 +18,12 @@ export interface ChronicleAction {
   inputs?: Array<{ name: string; how: string }>;
 }
 
-/** `decision`: decided when the page was written (receipt). `execution`: decided when the chronicle phase ran. */
-export type ChronicleStage = 'decision' | 'execution';
+/**
+ * Where a code is decided (same stages as Lane 1's `src/core/chronicle/contract.ts`): `decision` when
+ * the page is written (receipt), `discovery` when the phase finds the page, `execution` when it judges
+ * the page, `phase` for a whole run.
+ */
+export type ChronicleStage = 'decision' | 'discovery' | 'execution' | 'phase';
 
 export interface ChronicleReasonContext {
   /** Omitted on brain-wide surfaces (doctor, advisor): the pointer then covers every source. */
@@ -43,6 +47,9 @@ export function chronicleBackfillArgv(opts: { sourceId?: string; since: string; 
   return ['gbrain', 'chronicle-backfill', ...(opts.sourceId ? ['--source', opts.sourceId] : []),
     '--since', opts.since, '--limit', String(opts.limit ?? 50), ...(opts.dryRun ? ['--dry-run'] : [])];
 }
+
+/** The run-now pointer: the chronicle phase in the foreground (paid). */
+export const CHRONICLE_RUN_NOW_ARGV = ['gbrain', 'dream', '--phase', 'chronicle'] as const;
 
 const backfill = (actor: ChronicleActor, why: string) => (ctx: ChronicleReasonContext): ChronicleAction => ({
   argv: chronicleBackfillArgv({ sourceId: ctx.sourceId, since: ctx.since, dryRun: false }),
@@ -79,18 +86,18 @@ export const CHRONICLE_REASONS = {
     meaning: () => 'The page body is under 80 characters, too short to hold events.' },
   dream_generated: { stage: 'decision',
     meaning: () => 'Dream-generated pages are never mined for events.' },
-  decision_error: { stage: 'decision',
-    meaning: () => 'The extraction decision failed for this write; the write itself committed.',
-    fix: () => ({ argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent',
-      why: 'Read the auto_chronicle check for the cause, then backfill the page if the user agrees.', requires_exclusive: false }) },
-  no_write_decision: { stage: 'execution',
+  no_write_decision: { stage: 'discovery',
     meaning: () => 'This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it.',
     fix: backfill('agent', FIX_BY_BACKFILL) },
+  not_chronicle_shaped: { stage: 'decision',
+    meaning: () => 'The page is no longer a meeting, conversation or calendar page, so the events extracted from it were retired.' },
   superseded: { stage: 'execution',
     meaning: () => 'A newer revision replaced this content before extraction ran; the newer revision carries its own decision.' },
   daily_limit: { stage: 'execution',
-    meaning: (ctx) => `The automatic daily limit (chronicle.auto_daily_limit = ${ctx.dailyLimit ?? 200} calls per rolling 24 hours) was used up.`,
-    fix: backfill('agent', FIX_BY_BACKFILL) },
+    meaning: (ctx) => `The automatic daily limit (chronicle.auto_daily_limit = ${ctx.dailyLimit ?? 200} calls per rolling 24 hours) is used up; pending pages wait for a free slot.`,
+    fix: (ctx) => ({ argv: ['gbrain', 'config', 'set', 'chronicle.auto_daily_limit', String((ctx.dailyLimit ?? 200) * 2)],
+      consent: ['paid'], actor: 'agent', requires_exclusive: false,
+      why: 'Pending pages run on their own as slots free up. Raise the limit only if the user agrees to more paid calls per day.' }) },
   judge_llm_unavailable: { stage: 'execution',
     meaning: () => 'No chat provider is configured on the brain host, so extraction cannot run.',
     fix: () => ({ consent: ['credentials'], actor: 'user', requires_exclusive: false,
@@ -103,11 +110,11 @@ export const CHRONICLE_REASONS = {
     inputs: [{ name: 'usd-per-1M-input-tokens', how: 'the provider pricing page' },
       { name: 'usd-per-1M-output-tokens', how: 'the provider pricing page' },
       { name: 'pricing-page-url', how: 'the URL you read the price from' }] }) },
-  job_budget_exceeded: { stage: 'execution',
+  budget_exhausted: { stage: 'execution',
     meaning: () => 'The extraction call cost more than chronicle.job_budget_usd allows for one page.',
     fix: () => ({ argv: ['gbrain', 'config', 'set', 'chronicle.job_budget_usd', '0.50'], consent: ['paid'], actor: 'agent',
       requires_exclusive: false, why: 'Raising the per-page cap lets long pages finish; ask the user before raising spend.' }) },
-  chat_error: { stage: 'execution',
+  judge_chat_error: { stage: 'execution',
     meaning: () => 'The chat provider returned an error; the page retries with backoff.',
     fix: () => ({ consent: [], actor: 'provider', requires_exclusive: false,
       why: 'Wait for the retry; if it keeps failing, check the provider status and key.' }) },
@@ -115,12 +122,22 @@ export const CHRONICLE_REASONS = {
     meaning: () => 'The extraction output hit chronicle.judge_max_tokens and was cut off, so nothing was written.',
     fix: () => ({ argv: ['gbrain', 'config', 'set', 'chronicle.judge_max_tokens', '8000'], consent: ['paid'], actor: 'agent',
       requires_exclusive: false, why: 'A higher output cap lets event-dense pages finish; ask the user before raising spend.' }) },
+  judge_parse_failed: { stage: 'execution',
+    meaning: () => 'The extraction output had no parseable JSON array, so nothing was written; the page retries on a later run.' },
   malformed_proposal: { stage: 'execution',
-    meaning: () => 'The extraction output was not valid event JSON, so nothing was written; the page is tried again when its content changes.' },
+    meaning: () => 'A proposed event failed validation, so the whole batch was rejected and nothing was written; the page retries on a later run.' },
+  publish_error: { stage: 'execution',
+    meaning: () => 'Publishing the events failed; nothing from this attempt replaced the previous events, and the page retries on a later run.' },
   judge_refused: { stage: 'execution',
     meaning: () => 'The chat model refused or filtered the page; no events were written.' },
-  page_not_found: { stage: 'execution',
-    meaning: () => 'The page was deleted or renamed before extraction ran.' },
+  page_missing: { stage: 'execution',
+    meaning: () => 'The page was deleted before extraction ran.' },
+  no_events: { stage: 'execution',
+    meaning: () => 'Extraction read the page and found no events.' },
+  no_chat_provider: { stage: 'phase',
+    meaning: () => 'No chat provider is configured on the brain host, so the chronicle phase made no calls.',
+    fix: () => ({ consent: ['credentials'], actor: 'user', requires_exclusive: false,
+      why: 'Ask the user to configure a chat provider key on the brain host (see docs/ai-providers/); pending pages run on the next cycle.' }) },
 } as const satisfies Record<string, ChronicleReason>;
 
 export type ChronicleReasonCode = keyof typeof CHRONICLE_REASONS;

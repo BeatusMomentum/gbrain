@@ -43,6 +43,7 @@ afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => {
   for (const k of ['auto_chronicle', CHRONICLE_ACK_KEY, CHRONICLE_NOTICE_SHOWN_KEY, 'chronicle.auto_daily_limit']) await engine.unsetConfig(k);
   await engine.executeRaw('DELETE FROM chronicle_page_state');
+  await engine.executeRaw('DELETE FROM chronicle_judge_reservations');
   __unconfigureGatewayForTests();
 });
 afterEach(() => { __setChatTransportForTests(null); resetGateway(); });
@@ -151,15 +152,29 @@ describe('advisor', () => {
     expect(ids.filter((id) => id.startsWith('auto_chronicle') || id.startsWith('chronicle_') && id !== 'chronicle_coverage_gap')).toEqual([]);
   });
 
-  test('daily-limit skips point at a scoped, previewed backfill; the coverage gap is scoped too', async () => {
+  test('a used-up daily limit with pages waiting asks before raising it; the coverage gap points at a scoped preview', async () => {
+    withChat();
     await engine.setConfig(CHRONICLE_ACK_KEY, 'x');
+    await engine.setConfig('chronicle.auto_daily_limit', '2');
     await engine.putPage('meetings/2026-10-01', { type: 'meeting', title: 'Weekly sync', compiled_truth: 'x'.repeat(120) });
-    await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'skipped', reason: 'daily_limit' });
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'extracted', cost: 0.01 });
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/b', state: 'extracted', cost: 0.01 });
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/c', state: 'pending' });
     const findings = await collectChronicle.collect(advisorCtx());
     expect(findings.find((f) => f.id === 'chronicle_daily_limit')).toMatchObject({ ask_user: true,
-      fix: { command_argv: ['gbrain', 'chronicle-backfill', '--since', '2026-09-27', '--limit', '50', '--dry-run'] } });
+      fix: { command_argv: ['gbrain', 'config', 'set', 'chronicle.auto_daily_limit', '4'] } });
     expect(findings.find((f) => f.id === 'chronicle_coverage_gap')?.fix.command_argv).toEqual(
       ['gbrain', 'chronicle-backfill', '--since', '2026-09-04', '--limit', '50', '--dry-run']);
+    const main = byName(await doctor(), 'auto_chronicle');
+    expect(main.message).toContain('The daily limit is used up, so pending pages wait');
+    expect(main.message).not.toContain('to run them now');
+  });
+
+  test('a skipped execution reason alone is not reported as a failure', async () => {
+    withChat();
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'skipped', reason: 'superseded' });
+    expect((await collectChronicle.collect(advisorCtx())).some((f) => f.id === 'chronicle_extraction_failing')).toBe(false);
+    expect(byName(await doctor(), 'auto_chronicle').status).toBe('ok');
   });
 
   test('pending pages with no chat provider warn', async () => {

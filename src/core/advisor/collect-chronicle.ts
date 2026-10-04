@@ -68,8 +68,7 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
       ask_user: true,
     });
   }
-  const failed = Object.entries(stats.last7d.reasons)
-    .find(([reason]) => reason in CHRONICLE_REASONS && CHRONICLE_REASONS[reason as keyof typeof CHRONICLE_REASONS].stage === 'execution');
+  const failed = Object.entries(stats.last7d.failedReasons).find(([reason]) => reason in CHRONICLE_REASONS);
   if (stats.last7d.failed > 0 && failed) {
     const reasonCtx = { since: daysAgo(ctx.now ?? new Date(), 7), dailyLimit: settings.autoDailyLimit, recentDays: settings.autoRecentDays };
     const entry = CHRONICLE_REASONS[failed[0] as keyof typeof CHRONICLE_REASONS];
@@ -84,14 +83,14 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
       ask_user: fix ? fix.consent.length > 0 || fix.actor !== 'agent' : false,
     });
   }
-  const limited = stats.last7d.reasons.daily_limit ?? 0;
-  if (limited > 0) {
+  if (stats.pending > 0 && stats.autoCalls24h >= settings.autoDailyLimit) {
+    const fix = CHRONICLE_REASONS.daily_limit.fix({ dailyLimit: settings.autoDailyLimit, since: daysAgo(ctx.now ?? new Date(), 7) });
     findings.push({
       id: 'chronicle_daily_limit',
       severity: 'info',
-      title: `${limited} page(s) hit the automatic daily limit (${settings.autoDailyLimit} calls) in 7 days`,
-      detail: `They are not lost: preview them, then backfill if the user agrees to the cost. ${activity}`,
-      fix: { command_argv: chronicleBackfillArgv({ since: daysAgo(ctx.now ?? new Date(), 7), dryRun: true }) },
+      title: `The automatic daily limit (${settings.autoDailyLimit} calls) is used up; ${stats.pending} page(s) wait for a free slot`,
+      detail: `${fix.why} ${activity}`,
+      fix: { command_argv: fix.argv ?? null },
       collector: 'chronicle',
       ask_user: true,
     });

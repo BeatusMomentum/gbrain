@@ -138,18 +138,22 @@ brackets are filled in with real values on each surface.
 | `not_yet_happened` | decision | The calendar event has not ended yet; it is picked up automatically after its end time, with no edit needed. | — | — | — |
 | `too_short` | decision | The page body is under 80 characters, too short to hold events. | — | — | — |
 | `dream_generated` | decision | Dream-generated pages are never mined for events. | — | — | — |
-| `decision_error` | decision | The extraction decision failed for this write; the write itself committed. | `gbrain doctor --json` | agent | — |
-| `no_write_decision` | execution | This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `no_write_decision` | discovery | This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `not_chronicle_shaped` | decision | The page is no longer a meeting, conversation or calendar page, so the events extracted from it were retired. | — | — | — |
 | `superseded` | execution | A newer revision replaced this content before extraction ran; the newer revision carries its own decision. | — | — | — |
-| `daily_limit` | execution | The automatic daily limit (chronicle.auto_daily_limit = 200 calls per rolling 24 hours) was used up. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `daily_limit` | execution | The automatic daily limit (chronicle.auto_daily_limit = 200 calls per rolling 24 hours) is used up; pending pages wait for a free slot. | `gbrain config set chronicle.auto_daily_limit 400` | agent | paid |
 | `judge_llm_unavailable` | execution | No chat provider is configured on the brain host, so extraction cannot run. | — | user | credentials |
 | `no_pricing` | execution | chronicle.job_budget_usd was set explicitly, and gbrain has no price for <provider:model>, so the cap cannot be enforced. | `gbrain pricing set <provider:model> --input <usd-per-1M-input-tokens> --output <usd-per-1M-output-tokens> --source <pricing-page-url>` | agent | — |
-| `job_budget_exceeded` | execution | The extraction call cost more than chronicle.job_budget_usd allows for one page. | `gbrain config set chronicle.job_budget_usd 0.50` | agent | paid |
-| `chat_error` | execution | The chat provider returned an error; the page retries with backoff. | — | provider | — |
+| `budget_exhausted` | execution | The extraction call cost more than chronicle.job_budget_usd allows for one page. | `gbrain config set chronicle.job_budget_usd 0.50` | agent | paid |
+| `judge_chat_error` | execution | The chat provider returned an error; the page retries with backoff. | — | provider | — |
 | `judge_truncated` | execution | The extraction output hit chronicle.judge_max_tokens and was cut off, so nothing was written. | `gbrain config set chronicle.judge_max_tokens 8000` | agent | paid |
-| `malformed_proposal` | execution | The extraction output was not valid event JSON, so nothing was written; the page is tried again when its content changes. | — | — | — |
+| `judge_parse_failed` | execution | The extraction output had no parseable JSON array, so nothing was written; the page retries on a later run. | — | — | — |
+| `malformed_proposal` | execution | A proposed event failed validation, so the whole batch was rejected and nothing was written; the page retries on a later run. | — | — | — |
+| `publish_error` | execution | Publishing the events failed; nothing from this attempt replaced the previous events, and the page retries on a later run. | — | — | — |
 | `judge_refused` | execution | The chat model refused or filtered the page; no events were written. | — | — | — |
-| `page_not_found` | execution | The page was deleted or renamed before extraction ran. | — | — | — |
+| `page_missing` | execution | The page was deleted before extraction ran. | — | — | — |
+| `no_events` | execution | Extraction read the page and found no events. | — | — | — |
+| `no_chat_provider` | phase | No chat provider is configured on the brain host, so the chronicle phase made no calls. | — | user | credentials |
 <!-- chronicle-reasons:end -->
 
 Don't hand-write `life/events/` pages: extraction owns them and retires events
