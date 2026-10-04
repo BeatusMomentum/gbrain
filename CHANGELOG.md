@@ -102,7 +102,7 @@ Before: the three baseline runs of the master tree on 2026-10-04 (`docs/test-aud
 
 #### Faster and cheaper pull-request CI
 
-- E2E selection is one rule: doc-only changes select nothing, everything else selects the whole corpus, read from the pull request files API on a shallow checkout and failing closed on a truncated list. Up to eight Selected E2E workers on 2 vCPU; the E2E backend matrix moves to its own 4 vCPU job and stops running a second time in Selected E2E; serial tests on 4 vCPU; the longmemeval slow file joins the unit shards; unit shards stay on 4 vCPU (2 vCPU raised the shard mean from 542 s to 608 s).
+- E2E selection is one rule: doc-only changes select nothing, everything else selects the whole corpus, read from the pull request files API on a shallow checkout and failing closed on a truncated list. Up to eight Selected E2E workers on 2 vCPU; the E2E backend matrix moves to its own two 4 vCPU shards and stops running a second time in Selected E2E; serial tests on 4 vCPU; the longmemeval slow file joins the unit shards; unit shards stay on 4 vCPU (2 vCPU raised the shard mean from 542 s to 608 s).
 - 92 serial files that pass the isolation lint and touch no process-wide state rejoin the parallel lane; `scripts/serial-files.tsv` lists the remaining serial files with a class and reason.
 - Shorter test waits through production-default seams (connector fixture, maintenance publish wait, effect renewal interval), and `test/helpers/brain-template.ts` clones initialized disk brains instead of replaying migrations.
 - Shard weights re-mined from this branch's green run; `check:weight-coverage` fails on stale entries and warns on unweighted shares.

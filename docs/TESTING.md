@@ -494,7 +494,7 @@ on first use through `GBRAIN_PGBOUNCER_DIRECT_URL`
 (`scripts/lib/ensure-e2e-database.ts`). `ci:ubicloud` routes each slot's own
 pooler at the slot database, `ci:local` gives each shard a
 `gbrain_pooled_<N>_test` database behind its single pooler, and `e2e.yml`'s
-`tier1-backend-matrix` job runs the list against a `pgbouncer` service; it is
+`tier1-backend-matrix` job runs the list in two weighted shards (`SHARD=N/2`) against a `pgbouncer` service; it is
 the PR owner of the listed `test/e2e/` files, which Selected E2E excludes. An entry may carry
 `<TAB>pooled-timeout=<seconds>` when its pooled pass needs more than the
 per-file cap; `!path<TAB>reason` records a parity file deliberately left out.
