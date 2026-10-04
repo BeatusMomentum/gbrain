@@ -216,7 +216,7 @@ async function estimateBacklogUsd(engine: BrainEngine, model: string, backlog: n
       WHERE j.name = $1 AND j.queue = $2 AND j.status IN ('waiting', 'delayed')`,
     [FACTS_DRAIN_JOB, FACTS_DRAIN_QUEUE, MAX_TURN_TEXT_CHARS]).catch(() => [{ chars: null }]);
   const inputTokens = Math.ceil((row?.chars ?? MAX_TURN_TEXT_CHARS / 2) / 4) + PROMPT_OVERHEAD_TOKENS;
-  const perJob = reservationCostUsd(model, 'chat', inputTokens, Math.min(maxTokens, 800));
+  const perJob = reservationCostUsd(model, 'chat', inputTokens, Math.min(maxTokens, 300));
   return perJob === null ? null : perJob * backlog;
 }
 
