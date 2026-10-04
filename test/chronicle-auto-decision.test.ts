@@ -21,7 +21,12 @@ import { isChronicleEligible } from '../src/core/chronicle/eligibility.ts';
 import { autoChronicleSetting } from '../src/core/chronicle/config.ts';
 import { prepareFactsBackstop } from '../src/core/persistence/effect-facts.ts';
 import type { WriteAuthority, WriteRequest } from '../src/core/persistence/model.ts';
-import { managedBrain } from './helpers/managed-brain.ts';
+import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
+import { requirePostgresTestDatabase } from './helpers/test-backends.ts';
+
+/** PGLite in the unit lane; the e2e wrapper reruns every case on an isolated Postgres database. */
+const databaseUrl = process.env.GBRAIN_TEST_BACKEND === 'postgres' ? requirePostgresTestDatabase() : undefined;
+const brain = (run: (b: ManagedBrain) => Promise<void>) => managedBrain(run, { databaseUrl });
 
 const today = new Date().toISOString().slice(0, 10);
 const lastYear = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
@@ -38,7 +43,7 @@ async function rows(engine: BrainEngine) {
 }
 
 describe('managed put_page', () => {
-  test('an eligible meeting records one pending row with the writer; a no-op re-put changes nothing', () => managedBrain(async ({ engine, ctx }) => {
+  test('an eligible meeting records one pending row with the writer; a no-op re-put changes nothing', () => brain(async ({ engine, ctx }) => {
     const receipt = await put(ctx, 'meetings/sync', meeting());
     expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200, next_command: 'gbrain dream --phase chronicle' });
     const [row] = await rows(engine);
@@ -49,13 +54,13 @@ describe('managed put_page', () => {
     expect(await rows(engine)).toHaveLength(1);
   }), 120_000);
 
-  test('an ordinary note gets neither a row nor a receipt field', () => managedBrain(async ({ engine, ctx }) => {
+  test('an ordinary note gets neither a row nor a receipt field', () => brain(async ({ engine, ctx }) => {
     const receipt = await put(ctx, 'notes/plan', `---\ntype: note\ntitle: Plan\n---\n\n${BODY}`);
     expect('chronicle_backstop' in receipt).toBe(false);
     expect(await rows(engine)).toEqual([]);
   }), 120_000);
 
-  test('auto_chronicle false and an invalid word both skip with auto_chronicle_off; unset is on', () => managedBrain(async ({ engine, ctx }) => {
+  test('auto_chronicle false and an invalid word both skip with auto_chronicle_off; unset is on', () => brain(async ({ engine, ctx }) => {
     await engine.setConfig('auto_chronicle', 'false');
     expect((await put(ctx, 'meetings/a', meeting())).chronicle_backstop).toEqual({ skipped: 'auto_chronicle_off', next_command: 'gbrain config set auto_chronicle true', ask_user: true });
     await engine.setConfig('auto_chronicle', 'flase');
@@ -66,13 +71,13 @@ describe('managed put_page', () => {
     expect(autoChronicleSetting('flase')).toBe('invalid');
   }), 120_000);
 
-  test('a page dated last year skips history with a scoped backfill command', () => managedBrain(async ({ ctx }) => {
+  test('a page dated last year skips history with a scoped backfill command', () => brain(async ({ ctx }) => {
     const receipt = await put(ctx, 'meetings/old', meeting(`date: ${lastYear}\n`));
     expect(receipt.chronicle_backstop).toEqual({ skipped: 'history', ask_user: true,
       next_command: `gbrain chronicle-backfill --dated-since ${lastYear} --limit 50 --dry-run` });
   }), 120_000);
 
-  test('a future invite is not_yet_happened and waits until its end', () => managedBrain(async ({ engine, ctx }) => {
+  test('a future invite is not_yet_happened and waits until its end', () => brain(async ({ engine, ctx }) => {
     const end = new Date(Date.now() + 2 * 86_400_000).toISOString();
     const receipt = await put(ctx, 'calendar/2026/10/standup', meeting(`start: ${end}\nend: ${end}\n`));
     expect(receipt.chronicle_backstop).toEqual({ skipped: 'not_yet_happened', next_command: null, ask_user: false });
@@ -92,7 +97,7 @@ describe('submit_job intents and grants (C1/C11)', () => {
     return outcome.chronicle_backstop;
   }
 
-  test('managed sync and connector imports decide; --no-extract skips; other intents never decide', () => managedBrain(async ({ engine, ctx }) => {
+  test('managed sync and connector imports decide; --no-extract skips; other intents never decide', () => brain(async ({ engine, ctx }) => {
     for (const slug of ['meetings/sync-file', 'calendar/2026/09/invite', 'meetings/no-extract', 'meetings/maintenance']) await put(ctx, slug, meeting());
     await engine.executeRaw('DELETE FROM chronicle_page_state');
     expect(await decide(engine, 'meetings/sync-file', { operation: 'submit_job', intent: { kind: 'managed_sync_import', processingOptions: { noExtract: false } } }))
@@ -106,7 +111,7 @@ describe('submit_job intents and grants (C1/C11)', () => {
       ['calendar/2026/09/invite', 'pending', null], ['meetings/no-extract', 'skipped', 'no_extract'], ['meetings/sync-file', 'pending', null]]);
   }), 120_000);
 
-  test('confined and operation-bound writers skip; the predicate is the one facts uses', () => managedBrain(async ({ engine, ctx }) => {
+  test('confined and operation-bound writers skip; the predicate is the one facts uses', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/a', meeting());
     expect(await decide(engine, 'meetings/a', { operation: 'put_page', authority: authority({ slugPrefixes: ['meetings/'] }) })).toMatchObject({ skipped: 'slug_bound_client' });
     expect(await decide(engine, 'meetings/a', { operation: 'put_page', authority: authority({ delegated: true }) })).toMatchObject({ skipped: 'slug_bound_client' });

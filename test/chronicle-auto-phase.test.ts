@@ -23,7 +23,12 @@ import { configureGateway, resetGateway, __setChatTransportForTests, type ChatOp
 import { _resetBudgetTrackerWarningsForTest } from '../src/core/budget/budget-tracker.ts';
 import { makeChronicleExtractHandler } from '../src/core/minions/handlers/chronicle-extract.ts';
 import { UnrecoverableError } from '../src/core/minions/errors.ts';
-import { managedBrain } from './helpers/managed-brain.ts';
+import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
+import { requirePostgresTestDatabase } from './helpers/test-backends.ts';
+
+/** PGLite in the unit lane; the e2e wrapper reruns every case on an isolated Postgres database. */
+const databaseUrl = process.env.GBRAIN_TEST_BACKEND === 'postgres' ? requirePostgresTestDatabase() : undefined;
+const brain = (run: (b: ManagedBrain) => Promise<void>) => managedBrain(run, { databaseUrl });
 
 const today = new Date().toISOString().slice(0, 10);
 const BODY = 'Alice and Bob reviewed the launch plan and agreed on the next steps for the beta. '.repeat(3);
@@ -55,7 +60,7 @@ async function events(engine: BrainEngine) {
 afterEach(() => { __setChatTransportForTests(null); resetGateway(); _resetBudgetTrackerWarningsForTest(); });
 
 describe('execution path (D10) and settle (D4)', () => {
-  test('PGLite: write a meeting, run the phase, read the events', () => managedBrain(async ({ engine, ctx }) => {
+  test('PGLite: write a meeting, run the phase, read the events', () => brain(async ({ engine, ctx }) => {
     const receipt = await put(ctx, 'meetings/sync', meeting('Sync'));
     expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200, next_command: 'gbrain dream --phase chronicle' });
     const judge = countingJudge(() => ({ events: [ev('Alice agreed to ship the beta')] }));
@@ -67,7 +72,7 @@ describe('execution path (D10) and settle (D4)', () => {
     expect(day.map((d) => [d.summary, d.page_slug])).toEqual([['Alice agreed to ship the beta', 'meetings/sync']]);
   }), 120_000);
 
-  test('three puts inside the window → one judged call, one daily slot', () => managedBrain(async ({ engine, ctx }) => {
+  test('three puts inside the window → one judged call, one daily slot', () => brain(async ({ engine, ctx }) => {
     for (const n of [1, 2, 3]) await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} Revision ${n}.`));
     const judge = countingJudge(() => ({ events: [ev('Alice agreed to ship the beta')] }));
     await settle(engine);
@@ -79,7 +84,7 @@ describe('execution path (D10) and settle (D4)', () => {
 });
 
 describe('daily reservation (E3)', () => {
-  test('limit 2, three pages → two judged, the third waits; backfill is exempt', () => managedBrain(async ({ engine, ctx }) => {
+  test('limit 2, three pages → two judged, the third waits; backfill is exempt', () => brain(async ({ engine, ctx }) => {
     await engine.setConfig('chronicle.auto_daily_limit', '2');
     for (const n of [1, 2, 3]) await put(ctx, `meetings/m${n}`, meeting(`M${n}`));
     await settle(engine);
@@ -100,7 +105,7 @@ describe('daily reservation (E3)', () => {
     expect((await rows(engine)).every((r) => r.state === 'extracted')).toBe(true);
   }), 120_000);
 
-  test('retries consume reservations', () => managedBrain(async ({ engine, ctx }) => {
+  test('retries consume reservations', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/m1', meeting('M1'));
     await settle(engine);
     const judge = countingJudge(() => ({ events: [], failure: 'chat_error' }));
@@ -112,7 +117,7 @@ describe('daily reservation (E3)', () => {
     expect((await rows(engine))[0]).toMatchObject({ state: 'failed', reason: 'judge_chat_error', attempts: 2 });
   }), 120_000);
 
-  test('opt-out between decision and run → zero calls', () => managedBrain(async ({ engine, ctx }) => {
+  test('opt-out between decision and run → zero calls', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/m1', meeting('M1'));
     await settle(engine);
     await engine.setConfig('auto_chronicle', 'false');
@@ -125,7 +130,7 @@ describe('daily reservation (E3)', () => {
 });
 
 describe('judge failure classes (E2/D5)', () => {
-  test('a chat error is a failure with backoff, never no_events; [] is no_events; a refusal is judge_refused', () => managedBrain(async ({ engine, ctx }) => {
+  test('a chat error is a failure with backoff, never no_events; [] is no_events; a refusal is judge_refused', () => brain(async ({ engine, ctx }) => {
     for (const n of [1, 2, 3]) await put(ctx, `meetings/m${n}`, meeting(`M${n}`));
     await settle(engine);
     const answers: Record<string, ChronicleJudgeResult> = {
@@ -140,7 +145,7 @@ describe('judge failure classes (E2/D5)', () => {
     });
   }), 120_000);
 
-  test('the default judge reports a thrown provider error as chat_error', () => managedBrain(async ({ engine, ctx }) => {
+  test('the default judge reports a thrown provider error as chat_error', () => brain(async ({ engine, ctx }) => {
     configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: { ANTHROPIC_API_KEY: 'sk-test' } });
     __setChatTransportForTests(async () => { throw new Error('provider 503'); });
     await put(ctx, 'meetings/m1', meeting('M1'));
@@ -149,7 +154,7 @@ describe('judge failure classes (E2/D5)', () => {
     expect(r.details).toMatchObject({ judged: 1, failed: 1, no_events: 0, reasons: { judge_chat_error: 1 } });
   }), 120_000);
 
-  test('no chat provider → no calls, no churn, the row keeps waiting', () => managedBrain(async ({ engine, ctx }) => {
+  test('no chat provider → no calls, no churn, the row keeps waiting', () => brain(async ({ engine, ctx }) => {
     configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: {} });
     await put(ctx, 'meetings/m1', meeting('M1'));
     await settle(engine);
@@ -159,7 +164,7 @@ describe('judge failure classes (E2/D5)', () => {
     expect((await rows(engine))[0]).toMatchObject({ state: 'pending', attempts: 0 });
   }), 120_000);
 
-  test('legacy chronicle_extract job: provider error throws, no provider is unrecoverable, [] completes', () => managedBrain(async ({ engine, ctx }) => {
+  test('legacy chronicle_extract job: provider error throws, no provider is unrecoverable, [] completes', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/m1', meeting('M1'));
     await engine.executeRaw('DELETE FROM chronicle_page_state'); // a job queued by an older release, no decision row
     const handler = makeChronicleExtractHandler(engine);
@@ -184,7 +189,7 @@ function chatReply(text: string, model?: string, tokens = { input: 10, output: 1
 }
 
 describe('budget (C2/E4)', () => {
-  test('a priced model over the default cap stops with budget_exhausted and publishes nothing', () => managedBrain(async ({ engine, ctx }) => {
+  test('a priced model over the default cap stops with budget_exhausted and publishes nothing', () => brain(async ({ engine, ctx }) => {
     configureGateway({ chat_model: 'anthropic:claude-sonnet-4-6', env: { ANTHROPIC_API_KEY: 'sk-test' } });
     __setChatTransportForTests(async (opts: ChatOpts) => chatReply(JSON.stringify([ev('Alice agreed to ship the beta')]), opts.model, { input: 10, output: 2_000_000 }));
     await put(ctx, 'meetings/m1', meeting('M1'));
@@ -195,7 +200,7 @@ describe('budget (C2/E4)', () => {
     expect(Number((await rows(engine))[0].cost_usd)).toBeGreaterThan(0.25);
   }), 120_000);
 
-  test('default cap + unpriced model: warns and runs, spend marked unpriced', () => managedBrain(async ({ engine, ctx }) => {
+  test('default cap + unpriced model: warns and runs, spend marked unpriced', () => brain(async ({ engine, ctx }) => {
     configureGateway({ chat_model: 'openai:gpt-unpriced-example', env: { OPENAI_API_KEY: 'sk-test' } });
     __setChatTransportForTests(async () => chatReply(JSON.stringify([ev('Alice agreed to ship the beta')]), 'openai:gpt-unpriced-example'));
     await put(ctx, 'meetings/m1', meeting('M1'));
@@ -205,7 +210,7 @@ describe('budget (C2/E4)', () => {
     expect((await rows(engine))[0]).toMatchObject({ state: 'extracted', unpriced: true });
   }), 120_000);
 
-  test('explicit cap + unpriced model: refuses with the no_pricing register command, zero calls', () => managedBrain(async ({ engine, ctx }) => {
+  test('explicit cap + unpriced model: refuses with the no_pricing register command, zero calls', () => brain(async ({ engine, ctx }) => {
     configureGateway({ chat_model: 'openai:gpt-unpriced-example', env: { OPENAI_API_KEY: 'sk-test' } });
     let calls = 0;
     __setChatTransportForTests(async (opts: ChatOpts) => { calls++; return chatReply('[]', opts.model); });
@@ -222,7 +227,7 @@ describe('budget (C2/E4)', () => {
 });
 
 describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
-  test('an edit or a private flip during the judge call publishes nothing', () => managedBrain(async ({ engine, ctx }) => {
+  test('an edit or a private flip during the judge call publishes nothing', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/edit', meeting('Edit'));
     await put(ctx, 'meetings/flip', meeting('Flip'));
     await settle(engine);
@@ -236,7 +241,7 @@ describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
     expect(await events(engine)).toEqual([]);
   }), 120_000);
 
-  test('re-extraction retires the stale event and never touches an operator-edited sibling', () => managedBrain(async ({ engine, ctx }) => {
+  test('re-extraction retires the stale event and never touches an operator-edited sibling', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/sync', meeting('Sync'));
     await settle(engine);
     await runPhaseChronicle(engine, { judge: async () => ({ events: [ev('Alice agreed to ship the beta'), ev('Bob owns the launch email', 'decision')] }) });
@@ -255,7 +260,7 @@ describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
     ]);
   }), 120_000);
 
-  test('a genuine [] retires the previous generation; a failed run retires nothing', () => managedBrain(async ({ engine, ctx }) => {
+  test('a genuine [] retires the previous generation; a failed run retires nothing', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/sync', meeting('Sync'));
     await settle(engine);
     await runPhaseChronicle(engine, { judge: async () => ({ events: [ev('Alice agreed to ship the beta')] }) });
@@ -269,7 +274,7 @@ describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
     expect((await events(engine)).map((e) => [e.deleted, e.retired_by])).toEqual([[true, 'life-chronicle']]);
   }), 120_000);
 
-  test('a depth page that stops being a meeting retires its automatic events without a model call', () => managedBrain(async ({ engine, ctx }) => {
+  test('a depth page that stops being a meeting retires its automatic events without a model call', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'notes/sync', meeting('Sync'));
     await settle(engine);
     await runPhaseChronicle(engine, { judge: async () => ({ events: [ev('Alice agreed to ship the beta')] }) });
@@ -281,7 +286,7 @@ describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
     expect((await events(engine)).map((e) => e.retired_by)).toEqual(['life-chronicle']);
   }), 120_000);
 
-  test('A → B → A: A\'s events are back after one more judged call', () => managedBrain(async ({ engine, ctx }) => {
+  test('A → B → A: A\'s events are back after one more judged call', () => brain(async ({ engine, ctx }) => {
     const judge = countingJudge(() => ({ events: [ev(judgeText)] }));
     let judgeText = 'Version A decision';
     await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} A.`));
@@ -298,7 +303,7 @@ describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
 });
 
 describe('ledger and discovery (E1/E6/D12)', () => {
-  test('extract, prune jobs, rerun backfill → zero judged calls', () => managedBrain(async ({ engine, ctx }) => {
+  test('extract, prune jobs, rerun backfill → zero judged calls', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/m1', meeting('M1'));
     await settle(engine);
     const judge = countingJudge(() => ({ events: [ev('x')] }));
@@ -310,7 +315,7 @@ describe('ledger and discovery (E1/E6/D12)', () => {
     expect(judge.calls).toBe(1);
   }), 120_000);
 
-  test('an invite becomes eligible once its end passes, without an edit', () => managedBrain(async ({ engine, ctx }) => {
+  test('an invite becomes eligible once its end passes, without an edit', () => brain(async ({ engine, ctx }) => {
     await engine.setConfig('chronicle.auto_settle_seconds', '0');
     const end = new Date(Date.now() + 1500).toISOString();
     const receipt = await put(ctx, 'calendar/2026/10/standup', meeting('Standup', BODY, `start: ${new Date().toISOString()}\nend: ${end}\n`));
@@ -323,7 +328,7 @@ describe('ledger and discovery (E1/E6/D12)', () => {
     expect(judge.calls).toBe(1);
   }), 120_000);
 
-  test('a managed page written without a decision is left to backfill (no_write_decision)', () => managedBrain(async ({ engine }) => {
+  test('a managed page written without a decision is left to backfill (no_write_decision)', () => brain(async ({ engine }) => {
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     await engine.putPage('meetings/legacy', { type: 'meeting', title: 'Legacy', compiled_truth: BODY, frontmatter: { date: today } });
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');

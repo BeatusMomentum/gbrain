@@ -12,13 +12,17 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { requirePostgresTestDatabase } from './helpers/test-backends.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { runChronicleExtract } from '../src/core/chronicle/extract-events.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 
-let engine: PGLiteEngine;
+let engine: BrainEngine;
+let closeEngine: () => Promise<void>;
 const now = new Date();
 const day = now.toISOString().slice(0, 10);
 const lastYearDay = `${now.getUTCFullYear() - 1}${day.slice(4)}`;
@@ -34,8 +38,14 @@ async function legacyEvent(slug: string, depth: string, what: string, date = day
 }
 
 beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({}); await engine.initSchema();
+  if (process.env.GBRAIN_TEST_BACKEND === 'postgres') {
+    const pg = await isolatedPersistencePostgres(requirePostgresTestDatabase());
+    engine = pg.engine; closeEngine = pg.close;
+  } else {
+    const pglite = new PGLiteEngine();
+    await pglite.connect({}); await pglite.initSchema();
+    engine = pglite; closeEngine = () => pglite.disconnect();
+  }
   __resetPrivateVisibilityCacheForTests();
   await engine.putPage('meetings/world', { type: 'meeting', title: 'World', compiled_truth: BODY });
   await engine.putPage('meetings/private', { type: 'meeting', title: 'Private', compiled_truth: BODY, frontmatter: { visibility: 'private' } });
@@ -51,7 +61,7 @@ beforeAll(async () => {
   await engine.executeRaw("UPDATE pages SET slug='meetings/renamed-later' WHERE slug='meetings/renamed'");
   await legacyEvent('life/events/world-2', 'meetings/world', 'Worldwide anniversary launch', lastYearDay);
 }, 120_000);
-afterAll(async () => { await engine.disconnect(); });
+afterAll(async () => { await closeEngine(); });
 
 const HIDDEN = ['life/events/private-1', 'life/events/private-2', 'life/events/derived-1', 'life/events/orphan-1'];
 
