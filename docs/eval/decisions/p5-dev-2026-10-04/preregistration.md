@@ -1,7 +1,22 @@
 # P5 preregistration: typed line grammar, wanted pages, similar-page hint
 
-Decision id `p5-dev-2026-10-04`, kit `bun run eval:decide` (gbrain-evals). The candidate SHA in `decision.json` is the
-dev-run build; the custodian pins the frozen build at confirmation. Sealed runs are executed by the custodian only.
+Decision id `p5-dev-2026-10-04`, kit `bun run eval:decide` (gbrain-evals). Sealed runs are executed by the custodian
+only. This split was recorded on 2026-10-04, before any sealed data was opened.
+
+## Builds under test
+
+P5 is decided in two sealed runs.
+
+1. **First sealed run, frozen build `21befeb5b7274b23e872261aa924ee46f63a0d20`** (the candidate in `decision.json`;
+   baseline master `6622a119e40ea09a7719233046aca24741863ed2`). It covers the parts that are final in that build:
+   wanted pages, the typed line grammar, the similar-page hint and the per-edge verb attachment in link-type
+   inference. Their defaults come from this run's held-out verdicts, as the table below states. Later commits on the
+   branch do not change what this run measures.
+2. **Delta sealed run, preregistered separately before it runs.** It covers the pieces that land after the freeze:
+   wanted-row recording on the remote `put_page` write path (after the link-effect hook in the persistence pipeline
+   merges) and validity ranges stored on edges (`@effective[start,end)`, after the edge-validity schema merges). Its
+   baseline is the frozen build above. Those pieces ship off by default and turn on only if the delta run passes; if
+   it fails, they stay off.
 
 ## Features and the default each verdict decides
 
@@ -10,7 +25,8 @@ dev-run build; the custodian pins the frozen build at confirmation. Sealed runs 
 | Wanted pages: unresolved authored links recorded and re-linked when the target appears | `wanted_pages.enabled` | on | off |
 | Typed relation lines (`- works_at [[companies/x]]`) | `line_grammar.enabled` | on | off |
 | Similar-page hint when a write creates a page | `put_page.similar_pages` | on | off |
-| Validity ranges stored on edges (`@effective[start,end)`) | needs the edge-validity schema | measured after it lands | — |
+| Validity ranges stored on edges (`@effective[start,end)`) | needs the edge-validity schema | on only if the delta run passes | off |
+| Wanted rows from remote `put_page` writes | needs the persistence link-effect hook | on only if the delta run passes | off |
 
 Fact lines (`- [category] claim`) are parsed, linted and reported; they are not projected into `facts`, and no
 default rides on them. The per-edge verb attachment fix in link-type inference is a correctness fix covered by the
