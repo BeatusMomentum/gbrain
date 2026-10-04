@@ -8,9 +8,9 @@
     ],
     "exit_code": 0,
     "report": {
-      "brain_checks_score": 80,
+      "brain_checks_score": 85,
       "category_scores": {
-        "brain": 80,
+        "brain": 85,
         "meta": 100,
         "ops": 95,
         "skill": 95
@@ -422,7 +422,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 198 (latest: 198)",
+          "message": "Version 199 (latest: 199)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1130,15 +1130,99 @@
         {
           "category": "brain",
           "details": {
-            "cause": "auto_chronicle has no reader in this version",
-            "code": "auto_chronicle_no_effect",
-            "docs": "docs/guides/troubleshooting.md#auto_chronicle-has-no-effect",
+            "auto_calls_24h": 0,
+            "chat_available": false,
+            "daily_limit": 200,
+            "docs": "docs/guides/life-chronicle.md",
             "enabled": true,
-            "fix": "gbrain chronicle-backfill --dry-run"
+            "job_budget_usd": 0.25,
+            "last_7d": {
+              "extracted": 0,
+              "failed": 0,
+              "failedReasons": {},
+              "reasons": {},
+              "skipped": 0
+            },
+            "ledger_available": true,
+            "pending": 0,
+            "principals_24h": [],
+            "readiness": "missing",
+            "run_now": [
+              "gbrain",
+              "dream",
+              "--phase",
+              "chronicle"
+            ],
+            "severity": "info",
+            "source": "default",
+            "spend_7d": {
+              "incompleteRecords": 0,
+              "knownUsd": 0,
+              "unpricedCalls": 0
+            }
           },
-          "message": "auto_chronicle=true currently has no effect: no write or cycle step enqueues chronicle extraction, so new meetings are not swept into events. Fix: run `gbrain chronicle-backfill --dry-run`, then `gbrain chronicle-backfill`; `gbrain config unset auto_chronicle` clears the setting.",
+          "message": "auto_chronicle is on (default). Last 24 h: 0 of 200 automatic extraction calls. Last 7 days: 0 extracted, 0 failed, 0 skipped; $0.00 known spend. 0 page(s) pending. No chat provider is configured, so nothing will be extracted until one is.",
           "name": "auto_chronicle",
-          "status": "warn"
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "chronicle.* settings are valid.",
+          "name": "chronicle_config_invalid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ask_user": true,
+            "code": "auto_chronicle_default_on",
+            "decisions": [
+              {
+                "argv": [
+                  "gbrain",
+                  "config",
+                  "set",
+                  "auto_chronicle",
+                  "true"
+                ],
+                "id": "keep",
+                "label": "Keep automatic extraction on"
+              },
+              {
+                "argv": [
+                  "gbrain",
+                  "config",
+                  "set",
+                  "auto_chronicle",
+                  "false"
+                ],
+                "id": "opt_out",
+                "label": "Turn automatic extraction off"
+              }
+            ],
+            "default": "keep",
+            "docs": "docs/guides/life-chronicle.md",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "auto_chronicle",
+                "true"
+              ],
+              "consent": [
+                "paid",
+                "egress"
+              ],
+              "requires_exclusive": false,
+              "why": "Keeping the default records that the user accepted the per-page cost; the alternative is the opt-out."
+            },
+            "severity": "info"
+          },
+          "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
+          "name": "auto_chronicle_default_on",
+          "status": "ok"
         },
         {
           "category": "brain",
@@ -1381,16 +1465,10 @@
       ],
       "db_url_source": null,
       "engine": "postgres",
-      "health_score": 70,
+      "health_score": 75,
       "schema_version": 2,
       "status": "warnings",
       "top_issues": [
-        {
-          "fix": "auto_chronicle=true currently has no effect: no write or cycle step enqueues chronicle extraction, so new meetings are not swept into events. Fix: run `gbrain chronicle-backfill --dry-run`, then `gbrain chronicle-backfill`; `gbrain config unset auto_chronicle` clears the setting.",
-          "name": "auto_chronicle",
-          "status": "warn",
-          "tier": "symptom"
-        },
         {
           "fix": "1 knowledge asset(s) lack verified recovery: default (not_a_git_repo). Current recovery is not verified for all repositories. Run `gbrain backup status` for fix commands (`gbrain bootstrap repo` / `git remote add origin <url>` / `gbrain sources harden <id>`).",
           "name": "backup_coverage",
