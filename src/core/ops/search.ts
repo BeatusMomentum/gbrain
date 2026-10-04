@@ -40,7 +40,7 @@ import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-description
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
-import { invalidParam, paramUse } from './op-fix.ts';
+import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   federatedSearchScope,
@@ -1244,13 +1244,13 @@ export const searchOperations: Operation[] = [
  */
 function relationalPlanNotice(plan: RelationalPlanMeta | undefined): Notice | null {
   if (!plan || plan.status === 'fired') return null;
-  const base = { consent: [] as [], actor: 'agent' as const, requires_exclusive: false };
   if (plan.status === 'unsupported') {
     return { code: 'relational_chain', kind: 'degraded', why: `This question chains relationships in a way the planner does not run (${plan.reason ?? 'unsupported'}), so no graph answer is included; split it into one-relationship questions, or call traverse_graph with explicit hops.` };
   }
   if (plan.status === 'anchor_not_found') {
-    return { code: 'relational_chain', kind: 'degraded', why: `No page matches "${plan.anchor ?? ''}" in the searched sources, so the relationship chain did not run; the results are ordinary text matches.`,
-      fix: { ...base, mcp: { tool: 'search', arguments: { query: plan.anchor ?? '' } }, why: 'Find the entity page first, then ask again with its exact name (or call traverse_graph with its slug and explicit hops).' } };
+    const anchor = plan.anchor ?? '';
+    return { code: 'relational_chain', kind: 'degraded', why: `No page matches "${anchor}" in the searched sources, so the relationship chain did not run; the results are ordinary text matches.`,
+      fix: readFix('Find the entity page first, then ask again with its exact name (or call traverse_graph with its slug and explicit hops).', { argv: ['gbrain', 'search', anchor], mcp: { tool: 'search', arguments: { query: anchor } } }) };
   }
   if (plan.status === 'truncated') {
     return { code: 'relational_chain', kind: 'info', why: `The relationship chain hit its ${plan.cap_hit?.cap ?? ''} cap at hop ${plan.cap_hit?.hop ?? '?'}, so lower-ranked answers were dropped; narrow the question or start from a more specific entity.` };
@@ -1258,5 +1258,5 @@ function relationalPlanNotice(plan: RelationalPlanMeta | undefined): Notice | nu
   const hop = plan.empty_hop ?? 1;
   const slug = plan.anchor_slugs?.[0];
   return { code: 'relational_chain', kind: 'degraded', why: `Hop ${hop} of the relationship chain found no typed links${hop === 1 ? ` from "${plan.anchor ?? ''}"` : ''}; the relationship may only be written as plain mentions. The results are ordinary text matches.`,
-    ...(slug ? { fix: { ...base, mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1 } }, why: 'A depth-1 walk shows what the start page is linked to.' } } : {}) };
+    ...(slug ? { fix: readFix('A depth-1 walk shows what the start page is linked to.', { argv: ['gbrain', 'graph-query', slug, `--${'depth'}`, '1'], mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1 } } }) } : {}) };
 }

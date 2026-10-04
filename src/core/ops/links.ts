@@ -11,7 +11,7 @@ import { coordinatedManualLinkWrite } from '../persistence/manual-links.ts';
 import { opError, type Operation } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { presentEdgeContext, resolveChainAnchors, runRelationalChain, validateChainHops, type ChainEvidenceEdge, type ChainPlan } from '../search/relational-chain.ts';
-import { paramUse } from './op-fix.ts';
+import { paramUse, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   enforceClientSlugFence,
@@ -483,19 +483,22 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
   };
 }
 
+/** A CLI flag token built at runtime (the flag-registry generator scans literal flag strings per command). */
+const cliFlag = (name: string) => `--${name}`;
+
 function chainFix(slug: string, status: string, hops: Array<Record<string, unknown>>, emptyHop?: number): Action | undefined {
-  const base = { consent: [], actor: 'agent' as const, requires_exclusive: false };
-  if (status === 'anchor_not_found') return { ...base, mcp: { tool: 'search', arguments: { query: slug } }, argv: ['gbrain', 'search', slug],
-    why: `No page "${slug}" is visible in the searched sources; search for the entity to find its exact slug, then retry the chain with that slug.` };
-  if (status === 'no_edges') return { ...base, mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1 } },
-    why: `"${slug}" has no typed ${String(hops[0]?.link_type)} edges in the needed direction; the relationship may only be written as plain mentions. A depth-1 walk shows what is linked.` };
+  const hopArgs = (hs: Array<Record<string, unknown>>) => hs.flatMap(h => [cliFlag('hop'), `${String(h.link_type)}:${String(h.toward)}`]);
+  if (status === 'anchor_not_found') return readFix(`No page "${slug}" is visible in the searched sources; search for the entity to find its exact slug, then retry the chain with that slug.`,
+    { argv: ['gbrain', 'search', slug], mcp: { tool: 'search', arguments: { query: slug } } });
+  if (status === 'no_edges') return readFix(`"${slug}" has no typed ${String(hops[0]?.link_type)} edges in the needed direction; the relationship may only be written as plain mentions. A depth-1 walk shows what is linked.`,
+    { argv: ['gbrain', 'graph-query', slug, cliFlag('depth'), '1'], mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1 } } });
   if (status === 'empty_hop' && emptyHop && emptyHop > 1) {
     const prefix = hops.slice(0, emptyHop - 1);
-    return { ...base, mcp: { tool: 'traverse_graph', arguments: { slug, hops: prefix } },
-      why: `Hop ${emptyHop} (${String(hops[emptyHop - 1]?.link_type)}) found no typed edges from the pages hop ${emptyHop - 1} reached; the shorter chain lists those pages so you can inspect them.` };
+    return readFix(`Hop ${emptyHop} (${String(hops[emptyHop - 1]?.link_type)}) found no typed edges from the pages hop ${emptyHop - 1} reached; the shorter chain lists those pages so you can inspect them.`,
+      { argv: ['gbrain', 'graph-query', slug, ...hopArgs(prefix)], mcp: { tool: 'traverse_graph', arguments: { slug, hops: prefix } } });
   }
-  if (status === 'truncated') return { ...base, mcp: { tool: 'traverse_graph', arguments: { slug, hops } },
-    why: 'A chain cap was hit (diagnostics.cap_hit names the cap and hop), so lower-ranked answers were dropped; narrow the chain or start from a more specific page for a complete list.' };
+  if (status === 'truncated') return readFix('A chain cap was hit (diagnostics.cap_hit names the cap and hop), so lower-ranked answers were dropped; narrow the chain or start from a more specific page for a complete list.',
+    { argv: ['gbrain', 'graph-query', slug, ...hopArgs(hops)], mcp: { tool: 'traverse_graph', arguments: { slug, hops } } });
   return undefined;
 }
 
