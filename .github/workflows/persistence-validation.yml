@@ -277,7 +277,7 @@ jobs:
             echo "::endgroup::"
           done
           for file in ${failed[@]+"${failed[@]}"}; do
-            echo "::error file=$file::PostgreSQL arm failed. Reproduce: DATABASE_URL=<pgvector test database> GBRAIN_TEST_ALLOW_DATABASE_URL=1 bun test $file"
+            echo "::error file=$file::PostgreSQL arm failed. Reproduce: DATABASE_URL=<pgvector test database> GBRAIN_TEST_ALLOW_DATABASE_URL=1 bun test --timeout=120000 $file"
           done
           [ "${#failed[@]}" -eq 0 ]
 
