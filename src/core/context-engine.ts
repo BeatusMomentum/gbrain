@@ -17,6 +17,7 @@ import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { buildReflexAddition, warmReflex, type ResolveEntitiesFn as ReflexResolveEntitiesFn } from './context/reflex.ts';
 import { backupNagReadOnlyConsult, backupNoticeText, loadBackupStatus } from './backup/status-file.ts';
+import { pressureNotice, type PressureGate } from './context/pressure.ts';
 // Types inlined from openclaw/plugin-sdk to avoid hard dependency during development.
 // At runtime inside OpenClaw, the real SDK is available; these types ensure build compat.
 
@@ -906,9 +907,10 @@ export function createGBrainContextEngine(ctx: {
   // shared across sessions of this process (core is per brain + source, not
   // per session). Staleness of at most CORE_MEMO_TTL_MS is accepted.
   const CORE_MEMO_TTL_MS = 60_000;
-  let coreMemo: { at: number; text: string } | null = null;
-  async function fetchCore(sessionId: string | null): Promise<string | null> {
-    const work = (async (): Promise<string | null> => {
+  type CoreFetch = { text: string; pressure: PressureGate | null };
+  let coreMemo: { at: number; value: CoreFetch } | null = null;
+  async function fetchCore(sessionId: string | null): Promise<CoreFetch | null> {
+    const work = (async (): Promise<CoreFetch | null> => {
       try {
         const { loadConfig } = await import('./config.ts');
         const cfg = loadConfig();
@@ -923,8 +925,8 @@ export function createGBrainContextEngine(ctx: {
             ...(sessionId ? { sessionId } : {}),
             ...(process.env.GBRAIN_SOURCE ? { sourceId: process.env.GBRAIN_SOURCE } : {}),
           });
-          if (res === ipc.IPC_UNAVAILABLE || !('ok' in res) || !res.ok || !res.block?.core) return null;
-          return res.block.core.text;
+          if (res === ipc.IPC_UNAVAILABLE || !('ok' in res) || !res.ok || !res.block) return null;
+          return { text: res.block.core?.text ?? '', pressure: res.block.pressure ?? null };
         }
         const { getDirectPostgresEngine } = await import('./context/reflex.ts');
         const pg = await getDirectPostgresEngine(cfg);
@@ -932,7 +934,11 @@ export function createGBrainContextEngine(ctx: {
         const { resolveSourceId } = await import('./source-resolver.ts');
         const sourceId = await resolveSourceId(pg, null, workspaceDir);
         const { loadCoreBlock } = await import('./core-memory.ts');
-        return (await loadCoreBlock(pg, { sessionSourceId: sourceId, excludePrivate: true })).text;
+        const { readPressureGate } = await import('./context/pressure.ts');
+        return {
+          text: (await loadCoreBlock(pg, { sessionSourceId: sourceId, excludePrivate: true })).text,
+          pressure: await readPressureGate(pg, true).catch(() => null),
+        };
       } catch {
         return null;
       }
@@ -942,15 +948,15 @@ export function createGBrainContextEngine(ctx: {
       if (typeof (t as { unref?: () => void }).unref === 'function') (t as unknown as { unref: () => void }).unref();
     })]);
   }
-  async function getCoreBlock(sessionId: string | null): Promise<string | null> {
-    if (process.env.GBRAIN_CORE === '0') return null;
-    if (coreMemo && Date.now() - coreMemo.at < CORE_MEMO_TTL_MS) return coreMemo.text || null;
-    const text = await fetchCore(sessionId);
-    // A failed fetch keeps the previous block for one more window rather than flapping.
-    if (text !== null || !coreMemo) coreMemo = { at: Date.now(), text: text ?? '' };
-    else coreMemo.at = Date.now();
-    return coreMemo.text || null;
+  async function getCore(sessionId: string | null): Promise<CoreFetch> {
+    if (coreMemo && Date.now() - coreMemo.at < CORE_MEMO_TTL_MS) return coreMemo.value;
+    const value = await fetchCore(sessionId);
+    // A failed fetch keeps the previous value for one more window rather than flapping.
+    coreMemo = { at: Date.now(), value: value ?? coreMemo?.value ?? { text: '', pressure: null } };
+    return coreMemo.value;
   }
+  /** Sessions already warned about context pressure since their last compaction. */
+  const pressureWarned = new Set<string>();
 
   /** assemble()-side: memo-first, hash-keyed polls, settle-and-render. */
   async function getCheckpointBlock(sessionId: string): Promise<string | null> {
@@ -1285,9 +1291,10 @@ export function createGBrainContextEngine(ctx: {
       // output (pinned).
       const parts = [contextBlock];
       // Always-loaded core sits right after the live context block.
-      let coreBlock: string | null = null;
-      try { coreBlock = await getCoreBlock(sanitizeEngineSessionId(sessionId ?? sessionKey ?? null)); } catch { coreBlock = null; }
-      if (coreBlock) parts.push(coreBlock);
+      const coreSid = sanitizeEngineSessionId(sessionId ?? sessionKey ?? null);
+      let core: CoreFetch = { text: '', pressure: null };
+      try { core = await getCore(coreSid); } catch { /* fail-open */ }
+      if (core.text && process.env.GBRAIN_CORE !== '0') parts.push(core.text);
       if (checkpointBlock) parts.push(checkpointBlock);
       if (memoryAddition) parts.push(memoryAddition);
       if (reflexAddition) parts.push(reflexAddition);
@@ -1308,17 +1315,30 @@ export function createGBrainContextEngine(ctx: {
         /* a notice must never break context assembly */
       }
 
+      const estimatedTokens = msgs.reduce((sum, m) => {
+        const text = typeof m.content === 'string'
+          ? m.content
+          : JSON.stringify(m.content);
+        // #2880: JSON.stringify(undefined) is undefined, not a string —
+        // a content-less message counts 0 instead of throwing.
+        return sum + (typeof text === 'string' ? Math.ceil(text.length / 4) : 0);
+      }, 0);
+
+      // Context-pressure notice (pressure.ts): once per compaction segment, only when remember is callable.
+      const gate = core.pressure;
+      const window = gate?.context_window ?? tokenBudget ?? 0;
+      const pressureKey = coreSid ?? 'default';
+      const rememberTool = [...(availableTools ?? [])].some((t) => /(^|[_.:-])remember$/.test(t));
+      if (gate?.enabled && rememberTool && window > 0 && !pressureWarned.has(pressureKey)
+        && process.env.GBRAIN_PRESSURE !== '0' && estimatedTokens / window >= gate.warn_ratio) {
+        pressureWarned.add(pressureKey);
+        parts.push(pressureNotice(Math.min(99, Math.round((estimatedTokens / window) * 100))));
+      }
+
       // 4. Pass through messages unchanged (legacy assembly)
       return {
         messages: msgs,
-        estimatedTokens: msgs.reduce((sum, m) => {
-          const text = typeof m.content === 'string'
-            ? m.content
-            : JSON.stringify(m.content);
-          // #2880: JSON.stringify(undefined) is undefined, not a string —
-          // a content-less message counts 0 instead of throwing.
-          return sum + (typeof text === 'string' ? Math.ceil(text.length / 4) : 0);
-        }, 0),
+        estimatedTokens,
         systemPromptAddition: parts.join('\n\n'),
       };
     },
@@ -1326,6 +1346,8 @@ export function createGBrainContextEngine(ctx: {
     async compact(params) {
       // Lazy SDK load on first method call (was top-level await pre-L0-B).
       await ensureSdkLoaded();
+      // A new compaction segment may warn about context pressure again.
+      pressureWarned.delete(sanitizeEngineSessionId(params?.sessionId ?? params?.sessionKey ?? null) ?? 'default');
       // Cathedral 5 — time-bounded, FAIL-OPEN checkpoint step BEFORE the
       // delegate. A checkpoint failure/timeout must never break compaction.
       // The deadline CANCELS the work (adversarial review): the race alone

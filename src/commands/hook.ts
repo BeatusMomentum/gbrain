@@ -87,6 +87,8 @@ import {
   type HookHeartbeatEntry,
 } from '../core/context/hook-heartbeat.ts';
 import { CLAUDE_HOOK_OUTPUT_CAP_CHARS } from '../core/bootstrap/host-specs.ts';
+import { composeSessionStartOutput } from '../core/context/session-start-output.ts';
+import { claudeCodePressure } from '../core/context/pressure.ts';
 import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstrap/format.ts';
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
@@ -478,7 +480,6 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   let outcome: HookHeartbeatEntry['outcome'] = 'ok';
   let reason: string | undefined;
   const out: string[] = [];
-  // Boxed: assigned inside the deadline-raced closure (TS cannot see that write).
   const coreBox: { core: { text: string; revision: string; chars_used: number } | null; reason?: string } = { core: null };
   // Deferred nag records: fire ONLY after the digest actually reached stdout
   // (record-after-write — a deadline-suppressed note must re-fire next time).
@@ -558,7 +559,6 @@ async function hookSessionStart(io: HookIo): Promise<number> {
               if (res !== IPC_UNAVAILABLE && !('degraded' in res)) {
                 const pack = res as ContextPackResponse;
                 if (pack.ok && pack.block?.text) out.push(pack.block.text);
-                // Always-loaded core rides the same response; an older serve omits it.
                 if (pack.ok && pack.block?.core && process.env.GBRAIN_CORE !== '0') coreBox.core = pack.block.core;
                 else if (pack.ok && !pack.block?.core) coreBox.reason = 'stale_serve_no_core';
               }
@@ -575,8 +575,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     }
     // Print whatever accumulated before the deadline — a partial digest
     // beats an empty one (the deadline bounds latency, not usefulness).
-    // Always-loaded core prints first; the digest/pack are trimmed (never
-    // core) so the whole stdout stays under the harness cap.
+    // Always-loaded core first; digest/pack trimmed to the cap (session-start-output.ts).
     const text = composeSessionStartOutput(coreBox.core?.text ?? '', out.filter(Boolean));
     if (text) {
       write(io, text + '\n');
@@ -601,33 +600,6 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     ...(coreBox.core ? { core_chars: coreBox.core.chars_used, core_revision: coreBox.core.revision } : {}),
   });
   return 0;
-}
-
-/** Marker printed when lower-priority parts were trimmed to keep core whole under the cap. */
-export const SESSION_START_TRIM_MARKER = '[gbrain: digest/pack trimmed to fit core memory]';
-
-/**
- * Session-start stdout: core first, then the other parts, all under
- * CLAUDE_HOOK_OUTPUT_CAP_CHARS (overflow would be diverted, never injected).
- * Trailing parts are dropped whole, then the last kept part is cut, before
- * core is ever touched; core itself is bounded by memory.core.max_chars.
- */
-export function composeSessionStartOutput(coreText: string, parts: string[]): string {
-  const cap = CLAUDE_HOOK_OUTPUT_CAP_CHARS - 64;
-  const head = coreText ? [coreText] : [];
-  const kept: string[] = [];
-  let trimmed = false;
-  const size = (xs: string[]) => xs.join('\n\n').length;
-  for (const part of parts) {
-    if (size([...head, ...kept, part, SESSION_START_TRIM_MARKER]) <= cap) { kept.push(part); continue; }
-    const room = cap - size([...head, ...kept, SESSION_START_TRIM_MARKER]) - 4;
-    if (room > 200) kept.push(part.slice(0, room));
-    trimmed = true;
-    break;
-  }
-  const all = [...head, ...kept, ...(trimmed ? [SESSION_START_TRIM_MARKER] : [])];
-  const text = all.join('\n\n');
-  return text.length <= CLAUDE_HOOK_OUTPUT_CAP_CHARS ? text : text.slice(0, CLAUDE_HOOK_OUTPUT_CAP_CHARS);
 }
 
 /**
@@ -1110,6 +1082,7 @@ interface UserPromptOutcome {
   outcome: HookHeartbeatEntry['outcome'];
   reason?: string;
   turns?: number;
+  pressure_pct?: number;
 }
 
 async function hookUserPrompt(io: HookIo): Promise<number> {
@@ -1141,6 +1114,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // path aborts the event (heartbeat + empty stdout), never "best effort".
     let turns: WindowTurn[] = [];
     let priorContextText: string | undefined;
+    let transcriptPath: string | undefined;
     if (j.transcript_path !== undefined && j.transcript_path !== null) {
       const conf = confineTranscriptPath(j.transcript_path, {
         ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
@@ -1150,6 +1124,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
         allowOversize: true,
       });
       if (!conf.ok) return { outcome: 'degraded', reason: `transcript_${conf.reason}` };
+      transcriptPath = conf.path;
       try {
         const parsed = parseTranscript(conf.path, { maxBytes: USER_PROMPT_TRANSCRIPT_MAX_BYTES });
         turns = parsed.turns.slice(-USER_PROMPT_WINDOW_TURNS);
@@ -1226,7 +1201,9 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     if (!resp.ok) {
       return { outcome: 'degraded', reason: reasonCode(resp.error ?? 'server_error'), turns: turns.length };
     }
-    const text = resp.block?.text ?? '';
+    // Context-pressure notice (pressure.ts) leads the block so the cap loop never trims it.
+    const pressure = transcriptPath ? claudeCodePressure(resp.block?.pressure, transcriptPath, sessionId) : null;
+    const text = [pressure?.notice, resp.block?.text].filter(Boolean).join('\n\n');
     if (!text) return { outcome: 'ok', reason: 'empty_block', turns: turns.length };
 
     // [ENG-1] The 10000-char harness cap applies to the WHOLE stdout payload;
@@ -1257,10 +1234,9 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // were never injected. Record it so the doctor's heartbeat reconciliation
     // (and a future reconciler) can see the divergence — outcome stays ok
     // (context WAS injected), the reason carries the signal.
-    if (blockText.length < text.length) {
-      return { outcome: 'ok', reason: 'trimmed', turns: turns.length };
-    }
-    return { outcome: 'ok', turns: turns.length };
+    const pct = pressure?.notice ? { pressure_pct: pressure.percent } : {};
+    if (blockText.length < text.length) return { outcome: 'ok', reason: 'trimmed', turns: turns.length, ...pct };
+    return { outcome: 'ok', turns: turns.length, ...pct };
   })();
 
   let result: UserPromptOutcome;
@@ -1298,6 +1274,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     ...(result.reason ? { reason: result.reason } : {}),
     duration_ms: Date.now() - t0,
     ...(result.turns !== undefined ? { turns: result.turns } : {}),
+    ...(result.pressure_pct !== undefined ? { pressure_pct: result.pressure_pct } : {}),
   });
   return 0;
 }

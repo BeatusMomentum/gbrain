@@ -1041,6 +1041,14 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       catch (error) { console.error(`[config] ${(error as Error).message}`); process.exit(1); }
     }
 
+    // Core memory and pressure keys are read on every session/turn; reject bad values here.
+    if (key.startsWith('memory.core.') || key.startsWith('memory.pressure.')) {
+      const { validateCoreConfigValue } = await import('../core/core-memory.ts');
+      const { validatePressureConfigValue } = await import('../core/context/pressure.ts');
+      const problem = validateCoreConfigValue(key, value) ?? validatePressureConfigValue(key, value);
+      if (problem) { console.error(`[config] ${problem} Nothing was written.`); process.exit(1); }
+    }
+
     // #5254: an unknown value would silently keep refusing unbound writes.
     const { UNBOUND_WRITE_KEY, parseUnboundWriteValue } = await import('../core/persistence/unbound-source.ts');
     if (key === UNBOUND_WRITE_KEY) {

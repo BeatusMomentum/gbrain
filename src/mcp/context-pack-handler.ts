@@ -12,6 +12,7 @@
  * stateless pack, never an error.
  */
 
+import { readPressureGate } from '../core/context/pressure.ts';
 import { existsSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -75,7 +76,9 @@ export function makeContextPackIpcHandler(
     const sessionSource = typeof req.sourceId === 'string' && req.sourceId.trim() ? req.sourceId : defaultSource;
     if (req.coreOnly === true) {
       const core = await coreForSession(engine, sessionSource);
-      return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(core ? { core } : {}) };
+      // The OpenClaw lane reads the pressure gate on the same fetch; it checks remember's availability itself.
+      const pressure = await readPressureGate(engine, true).catch(() => null);
+      return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(core ? { core } : {}), ...(pressure ? { pressure } : {}) };
     }
     if (req.manifestOnly === true) {
       const links = sessionId
