@@ -399,7 +399,10 @@ Test command tiers, each with a clear scope:
 | `bun run test:slow` | Just the `*.slow.test.ts` set (intentional cold-path correctness checks). | seconds-to-minutes | When touching slow-path code. |
 | `bun run test:serial` | Just the `*.serial.test.ts` set (cross-file-contention quarantine; one bun process per file for true module-registry isolation), run through a POOL of concurrent per-file processes — the isolation is per-process, not per-machine. Dispatch is heaviest-first (LPT) from the advisory `scripts/serial-weights.json` (seconds; mined from the `.context/serial-durations.txt` table each run banks; absent/corrupt weights fall back to discovery order, absent keys to the corpus p75 — scheduling only, never correctness; LPT order + the corrupt-weights fail-soft are pinned by `test/scripts/run-serial-pool.test.ts`). Pool defaults to `min(detect_cpus, 4)` then memory-adapts (same doctrine as the parallel runner); a small growth-guarded set of files (machine-global state or contention-critical timing — see the justified `EXCLUSIVE_FILES` list in `scripts/run-serial-tests.sh`, capped at 3 by `test/scripts/serial-files.test.ts`) runs on a sequential EXCLUSIVE lane after the pool. Per-test timeout 120s (pooled contention headroom); each pooled file is wall-clock-killed at 300s (`timeout -k`, exit-hang containment). `SHARD=N/M` partitions pooled files by duration; the three exclusive files run only on shard 1. Unset runs the complete corpus. Routing variables are cleared before tests start, so nested runners remain independent. Externally-killed files (exit 143/137 or a missing exit sentinel — sibling-workspace cleanup, memory jetsam) get ONE sequential rescue re-run, mirroring the parallel runner's doctrine: phantoms stay green with a rescue note, real failures stay red. Prints per-file PASS lines plus a top-10 slowest-files list. Knobs: `GBRAIN_SERIAL_POOL=N` (explicit pool width — bypasses the memory clamp; `1` restores fully-sequential), `GBRAIN_SERIAL_FILE_TIMEOUT`. | a few minutes for all ~220 files at pool=4 | Debugging quarantined files; CI's serial-tests job. |
 | `bun run test:e2e` | Real Postgres E2E. Requires Docker + `DATABASE_URL`. Sequential within a shard; `SHARD=N/M` fans out against separate databases (ci-local runs 4 containers). Activates the PGLite snapshot like every other runner (per-file cold-path opt-outs where the test asserts the path TO post-initSchema state), exporting it as an ABSOLUTE path so CLI children spawned with varying cwd still find it. | ~5-10min | Pre-ship; nightly. |
-| `bun run test:compile-smoke` | Self-update integrity verify under a REAL `bun build --compile` binary, offline (sets `GBRAIN_SELFUPDATE_COMPILE_SMOKE=1`). The unit suite mocks the network seams; this proves the dependency-free crypto/base64/JSON verify path survives compilation — the failure mode `sigstore-js` would have hit. | ~5s (one compile) | When touching `src/core/binary-self-update.ts`; pre-ship on self-update changes. |
+| `bun run test:compile-smoke` | Self-update integrity verify under a REAL `bun build --compile` binary, offline; also runs unconditionally in the serial lane. The unit suite mocks the network seams; this proves the dependency-free crypto/base64/JSON verify path survives compilation — the failure mode `sigstore-js` would have hit. | under 1s (one small compile) | When touching `src/core/binary-self-update.ts`; pre-ship on self-update changes. |
+| `bun run test:agent-voice` | The agent-voice recipe's vitest unit suite (`recipes/agent-voice/tests/unit`), via `scripts/test-agent-voice.sh`: installs pinned vitest + ws into a temporary prefix and links it as the recipe's `node_modules` for the run. Needs node + npm and registry access. CI runs it in test.yml's verify job. | ~10s | When touching `recipes/agent-voice/`. |
+| `scripts/ship-remote-tests.sh` | Pushes the branch, dispatches `test.yml` (or `--workflow`) on GitHub's runners for that branch or `--ref`, and waits with `gh run watch --exit-status`, so its exit code is the run's. Needs an authenticated `gh`; unlike `ci:ubicloud` it needs no Ubicloud credential and runs the workflow's own job inventory. | one CI run | Offloading the suite from a saturated local machine. |
+| `bun run test:profile` | Reads a captured `bun test` log on stdin and prints the N slowest tests (`-n N`, default 10): `bun test 2>&1 \| bun run test:profile`. | seconds | Finding slow tests to fix or demote to `*.slow.test.ts`. |
 | `bun run test:admin` | Pinned Playwright Chromium tests for the production embedded admin UI, served with an isolated temporary home/cwd and in-memory PGLite. Exercises owner login, OAuth consent, registration, setup, and lifecycle actions. | seconds-to-minutes | When touching the admin browser flow; required `admin-browser` CI job. |
 
 For the admin browser lane, install frozen dependencies in the repository and
@@ -412,7 +415,7 @@ activation inside a native vendor harness.
 There is no `check:all` script: a second, hand-synced guard registry would
 drift from `verify`, leaving checks that never run anywhere. The `CHECKS`
 array in `scripts/run-verify-parallel.sh` is the single execution list
-(including `check:newlines`, `check:exports-count`,
+(including `check:newlines`,
 `check:no-legacy-getconnection`). The guard REGISTRY is `scripts/guards-manifest.tsv` (see "Guard registry and
 self-test" below).
 
@@ -1255,14 +1258,14 @@ tracked `*.sh` except the guard fixtures under `test/fixtures/guards/`. It
 uses the first parser available: `GBRAIN_BASH32=<path>` (a bash 3.x binary),
 `/bin/bash` when it is bash 3.x (stock macOS), or the digest-pinned `bash:3.2`
 Docker image (`GBRAIN_BASH32=docker` forces the image). With none it prints
-one skip line and exits 0; `GBRAIN_BASH32_REQUIRE=1` makes that exit 2. Each
+one skip line and exits 0; `GBRAIN_TEST_BASH32_REQUIRE=1` makes that exit 2. Each
 failure prints `FAIL: <file:line>`, `Why:` (macOS `/bin/bash` is 3.2), `Fix:`
 (read heredoc text with `IFS= read -r -d '' VAR <<'EOF' || true`) and `See:`.
 To reproduce one file by hand:
 `docker run --rm -v "$PWD":/w -w /w bash:3.2 bash -n <file>`.
 
 The guard checks parsing only. It is not in `bun run verify`, which must not
-need Docker. The `test.yml` verify job runs it with `GBRAIN_BASH32_REQUIRE=1`
+need Docker. The `test.yml` verify job runs it with `GBRAIN_TEST_BASH32_REQUIRE=1`
 together with `test/scripts/check-bash32.test.ts`, whose real-parser cases
 feed it the `test/fixtures/guards/check-bash32.sh/{bad,good}` trees. The
 macOS 26 job runs it under `/bin/bash` and then runs `bun run verify` there,
@@ -2089,6 +2092,7 @@ Unit tests and what they cover:
 
 ### Lane-move pilot (2026-09)
 
+<!-- repo-paths: historical -->
 The 20 heaviest PGLite-only files in `test/e2e/` (by `scripts/e2e-weights.json`)
 moved out of the sequential Postgres runner into the lanes that run on every PR.
 Each met the move criterion: it constructs PGLite (or spawns a PGLite CLI)

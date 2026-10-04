@@ -62,6 +62,9 @@ CHECKS=(
   "check:admin-build"
   "check:wasm"
   "check:pglite-embedded"
+  # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
+  # bundles a handful of modules, not the CLI).
+  "check:image-decoders"
   "check:fuzz-purity"
   # W0 fix-wave (Tier-1 #11): guard self-tests — every scanner guard proves it
   # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
@@ -97,9 +100,17 @@ CHECKS=(
   "check:privacy"
   "check:test-names"
   "check:test-isolation"
+  # D7: a test that gates execution on a GBRAIN_* opt-in the operator-env
+  # preload strips is a silent skip; TS AST scan, ~2s.
+  "check:test-env-opt-ins"
+  # D8: every DATABASE_URL-gated PostgreSQL arm outside test/e2e/ runs in a
+  # named Postgres lane (TS AST).
+  "check:postgres-lanes"
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"
+  # Positional $N::jsonb + JSON.stringify double-encode (AST-lite, ~0.2s).
+  "check:jsonb-params"
   "check:search-path"
   "check:source-id-projection"
   "check:source-config-leak"
@@ -132,10 +143,8 @@ CHECKS=(
   "check:skill-refs"
   # Previously reachable ONLY from the deleted check:all (i.e. never run):
   "check:newlines"
-  "check:exports-count"
   "check:no-legacy-getconnection"
   # Revived registered-but-never-executed guards (this pass):
-  "check:pagetype-exhaustive"
   "check:pg-url-redaction"
   # Containment sprint: module-size ratchet + structural-suite freshness.
   "check:module-size"

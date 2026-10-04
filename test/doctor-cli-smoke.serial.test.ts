@@ -13,7 +13,7 @@
  * the documented values, checks array is non-empty.
  *
  * Serial because it spawns subprocesses and writes a tmpdir. Skippable
- * via `GBRAIN_SKIP_SUBPROCESS_TESTS=1` for fast-loop budget control.
+ * via `GBRAIN_TEST_SKIP_SUBPROCESS=1` for fast-loop budget control.
  *
  * Per-spawn cold-start on CI is ~10-20s. Single test, single brain.
  */
@@ -23,7 +23,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
-const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
+const SKIP = process.env.GBRAIN_TEST_SKIP_SUBPROCESS === '1';
 
 function makeGbrainShim(): { binDir: string; cleanup: () => void } {
   const binDir = mkdtempSync(join(tmpdir(), 'gbrain-shim-doctor-'));

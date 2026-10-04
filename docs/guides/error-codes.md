@@ -685,6 +685,14 @@ More: [docs/guides/write-refusals.md#embedding_auth_failed](../../docs/guides/wr
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### eval_suite_unwired
+
+<a id="eval_suite_unwired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain eval run-all` was asked for a suite it does not run in-process (longmemeval or replay); nothing ran. | run-all runs only wired suites (brainbench). Recording a skipped run and exiting 0 would read as a completed sweep with no numbers behind it. | Run each requested suite with its own command (`gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record`, `gbrain eval replay --mode <mode>`), once per mode, or drop it from --suites. | agent | `repeat the read that failed` | 1 | no |
+
 ### export_limit
 
 <a id="export_limit"></a>

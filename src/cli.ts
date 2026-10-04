@@ -2110,14 +2110,13 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
   }
 
   // `eval run-all` is a pure orchestrator — its engine arg is unused
-  // (`_engine`), the brainbench suite it runs in-process is hermetic (brings
-  // its own PGLite via createBenchmarkBrain), and the remaining suites write
-  // stub records. Bypass connectEngine so run-all works with no brain
-  // configured — e.g. in CI, where `--suites brainbench` otherwise died with
-  // "No brain configured" before reaching the hermetic run.
+  // (`_engine`) and the brainbench suite it runs in-process is hermetic (brings
+  // its own PGLite via createBenchmarkBrain). Bypass connectEngine so run-all
+  // works with no brain configured — e.g. in CI. It returns its exit code
+  // (1 when a suite failed).
   if (command === 'eval' && args[0] === 'run-all') {
     const { runEvalRunAll } = await import('./commands/eval-run-all.ts');
-    await runEvalRunAll(null, args.slice(1));
+    setCliExitVerdict(await runEvalRunAll(null, args.slice(1)));
     return true;
   }
 
@@ -2154,20 +2153,13 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
   // connectEngine here keeps `gbrain eval longmemeval --help` and benchmark
   // runs working on machines that have no `~/.gbrain/config.json` configured.
   //
-  // v0.35.1.1: still need to configureGateway() so the in-memory brain's
-  // import + hybridSearch can embed via the configured provider. Reads
-  // ~/.gbrain/config.json when present; falls back to env vars otherwise
-  // (GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS).
+  // The in-memory brain's import + hybridSearch still embed through the
+  // configured provider, so the shared eval gateway bootstrap runs first.
   if (command === 'eval' && args[0] === 'longmemeval') {
     const { runEvalLongMemEval } = await import('./commands/eval-longmemeval.ts');
     if (!(args.length > 1 && (args[1] === '--help' || args[1] === '-h'))) {
-      const config = loadConfig() ?? ({
-        embedding_model: process.env.GBRAIN_EMBEDDING_MODEL,
-        embedding_dimensions: process.env.GBRAIN_EMBEDDING_DIMENSIONS
-          ? Number(process.env.GBRAIN_EMBEDDING_DIMENSIONS) : undefined,
-      } as GBrainConfig);
-      const { configureGateway } = await import('./core/ai/gateway.ts');
-      configureGateway(buildGatewayConfig(config));
+      const { configureEvalGateway } = await import('./eval/shared/gateway-bootstrap.ts');
+      configureEvalGateway();
     }
     await runEvalLongMemEval(args.slice(1));
     return true;

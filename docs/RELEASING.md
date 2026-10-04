@@ -590,6 +590,22 @@ flipping the repo-wide "send secrets to fork PRs" toggle, both broaden
 secret distribution to every fork PR from that account or any fork. Moving
 the branch keeps secret scope tight to just the one PR being shipped.
 
+## ClawHub bundle plugin publish (manual)
+
+`openclaw.plugin.json` makes this repository a ClawHub bundle plugin (see
+[docs/mcp/OPENCLAW.md](mcp/OPENCLAW.md)). Publishing a new version to ClawHub is
+a manual step outside `release.yml`, run from a clean checkout of the release
+tag by an owner with an authenticated `clawhub` CLI:
+
+```bash
+bun run prepublish:clawhub   # bun run build:all: bin/gbrain-darwin-arm64 + bin/gbrain-linux-x64
+bun run publish:clawhub      # clawhub package publish . --family bundle-plugin
+```
+
+`build:all` compiles only those two targets; the full binary matrix ships
+through the GitHub release job above. ClawHub users upgrade with
+`clawhub update gbrain`, which `gbrain upgrade` runs for ClawHub installs.
+
 ## Plugin dist tree (codex/claude lanes)
 
 The committed `plugin/` and `plugin-variants/` trees embed the VERSION stamp

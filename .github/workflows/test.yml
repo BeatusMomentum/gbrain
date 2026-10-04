@@ -296,11 +296,15 @@ jobs:
       # test's real-parser fixture cases mandatory.
       - name: Shell scripts parse under bash 3.2
         env:
-          GBRAIN_BASH32_REQUIRE: '1'
+          GBRAIN_TEST_BASH32_REQUIRE: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: |
           bun run check:bash32
           bash scripts/run-with-receipt.sh verify-tests bash32 -- bun test --timeout 60000 test/scripts/check-bash32.test.ts
+      # recipes/agent-voice's vitest unit suite (109 tests) ran in no workflow;
+      # pinned vitest + ws into a temp prefix, ~10s.
+      - name: agent-voice recipe unit tests (vitest)
+        run: bun run test:agent-voice
       - name: Upload receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
