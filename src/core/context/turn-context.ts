@@ -694,7 +694,7 @@ export const CHECKPOINT_LINKS_RENDER_CAP = 10;
 // packers in ops/facts.ts — the packer prices exactly the bytes the renderer
 // emits, so `text` honors budget_tokens instead of overshooting it.
 export const renderCardLine = (c: EntityCard): string =>
-  `- **${c.entity.title}** → \`${c.entity.slug}\`${c.summary ? ` — ${c.summary}` : ''} (use get_page/entity before relying on details)`;
+  `- **${c.entity.title}** → \`${c.entity.slug}\`${c.summary ? ` — ${c.summary}` : ''}${c.relationship_note ? ` [${c.relationship_note}]` : ''} (use get_page/entity before relying on details)`;
 export const renderThreadLine = (t: EntityOpenThread): string =>
   `- [${t.kind}] ${t.text}${t.date ? ` (${t.date})` : ''}`;
 export const renderFactLine = (f: TurnContextFact): string =>

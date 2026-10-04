@@ -28,6 +28,7 @@ import { PageMissingError } from '../engine-errors.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
+import { TEMPORAL_EDGE_PARAMS, resolveEdgeTemporal, filterTemporalLinks, reportTemporal } from './edge-temporal.ts';
 // #4655: write-time pack vocabulary enforcement for explicit link verbs.
 import {
   loadActivePackForWriteVocabulary,
@@ -226,14 +227,26 @@ async function readLinkEdges(
 ): Promise<Link[]> {
   const slug = p.slug as string;
   const { requested, policy } = await resolveLinkReadScope(ctx, p, opName);
+  const temporal = await resolveEdgeTemporal(ctx, p, opName);
+  const linkType = typeof p.link_type === 'string' && p.link_type ? p.link_type : undefined;
+  // Rows come back annotated with their relationship status; the policy is
+  // applied below so hidden former relationships can be counted and reported.
+  const annotate = temporal.disabled ? undefined : { ...temporal, status: 'all' as const, during: undefined };
+  const finish = (links: Link[]): Link[] => {
+    const typed = linkType ? links.filter(l => l.link_type === linkType) : links;
+    const { kept, hidden } = filterTemporalLinks(typed, temporal);
+    reportTemporal(ctx, opName, p, temporal, hidden);
+    return kept;
+  };
   const scopes: PageReadPolicy[] = ctx.remote === false && policy.sourceIds
     ? policy.sourceIds.map((sourceId) => ({ ...policy, sourceIds: undefined, sourceId }))
     : [policy];
   const perScope: Link[][] = [];
   for (const sourceOpts of scopes) {
+    const readOpts = annotate ? { ...sourceOpts, temporal: annotate } : sourceOpts;
     const links = direction === 'out'
-      ? await ctx.engine.getLinks(slug, sourceOpts)
-      : await ctx.engine.getBacklinks(slug, sourceOpts);
+      ? await ctx.engine.getLinks(slug, readOpts)
+      : await ctx.engine.getBacklinks(slug, readOpts);
     // #4224: flag-gated identity union — merge edges from the page's identity
     // co-members (entity_identity.union config, default off; pure no-op then).
     // Member visibility never widens past the caller's grant. The scalar base
@@ -244,11 +257,12 @@ async function readLinkEdges(
       sourceId: sourceOpts.sourceId,
       allowedSources: sourceOpts.sourceIds,
       excludePrivate: sourceOpts.excludePrivate,
+      ...(annotate ? { temporal: annotate } : {}),
     }));
   }
   if (perScope.length === 1) {
     if (perScope[0].length === 0) await hintScopedLinkMiss(ctx, p, requested, policy, direction);
-    return perScope[0];
+    return finish(perScope[0]);
   }
   const seen = new Set<string>();
   const merged = perScope.flat().filter((l) => {
@@ -258,7 +272,7 @@ async function readLinkEdges(
     return true;
   });
   if (merged.length === 0) await hintScopedLinkMiss(ctx, p, requested, policy, direction);
-  return merged;
+  return finish(merged);
 }
 
 /**
@@ -310,9 +324,11 @@ const get_links: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List a page\'s outgoing links (typed edges to other pages). Use when exploring what a page points at; pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
+  description: 'List a page\'s outgoing links (typed edges to other pages). Returns relationships that are true today, each with status and dates; pass status: "all" for history, as_of for a past date, during for a period (e.g. where someone worked in 2022). Pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose outgoing links to list.' },
+    link_type: { type: 'string', description: 'Only this link type (e.g. works_at).' },
+    ...TEMPORAL_EDGE_PARAMS,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },
@@ -326,9 +342,11 @@ const get_backlinks: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List links pointing to a page. Use when finding what mentions an entity.',
+  description: 'List links pointing to a page, such as who works at a company. Returns relationships true today; status: "ended" lists former ones, status: "all" history, as_of / during a past date or period.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
+    link_type: { type: 'string', description: 'Only this link type (e.g. works_at).' },
+    ...TEMPORAL_EDGE_PARAMS,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },
@@ -383,12 +401,14 @@ const traverse_graph: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: `Walk the link graph from a page. Remote callers get bidirectional paths at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} by default.`,
+  description: `Walk the link graph from a page along relationships that are true today (status: "all" walks history, as_of a past date). Remote callers get bidirectional paths at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} by default.`,
   params: {
     slug: { type: 'string', description: 'Start page slug.', required: true },
     depth: { type: 'number', description: `Max depth (cap ${TRAVERSE_DEPTH_CAP}).` },
     link_type: { type: 'string', description: 'Follow only this link type.' },
     direction: { type: 'string', description: 'Remote default both.', enum: ['in', 'out', 'both'] },
+    status: TEMPORAL_EDGE_PARAMS.status,
+    as_of: TEMPORAL_EDGE_PARAMS.as_of,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },
@@ -420,7 +440,10 @@ const traverse_graph: Operation = {
     // #5827: the walk scopes every visited page, so a federated `sourceIds[]`
     // (no-grant remote, or a trusted local unqualified read) walks the
     // federated set in one query; nodes and edges carry their source ids.
-    const { policy: scope } = await resolveLinkReadScope(ctx, p, 'traverse_graph');
+    const { policy: readScope } = await resolveLinkReadScope(ctx, p, 'traverse_graph');
+    const temporal = await resolveEdgeTemporal(ctx, p, 'traverse_graph');
+    const scope = temporal.disabled ? readScope : { ...readScope, temporal };
+    reportTemporal(ctx, 'traverse_graph', p, temporal, null);
     // Backward compat: trusted local no-filter callers keep the legacy
     // GraphNode[] shape used by `gbrain graph`. Remote MCP callers need the
     // natural no-filter invocation to surface inbound-only typed edges too,

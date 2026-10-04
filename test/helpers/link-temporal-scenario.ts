@@ -5,10 +5,11 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { refreshRelationships, relationshipKeysForPages, staleRelationshipKeys } from '../../src/core/engine-sql/link-relationships.ts';
+import { refreshRelationships, relationshipKeysForPages, staleRelationshipKeys } from '../../src/core/link-relationships.ts';
 import { relationshipFilterSql, parseMultirange } from '../../src/core/link-validity.ts';
 
-export function defineLinkRelationshipTests(label: string, open: () => Promise<BrainEngine>, close: (e: BrainEngine) => Promise<void>, tag = 'lrt') {
+/** The caller owns the engine lifecycle (beforeAll connect / afterAll disconnect); `engineOf` returns it. */
+export function defineLinkRelationshipTests(label: string, engineOf: () => BrainEngine, tag = 'lrt') {
   let eng: BrainEngine;
   const ids: Record<string, number> = {};
   const alice = `people/${tag}-alice-example`;
@@ -40,14 +41,13 @@ export function defineLinkRelationshipTests(label: string, open: () => Promise<B
 
   describe(`link_relationships refresh (${label})`, () => {
     beforeAll(async () => {
-      eng = await open();
+      eng = engineOf();
       await page(alice, 'person');
       await page(notes, 'note', { visibility: 'private' });
       for (const c of [acme, widget, fund]) await page(c, 'company');
     });
     afterAll(async () => {
       await eng.executeRaw(`DELETE FROM pages WHERE slug LIKE $1`, [`%/${tag}-%`]);
-      await close(eng);
     });
 
     test('schema objects exist after initSchema', async () => {

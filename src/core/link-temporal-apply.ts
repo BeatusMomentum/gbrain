@@ -15,7 +15,7 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import type { Page } from './types.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { deriveTemporalEvidence, rowKey, type TemporalEvidence } from './link-temporal-evidence.ts';
-import { refreshRelationships, type RelationshipKey } from './engine-sql/link-relationships.ts';
+import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { TEMPORAL_LINK_TYPES } from './link-validity.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;

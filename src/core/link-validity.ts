@@ -17,6 +17,7 @@
  *
  * Pure module except the SQL fragment builders; no engine imports.
  */
+import type { PageReadScope } from './types.ts';
 
 export type RelationSemantics = 'state' | 'event' | 'reference';
 export type TransitionKind = 'start' | 'end';
@@ -322,6 +323,11 @@ function recordedMs(v: string | Date | null): number {
 
 // ─── SQL ─────────────────────────────────────────────────────────────────
 
+/** Link reads that may apply a temporal edge policy. `temporal` absent = every edge, unannotated (reference consumers). */
+export interface LinkReadScope extends PageReadScope {
+  temporal?: EdgeTemporalOpts;
+}
+
 export interface EdgeTemporalOpts {
   /** live (default), ended, or all. */
   status?: EdgeStatusFilter;
@@ -411,4 +417,97 @@ function periodEnd(date: string, precision: DatePrecision): string {
     : precision === 'month' ? new Date(Date.UTC(y, m, 1))
       : new Date(Date.UTC(y, m - 1, d + 1));
   return next.toISOString().slice(0, 10);
+}
+
+// ─── Row annotation (bounded per-page reads: get_links / get_backlinks / entity cards) ──
+
+export type EdgeRowStatus = RelationshipStatus | 'reference';
+
+/** Annotation fields added to link rows when a temporal read is requested. */
+export interface TemporalAnnotation {
+  status: EdgeRowStatus;
+  /** Stints [from, until) when the relationship has temporal state. */
+  stints?: Stint[];
+  /** When the brain first recorded evidence for the relationship. */
+  recorded_at?: string | null;
+  /** When the brain recorded that the relationship ended. */
+  retired_at?: string | null;
+}
+
+/** LEFT JOIN of a links alias onto its relationship state row for the read scope. */
+export function temporalLinkJoinSql(linkAlias: string, excludePrivate?: boolean): string {
+  return `LEFT JOIN link_relationships lr_t ON lr_t.from_page_id = ${linkAlias}.from_page_id
+      AND lr_t.to_page_id = ${linkAlias}.to_page_id AND lr_t.link_type = ${linkAlias}.link_type
+      AND lr_t.scope = '${excludePrivate ? 'world' : 'all'}'`;
+}
+
+export const TEMPORAL_LINK_SELECT_SQL = `, lr_t.valid_ranges::text AS temporal_ranges, lr_t.semantics AS temporal_semantics,
+      lr_t.disputed AS temporal_disputed, lr_t.undated_past AS temporal_undated_past, lr_t.first_start::text AS temporal_first_start,
+      lr_t.recorded_at AS temporal_recorded_at, lr_t.retired_at AS temporal_retired_at`;
+
+const TEMPORAL_COLUMNS = ['temporal_ranges', 'temporal_semantics', 'temporal_disputed', 'temporal_undated_past',
+  'temporal_first_start', 'temporal_recorded_at', 'temporal_retired_at'] as const;
+
+const iso = (v: unknown): string | null => v == null ? null : v instanceof Date ? v.toISOString() : String(v);
+
+/** Replace the temporal_* columns of a row with its annotation (status at `asOf`, default today UTC). */
+export function annotateTemporalRow<T extends { link_type: string }>(row: T, asOf?: string): T & TemporalAnnotation & { first_start?: string | null } {
+  const r = row as unknown as Record<string, unknown>;
+  const ranges = r.temporal_ranges;
+  const semantics = r.temporal_semantics as 'state' | 'event' | null | undefined;
+  const out = { ...row } as T & TemporalAnnotation & { first_start?: string | null };
+  for (const c of TEMPORAL_COLUMNS) delete (out as unknown as Record<string, unknown>)[c];
+  if (relationSemantics(row.link_type) === 'reference') return Object.assign(out, { status: 'reference' as const });
+  if (ranges == null || !semantics) return Object.assign(out, { status: 'live' as const });
+  const stints = parseMultirange(ranges);
+  const status = statusAt({ semantics, stints, disputed: r.temporal_disputed === true, undatedPast: Number(r.temporal_undated_past ?? 0) }, asOf);
+  return Object.assign(out, {
+    status, stints,
+    recorded_at: iso(r.temporal_recorded_at), retired_at: iso(r.temporal_retired_at),
+    first_start: r.temporal_first_start == null ? null : String(r.temporal_first_start).slice(0, 10),
+  });
+}
+
+/**
+ * Same semantics as `relationshipFilterSql`, applied to an annotated row.
+ * Used where the read is bounded (one page's edges) so callers can also count
+ * what they hid.
+ */
+export function edgeMatchesTemporal(row: TemporalAnnotation & { first_start?: string | null }, opts: EdgeTemporalOpts = {}): boolean {
+  const status = opts.status ?? 'live';
+  if (opts.disabled) return true;
+  if (row.status === 'reference') return status !== 'ended';
+  if (opts.during) {
+    if (!row.stints) return true;
+    return row.stints.some(s => (s.from === null || s.from < opts.during!.until) && (s.until === null || s.until > opts.during!.from));
+  }
+  if (status === 'all') return true;
+  if (status === 'ended') {
+    const day = opts.asOf ?? utcToday();
+    return (row.status === 'ended' || row.status === 'ended_unknown_date') && (row.first_start == null || row.first_start <= day);
+  }
+  if (row.status === 'disputed') return !opts.asOf;
+  return row.status === 'live' || row.status === 'event';
+}
+
+const OFF_VALUES = new Set(['off', 'false', '0', 'no', 'disabled']);
+
+/** `graph.edge_validity` read policy: on unless explicitly turned off; fail-open to on. */
+export async function edgeValidityEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  try {
+    const value = await engine.getConfig('graph.edge_validity');
+    return !(typeof value === 'string' && OFF_VALUES.has(value.trim().toLowerCase()));
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Status a relational question asks about: "former employees of X" → ended;
+ * "who worked at X" / "used to" → all (history); present tense → live.
+ */
+export function relationQueryStatus(query: string): EdgeStatusFilter {
+  if (/\b(?:former|ex-|previous(?:ly)?|past|old)\b/i.test(query) && !/\b(?:current(?:ly)?|now)\b/i.test(query)) return 'ended';
+  if (/\b(?:worked|used\s+to|did\s+\S+\s+work|was\s+(?:an?\s+)?(?:employee|advisor|partner)|have\s+(?:ever\s+)?worked|ever)\b/i.test(query)) return 'all';
+  return 'live';
 }

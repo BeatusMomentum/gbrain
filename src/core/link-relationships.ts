@@ -17,12 +17,12 @@
  * as live, the same as an unrefreshed relationship).
  */
 import { createHash } from 'node:crypto';
-import { executeRawJsonb } from '../sql-query.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { executeRawJsonb } from './sql-query.ts';
+import { privatePagesFilterFragment } from './search/private-visibility.ts';
 import {
   buildRelationshipState, relationSemantics, statusAt, stintsToMultirange, dateKey, TEMPORAL_LINK_TYPES,
   type AssertionEvidence, type TransitionEvidence, type RelationshipScope, type TransitionProducer,
-} from '../link-validity.ts';
+} from './link-validity.ts';
 
 export interface RelationshipKey { from_page_id: number; to_page_id: number; link_type: string }
 
