@@ -11,11 +11,11 @@ takes 77 to 83. By the CEO-A1 decision rule, the measured numbers
 call for multi-page (bulk) publication after the round-trip diet;
 pipelined admission alone cannot reach the target.
 
-With the drain loop, the diet and bulk publication (v0.60.44.0), one
+With the drain loop, the diet and bulk publication (v0.60.48.0), one
 `gbrain sync` catches up at 13 to 16 pages/min at 57 ms (the 10k
 backlog in about 11 h instead of 49 h) and 775 pages/min near the
 database, with foreground writes unharmed. See
-[Results on the #5984 branch](#results-on-the-5984-branch-v060440).
+[Results on the #5984 branch](#results-on-the-5984-branch-v060480).
 
 This page is the research and decision record for the #5984 plan
 (CEO-A1, A2, A3, A4, A6, A17, A19, A25, A26, A27, A29; ENG-A5, A9,
@@ -420,7 +420,7 @@ the describe fix and the counter-lock order. Then measure, and expect
 the rule to select 2.3. Skip 2.2 unless post-2.1 publication is
 400 ms or less per page.
 
-## Results on the #5984 branch (v0.60.44.0)
+## Results on the #5984 branch (v0.60.48.0)
 
 Same bench, same 500-file backlog (534 entries), 57 ms rows time-boxed
 at 15 min. "This branch" is one `gbrain sync` run, which now drains the
