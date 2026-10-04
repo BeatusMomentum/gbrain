@@ -17,7 +17,7 @@
 # guard	class	selftest	notes
 check-no-double-retry.sh	scanner	yes	regex hole fixed in W0 (could not match `() =>`); perl multi-line pass replaces never-installed pcregrep
 check-jsonb-pattern.sh	scanner	yes	nested-paren hole fixed in W0; safe ::text::jsonb spelling stays unflagged
-check-jsonb-params.mjs	scanner	yes	positional $N::jsonb AST-lite scanner; argv/env root override; not in verify CHECKS: exercised by its unit test + self-test fixtures
+check-jsonb-params.mjs	scanner	yes	positional $N::jsonb AST-lite scanner; argv/env root override; in verify CHECKS (check:jsonb-params) over the real tree
 check-batch-audit-site.sh	scanner	todo
 check-bun-test-timeout.sh	scanner	todo	not in verify CHECKS: runs directly as a test.yml verify-job step
 check-fixture-privacy.sh	scanner	todo
@@ -54,7 +54,7 @@ check-bootstrap-templates.sh	buildfresh	exempt	regenerates template tree + diffs
 check-plugin-tree.sh	buildfresh	exempt	regenerates the plugin tree + diffs (curation record validated by the generator)
 check-eval-glossary-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-fuzz-purity.sh	buildfresh	exempt	executes fuzz corpus
-check-image-decoders-embedded.sh	buildfresh	exempt	binary embed check; not in verify CHECKS: own bun build --compile too heavy per-verify
+check-image-decoders-embedded.sh	buildfresh	exempt	binary embed check; in verify CHECKS (check:image-decoders); its smoketest compile bundles a handful of modules (~0.6s)
 check-pglite-embedded.sh	buildfresh	exempt	binary embed check
 check-skills-manifest-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs

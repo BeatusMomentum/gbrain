@@ -52,6 +52,9 @@ CHECKS=(
   "check:admin-build"
   "check:wasm"
   "check:pglite-embedded"
+  # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
+  # bundles a handful of modules, not the CLI).
+  "check:image-decoders"
   "check:fuzz-purity"
   # W0 fix-wave (Tier-1 #11): guard self-tests — every scanner guard proves it
   # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
@@ -93,6 +96,8 @@ CHECKS=(
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"
+  # Positional $N::jsonb + JSON.stringify double-encode (AST-lite, ~0.2s).
+  "check:jsonb-params"
   "check:search-path"
   "check:source-id-projection"
   "check:source-config-leak"
