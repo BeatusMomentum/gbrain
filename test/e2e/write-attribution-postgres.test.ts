@@ -15,6 +15,8 @@ if (hasDatabase()) {
   await import('../write-attribution-timeline-10k.slow.test.ts');
   await import('../write-attribution-facts-takes.test.ts');
   await import('../write-attribution-cycle.test.ts');
+  await import('../write-attribution-schema-pack.test.ts');
+  await import('../write-attribution-misc.test.ts');
 } else {
   test.skip('write attribution on Postgres requires DATABASE_URL', () => {});
 }
