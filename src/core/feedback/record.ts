@@ -274,9 +274,11 @@ export async function searchAnswerFeedback(
   op: 'query' | 'search' | 'recall',
   rows: Array<{ slug: string; source_id?: string; content_hash?: string | null; relational_path_edges?: string[] }>,
 ): Promise<Record<string, unknown>> {
-  return feedbackMetaFields(await recordAnswer(ctx, {
+  const meta = feedbackMetaFields(await recordAnswer(ctx, {
     op,
     pages: rows.map(r => ({ source_id: r.source_id, slug: r.slug, content_hash: r.content_hash })),
     links: relationalPathLinks(rows),
   }));
+  for (const r of rows) delete r.content_hash;
+  return meta;
 }
