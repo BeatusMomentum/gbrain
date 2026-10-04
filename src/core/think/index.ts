@@ -32,6 +32,7 @@ import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
+import { resolveThinkTemporalContext } from './temporal-context.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
@@ -140,10 +141,27 @@ export interface RunThinkOpts {
    * to world-only rows.
    */
   remote?: boolean;
+  /**
+   * Reference date (YYYY-MM-DD) the question's relative time words resolve
+   * against; default today in `brain.timezone`. Evals pass the dataset's
+   * question date. Invalid or future values throw ReferenceDateError.
+   */
+  referenceDate?: string;
+  /** Per-call notes-first reading override; default `think.reading_notes`. */
+  readingNotes?: ThinkReadingNotesMode;
 }
+
+export type ThinkReadingNotesMode = 'on' | 'off' | 'auto';
+const THINK_READING_NOTES_CONFIG_KEY = 'think.reading_notes';
+/** Shipped default until the held-out think-lane verdict sets it. */
+const DEFAULT_THINK_READING_NOTES: ThinkReadingNotesMode = 'off';
+/** Output-token allowance added when notes are on, so notes never crowd out the answer. */
+const READING_NOTES_OUTPUT_ALLOWANCE = 512;
 
 /** Structured response from the LLM (matches the schema declared in prompt.ts). */
 export interface ThinkResponse {
+  /** Notes-first reading scratch work; never part of the answer or persisted. */
+  notes?: string;
   answer: string;
   citations: Array<{ page_slug: string; row_num: number | null; citation_index?: number }>;
   gaps: string[];
@@ -219,6 +237,10 @@ export interface ThinkResult {
   cost_usd?: number;
   /** System One S4 (on): the brain holds no evidence; synthesis was skipped (think/decide.ts). */
   abstained?: ThinkAbstention;
+  /** The date frame the synthesis read in (reference date + brain timezone). */
+  temporal?: { reference_date: string; time_zone: string };
+  /** Reading mode applied and the model's notes (null when off or absent). Never persisted. */
+  reading_notes?: { mode: 'on' | 'off'; notes: string | null };
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
@@ -497,13 +519,13 @@ async function persistCitations(
  * the renderer passes through whole instead of cutting its own excerpts;
  * auto's unchanged chunks keep the usual excerpts.
  */
-async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[]): Promise<{ pagesBlock: string; evidenceDelivery?: DeliveryMeta }> {
+async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[], timeZone: string): Promise<{ pagesBlock: string; evidenceDelivery?: DeliveryMeta }> {
   const plan = await resolveEvidencePlan(engine, {
     remote: opts.remote, returnUnit: undefined, returnWindow: undefined, budget: undefined,
     snippetChars: undefined, snippetCap: 0, configKey: THINK_RETURN_UNIT_CONFIG_KEY, op: 'think',
   });
   const applied = effectivePlan(plan, pages);
-  if (!applied) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question) };
+  if (!applied) return { pagesBlock: renderPagesBlock(pages, pagesBlockExcerptLen(pages.length), opts.question, { timeZone }) };
   const delivered = await deliverEvidence(engine, pages, applied, {
     ...(opts.allowedSources !== undefined && opts.allowedSources.length > 0 ? { sourceIds: opts.allowedSources } : opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
@@ -511,8 +533,8 @@ async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: 
   });
   const pagesBlock = applied.unit === 'auto'
     ? renderPagesBlock(delivered.results, pagesBlockExcerptLen(pages.length), opts.question,
-      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP })
-    : renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true });
+      { verbatim: r => r.delivered?.reason !== 'not_conversation' && r.delivered?.reason !== 'conversation_over_budget', verbatimLen: EVIDENCE_BLOCK_CHAR_CAP, timeZone })
+    : renderPagesBlock(delivered.results, EVIDENCE_BLOCK_CHAR_CAP, opts.question, { verbatim: true, timeZone });
   return { pagesBlock, evidenceDelivery: delivered.delivery };
 }
 
@@ -527,6 +549,7 @@ export async function runThink(
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
   const window = parseTemporalWindow(opts.since, opts.until);
+  const temporal = await resolveThinkTemporalContext(engine, { referenceDate: opts.referenceDate });
 
   // Resolve the model through the 6-tier chain.
   const modelUsed = await resolveModel(engine, {
@@ -588,7 +611,7 @@ export async function runThink(
   // budget-aware — 600 chars is the FLOOR (a big gather never collapses each
   // page below it) and a small gather spreads the block budget into much
   // larger, often complete, per-page windows.
-  const { pagesBlock, evidenceDelivery } = await renderThinkPages(engine, opts, gather.pages);
+  const { pagesBlock, evidenceDelivery } = await renderThinkPages(engine, opts, gather.pages, temporal.timeZone);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
@@ -727,18 +750,15 @@ export async function runThink(
 
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);
+  const readingNotes = await resolveReadingNotes(engine, opts, gather.pages.length);
   const systemPrompt = buildThinkSystemPrompt({
-    intent,
+    currentDate: true, readingNotes, intent, willSave: opts.save, withCalibration: !!calibrationBlockOpts,
     ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
     ...(opts.since !== undefined ? { since: opts.since } : {}),
     ...(opts.until !== undefined ? { until: opts.until } : {}),
-    willSave: opts.save,
-    withCalibration: !!calibrationBlockOpts,
   });
   const userMessage = buildThinkUserMessage({
-    question: opts.question,
-    pagesBlock,
-    takesBlock,
+    question: opts.question, pagesBlock, takesBlock, currentDate: `${temporal.referenceDate} (${temporal.timeZone})`,
     ...(graphBlock !== undefined ? { graphBlock } : {}),
     ...(calibrationBlockOpts !== undefined ? { calibration: calibrationBlockOpts } : {}),
     ...(trajectoryBlock.length > 0 ? { trajectoryBlock } : {}),
@@ -826,7 +846,7 @@ export async function runThink(
     try {
       created = await client.create({
         model: modelUsed,
-        max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)),
+        max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)) + (readingNotes ? READING_NOTES_OUTPUT_ALLOWANCE : 0),
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       });
@@ -872,6 +892,7 @@ export async function runThink(
         const stop = (created as { stop_reason?: string }).stop_reason;
         if (stop === 'max_tokens') {
           warnings.push('LLM_OUTPUT_TRUNCATED');
+          if (readingNotes) warnings.push('READING_NOTES_TRUNCATED');
           synthesisStatus = 'output_truncated';
         } else {
           warnings.push('LLM_OUTPUT_NOT_JSON');
@@ -897,12 +918,7 @@ export async function runThink(
           response = { answer: text, citations: [], gaps: [] };
         }
       } else {
-        const r = parsed as Partial<ThinkResponse>;
-        response = {
-          answer: typeof r.answer === 'string' ? r.answer : '',
-          citations: Array.isArray(r.citations) ? (r.citations as ThinkResponse['citations']) : [],
-          gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
-        };
+        response = toThinkResponse(parsed as Partial<ThinkResponse>);
       }
     }
   }
@@ -967,8 +983,36 @@ export async function runThink(
       takesFromVector: gather.diagnostics.takesFromVector,
       graphHits: gather.diagnostics.graphHits,
     },
+    temporal: { reference_date: temporal.referenceDate, time_zone: temporal.timeZone },
+    reading_notes: { mode: readingNotes ? 'on' : 'off', notes: readingNotes ? response.notes ?? null : null },
   };
 }
+
+/** Normalizes the model's parsed JSON envelope; `notes` survives only as a non-empty string. */
+function toThinkResponse(r: Partial<ThinkResponse>): ThinkResponse {
+  return {
+    ...(typeof r.notes === 'string' && r.notes.trim() ? { notes: r.notes.trim() } : {}),
+    answer: typeof r.answer === 'string' ? r.answer : '',
+    citations: Array.isArray(r.citations) ? (r.citations as ThinkResponse['citations']) : [],
+    gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
+  };
+}
+
+/**
+ * Notes-first reading for this call: per-call override, then
+ * `think.reading_notes`, then the shipped default. `auto` turns notes on for
+ * temporal / knowledge-update questions and for large gathers, where reading
+ * across many pages is the hard part.
+ */
+async function resolveReadingNotes(engine: BrainEngine, opts: RunThinkOpts, pagesGathered: number): Promise<boolean> {
+  const configured = (await engine.getConfig(THINK_READING_NOTES_CONFIG_KEY).catch(() => null))?.trim().toLowerCase();
+  const mode = opts.readingNotes
+    ?? (configured === 'on' || configured === 'off' || configured === 'auto' ? configured : DEFAULT_THINK_READING_NOTES);
+  if (mode === 'auto') return classifyIntent(opts.question) !== 'other' || pagesGathered >= READING_NOTES_AUTO_MIN_PAGES;
+  return mode === 'on';
+}
+
+const READING_NOTES_AUTO_MIN_PAGES = 8;
 
 /**
  * Strip a "## Gaps" section from an answer body.

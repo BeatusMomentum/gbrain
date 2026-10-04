@@ -129,6 +129,7 @@ import {
 } from '../core/search/mode.ts';
 import { buildCaptureExtras } from '../eval/longmemeval/capture.ts';
 import * as decideLane from '../eval/longmemeval/decide-lane.ts';
+import * as retrievalArms from '../eval/longmemeval/retrieval-arms.ts';
 import { resolveModel } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
@@ -212,7 +213,7 @@ interface ParsedArgs {
   judgeConcurrency: number;
   allowIncompleteJudgments: boolean;
   /** System One arm (`--decide*`, src/eval/decide-eval-flags.ts) and the eval-only `--eval-pool-depth`. */
-  decide: decideLane.DecideEvalOptions; evalPoolDepth?: number;
+  decide: decideLane.DecideEvalOptions; evalPoolDepth?: number; arms: retrievalArms.RetrievalArmOptions;
 }
 
 interface LmeFlag {
@@ -392,6 +393,7 @@ const LME_FLAGS: LmeFlag[] = [
       '--judge --resume-from FILE until all three are 0.'],
     apply: (o) => { o.allowIncompleteJudgments = true; } },
   ...decideLane.LME_DECIDE_FLAGS,
+  ...retrievalArms.LME_RETRIEVAL_ARM_FLAGS,
 ];
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -416,7 +418,7 @@ function parseArgs(args: string[]): ParsedArgs {
     yes: false,
     judgeConcurrency: 1,
     allowIncompleteJudgments: false,
-    decide: decideLane.newDecideEvalOptions(),
+    decide: decideLane.newDecideEvalOptions(), arms: retrievalArms.newRetrievalArmOptions(),
   };
   const byName = new Map(LME_FLAGS.map(f => [f.name, f]));
   for (let i = 0; i < args.length; i++) {
@@ -550,6 +552,7 @@ interface RunContext {
    */
   embedTxn: <T>(fn: () => Promise<T>) => Promise<T>;
   decide: decideLane.DecideEvalRun | null;
+  factKeys: { arm: retrievalArms.FactKeyArm; spend: retrievalArms.FactKeySpend } | null;
 }
 
 interface QuestionOutcome {
@@ -593,6 +596,7 @@ function resolvePins(opts: ParsedArgs, runOpts: RunOpts, trajectoryEnabled: bool
     trajectory: trajectoryEnabled,
     ...(searchPins ? { search_pins: searchPins } : {}),
     ...(opts.evalPoolDepth ? { eval_pool_depth: opts.evalPoolDepth } : {}), ...(decide ? { decide: decide.runConfig } : {}),
+    ...retrievalArms.armPins(opts.arms),
   };
   return { pins, knobs };
 }
@@ -1117,6 +1121,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
 
   const ctx: RunContext = {
     opts, model, readerConfig, readerHash, client, trajectoryEnabled, extractorClient, extractorModel, decide: decideRun,
+    factKeys: await retrievalArms.resolveFactKeyArm(opts.arms, extractorClient),
     expandFn: runOpts.expandFn ?? expandQuery,
     replay,
     retrievalConfigHash: retrievalHash,
@@ -1391,6 +1396,7 @@ async function runOneQuestion(
   const aliasMap: AliasMap = makeAliasMap();
 
   let meta: HybridSearchMeta | undefined;
+  const extra0: Record<string, unknown> = {};
   const decideBefore = await decideLane.lmeSpendBefore(engine, ctx.decide);
   let pool: SearchResult[] | undefined;
   let preRerank: SearchResult[] | undefined;
@@ -1416,9 +1422,10 @@ async function runOneQuestion(
         });
       }
     }
+    if (ctx.factKeys) Object.assign(extra0, { fact_keys: await retrievalArms.applyFactKeyArm(engine, adapterPages, ctx.factKeys.arm, ctx.factKeys.spend) });
     if (opts.keywordOnly) return engine.searchKeyword(q.question, { limit: opts.topK });
     const searchOpts: HybridSearchOpts = {
-      limit: opts.topK,
+      limit: opts.arms.timeScope ? Math.max(opts.topK, opts.arms.timeScopePool) : opts.topK,
       // Per-call wins over the bundle: expansion fires ONLY with --expansion.
       expansion: opts.expansion,
       ...(expandFn ? { expandFn } : {}),
@@ -1428,7 +1435,11 @@ async function runOneQuestion(
         ? { onRerankPool: (p: readonly SearchResult[], pre?: readonly SearchResult[]) => { pool = [...p]; preRerank = pre ? [...pre] : undefined; } }
         : {}),
     };
-    return hybridSearch(engine, q.question, searchOpts);
+    const found = await hybridSearch(engine, q.question, searchOpts);
+    if (!opts.arms.timeScope) return found;
+    const scoped = retrievalArms.applyTimeScopeArm(found, q, pageMeta, opts.arms.timeScope, opts.topK);
+    Object.assign(extra0, retrievalArms.timeScopeRowExtras(scoped.row, slugToRaw, gold, opts.topK));
+    return scoped.results;
   });
 
   // Trajectory routing for temporal / knowledge_update intents. Skips for
@@ -1487,6 +1498,7 @@ async function runOneQuestion(
   searchMeta.reranked = results.some(r => Number.isFinite(r.rerank_score)) && !rerankerSkipped;
 
   const extra: Record<string, unknown> = {
+    ...extra0,
     retrieval_config_hash: ctx.retrievalConfigHash,
     ...readerFields,
     search_meta: searchMeta,

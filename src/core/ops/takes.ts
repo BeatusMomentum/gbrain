@@ -191,6 +191,10 @@ async function countMcpResolved(ctx: OperationContext): Promise<number> {
 
 /** runThink names the CLI flag; op callers get the param on their own surface and a caller-class code. */
 function thinkModelError(ctx: OperationContext, e: unknown): unknown {
+  if (e instanceof Error && e.name === 'ReferenceDateError') {
+    return opError('invalid_params', `think: ${e.message}`,
+      `Nothing was synthesized. Pass ${opTransport(ctx) === 'cli' ? paramUse(ctx, 'reference_date') : '`reference_date`'} as a past or current YYYY-MM-DD, or omit it to use today in brain.timezone.`);
+  }
   if (!(e instanceof Error) || !e.message.startsWith('think: --model ')) return e;
   const name = opTransport(ctx) === 'cli' ? paramUse(ctx, 'model') : '`model`';
   return opError('invalid_params',
@@ -213,6 +217,8 @@ const think: Operation = {
     model: { type: 'string', description: 'Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.' },
     since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM)' },
     until: { type: 'string', description: 'End of temporal window' },
+    reference_date: { type: 'string', description: 'YYYY-MM-DD the question\'s relative time words resolve against (default: today in brain.timezone).' },
+    reading_notes: { type: 'string', enum: ['on', 'off', 'auto'], description: 'Notes-first reading for this call (default: think.reading_notes). Notes return in reading_notes, never in the answer.' },
   },
   // Local CLI can persist with save/take; remote/MCP callers are forced
   // read-only below before runThink/persistSynthesis sees those flags.
@@ -245,6 +251,8 @@ const think: Operation = {
       modelExplicit: !!p.model,
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
+      ...(typeof p.reference_date === 'string' ? { referenceDate: p.reference_date } : {}),
+      ...(p.reading_notes === 'on' || p.reading_notes === 'off' || p.reading_notes === 'auto' ? { readingNotes: p.reading_notes } : {}),
       takesHoldersAllowList: readHolders(ctx),
       ...thinkScope,
       excludePrivate: (await readPolicyOpts(ctx)).excludePrivate,

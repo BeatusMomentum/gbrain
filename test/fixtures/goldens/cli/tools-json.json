@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 196835,
-    "stdoutSha256": "7c6a8f58d1ecf9152a0bef45fe6b85d84ea6bc81c4610fc65b2a65eeec68370a",
+    "stdoutBytes": 197396,
+    "stdoutSha256": "bab9dd03319eebafdc9dad4120ae80519e7d200b71f661e14b1811ad280fabdc",
     "toolNames": [
       "remember",
       "entity",
@@ -3608,6 +3608,8 @@
           "anchor": "string?",
           "model": "string?",
           "question": "string",
+          "reading_notes": "string?",
+          "reference_date": "string?",
           "rounds": "number?",
           "save": "boolean?",
           "since": "string?",
@@ -3627,6 +3629,19 @@
             },
             "question": {
               "description": "The question to think about",
+              "type": "string"
+            },
+            "reading_notes": {
+              "description": "Notes-first reading for this call (default: think.reading_notes). Notes return in reading_notes, never in the answer.",
+              "enum": [
+                "on",
+                "off",
+                "auto"
+              ],
+              "type": "string"
+            },
+            "reference_date": {
+              "description": "YYYY-MM-DD the question's relative time words resolve against (default: today in brain.timezone).",
               "type": "string"
             },
             "rounds": {

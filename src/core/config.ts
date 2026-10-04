@@ -1363,6 +1363,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
   'think.return_unit',
+  'think.reading_notes',
   // Models tier system (v0.31.12)
   'models.default',
   'models.tier.utility',

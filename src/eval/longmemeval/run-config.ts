@@ -52,6 +52,8 @@ export interface RetrievalPins {
   eval_pool_depth?: number;
   /** System One arm (`--decide`): slots, provider, calibrations, thresholds, force_on, split. Present only when a slot is on or shadow. */
   decide?: Record<string, unknown>;
+  /** Eval-only fact-key / time-scope arms (retrieval-arms.ts). Present only when an arm is on. */
+  retrieval_arms?: Record<string, unknown>;
 }
 
 /** Stable JSON: sorted keys at every level so key order can never move the hash. */
