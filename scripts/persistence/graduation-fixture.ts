@@ -185,9 +185,12 @@ export async function rehomeFixture(dir: string): Promise<void> {
     if (name !== '.gbrain-owner.json' && !/^\.gbrain-owner-[a-f0-9]{64}\.json$/.test(name)) return;
     const value = JSON.parse(readFileSync(path, 'utf8'));
     const info = statSync(value.root, { bigint: true });
-    if (name === '.gbrain-owner.json') Object.assign(value, { device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() });
-    else if (value.initialInode !== null) Object.assign(value, { initialDevice: info.dev.toString(), initialInode: info.ino.toString(), initialBirth: info.birthtimeNs.toString() });
-    writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
+    const stamped = name === '.gbrain-owner.json'
+      ? { ...value, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() }
+      : value.initialInode !== null
+        ? { ...value, initialDevice: info.dev.toString(), initialInode: info.ino.toString(), initialBirth: info.birthtimeNs.toString() }
+        : value;
+    writeFileSync(path, JSON.stringify(stamped), { mode: 0o600 });
   });
   const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
   const engine = new PGLiteEngine();
