@@ -5,9 +5,12 @@
 ```bash
 git clone https://github.com/garrytan/gbrain.git
 cd gbrain
-bun install
-bun test
+bun install --frozen-lockfile && bun run test && bun run verify
 ```
+
+`bun run test` is the parallel unit loop; `bun run verify` is CI's guard
+battery. [`docs/TESTING.md`](docs/TESTING.md#quick-start) covers E2E, failure
+logs and the lanes.
 
 Requires Bun 1.4.0 or newer, matching `package.json`.
 
@@ -159,7 +162,7 @@ in one-shot with `GBRAIN_E2E_ALLOW_DB=<name>`.
 
 Changes to durable persistence also require the native/runtime, process-crash,
 soak, deployment-matrix and read-latency gates in
-[`docs/TESTING.md`](docs/TESTING.md#durable-persistence-schedules-and-process-crashes).
+[`scripts/persistence/README.md`](scripts/persistence/README.md#test-suites).
 `test:full` alone does not execute those complete platform and runtime matrices.
 Keep each result tied to its tested revision and disclose skipped cells.
 
