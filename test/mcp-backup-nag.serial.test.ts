@@ -116,13 +116,17 @@ function leanResults(): unknown[] {
   return nextResults.map(r => { const { page_id: _p, ...lean } = r as Record<string, unknown>; return lean; });
 }
 
-function callSearch(opts: CallOpts = {}) {
-  return dispatchToolCall(engineStub, 'search', { query: 'anything at all' }, {
+async function callSearch(opts: CallOpts = {}) {
+  const out = await dispatchToolCall(engineStub, 'search', { query: 'anything at all' }, {
     remote: true,
     transport: 'stdio',
     sourceId: 'default',
     ...opts,
   });
+  // F3's degraded_recall notice (this keyless stub searches keyword-only) is
+  // orthogonal to the backup block under test; it is pinned in
+  // test/mcp-notice-channels.test.ts.
+  return { ...out, content: out.content.filter(c => !c.text.startsWith('[gbrain notice degraded_recall ')) };
 }
 
 async function waitFor(pred: () => boolean, ms = 2000): Promise<boolean> {

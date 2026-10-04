@@ -2,22 +2,7 @@
 // `chronicle_backstop` write-receipt field built from it. Docs (docs/guides/life-chronicle.md)
 // and tests render from CHRONICLE_REASONS; nothing else spells these codes out.
 import { pricingSetCommand } from '../budget/no-pricing.ts';
-
-/**
- * Local equivalent of the agent-operator `Action` (GBRA-42 `src/core/agent-output.ts`), same field
- * names. Stored form: never carries `next` or a rendered command; both are derived at render time.
- */
-export type ChronicleEffect = 'paid' | 'destructive' | 'credentials' | 'egress' | 'persistent_install';
-export type ChronicleActor = 'agent' | 'user' | 'host_admin' | 'provider';
-export interface ChronicleAction {
-  argv?: string[];
-  preview_argv?: string[];
-  consent: ChronicleEffect[];
-  actor: ChronicleActor;
-  why: string;
-  requires_exclusive: boolean;
-  inputs?: Array<{ name: string; how: string }>;
-}
+import type { Action, Actor } from '../agent-output.ts';
 
 /**
  * Where a code is decided: `decision` when
@@ -40,7 +25,7 @@ export interface ChronicleReasonContext {
 interface ChronicleReason {
   stage: ChronicleStage;
   meaning: (ctx: ChronicleReasonContext) => string;
-  fix?: (ctx: ChronicleReasonContext) => ChronicleAction;
+  fix?: (ctx: ChronicleReasonContext) => Action;
 }
 
 /**
@@ -55,7 +40,7 @@ export function chronicleBackfillArgv(opts: { sourceId?: string; since: string; 
 /** The run-now pointer: the chronicle phase in the foreground (paid). */
 export const CHRONICLE_RUN_NOW_ARGV = ['gbrain', 'dream', '--phase', 'chronicle'] as const;
 
-const backfill = (actor: ChronicleActor, why: string) => (ctx: ChronicleReasonContext): ChronicleAction => ({
+const backfill = (actor: Actor, why: string) => (ctx: ChronicleReasonContext): Action => ({
   argv: chronicleBackfillArgv({ sourceId: ctx.sourceId, since: ctx.since, dryRun: false }),
   preview_argv: chronicleBackfillArgv({ sourceId: ctx.sourceId, since: ctx.since, dryRun: true }),
   consent: ['paid'], actor, why, requires_exclusive: false,
@@ -160,7 +145,7 @@ export type ChronicleDecision = { state: 'pending' | 'skipped'; reason?: string 
 
 export type ChronicleBackstopReceipt =
   | { pending: 'next_cycle'; daily_remaining?: number }
-  | { skipped: string; stage: ChronicleStage; why: string; fix?: ChronicleAction };
+  | { skipped: string; stage: ChronicleStage; why: string; fix?: Action };
 
 /**
  * The `chronicle_backstop` receipt field (sibling of `facts_backstop`). Omitted (undefined) for pages

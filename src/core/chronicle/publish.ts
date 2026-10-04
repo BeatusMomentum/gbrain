@@ -30,7 +30,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { computeContentHash } from '../ingestion/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { digest } from '../persistence/digest.ts';
@@ -141,7 +141,8 @@ function requestIdFor(value: unknown): string {
 }
 
 function supersededError(reason: string): OperationError {
-  return new OperationError('revision_conflict', `chronicle_superseded: ${reason}. The depth page, its privacy or its writer grant changed after it was judged; nothing from this generation is published.`);
+  return opError('revision_conflict', `chronicle_superseded: ${reason}. The depth page, its privacy or its writer grant changed after it was judged; nothing from this generation is published.`,
+    'Nothing to do: the newer revision carries its own extraction decision, and the next chronicle cycle judges it.');
 }
 
 /** A publication failure that means the judged generation no longer applies. */
@@ -267,7 +268,8 @@ interface ChronicleIntent extends Record<string, unknown> {
 export async function prepareChronicleMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const p = row.intent as ChronicleIntent | null;
   if (!p || !p.depth || !Array.isArray(p.owned_hashes) || row.authority.remote) {
-    throw new OperationError('invalid_params', 'Unsupported Life Chronicle maintenance intent.');
+    throw opError('invalid_params', 'Unsupported Life Chronicle maintenance intent.',
+      'Life Chronicle maintenance is submitted only by the chronicle phase on the brain host; let `gbrain dream --phase chronicle` resubmit it rather than replaying this request.');
   }
   const owned = new Set(p.owned_hashes);
   const retire = p.kind === CHRONICLE_RETIRE_INTENT;
