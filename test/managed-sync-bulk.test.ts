@@ -75,6 +75,11 @@ test('a bulk drain publishes groups in one transaction while every page keeps it
   for (const row of rows) sharedTransaction.set(row.published, (sharedTransaction.get(row.published) ?? 0) + 1);
   expect(Math.max(...sharedTransaction.values())).toBeGreaterThan(1);
   for (let i = 0; i < 14; i++) expect((await engine.getPage(`notes/n${i}`, { sourceId: f.id }))?.title).toBe(`Note ${i}`);
+  // Every page revision is attributed to its own request, also inside a shared group transaction.
+  const attributed = await engine.executeRaw<{ slug: string; mismatched: boolean }>(`SELECT p.slug, p.revision_write_request_id IS DISTINCT FROM r.id AS mismatched
+    FROM pages p JOIN persistence_requests r ON r.source_id=p.source_id AND r.slug=p.slug AND r.intent->>'kind'='managed_sync_import' WHERE p.source_id=$1`, [f.id]);
+  expect(attributed).toHaveLength(14);
+  expect(attributed.filter(row => row.mismatched)).toEqual([]);
   const [cursor] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0 ? 'group'");
   expect(cursor!.n).toBe(0);
 }), 300_000);

@@ -23,11 +23,10 @@ import { localHostId } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership } from './ownership.ts';
 import { completeWrite, getWriteRequestById, lockCounters, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type WriteRequest } from './model.ts';
-import { withCoordinatedWrite } from './context.ts';
+import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
-import { authorizePageVisibility } from './page-visibility.ts';
 import { assertUnboundPublication, classifyUnboundPage } from './unbound-source.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { classifyMirrorPage } from './mirror-read-only.ts';
@@ -59,25 +58,28 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
       const live = await guardOwnership(tx, head, hostId);
       if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.');
-      for (const row of rows) await authorizeStoredRequest(tx, row, true);
       await tx.lockPageKeys(rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug }, ...(prepared[i]!.additionalPageKeys ?? [])]));
       const outcomes: Record<string, unknown>[] = [];
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i]!, member = prepared[i]!;
-        const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-        await authorizePageVisibility(tx, row.authority, row.slug);
-        if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.');
-        await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-        if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.');
-        await member.validate?.(tx);
-        const outcome = await withCoordinatedWrite(tx, [row.source_id], () => member.apply(tx), requestAttribution(row));
-        await classifyUnboundPage(tx, row);
-        if (member.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
-        const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-        decoratePublicationOutcome(row, member, outcome, final, 0, false);
-        await queuePublicationEffects(tx, row, final, outcome, member);
-        outcomes.push(outcome);
-      }
+      // One coordinated write for the group; each member is the attributed actor of what it writes.
+      await withCoordinatedWrite(tx, [head.source_id], async () => {
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i]!, member = prepared[i]!;
+          await authorizeStoredRequest(tx, row, true);
+          const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+          if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.');
+          await assertUnboundPublication(tx, row, snapshot?.page.source_path);
+          if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.');
+          await member.validate?.(tx);
+          await setMemberAttribution(tx, requestAttribution(row));
+          const outcome = await member.apply(tx);
+          await classifyUnboundPage(tx, row);
+          if (member.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
+          const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+          decoratePublicationOutcome(row, member, outcome, final, 0, false);
+          await queuePublicationEffects(tx, row, final, outcome, member);
+          outcomes.push(outcome);
+        }
+      }, requestAttribution(head));
       await lockCounters(tx, ['brain', ...new Set(rows.map(row => principalKey(requestPrincipal(row)))), `worktree:${head.worktree_id}`]);
       const current = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY sequence FOR UPDATE', [rows.map(row => row.id)]);
       const byId = new Map(current.map(row => [row.id, row]));
