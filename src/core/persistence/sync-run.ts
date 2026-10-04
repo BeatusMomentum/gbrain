@@ -510,7 +510,12 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
   onProgress?.({ phase: 'managed_sync.group', bankedFiles: cursor.index, total: cursor.entries.length, group: members.length });
   await validateSyncAuthority(engine, cursor.authority, members[0]!.slug);
   assertSyncDispatchActive();
-  if (ahead) cursor = await ahead(cursor);
+  if (ahead) {
+    const before = cursor.window?.[0]?.[0]?.requestId;
+    cursor = await ahead(cursor);
+    const formed = cursor.window?.[0];
+    if (formed?.length && formed[0]!.requestId !== before) onProgress?.({ phase: 'managed_sync.group_ahead', bankedFiles: cursor.index, total: cursor.entries.length, group: formed.length });
+  }
   const last = rows.find(row => row.request_id === members.at(-1)!.requestId)!;
   const waited = await awaitWrite(engine, last, config, wait);
   assertSyncDispatchActive();
