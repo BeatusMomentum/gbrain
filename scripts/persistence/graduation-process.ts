@@ -80,7 +80,7 @@ export async function gbrain(argv: string[], opts: GbrainOpts): Promise<GbrainRe
 // ── Contract accessors (one place to fix if the CLI's JSON names move) ───────
 
 export const planHashOf = (doc: Record<string, any> | null): string | undefined =>
-  doc?.plan_hash ?? doc?.planHash ?? doc?.plan?.plan_hash ?? doc?.plan?.planHash ?? doc?.data?.plan_hash;
+  doc?.plan_hash ?? doc?.planHash ?? doc?.plan?.plan_hash ?? doc?.plan?.planHash ?? doc?.fix?.plan_hash ?? doc?.data?.plan_hash;
 export const codeOf = (doc: Record<string, any> | null): string | undefined => doc?.code ?? doc?.error?.code ?? doc?.error;
 export const fixOf = (doc: Record<string, any> | null): Record<string, any> | undefined => doc?.fix ?? doc?.error?.fix;
 export const stateOf = (doc: Record<string, any> | null): string | undefined =>

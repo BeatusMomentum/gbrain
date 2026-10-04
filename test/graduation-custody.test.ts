@@ -55,7 +55,7 @@ describe('intent marker and tombstone files', () => {
     expect(statSync(intentMarkerPath(dir)).mode & 0o777).toBe(0o600);
     writeFileSync(intentMarkerPath(dir), '{not json');
     expect(() => readIntentMarker(dir)).toThrow();
-    expect(inspectGraduationPath(dir).kind).toBe('interrupted');
+    expect(inspectGraduationPath(dir).state).toBe('interrupted');
   });
 
   test('the tombstone is created exclusively, 0600, and only its own run removes it', () => {
@@ -77,26 +77,26 @@ describe('inspectGraduationPath and marker liveness', () => {
   test('none, in_progress, interrupted, graduated and split_brain', () => {
     const dir = join(root, 'inspect.pglite');
     mkdirSync(dir);
-    expect(inspectGraduationPath(dir).kind).toBe('none');
+    expect(inspectGraduationPath(dir).state).toBe('none');
     const unregister = registerGraduationRunInProcess('run-live');
     writeIntentMarker(dir, marker('run-live', 'copying'));
-    expect(inspectGraduationPath(dir)).toMatchObject({ kind: 'in_progress', liveness: 'alive' });
+    expect(inspectGraduationPath(dir)).toMatchObject({ state: 'in_progress', liveness: 'alive' });
     unregister();
-    expect(inspectGraduationPath(dir)).toMatchObject({ kind: 'interrupted', liveness: 'dead' });
+    expect(inspectGraduationPath(dir)).toMatchObject({ state: 'interrupted', liveness: 'dead' });
     writeIntentMarker(dir, marker('run-dead', 'copying', { pid: deadPid(), processStart: null }));
-    expect(inspectGraduationPath(dir)).toMatchObject({ kind: 'interrupted', liveness: 'dead' });
+    expect(inspectGraduationPath(dir)).toMatchObject({ state: 'interrupted', liveness: 'dead' });
     writeIntentMarker(dir, marker('run-reused', 'copying', { pid: process.ppid, processStart: '1' }));
     if (processStartTime(process.ppid)) expect(inspectGraduationPath(dir).liveness).toBe('dead');
     writeIntentMarker(dir, marker('run-other-host', 'copying', { pid: process.ppid, bootId: 'another-boot' }));
     expect(inspectGraduationPath(dir).liveness).toBe('unknown');
     writeIntentMarker(dir, marker('run-split', 'tombstoned', { pid: deadPid() }));
     mkdirSync(graduatedPath(dir, 'run-split'));
-    expect(inspectGraduationPath(dir)).toMatchObject({ kind: 'split_brain', movedTo: graduatedPath(dir, 'run-split') });
+    expect(inspectGraduationPath(dir)).toMatchObject({ state: 'split_brain', movedTo: graduatedPath(dir, 'run-split') });
     writeIntentMarker(dir, marker('run-split', 'rolled_back'));
-    expect(inspectGraduationPath(dir).kind).toBe('none');
+    expect(inspectGraduationPath(dir).state).toBe('none');
     const tombPath = join(root, 'inspect-tomb.pglite');
     writeTombstone(tombPath, tombstone('run-g', `${tombPath}.graduated-run-g`));
-    expect(inspectGraduationPath(tombPath)).toMatchObject({ kind: 'graduated', tombstone: { runId: 'run-g' } });
+    expect(inspectGraduationPath(tombPath)).toMatchObject({ state: 'graduated', tombstone: { runId: 'run-g' } });
   });
 
   test('a serve hands off only to a live requester on another process', () => {

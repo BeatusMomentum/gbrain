@@ -25,7 +25,8 @@ import { buildHistoryFixture } from '../scripts/persistence/history-fixture.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { persistenceConsumerStatus } from '../src/core/persistence/service.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../src/core/persistence/admin-contract.ts';
-import { drainForGraduation, drainTimeoutError, freezeSource, graduationBlockers, unfreezeSource, withSourceWritable } from '../src/core/persistence/graduation-drain.ts';
+import { drainForGraduation, freezeSource, graduationBlockers, unfreezeSource, withSourceWritable } from '../src/core/persistence/graduation-drain.ts';
+import { drainTimeoutError } from '../src/core/persistence/graduation-errors.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -103,18 +104,19 @@ for (const backend of testBackends()) {
 
 describe('drainTimeoutError', () => {
   test('progressing requests resume with twice the timeout', () => {
-    const json = drainTimeoutError([{ kind: 'request', id: 'r1', detail: 'put_page running (source a)', needsUser: false }], 60_000).toJSON() as Record<string, any>;
+    const json = drainTimeoutError({ blockers: [{ kind: 'request', id: 'r1', detail: 'put_page running (source a)', needsUser: false }], timeoutSec: 60 }).toJSON() as Record<string, any>;
     expect(json.code).toBe('graduation_drain_timeout');
-    expect(json.fix.argv).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120', '--json']);
+    expect(json.fix.argv).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120']);
+    expect(json.reason).toBe('progressing');
     expect(json.fix.verify.argv).toEqual(['gbrain', 'migrate', '--status', '--json']);
-    expect(json.why).toContain('source is unchanged and still writable');
+    expect(json.why).toContain('source is unchanged and writable');
   });
 
   test('a blocker with its own action is named instead of a longer wait', () => {
-    const json = drainTimeoutError([
+    const json = drainTimeoutError({ blockers: [
       { kind: 'request', id: 'r1', detail: 'running', needsUser: false },
       { kind: 'request', id: 'r2', detail: 'recovering', argv: ['gbrain', 'sync', '--source', 'a', '--no-pull', '--retry-failed'], needsUser: false },
-    ], 5_000).toJSON() as Record<string, any>;
+    ], timeoutSec: 5 }).toJSON() as Record<string, any>;
     expect(json.fix.argv).toEqual(['gbrain', 'sync', '--source', 'a', '--no-pull', '--retry-failed']);
     expect(json.fix.actor).toBe('agent');
   });

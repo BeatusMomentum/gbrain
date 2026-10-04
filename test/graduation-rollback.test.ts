@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  planGraduation, readGraduationManifest, reconcileGraduation, rollbackGraduation, runGraduation, type GraduationRunOptions,
+  planGraduation, readGraduationManifest, reconcileGraduation, rollbackGraduation, runGraduation, type GraduationOptions,
 } from '../src/core/persistence/engine-graduation.ts';
 import { assertGraduationConnectAllowed, readIntentMarker, readTombstone } from '../src/core/persistence/graduation-custody.ts';
 import { graduationFenceStatus, readGraduationRow } from '../src/core/persistence/graduation-schema.ts';
@@ -40,10 +40,11 @@ for (const [label, postgresUrl] of targets) {
     afterAll(async () => { await h.close(); });
 
     async function fresh(): Promise<void> { await h.close(); h = await makeHarness({ postgresUrl }); }
-    function runOpts(expect: string, extra: Partial<GraduationRunOptions> = {}): GraduationRunOptions {
-      return { config: { engine: 'pglite', database_path: h.dataDir } as GraduationRunOptions['config'], url: TARGET_URL, env: {}, expect, deps: h.deps, handoffTimeoutMs: 1_000, ...extra };
+    function runOpts(expect: string, extra: Partial<GraduationOptions> = {}): GraduationOptions {
+      return { config: { engine: 'pglite', database_path: h.dataDir } as GraduationOptions['config'], to: 'postgres', url: TARGET_URL, env: {}, drainTimeoutMs: 60_000,
+        force: false, yes: true, expectPlanHash: expect, deps: h.deps, handoffTimeoutMs: 1_000, ...extra };
     }
-    async function graduate(extra: Partial<GraduationRunOptions> = {}): Promise<void> {
+    async function graduate(extra: Partial<GraduationOptions> = {}): Promise<void> {
       const hash = (await planGraduation(runOpts(''))).planHash;
       await runGraduation(runOpts(hash, extra));
     }
@@ -119,10 +120,10 @@ for (const [label, postgresUrl] of targets) {
         expect(refused.fix?.argv).toEqual(['gbrain', 'migrate', '--rollback-to-source', '--yes', '--expect', hash]);
         expect(manifest().state).toBe('graduated');
         await assertTargetAuthoritative();
-        const wrong = await refusal(rollbackGraduation(rollbackOpts({ yes: true, expect: '0000000000000000' })));
+        const wrong = await refusal(rollbackGraduation(rollbackOpts({ yes: true, expectPlanHash: '0000000000000000' })));
         expect(wrong.code).toBe('graduation_rollback_writes_lost');
         const relisted = wrong.fix!.plan_hash!;
-        await rollbackGraduation(rollbackOpts({ yes: true, expect: relisted }));
+        await rollbackGraduation(rollbackOpts({ yes: true, expectPlanHash: relisted }));
         await assertRolledBack();
         const source = await openPglite(h.dataDir);
         try { expect((await probeRows(source)).map(r => r.v)).not.toContain('written-on-target'); } finally { await source.disconnect(); }
@@ -134,7 +135,7 @@ for (const [label, postgresUrl] of targets) {
       await h.inHome(async () => {
         await graduate();
         await h.target.executeRaw(`INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash) VALUES ('default', 'private', '*', 'hash-w1')`);
-        for (const extra of [{}, { yes: true, expect: 'anything' }]) {
+        for (const extra of [{}, { yes: true, expectPlanHash: 'anything' }]) {
           const refused = await refusal(rollbackGraduation(rollbackOpts(extra)));
           expect(refused.code).toBe('graduation_rollback_writes_lost');
           expect(refused.fix?.argv).toBeUndefined();
@@ -149,10 +150,10 @@ for (const [label, postgresUrl] of targets) {
       await h.inHome(async () => {
         await graduate();
         await h.target.executeRaw(`DELETE FROM access_tokens WHERE id = $1::uuid`, [SOURCE_TOKEN_ID]);
-        const refused = await refusal(rollbackGraduation(rollbackOpts({ yes: true, expect: 'x' })));
+        const refused = await refusal(rollbackGraduation(rollbackOpts({ yes: true, expectPlanHash: 'x' })));
         expect(refused.code).toBe('graduation_rollback_writes_lost');
         expect(refused.fix?.argv).toBeUndefined();
-        expect(refused.message).toContain('access_tokens: 1 missing');
+        expect(refused.message).toContain('access_tokens missing (1)');
         await assertTargetAuthoritative();
       });
     }, 120_000);

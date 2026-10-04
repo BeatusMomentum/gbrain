@@ -20,9 +20,8 @@ import type { BrainEngine } from '../engine.ts';
 import { PostgresEngine } from '../postgres-engine.ts';
 import { normalizeDirectUrl, isNetworkUnreachableError } from '../connection-manager.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
-import { opError, type OpErrorOpts, type OperationError } from '../ops/contract.ts';
-import type { RegistryCode } from '../error-registry.ts';
-import type { EmbeddingColumn, GraduationBlocker, GraduationErrorCode, TargetIdentity, TargetProbe, TargetRoutes, TriggerBypass } from './engine-graduation.types.ts';
+import type { EmbeddingColumn, GraduationBlocker, TargetIdentity, TargetProbe, TargetRoutes, TriggerBypass } from './engine-graduation.types.ts';
+import { targetAuthFailedError, targetDdlUnreachableError, targetUnsupportedError } from './graduation-errors.ts';
 
 export type ResolvedTargetRoutes = TargetRoutes & { mainUrl: string; ddlUrl: string };
 
@@ -33,24 +32,13 @@ export const MIN_TARGET_SERVER_VERSION_NUM = 140000;
 /** pgvector release that added halfvec (facts.embedding, query_cache.embedding). */
 export const MIN_VECTOR_HALFVEC_VERSION = '0.7.0';
 
-/** Graduation codes are registered by the agent-contract batch; until then they are typed by the shared list. */
-export function graduationError(code: GraduationErrorCode, message: string, suggestion: string, opts: OpErrorOpts = {}): OperationError {
-  return opError(code as RegistryCode, message, suggestion, opts);
-}
-
 export function targetPlanArgv(routes: Pick<TargetRoutes, 'urlEnv'>, to: 'postgres' | 'supabase' = 'postgres'): string[] {
   return ['gbrain', 'migrate', '--to', to, '--url-env', routes.urlEnv ?? DEFAULT_TARGET_URL_ENV, '--plan', '--json'];
 }
 
 function parsePostgresUrl(url: string): URL {
   if (!/^postgres(?:ql)?:\/\//i.test(url)) {
-    throw graduationError('graduation_target_unsupported', 'The target is not a Postgres URL.',
-      'Pass a postgres:// or postgresql:// URL through --url-env, then rerun the plan.',
-      { why: 'Graduation moves a PGLite brain into a Postgres database; the given value is not a Postgres connection URL.',
-        fix: { argv: targetPlanArgv({}), consent: ['credentials'], actor: 'agent', requires_exclusive: false,
-          why: 'Re-plans against a URL held in an environment variable, so the password never appears in argv.',
-          user_message: `Set ${DEFAULT_TARGET_URL_ENV} to the Postgres connection URL of the target database (user, password, host, port and database).`,
-          verify: { argv: targetPlanArgv({}) } } });
+    throw targetUnsupportedError({ requirement: 'postgres_url', detail: 'the given target is not a postgres:// or postgresql:// URL', host: 'the given target' });
   }
   return new URL(url.replace(/^postgres(?:ql)?:\/\//i, 'http://'));
 }
@@ -79,21 +67,12 @@ export function targetIdentity(url: string): TargetIdentity {
 export function resolveTargetRoutes(opts: { url?: string; urlEnv?: string; env?: NodeJS.ProcessEnv }): ResolvedTargetRoutes {
   const env = opts.env ?? process.env;
   if (opts.url && opts.urlEnv) {
-    throw graduationError('graduation_target_unsupported', 'Both --url and --url-env were given.',
-      'Pass the target once, preferably as --url-env <VAR>.',
-      { why: 'Two target sources could name different databases.',
-        fix: { argv: targetPlanArgv({ urlEnv: opts.urlEnv }), consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Re-plans with the target named only by its environment variable.', verify: { argv: targetPlanArgv({ urlEnv: opts.urlEnv }) } } });
+    throw targetUnsupportedError({ requirement: 'one_target', detail: 'both --url and --url-env were given; pass the target once, preferably as --url-env <VAR>', host: 'the given target', spelling: { urlEnv: opts.urlEnv } });
   }
   const mainUrl = opts.urlEnv ? env[opts.urlEnv] : opts.url;
   if (!mainUrl) {
     const urlEnv = opts.urlEnv ?? DEFAULT_TARGET_URL_ENV;
-    throw graduationError('graduation_target_unsupported', opts.urlEnv ? `${opts.urlEnv} is not set.` : 'No target URL was given.',
-      `Set ${urlEnv} to the target Postgres URL and rerun with --url-env ${urlEnv}.`,
-      { why: 'Graduation needs the target database URL; it is read from an environment variable so the password never reaches argv or logs.',
-        fix: { argv: targetPlanArgv({ urlEnv }), consent: ['credentials'], actor: 'agent', requires_exclusive: false,
-          why: 'Plans the move once the variable holds the target URL.',
-          user_message: `Set ${urlEnv} to the Postgres URL of the empty target database.`, verify: { argv: targetPlanArgv({ urlEnv }) } } });
+    throw targetUnsupportedError({ requirement: 'target_url', detail: opts.urlEnv ? `${opts.urlEnv} is not set; it must hold the target Postgres URL` : `no target URL was given; set ${urlEnv} to it and pass --url-env ${urlEnv}`, host: 'the target', spelling: { urlEnv } });
   }
   parsePostgresUrl(mainUrl);
   const ddlUrl = normalizeDirectUrl(mainUrl, env.GBRAIN_DIRECT_DATABASE_URL || null) ?? mainUrl;
@@ -285,34 +264,15 @@ export function targetProbeBlockers(probe: TargetProbe, routes: Pick<TargetRoute
 
 /** Throws the typed refusal when either route is unreachable or refuses authentication. */
 export function assertTargetReachable(probe: TargetProbe, routes: Pick<TargetRoutes, 'urlEnv' | 'main' | 'ddl'>): void {
-  const urlEnv = routes.urlEnv ?? DEFAULT_TARGET_URL_ENV;
-  const argv = targetPlanArgv(routes);
-  if (probe.reachable && !probe.auth) {
-    throw graduationError('graduation_target_auth_failed', `The target ${routes.main} refused authentication.`,
-      `Ask the user for the current URL of the same database, put it in ${urlEnv} and rerun with --url-env ${urlEnv}.`,
-      { why: `The server answered but rejected the credentials (${probe.error?.code ?? 'auth'}); a rotated password is the usual cause.`,
-        fix: { argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, why: 'Re-plans with the corrected URL for the same target identity.',
-          user_message: `The Postgres server at ${routes.main} rejected the password. Set ${urlEnv} to the current URL for this database.`, verify: { argv } } });
-  }
+  const spelling = routes.urlEnv ? { urlEnv: routes.urlEnv } : {};
+  if (probe.reachable && !probe.auth) throw targetAuthFailedError({ host: routes.main, ...(routes.urlEnv ? { urlEnv: routes.urlEnv } : {}) });
   if (!probe.reachable) {
-    throw graduationError('graduation_target_unsupported', `The target ${routes.main} is unreachable.`,
-      'Check that the database is running and reachable from this machine, then rerun the plan.',
-      { why: `Connecting failed before authentication (${probe.error?.code ?? 'unreachable'}: ${probe.error?.message ?? 'no detail'}).`,
-        fix: { argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Re-probes the target once it is reachable.', verify: { argv } } });
+    throw targetUnsupportedError({ requirement: 'reachable', detail: `the server is unreachable (${probe.error?.code ?? 'unreachable'}: ${probe.error?.message ?? 'no detail'})`, host: routes.main, spelling });
   }
   if (probe.serverVersion === null) {
-    throw graduationError('graduation_target_unsupported', `The target ${routes.main} could not be probed.`,
-      'Fix the named connection problem (for example create the database), then rerun the plan.',
-      { why: `The server answered but the probe session failed (${probe.error?.code ?? 'unknown'}: ${probe.error?.message ?? 'no detail'}).`,
-        fix: { argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Re-probes the target after the fix.', verify: { argv } } });
+    throw targetUnsupportedError({ requirement: 'probe', detail: `the probe session failed (${probe.error?.code ?? 'unknown'}: ${probe.error?.message ?? 'no detail'})`, host: routes.main, spelling });
   }
-  if (!probe.ddl.reachable || !probe.ddl.auth) {
-    throw graduationError('graduation_target_ddl_unreachable', `The DDL connection ${routes.ddl} is unreachable.`,
-      'Ask the user for a session-mode connection (Supabase: the session pooler on port 5432), set GBRAIN_DIRECT_DATABASE_URL to it and rerun the plan.',
-      { why: `gbrain runs schema changes and the copy on a direct/session connection; it failed (${probe.ddl.error?.code ?? 'unreachable'}). Graduation never falls back to another route on its own.`,
-        fix: { argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, why: 'Re-plans with the DDL route the user provides.',
-          user_message: `Set GBRAIN_DIRECT_DATABASE_URL to the session-mode connection URL of ${routes.main}.`, verify: { argv } } });
-  }
+  if (!probe.ddl.reachable || !probe.ddl.auth) throw targetDdlUnreachableError({ host: routes.main, ddlHost: routes.ddl, spelling });
 }
 
 /**
@@ -324,12 +284,11 @@ export function assertTargetReachable(probe: TargetProbe, routes: Pick<TargetRou
  */
 export async function crossCheckRoutes(main: BrainEngine, ddl: BrainEngine, runId: string): Promise<void> {
   const keys = [randomInt(1, 2 ** 31 - 1), randomInt(1, 2 ** 31 - 1)];
-  const refuse = (detail: string) => graduationError('graduation_target_ddl_unreachable',
-    'The DDL connection does not reach the same database as the main connection.',
-    'Ask the user for the session-mode URL of the same database, set GBRAIN_DIRECT_DATABASE_URL to it and rerun the plan.',
-    { why: `Run ${runId}: ${detail}. Schema changes through a different database would leave the target incomplete, so nothing was changed.`,
-      fix: { argv: targetPlanArgv({}), consent: ['credentials'], actor: 'agent', requires_exclusive: false, why: 'Re-plans with a DDL route that names the target database.',
-        user_message: 'Set GBRAIN_DIRECT_DATABASE_URL to the session-mode connection URL of the target database.', verify: { argv: targetPlanArgv({}) } } });
+  const refuse = (detail: string) => {
+    const error = targetDdlUnreachableError({ host: 'the main connection', ddlHost: 'the DDL connection' });
+    error.detail = `Run ${runId}: ${detail}`;
+    return error;
+  };
   let seen: boolean;
   try {
     seen = await ddl.transaction(async tx => {

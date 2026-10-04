@@ -21,7 +21,7 @@ import {
 } from '../src/core/persistence/engine-graduation.types.ts';
 import {
   graduationStatus, planGraduation, readGraduationManifest, redactManifest, resumeGraduation, runGraduation, transitionManifest,
-  writeGraduationManifest, type GraduationRunOptions,
+  writeGraduationManifest, type GraduationOptions,
 } from '../src/core/persistence/engine-graduation.ts';
 import { assertGraduationAdmission, assertGraduationConnectAllowed, graduatedPath, readIntentMarker, readTombstone } from '../src/core/persistence/graduation-custody.ts';
 import { graduationFenceStatus, readGraduationRow, setSourceState, setTargetState, withGraduationRun } from '../src/core/persistence/graduation-schema.ts';
@@ -143,11 +143,12 @@ for (const [label, postgresUrl] of targets) {
     afterAll(async () => { await h.close(); });
 
     async function fresh(): Promise<void> { await h.close(); h = await makeHarness({ postgresUrl }); }
-    function runOpts(expect: string, extra: Partial<GraduationRunOptions> = {}): GraduationRunOptions {
-      return { config: { engine: 'pglite', database_path: h.dataDir } as GraduationRunOptions['config'], url: TARGET_URL, env: {}, expect, deps: h.deps, handoffTimeoutMs: 1_000, ...extra };
+    function runOpts(expect: string, extra: Partial<GraduationOptions> = {}): GraduationOptions {
+      return { config: { engine: 'pglite', database_path: h.dataDir } as GraduationOptions['config'], to: 'postgres', url: TARGET_URL, env: {}, drainTimeoutMs: 60_000,
+        force: false, yes: true, expectPlanHash: expect, deps: h.deps, handoffTimeoutMs: 1_000, ...extra };
     }
-    async function plan(extra: Partial<GraduationRunOptions> = {}): Promise<string> {
-      return (await planGraduation(runOpts('', extra))).planHash;
+    async function plan(extra: Partial<GraduationOptions> = {}): Promise<string> {
+      return (await planGraduation(runOpts('', { yes: false, ...extra }))).planHash;
     }
     async function assertGraduated(): Promise<void> {
       const config = JSON.parse(readFileSync(join(h.gbrainDir, 'config.json'), 'utf8'));
@@ -215,8 +216,8 @@ for (const [label, postgresUrl] of targets) {
         await h.inHome(async () => {
           const hash = await plan();
           await expect(runGraduation(runOpts(hash, { pauseAt: seam, pauseHook: crashAt(seam) }))).rejects.toThrow(`simulated crash at ${seam}`);
-          const status = await graduationStatus();
-          expect(status.live).toBe(false);
+          const status = await graduationStatus({ deps: h.deps });
+          expect(status.liveRun).toBeNull();
           expect(status.nextArgv).toEqual(['gbrain', 'migrate', '--resume']);
           const row = await readGraduationRow(h.target);
           if (row) expect(row.state === 'authoritative' ? seam : 'non-authoritative').toBe(['authoritative', 'config_flipped', 'registry_rewritten'].includes(seam) ? seam : 'non-authoritative');
@@ -248,9 +249,14 @@ for (const [label, postgresUrl] of targets) {
         mkdirSync(h.dataDir);
         const refused = await refusal(resumeGraduation({ env: {}, deps: h.deps, handoffTimeoutMs: 1_000 }));
         expect(refused.code).toBe('graduation_split_brain');
-        expect(refused.fix?.argv?.[0]).toBe('mv');
+        expect(refused.fix?.argv).toEqual(['gbrain', 'migrate', '--resume', '--yes']);
         expect((await readGraduationRow(h.target))?.state).toBe('verified');
-        expect((await graduationStatus()).path?.kind).toBe('split_brain');
+        const status = await graduationStatus({ deps: h.deps });
+        expect(status.sourcePath?.state).toBe('split_brain');
+        expect(status.splitBrain?.map(side => side.path)).toEqual([h.dataDir, `${h.dataDir}.graduated-${status.runId}`]);
+        await resumeGraduation({ env: {}, deps: h.deps, handoffTimeoutMs: 1_000, yes: true });
+        expect(existsSync(`${h.dataDir}.stray-${status.runId}`)).toBe(true);
+        await assertGraduated();
       });
     }, 60_000);
 
@@ -306,7 +312,7 @@ for (const [label, postgresUrl] of targets) {
         const stuck = { ...h.deps, drainForGraduation: async () => ({ drained: [], blockers: [{ kind: 'request' as const, id: 'req-1', detail: 'running', needsUser: false }] }) };
         const timeout = await refusal(runGraduation(runOpts(hash, { deps: stuck, drainTimeoutMs: 60_000 })));
         expect(timeout.code).toBe('graduation_drain_timeout');
-        expect(timeout.fix?.argv).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120', '--json']);
+        expect(timeout.fix?.argv).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120']);
         expect(readGraduationManifest(join(h.gbrainDir, 'graduation-manifest.json'))?.state).toBe('draining');
         const failing = { ...h.deps, verifyGraduation: async () => ({ ok: false, tables: [], failures: [{ relation: 'grad_probe', kind: 'digest' as const, detail: 'mismatch' }], replay: { status: 'not_available' as const, reason: 'no_caller_input' as const }, doctorFailingChecks: [] }) };
         const failed = await refusal(resumeGraduation({ env: {}, deps: failing, handoffTimeoutMs: 1_000 }));
@@ -327,9 +333,10 @@ for (const [label, postgresUrl] of targets) {
         await expect(runGraduation(runOpts(hash, { pauseAt: 'source_cutover', pauseHook: crashAt('source_cutover') }))).rejects.toThrow();
         const files = [join(h.gbrainDir, 'graduation-manifest.json'), `${h.dataDir}.gbrain-graduation.json`, join(h.gbrainDir, 'config.json')];
         const before = files.map(f => [readFileSync(f, 'utf8'), statSync(f).mtimeMs]);
-        const status = await graduationStatus();
+        const status = await graduationStatus({ deps: h.deps });
         expect(status.state).toBe('cutover');
-        expect(status.path?.kind).toBe('interrupted');
+        expect(status.sourcePath?.state).toBe('interrupted');
+        expect(status.target?.row).toBe('verified');
         expect(JSON.stringify(status)).not.toContain('secret-pw');
         expect(files.map(f => [readFileSync(f, 'utf8'), statSync(f).mtimeMs])).toEqual(before);
         expect(existsSync(graduatedPath(h.dataDir, status.runId!))).toBe(false);

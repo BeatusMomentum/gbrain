@@ -20,29 +20,32 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { EngineConfig } from '../types.ts';
 import { configDir, loadConfigFileOnly, saveConfig, type GBrainConfig } from '../config.ts';
-import { exclusiveFix, liveServeOwner } from '../exclusive-fix.ts';
+import { liveServeOwner } from '../exclusive-fix.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
-import { acquireKernelLockOnly, PgliteBusyError, peekLock, releaseLock, type LockHandle } from '../pglite-lock.ts';
+import { acquireKernelLockOnly, inspectLockHolder, PgliteBusyError, peekLock, releaseLock, type LockHandle } from '../pglite-lock.ts';
 import { localHostId } from './identity.ts';
 import { quiesceAutopilot } from '../../commands/migrate-engine.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import {
   assertTransition, GRADUATION_MANIFEST_VERSION, graduationBoundary, MANIFEST_TRANSITIONS,
   type GraduationBoundary, type GraduationBoundaryDetail,
-  type GraduationBlocker, type GraduationErrorCode, type GraduationManifest, type GraduationPathState, type GraduationPlan,
-  type GraduationReceipt, type GraduationStatusDoc, type IntentMarker, type Inventory, type InventoryEntry, type LossKind,
-  type ManifestState, type TableCheckpoint, type TableReceipt, type TargetIdentity, type TargetProbe, type TargetRoutes, type TriggerBypass,
+  type GraduationBlocker, type GraduationCommandOptions, type GraduationManifest, type GraduationPathState, type GraduationPhase, type GraduationPlan,
+  type GraduationReceipt, type GraduationRollbackResult, type GraduationStatusDoc, type GraduationTargetSpelling, type IntentMarker, type Inventory, type InventoryEntry, type LossKind,
+  type ManifestState, type TableCheckpoint, type TableReceipt, type TargetIdentity, type TargetProbe, type TargetRoutes, type TargetRowState, type TriggerBypass,
 } from './engine-graduation.types.ts';
 import {
-  currentProcessIdentity, fsyncParent, graduatedPath, graduationDataDir, graduationError, graduationInProgressError,
-  graduationInterruptedError, graduationSplitBrainError, inspectGraduationPath, markerLiveness, moveAsideHeld,
-  readIntentMarker, readTombstone, registerGraduationRunInProcess, removeIntentMarker, removeTombstone, targetDisplayUrl,
-  TERMINAL_STATES, TombstonePathOccupiedError, writeFileDurably, writeIntentMarker, writeTombstone,
+  currentProcessIdentity, engineGraduatedFor, fsyncParent, graduatedPath, graduationDataDir, inspectGraduationPath, markerLiveness,
+  allowGraduationInspection, moveAsideHeld, readIntentMarker, readTombstone, registerGraduationRunInProcess, removeIntentMarker, removeTombstone, splitBrainFor,
+  targetDisplayUrl, TERMINAL_STATES, TombstonePathOccupiedError, writeFileDurably, writeIntentMarker, writeTombstone,
 } from './graduation-custody.ts';
+import {
+  drainTimeoutError, embeddingDimensionMismatchError, foreignHostBindingError, inProgressError, interruptedError, planArgv as planArgvOf,
+  resumeArgv, rollbackWritesLostError, runArgv as runArgvOf, sourceWriterHeldError, statusArgv, targetAuthFailedError, targetNotEmptyError,
+  targetUnsupportedError, unsupportedPlatformError, verifyFailedError,
+} from './graduation-errors.ts';
 import {
   dropGraduationFence, graduationFenceStatus, installGraduationFence, readGraduationRow, setSourceState, setTargetState,
   withGraduationRun,
@@ -55,13 +58,12 @@ import {
   assertTargetReachable, chooseTriggerBypass, connectTargetEngines, crossCheckRoutes, probeTarget, resolveTargetRoutes, sourceEmbeddingLayout,
   targetIdentity, targetProbeBlockers,
 } from './graduation-target.ts';
-import { drainForGraduation, drainTimeoutError, freezeSource, graduationBlockers, withSourceWritable } from './graduation-drain.ts';
+import { drainForGraduation, freezeSource, graduationBlockers, withSourceWritable } from './graduation-drain.ts';
 import { buildDeferredIndexes, copySequences, copyTable, deferIndexes, detectTriggerBypass, reenableTriggers } from './graduation-copy.ts';
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const HANDOFF_TIMEOUT_MS = 30_000;
-const DOCS = 'docs/guides/move-to-postgres.md';
-const STATUS_ARGV = ['gbrain', 'migrate', '--status', '--json'];
+const STATUS_ARGV = statusArgv();
 /** Usage-tracking columns that change on every authorized call; not a security change. */
 const SECURITY_VOLATILE_COLUMNS = new Set(['last_used_at']);
 const SECURITY_TABLES = ['access_tokens', 'oauth_clients', 'oauth_tokens', 'oauth_grant_audit', 'persistence_local_writers', 'fact_withdrawals'] as const;
@@ -142,7 +144,7 @@ export function defaultGraduationDeps(): GraduationDeps {
     },
     async connectTargets(routes) {
       try { return await connectTargetEngines(routes); }
-      catch (error) { throw mapTargetConnectError(error); }
+      catch (error) { throw mapTargetConnectError(error, routes); }
     },
     async initTargetSchema(target, source) {
       const layout = await sourceEmbeddingLayout(source);
@@ -179,14 +181,10 @@ function spawnTargetDoctor(runId: string, mainUrl: string): readonly string[] {
   } catch { return ['doctor_unavailable']; }
 }
 
-function mapTargetConnectError(error: unknown): unknown {
+function mapTargetConnectError(error: unknown, routes: Routes): unknown {
   const e = error as { code?: string; message?: string };
   if (e?.code === '28P01' || /password authentication failed/i.test(e?.message ?? '')) {
-    return graduationError('graduation_target_auth_failed', 'The target database refused the recorded credentials.',
-      'Ask the user for the current URL of the same database, put it in an environment variable, and rerun with `--url-env <VAR>`; the host, port, database and user must match the recorded target.',
-      'The password changed since the run started; the manifest identity excludes the password so the same database is recognised.',
-      { argv: ['gbrain', 'migrate', '--resume', '--url-env', 'GBRAIN_TARGET_URL'], consent: ['credentials'], actor: 'agent', requires_exclusive: true,
-        why: 'Reconnects to the same target with the new password and continues the run.', verify: { argv: STATUS_ARGV } });
+    return targetAuthFailedError({ host: routes.main, ...(routes.urlEnv ? { urlEnv: routes.urlEnv } : {}) });
   }
   return error;
 }
@@ -234,7 +232,10 @@ export interface GraduationProgressEvent {
   message?: string;
 }
 
-interface CommonOptions {
+/** Seams beyond the CLI surface: tests and embedders. The CLI passes `GraduationCommandOptions` only. */
+export interface GraduationInternals {
+  /** The source brain config; defaults to the config file (never env overrides). */
+  config?: GBrainConfig;
   env?: NodeJS.ProcessEnv;
   manifestPath?: string;
   deps?: Partial<GraduationDeps>;
@@ -246,35 +247,8 @@ interface CommonOptions {
   handoffTimeoutMs?: number;
 }
 
-export interface GraduationPlanOptions extends CommonOptions {
-  config: GBrainConfig;
-  url?: string;
-  urlEnv?: string;
-  invokedAs?: 'postgres' | 'supabase';
-  force?: boolean;
-  triggerBypass?: TriggerBypass;
-  batchBytes?: number;
-}
-
-export interface GraduationRunOptions extends GraduationPlanOptions {
-  /** The plan hash the user approved (`--yes --expect <plan_hash>`). */
-  expect: string;
-  drainTimeoutMs?: number;
-}
-
-export interface GraduationResumeOptions extends CommonOptions {
-  url?: string;
-  urlEnv?: string;
-  drainTimeoutMs?: number;
-  batchBytes?: number;
-}
-
-export interface GraduationRollbackOptions extends CommonOptions {
-  yes?: boolean;
-  expect?: string;
-  url?: string;
-  urlEnv?: string;
-}
+export type GraduationOptions = GraduationCommandOptions & GraduationInternals;
+type RunOptions = Partial<GraduationCommandOptions> & GraduationInternals;
 
 // ── run context ────────────────────────────────────────────────────────────
 
@@ -282,7 +256,9 @@ interface Run {
   m: GraduationManifest;
   path: string;
   deps: GraduationDeps;
-  opts: CommonOptions & { drainTimeoutMs?: number; batchBytes?: number; config?: GBrainConfig };
+  opts: RunOptions;
+  /** True when a live serve handed the source over during this process. */
+  serveHandoff: boolean;
   dataDir: string;
   source: GraduationSourceEngine | null;
   lock: LockHandle | null;
@@ -296,11 +272,24 @@ interface Run {
 function newRun(m: GraduationManifest, path: string, opts: Run['opts']): Run {
   return {
     m, path, opts, deps: { ...defaultGraduationDeps(), ...opts.deps }, dataDir: m.source.dataDir,
-    source: null, lock: null, main: null, ddl: null, closeTargets: null, resumePause: null, unregister: registerGraduationRunInProcess(m.runId),
+    source: null, lock: null, main: null, ddl: null, closeTargets: null, resumePause: null, serveHandoff: false, unregister: registerGraduationRunInProcess(m.runId),
   };
 }
 
 function progress(run: Pick<Run, 'opts'>, event: GraduationProgressEvent): void { run.opts.onProgress?.(event); }
+function phase(run: Pick<Run, 'opts'>, name: GraduationPhase, total?: number): void {
+  run.opts.progress?.phase(name, total);
+  progress(run, { phase: name, ...(total !== undefined ? { total } : {}) });
+}
+
+/** SIGINT stops the run at the next boundary before cutover, leaving a resumable state. */
+function checkInterrupt(run: Run): void {
+  if (!run.opts.signal?.aborted || STATE_RANK[run.m.state] >= STATE_RANK.cutover) return;
+  throw opError('interrupted', `The move stopped after an interrupt at ${run.m.state}; it is resumable.`,
+    'Resume it when ready (fix); nothing was cut over and the PGLite brain stays authoritative.',
+    { why: 'An interrupt stops the run at the next custody boundary before cutover.',
+      fix: { argv: resumeArgv(), consent: [], actor: 'agent', requires_exclusive: true, why: 'Continues from the recorded state.', verify: { argv: STATUS_ARGV } } });
+}
 
 function markerFor(run: Run): IntentMarker {
   return { runId: run.m.runId, state: run.m.state, ...currentProcessIdentity(), target: run.m.target, updatedAt: new Date().toISOString() };
@@ -329,6 +318,7 @@ function save(run: Run): void {
 async function boundary(run: Run, name: GraduationBoundary, detail: GraduationBoundaryDetail = {}): Promise<void> {
   await graduationBoundary(name, { runId: run.m.runId, ...detail });
   await pauseSeam(run, name);
+  checkInterrupt(run);
 }
 
 async function pauseSeam(run: Pick<Run, 'opts'>, step: string): Promise<void> {
@@ -356,11 +346,17 @@ async function cleanup(run: Run): Promise<void> {
   if (errors.length) process.stderr.write(`[graduation] cleanup: ${errors.map(String).join('; ')}\n`);
 }
 
-function invokedAs(run: { m: GraduationManifest }): 'postgres' | 'supabase' { return run.m.invokedAs ?? 'postgres'; }
-function urlEnvName(routes: TargetRoutes): string { return routes.urlEnv ?? 'GBRAIN_TARGET_URL'; }
-
-function runArgv(spelling: 'postgres' | 'supabase', routes: TargetRoutes, planHash: string): string[] {
-  return ['gbrain', 'migrate', '--to', spelling, '--url-env', urlEnvName(routes), '--yes', '--expect', planHash];
+function invokedAs(run: { m: GraduationManifest }): GraduationTargetSpelling { return run.m.invokedAs ?? 'postgres'; }
+function spellingOf(run: { m: GraduationManifest }): { to: GraduationTargetSpelling; urlEnv?: string } {
+  return { to: invokedAs(run), ...(run.m.routes.urlEnv ? { urlEnv: run.m.routes.urlEnv } : {}) };
+}
+/** Escape hatches the user passed; every emitted command repeats them so the plan hash matches. */
+function hatchArgs(input: Pick<PlanInputs, 'force' | 'triggerBypassOverride' | 'batchBytes'>): string[] {
+  return [
+    ...(input.triggerBypassOverride ? ['--trigger-bypass', input.triggerBypassOverride === 'session_replication_role' ? 'replica' : 'disable-trigger'] : []),
+    ...(input.batchBytes ? ['--batch-size', String(input.batchBytes)] : []),
+    ...(input.force ? ['--force'] : []),
+  ];
 }
 
 // ── plan ───────────────────────────────────────────────────────────────────
@@ -370,10 +366,19 @@ interface PlanInputs {
   env: NodeJS.ProcessEnv;
   routes: Routes;
   target: TargetIdentity;
-  invokedAs: 'postgres' | 'supabase';
+  invokedAs: GraduationTargetSpelling;
   force: boolean;
   triggerBypassOverride?: TriggerBypass;
   batchBytes?: number;
+}
+
+function sourceConfig(opts: RunOptions): GBrainConfig {
+  const config = opts.config ?? loadConfigFileOnly();
+  if (!config) {
+    throw opError('no_brain', 'No brain is configured on this machine.', 'Run `gbrain init --pglite --no-embedding` first.',
+      { fix: { argv: ['gbrain', 'init', '--pglite', '--no-embedding'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Creates a local PGLite brain.' } });
+  }
+  return config;
 }
 
 function sourceDataDir(config: GBrainConfig): string {
@@ -403,7 +408,7 @@ async function userConfigKeys(main: BrainEngine): Promise<string[]> {
 }
 
 function planArgvFor(input: Pick<PlanInputs, 'invokedAs' | 'routes'>): string[] {
-  return ['gbrain', 'migrate', '--to', input.invokedAs, '--url-env', urlEnvName(input.routes), '--plan', '--json'];
+  return planArgvOf({ to: input.invokedAs, ...(input.routes.urlEnv ? { urlEnv: input.routes.urlEnv } : {}) });
 }
 
 async function countTables(source: BrainEngine, inventory: Inventory): Promise<GraduationPlan['tables']> {
@@ -490,28 +495,21 @@ async function assemblePlan(deps: GraduationDeps, input: PlanInputs, source: Bra
     planHash, source: { dataDir, brainId, hostId }, target: input.target, routes: { main: input.routes.main, ddl: input.routes.ddl, ...(input.routes.urlEnv ? { urlEnv: input.routes.urlEnv } : {}) },
     triggerBypass, tables, blockers, estimateSeconds: { copy, verify, doctor, total: copy + verify + doctor },
     sourceMeasured: source ? 'now' : 'at_run_start',
-    nextArgv: runArgv(input.invokedAs, input.routes, planHash),
+    nextArgv: runArgvOf({ to: input.invokedAs, ...(input.routes.urlEnv ? { urlEnv: input.routes.urlEnv } : {}) }, planHash, hatchArgs(input)),
   };
 }
 
-function planInputs(deps: GraduationDeps, opts: GraduationPlanOptions): PlanInputs {
+function planInputs(deps: GraduationDeps, opts: RunOptions): PlanInputs {
   const env = opts.env ?? process.env;
   const routes = deps.resolveTargetRoutes({ url: opts.url, urlEnv: opts.urlEnv, env });
-  return { config: opts.config, env, routes, target: deps.targetIdentity(routes.mainUrl), invokedAs: opts.invokedAs ?? 'postgres',
-    force: !!opts.force, triggerBypassOverride: opts.triggerBypass, batchBytes: opts.batchBytes };
+  return { config: sourceConfig(opts), env, routes, target: deps.targetIdentity(routes.mainUrl), invokedAs: opts.to ?? 'postgres',
+    force: !!opts.force, triggerBypassOverride: opts.triggerBypass, batchBytes: opts.batchSize };
 }
 
 function refuseOnPathState(state: GraduationPathState): void {
-  if (state.kind === 'graduated') throw graduationAlreadyGraduated(state);
-  if (state.kind === 'split_brain') throw graduationSplitBrainError(state);
-  if (state.kind === 'in_progress' && state.marker) throw graduationInProgressError({ runId: state.marker.runId, state: state.marker.state, where: 'source' });
-}
-
-function graduationAlreadyGraduated(state: GraduationPathState): OperationError {
-  return graduationError('engine_graduated', `This PGLite datastore already moved to Postgres (run ${state.tombstone?.runId ?? 'unknown'}).`,
-    'Run `gbrain migrate --resume` to finish any pending routing flip on this host; `gbrain migrate --status --json` shows the recorded run.',
-    'The datastore path holds a graduation tombstone, so there is nothing left to move.',
-    { argv: ['gbrain', 'migrate', '--resume'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Finishes the recorded graduation.', verify: { argv: STATUS_ARGV } });
+  if (state.state === 'graduated') throw engineGraduatedFor(state, 'cli');
+  if (state.state === 'split_brain') throw splitBrainFor(state);
+  if (state.state === 'in_progress' && state.marker) throw inProgressError({ runId: state.marker.runId, state: state.marker.state, pid: state.marker.pid, dataDir: state.dataDir });
 }
 
 /**
@@ -520,10 +518,11 @@ function graduationAlreadyGraduated(state: GraduationPathState): OperationError 
  * under a short kernel-lock hold; a live serve holding it marks counts
  * `measured at run start`.
  */
-export async function planGraduation(opts: GraduationPlanOptions): Promise<GraduationPlan> {
+export async function planGraduation(opts: GraduationOptions): Promise<GraduationPlan> {
   const deps = { ...defaultGraduationDeps(), ...opts.deps };
   const input = planInputs(deps, opts);
-  const dataDir = sourceDataDir(opts.config);
+  const dataDir = sourceDataDir(input.config);
+  phase({ opts }, 'plan');
   refuseOnPathState(inspectGraduationPath(dataDir));
   let source: GraduationSourceEngine | null = null;
   let targets: { main: BrainEngine; close(): Promise<void> } | null = null;
@@ -544,40 +543,40 @@ export async function planGraduation(opts: GraduationPlanOptions): Promise<Gradu
 const DRAIN_RESOLVED_BLOCKERS: ReadonlySet<GraduationBlocker['kind']> = new Set(['request', 'topology_recovery', 'effect_recovery']);
 function refusesRun(blocker: GraduationBlocker): boolean { return blocker.needsUser || !DRAIN_RESOLVED_BLOCKERS.has(blocker.kind); }
 
-function blockerRefusal(blocker: GraduationBlocker, run: { m: GraduationManifest }): OperationError {
-  const codeByKind: Partial<Record<GraduationBlocker['kind'], GraduationErrorCode>> = {
-    foreign_host_binding: 'graduation_foreign_host_binding', target_not_empty: 'graduation_target_not_empty',
-    unsupported_platform: 'graduation_unsupported_platform', unclassified_relation: 'graduation_unclassified_table',
-    embedding_dimension: 'graduation_embedding_dimension_mismatch', target_unsupported: 'graduation_target_unsupported',
-    writer_held: 'graduation_source_writer_held', env_override: 'graduation_target_unsupported', source_doctor: 'graduation_verify_failed',
-    dangling_reference: 'graduation_target_unsupported',
-  };
-  const code = codeByKind[blocker.kind] ?? 'graduation_drain_timeout';
-  const fix: Action = blocker.argv?.length
-    ? { argv: [...blocker.argv], consent: blocker.needsUser ? ['destructive'] : [], actor: 'agent', requires_exclusive: false, why: blocker.detail, verify: { argv: planArgv(run) } }
-    : blocker.needsUser
-      ? { argv: planArgv(run), consent: ['egress'], actor: 'agent', requires_exclusive: false, why: `${blocker.detail} Ask the user to resolve it, then show the plan again.`, user_message: blocker.detail }
-      : { consent: [], actor: 'agent', requires_exclusive: false, why: blocker.detail };
-  return graduationError(code, `Graduation is blocked: ${blocker.detail}`,
-    blocker.needsUser ? 'Relay the blocker to the user; nothing was changed and the source stays authoritative.' : 'Follow the fix; nothing was changed and the source stays authoritative.',
-    `Blocker ${blocker.kind} (${blocker.id}) must clear before any copy starts.`, fix, `${blocker.kind}:${blocker.id}`);
+function blockerRefusal(blocker: GraduationBlocker, run: { m: GraduationManifest; opts: RunOptions }, probe?: TargetProbe): OperationError {
+  const spelling = spellingOf(run);
+  const host = run.m.routes.main;
+  switch (blocker.kind) {
+    case 'foreign_host_binding':
+      return foreignHostBindingError({ sourceId: blocker.argv?.at(-1) ?? blocker.id, ownerHost: /host ([0-9a-f-]+)/.exec(blocker.detail)?.[1] ?? 'another host', spelling });
+    case 'target_not_empty':
+      return targetNotEmptyError({ host, tables: (probe?.nonEmptyTables ?? [blocker.id]).map(relation => ({ relation, rows: -1 })), spelling });
+    case 'unsupported_platform':
+      return unsupportedPlatformError({ platform: process.platform });
+    case 'embedding_dimension': {
+      const m = /source (\S+), target (\S+)/.exec(blocker.detail);
+      return embeddingDimensionMismatchError({ column: blocker.id, source: m?.[1] ?? 'unknown', target: m?.[2] ?? 'unknown', host, spelling });
+    }
+    case 'target_unsupported':
+    case 'env_override':
+      return targetUnsupportedError({ requirement: blocker.kind === 'env_override' ? 'env_override' : blocker.id, detail: blocker.detail, host, spelling });
+    case 'writer_held':
+      return sourceWriterHeldError({ owner: null, rerun: runArgvOf(spelling, run.m.planHash) });
+    default:
+      return drainTimeoutError({ blockers: [blocker], timeoutSec: Math.ceil((run.opts.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS) / 1000) });
+  }
 }
 
-function planArgv(run: { m: GraduationManifest }): string[] {
-  return ['gbrain', 'migrate', '--to', invokedAs(run), '--url-env', urlEnvName(run.m.routes), '--plan', '--json'];
+function planArgv(run: { m: GraduationManifest }, extra: readonly string[] = []): string[] {
+  return planArgvOf(spellingOf(run), extra);
 }
 
 function writerHeldError(run: Run, error: unknown): OperationError {
   const peek = peekLock(run.dataDir);
-  const owner = liveServeOwner(error) ?? (peek.held && peek.pid ? { pid: peek.pid, transport: peek.http ? 'http' as const : 'stdio' as const, is_self: false } : null);
-  const rerun: Action = { argv: runArgv(invokedAs(run), run.m.routes, run.m.planHash), consent: [], actor: 'agent', requires_exclusive: true,
-    why: 'Reruns the approved graduation once the datastore is free.', verify: { argv: STATUS_ARGV } };
-  const fix = owner ? exclusiveFix(rerun, owner)
-    : { ...rerun, actor: 'user' as const, user_message: 'Another gbrain process holds this brain; please stop it, then I will rerun the move.' };
-  return graduationError('graduation_source_writer_held',
-    `Another process holds this PGLite datastore${owner ? ` (PID ${owner.pid}, ${owner.transport})` : ''} and did not hand it off within ${Math.round((run.opts.handoffTimeoutMs ?? HANDOFF_TIMEOUT_MS) / 1000)} s.`,
-    'Stop the named server or daemon, then rerun the same command; the plan approval still holds.',
-    'Graduation needs the kernel lock on the source for the whole move; a holder that keeps writing would race the copy.', fix);
+  const holder = inspectLockHolder(run.dataDir);
+  const owner = liveServeOwner(error) ?? (peek.held && peek.isServe && peek.pid ? { pid: peek.pid, transport: peek.http ? 'http' as const : 'stdio' as const, is_self: false } : null);
+  return sourceWriterHeldError({ owner, ...(peek.pid ? { pid: peek.pid } : {}), ...(holder.subcommand ? { subcommand: holder.subcommand } : {}),
+    rerun: runArgvOf(spellingOf(run), run.m.planHash) });
 }
 
 async function openSourceUnderLock(run: Run): Promise<void> {
@@ -587,6 +586,7 @@ async function openSourceUnderLock(run: Run): Promise<void> {
     catch (error) {
       if (!(error instanceof PgliteBusyError)) throw error;
       if (Date.now() >= deadline) throw writerHeldError(run, error);
+      run.serveHandoff = true;
       progress(run, { phase: 'handoff', message: 'waiting for the live serve to hand off the datastore' });
       await new Promise(resolve => setTimeout(resolve, 250));
     }
@@ -596,12 +596,7 @@ async function openSourceUnderLock(run: Run): Promise<void> {
 async function claimPause(run: Run): Promise<void> {
   if (run.resumePause) return;
   const resume = await run.deps.claimAutopilotPause();
-  if (!resume) {
-    throw graduationError('graduation_in_progress', 'Another migration or an operator hold owns the autopilot pause marker.',
-      'Wait for the other migration to finish, then retry; `gbrain migrate --status --json` shows a graduation run.',
-      'The autopilot pause marker is the migration mutex; running without it would let two moves race.',
-      { argv: STATUS_ARGV, consent: [], actor: 'provider', requires_exclusive: false, why: 'Shows whether a graduation run holds the machine.', verify: { argv: STATUS_ARGV } });
-  }
+  if (!resume) throw inProgressError({ runId: run.m.runId, state: run.m.state, dataDir: run.dataDir });
   run.resumePause = resume;
 }
 
@@ -619,19 +614,14 @@ async function openTargets(run: Run): Promise<void> {
 
 /** Step 1 (fresh run): marker before the lock, pause marker, source under the lock, in-run plan bound to the approval. */
 async function quiesceFresh(run: Run, input: PlanInputs, expect: string): Promise<void> {
+  phase(run, 'quiesce');
   writeGraduationManifest(run.m, run.path);
   writeIntentMarker(run.dataDir, markerFor(run));
   await claimPause(run);
   await openSourceUnderLock(run);
   await openTargets(run);
   const plan = await assemblePlan(run.deps, input, run.source, run.main, false);
-  if (plan.planHash !== expect) {
-    throw opError('preview_changed', 'The brain or target changed since the approved plan; nothing was moved.',
-      'Show the user the fresh plan (the preview command) and rerun with its plan_hash after they agree.',
-      { why: 'The approval binds identities, inventory, blockers, trigger bypass and target emptiness; one of them changed.',
-        fix: { argv: runArgv(input.invokedAs, input.routes, plan.planHash), consent: ['egress', 'destructive'], actor: 'agent', requires_exclusive: true,
-          why: 'Runs the move against the fresh plan once the user agrees.', plan_hash: plan.planHash, preview_argv: planArgv(run), verify: { argv: STATUS_ARGV } } });
-  }
+  if (plan.planHash !== expect) throw previewChanged(run, hatchArgs(input), plan.planHash);
   const blocker = plan.blockers.find(refusesRun);
   if (blocker) throw blockerRefusal(blocker, run);
   run.m.source = plan.source;
@@ -642,38 +632,41 @@ async function quiesceFresh(run: Run, input: PlanInputs, expect: string): Promis
   save(run);
 }
 
+function previewChanged(run: { m: GraduationManifest }, extra: readonly string[], freshHash: string): OperationError {
+  return opError('preview_changed', 'The brain or target changed since the approved plan; nothing was moved.',
+    'Show the user the fresh plan (fix) and run the move with its plan_hash after they agree.',
+    { why: 'The approval binds identities, inventory, person-needed blockers, trigger bypass and target emptiness; one of them changed.',
+      fix: { argv: planArgv(run, extra), consent: [], actor: 'agent', requires_exclusive: false, plan_hash: freshHash,
+        why: 'Shows the fresh read-only plan and its plan_hash.', verify: { argv: planArgv(run, extra) } } });
+}
+
 /** Step 1 on resume: same custody, recorded identities; before cutover the recorded approval must still match. */
 async function quiesceResume(run: Run): Promise<void> {
+  phase(run, 'quiesce');
   writeIntentMarker(run.dataDir, markerFor(run));
   await claimPause(run);
   await openSourceUnderLock(run);
   const [brain] = await run.source!.executeRaw<{ brain_id: string }>('SELECT brain_id::text AS brain_id FROM persistence_brain WHERE singleton = 1');
   if (run.m.source.brainId && brain?.brain_id !== run.m.source.brainId) {
-    throw graduationSplitBrainError({ dataDir: run.dataDir, movedTo: null, marker: readIntentMarker(run.dataDir),
-      detail: `The datastore at ${run.dataDir} has brain_id ${brain?.brain_id ?? 'unknown'}, not the recorded ${run.m.source.brainId}.` });
+    throw splitBrainFor({ dataDir: run.dataDir, movedTo: existsSync(graduatedPath(run.dataDir, run.m.runId)) ? graduatedPath(run.dataDir, run.m.runId) : null });
   }
   await openTargets(run);
   if (STATE_RANK[run.m.state] < STATE_RANK.cutover) await recheckApproval(run);
 }
 
 async function recheckApproval(run: Run): Promise<void> {
-  const config = loadConfigFileOnly() ?? run.opts.config ?? ({ engine: 'pglite', database_path: run.dataDir } as GBrainConfig);
+  const config = run.opts.config ?? loadConfigFileOnly() ?? ({ engine: 'pglite', database_path: run.dataDir } as GBrainConfig);
   const row = await readGraduationRow(run.main!);
   const input: PlanInputs = {
     config: { ...config, engine: 'pglite', database_path: run.dataDir }, env: run.opts.env ?? process.env,
     routes: { ...run.m.routes, mainUrl: run.m.targetUrls!.main, ddlUrl: run.m.targetUrls!.ddl }, target: run.m.target,
-    invokedAs: invokedAs(run), force: false, triggerBypassOverride: run.m.triggerBypass, batchBytes: run.opts.batchBytes,
+    invokedAs: invokedAs(run), force: false, triggerBypassOverride: run.m.triggerBypass, batchBytes: run.m.batchSize,
   };
   const ours = row?.role === 'target' && row.run_id === run.m.runId;
   const plan = await assemblePlan(run.deps, input, run.source, run.main, ours);
   const blocker = plan.blockers.find(refusesRun);
   if (blocker) throw blockerRefusal(blocker, run);
-  if (!run.m.force && plan.planHash !== run.m.planHash) {
-    throw opError('preview_changed', 'The brain or target changed since the approved plan; the run did not continue.',
-      'Show the user the fresh plan and, after they agree, roll this run back (`gbrain migrate --rollback-to-source`) and start again with the new plan_hash.',
-      { why: 'Resume reuses the recorded approval only while identities, inventory, person-needed blockers and trigger bypass are unchanged.',
-        fix: { argv: planArgv(run), consent: ['egress'], actor: 'agent', requires_exclusive: false, why: 'Shows the fresh plan.', plan_hash: plan.planHash, verify: { argv: STATUS_ARGV } } });
-  }
+  if (!run.m.force && plan.planHash !== run.m.planHash) throw previewChanged(run, [], plan.planHash);
 }
 
 async function sourceReceipts(run: Run): Promise<TableReceipt[]> {
@@ -725,11 +718,12 @@ async function stepRecord(run: Run): Promise<void> {
 
 async function stepDrain(run: Run): Promise<void> {
   if (run.m.state !== 'draining') advance(run, 'draining');
+  phase(run, 'drain');
   await boundary(run, 'drain_started');
   const started = Date.now();
   const timeoutMs = run.opts.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
-  const { blockers } = await run.deps.drainForGraduation(run.source!, { timeoutMs, hostId: run.m.source.hostId, config: run.opts.config ?? loadConfigFileOnly() ?? ({ engine: 'pglite' } as GBrainConfig) });
-  if (blockers.length) throw drainTimeoutError(blockers, timeoutMs);
+  const { blockers } = await run.deps.drainForGraduation(run.source!, { timeoutMs, hostId: run.m.source.hostId, config: sourceConfig(run.opts) });
+  if (blockers.length) throw drainTimeoutError({ blockers, timeoutSec: Math.ceil(timeoutMs / 1000) });
   await run.deps.freezeSource(run.source!);
   const receipts = await sourceReceipts(run);
   if (run.m.sourceReceipts?.length) await markForRecopy(run, changedRelations(run.m.sourceReceipts, receipts));
@@ -742,18 +736,25 @@ async function stepDrain(run: Run): Promise<void> {
 /** Step 4: route cross-check, read-only emptiness, schema, target row `copying`, fence, emptiness again under the fence. */
 async function stepFenceTarget(run: Run, opts: { force?: boolean }): Promise<void> {
   const { main, ddl } = run as Required<Pick<Run, 'main' | 'ddl'>>;
+  phase(run, 'schema');
   await run.deps.crossCheckRoutes(main!, ddl!, run.m.runId);
   const existing = await readGraduationRow(main!);
   const ours = existing?.role === 'target' && existing.run_id === run.m.runId;
   const reuse = !!opts.force && existing?.role === 'target' && existing.state === 'abandoned';
   if (!ours) {
     const routes = recordedRoutes(run);
-    if (existing && !reuse) throw targetNotEmptyError(run, `it records graduation run ${existing.run_id} (${existing.state})`);
-    if (!existing && !probeTargetEmpty(await run.deps.probeTarget(routes)) && !opts.force) throw targetNotEmptyError(run, 'it already holds gbrain data');
+    if (existing && !reuse) throw notEmpty(run, [{ relation: `persistence_graduation (run ${existing.run_id}, ${existing.state})`, rows: 1 }]);
+    if (!existing) {
+      const probe = await run.deps.probeTarget(routes);
+      if (!probeTargetEmpty(probe) && !opts.force) throw notEmpty(run, await tableCounts(main!, probe.nonEmptyTables));
+    }
     await run.deps.initTargetSchema(ddl!, run.source!);
     await withGraduationRun(main!, existing?.run_id ?? run.m.runId, tx => setTargetState(tx, run.m.runId, 'copying', { sourceBrainId: run.m.source.brainId || null, sourceDataDir: run.dataDir, triggerBypass: run.m.triggerBypass }, { reuse }));
     await installGraduationFence(ddl!, run.m.runId);
-    if (!opts.force && !probeTargetEmpty(await run.deps.probeTarget(routes))) throw targetNotEmptyError(run, 'rows appeared while the schema was bootstrapped');
+    if (!opts.force) {
+      const probe = await run.deps.probeTarget(routes);
+      if (!probeTargetEmpty(probe)) throw notEmpty(run, await tableCounts(main!, probe.nonEmptyTables));
+    }
     if (opts.force) await wipeUncopiedTables(run);
     await boundary(run, 'target_fenced');
     return;
@@ -771,12 +772,19 @@ async function wipeUncopiedTables(run: Run): Promise<void> {
   });
 }
 
-function targetNotEmptyError(run: Run, why: string): OperationError {
-  return graduationError('graduation_target_not_empty', `The target database is not empty: ${why}.`,
-    'Ask the user to pick an empty database, or to approve `--force` after the plan lists what it deletes.',
-    'Graduation copies into an empty database (or one only this run wrote) so nothing foreign is merged into the brain.',
-    { argv: [...planArgv(run), '--force'], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
-      why: 'Shows what a forced run would delete from the target, so the user can decide.', verify: { argv: planArgv(run) } });
+function notEmpty(run: Run, tables: readonly { relation: string; rows: number }[]): OperationError {
+  return targetNotEmptyError({ host: run.m.routes.main, tables, spelling: spellingOf(run) });
+}
+
+async function tableCounts(engine: BrainEngine, relations: readonly string[]): Promise<Array<{ relation: string; rows: number }>> {
+  const out: Array<{ relation: string; rows: number }> = [];
+  for (const relation of relations.slice(0, 10)) {
+    const [q] = await engine.executeRaw<{ q: string | null }>('SELECT CASE WHEN to_regclass($1) IS NULL THEN NULL ELSE quote_ident($1) END AS q', [relation]);
+    if (!q?.q) continue;
+    const [n] = await engine.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM ${q.q}`);
+    out.push({ relation, rows: Number(n?.n ?? 0) });
+  }
+  return out;
 }
 
 /** Step 5: per-table copy with manifest checkpoints, then sequences, deferred indexes and trigger re-enable. */
@@ -793,22 +801,29 @@ async function stepCopy(run: Run): Promise<void> {
   run.m.tables = order.map(e => known.get(e.relation) ?? { relation: e.relation, state: 'pending', batches: 0, disabledTriggers: false });
   save(run);
   const pending = order.filter(e => !['copied', 'verified'].includes(known.get(e.relation)?.state ?? 'pending'));
+  phase(run, 'copy', pending.length);
   if (pending.length) await run.deps.deferIndexes(run.main!, { runId: run.m.runId });
+  const sourceRows = new Map((run.m.sourceReceipts ?? []).map(r => [r.relation, r.rows]));
   let done = order.length - pending.length;
   for (const entry of pending) {
+    checkInterrupt(run);
     setCheckpoint(run, entry.relation, { state: 'copying', batches: 0, disabledTriggers: run.m.triggerBypass === 'disable_trigger' });
+    run.opts.progress?.table(entry.relation, sourceRows.get(entry.relation) ?? 0);
     let batches = 0;
-    await run.deps.copyTable(engines, entry, { bypass: run.m.triggerBypass, batchBytes: run.opts.batchBytes, runId: run.m.runId,
+    await run.deps.copyTable(engines, entry, { bypass: run.m.triggerBypass, batchBytes: run.m.batchSize, runId: run.m.runId,
       onBatch: rows => {
         batches += 1;
+        run.opts.progress?.batch(entry.relation, rows);
         progress(run, { phase: 'copy', relation: entry.relation, rows, done, total: order.length });
         void graduationBoundary('batch_copied', { runId: run.m.runId, relation: entry.relation, batch: batches });
+        checkInterrupt(run);
       } });
     setCheckpoint(run, entry.relation, { state: 'copied', batches });
     done += 1;
     await boundary(run, 'table_copied', { relation: entry.relation });
   }
   await run.deps.copySequences(engines, { runId: run.m.runId });
+  phase(run, 'indexes');
   await run.deps.buildDeferredIndexes(run.ddl!, { runId: run.m.runId, log: line => progress(run, { phase: 'index', message: line }) });
   const disabled = run.m.tables.filter(t => t.disabledTriggers).map(t => t.relation);
   if (disabled.length) {
@@ -832,25 +847,18 @@ async function stepVerify(run: Run): Promise<void> {
   await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verifying'));
   const started = Date.now();
   await run.deps.assertRelationSet(run.main!, 'postgres', run.deps.inventory);
+  phase(run, 'verify');
   const result = await run.deps.verifyGraduation({ source: run.source!, target: run.main! }, {
     inventory: run.deps.inventory, sourceReceipts: run.m.sourceReceipts ?? [], replayRequestId: run.m.replayRequestId ?? undefined,
     runId: run.m.runId, expectFence: true,
-    runDoctor: () => run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main),
+    runDoctor: () => { phase(run, 'doctor'); return run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main); },
   });
   const timings = { ...run.m.timings, verify_ms: Date.now() - started };
   if (!result.ok) {
     await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verify_failed', { tableReceipts: result.tables, replayProbe: result.replay, timings, doctor: { target: result.doctorFailingChecks } }));
     advance(run, 'verify_failed', { verifyFailures: result.failures, timings });
     const repeated = result.failures.some(f => prior.some(p => p.relation === f.relation && p.kind === f.kind));
-    const first = result.failures[0];
-    throw graduationError('graduation_verify_failed',
-      `Verify failed: ${result.failures.map(f => `${f.relation} (${f.kind}${f.firstKey ? ` at ${f.firstKey}` : ''}${f.column ? `, column ${f.column}` : ''})`).join('; ')}.`,
-      repeated ? 'The same mismatch repeated after a re-copy: report it with the detail below. `gbrain migrate --rollback-to-source` discards the target and keeps the source.'
-        : 'Run `gbrain migrate --resume`; it re-copies the mismatched tables with their dependants and verifies again. The source stays authoritative and writable.',
-      first ? `Verify sub-cause ${first.kind}: ${first.detail}` : 'Verify reported a failure.',
-      repeated ? { consent: [], actor: 'agent', requires_exclusive: false, why: 'A repeated mismatch is a gbrain bug: report it with the table, first key and column; the source is untouched.' }
-        : { argv: ['gbrain', 'migrate', '--resume'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Re-copies the mismatched tables once and verifies again.', verify: { argv: STATUS_ARGV } },
-      JSON.stringify(result.failures.slice(0, 20)));
+    throw verifyFailedError({ failures: result.failures, repeated });
   }
   await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'verified', { tableReceipts: result.tables, replayProbe: result.replay, timings, triggerBypass: run.m.triggerBypass, doctor: { target: result.doctorFailingChecks } }));
   run.m.tables = run.m.tables.map(t => ({ ...t, state: 'verified' as const }));
@@ -860,6 +868,7 @@ async function stepVerify(run: Run): Promise<void> {
 
 /** Step 7a: re-apply sequences, fence the source (`cutover`), close it keeping the lock, move aside, tombstone. */
 async function stepCutover(run: Run): Promise<void> {
+  phase(run, 'cutover');
   await run.deps.copySequences({ source: run.source!, target: run.main! }, { runId: run.m.runId });
   const [brain] = await run.source!.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton = 1');
   const [seq] = await run.source!.executeRaw<{ s: string }>('SELECT COALESCE(max(sequence), 0)::text AS s FROM persistence_requests');
@@ -888,7 +897,7 @@ async function tombstoneUnderLock(run: Run): Promise<void> {
         fixArgv: ['gbrain', 'config', 'set', 'database_url', '<GBRAIN_TARGET_URL>'],
       });
     } catch (error) {
-      if (error instanceof TombstonePathOccupiedError) throw graduationSplitBrainError(inspectGraduationPath(run.dataDir));
+      if (error instanceof TombstonePathOccupiedError) throw splitBrainFor(inspectGraduationPath(run.dataDir));
       throw error;
     }
   }
@@ -899,7 +908,7 @@ async function tombstoneUnderLock(run: Run): Promise<void> {
 /** Step 7b: one target transaction grants authority (persistence enabled as on the source) and drops the fence. */
 async function stepAuthority(run: Run): Promise<void> {
   const state = inspectGraduationPath(run.dataDir);
-  if (state.kind === 'split_brain' || readTombstone(run.dataDir)?.runId !== run.m.runId) throw graduationSplitBrainError(state);
+  if (state.state === 'split_brain' || readTombstone(run.dataDir)?.runId !== run.m.runId) throw splitBrainFor(state);
   await openTargets(run);
   await withGraduationRun(run.main!, run.m.runId, async tx => {
     await tx.executeRaw('UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1', [run.m.sourceEnabled === true]);
@@ -912,6 +921,7 @@ async function stepAuthority(run: Run): Promise<void> {
 
 /** Step 8: routing flip, registry/mount rewrite, manifest `graduated`, then the caller releases lock and pause marker. */
 async function stepFlip(run: Run): Promise<void> {
+  phase(run, 'flip');
   const file = loadConfigFileOnly() ?? run.opts.config ?? ({ engine: 'pglite' } as GBrainConfig);
   const next = { ...file, engine: 'postgres' as const, database_url: run.m.targetUrls!.main };
   delete (next as { database_path?: string }).database_path;
@@ -939,8 +949,11 @@ function rewriteMounts(path: string, match: (m: MountRecord) => boolean, rewrite
 async function receiptOf(run: Run): Promise<GraduationReceipt> {
   if (!run.main) await openTargets(run);
   const row = await readGraduationRow(run.main!);
+  const doctor = (row?.doctor ?? {}) as { source?: readonly string[]; target?: readonly string[] };
   return { runId: run.m.runId, state: (row?.state ?? 'authoritative') as GraduationReceipt['state'], tables: row?.table_receipts ?? [],
-    triggerBypass: run.m.triggerBypass, replay: row?.replay_probe ?? { status: 'not_available', reason: 'no_uncompacted_request' }, timings: run.m.timings };
+    triggerBypass: run.m.triggerBypass, replay: row?.replay_probe ?? { status: 'not_available', reason: 'no_uncompacted_request' }, timings: run.m.timings,
+    targetDisplayUrl: run.m.routes.main, retainedPath: graduatedPath(run.dataDir, run.m.runId), serveHandoff: run.serveHandoff,
+    doctor: { source: doctor.source ?? [], target: doctor.target ?? [] } };
 }
 
 async function takeKernelLock(run: Run): Promise<void> {
@@ -951,9 +964,13 @@ async function takeKernelLock(run: Run): Promise<void> {
 
 /** Continue a run from its recorded state to `graduated`. */
 async function continueRun(run: Run, opts: { force?: boolean } = {}): Promise<GraduationReceipt> {
-  if (run.m.state === 'cutover') {
-    const path = inspectGraduationPath(run.dataDir);
-    if (path.kind === 'split_brain') throw graduationSplitBrainError(path);
+  if (run.m.state === 'cutover' || run.m.state === 'tombstoned') {
+    let path = inspectGraduationPath(run.dataDir);
+    if (path.state === 'split_brain') {
+      if (!run.opts.yes) throw splitBrainFor(path);
+      moveStrayAside(run);
+      path = inspectGraduationPath(run.dataDir);
+    }
     const tombstone = readTombstone(run.dataDir);
     if (tombstone?.runId === run.m.runId || (!existsSync(run.dataDir) && path.movedTo)) {
       await claimPause(run);
@@ -983,6 +1000,19 @@ async function stepFenceTargetIfStarted(run: Run, opts: { force?: boolean }): Pr
   if (STATE_RANK[run.m.state] > STATE_RANK.draining) await stepFenceTarget(run, opts);
 }
 
+/**
+ * `--resume --yes` after the user decided about a stray datastore at the old
+ * path: move it to `<path>.stray-<run_id>` (never deleted) so the tombstone
+ * can be written and the move can finish.
+ */
+function moveStrayAside(run: Run): void {
+  const stray = `${run.dataDir}.stray-${run.m.runId}`;
+  if (existsSync(stray)) throw splitBrainFor(inspectGraduationPath(run.dataDir));
+  renameSync(run.dataDir, stray);
+  fsyncParent(run.dataDir);
+  progress(run, { phase: 'split_brain', message: `moved the stray datastore to ${stray}` });
+}
+
 function newManifest(input: PlanInputs, expect: string, runId: string): GraduationManifest {
   const now = new Date().toISOString();
   return {
@@ -992,6 +1022,7 @@ function newManifest(input: PlanInputs, expect: string, runId: string): Graduati
     inventoryVersion: 0, schemaVersion: LATEST_VERSION, planHash: expect, triggerBypass: input.triggerBypassOverride ?? 'session_replication_role',
     tables: [], timings: {}, startedAt: now, updatedAt: now,
     targetUrls: { main: input.routes.mainUrl, ddl: input.routes.ddlUrl }, invokedAs: input.invokedAs, force: input.force,
+    ...(input.batchBytes ? { batchSize: input.batchBytes } : {}),
   };
 }
 
@@ -1006,20 +1037,29 @@ function abandonUnstarted(run: Run): void {
  * the source unchanged and writable; a drain timeout or verify failure is
  * resumable with `resumeGraduation`.
  */
-export async function runGraduation(opts: GraduationRunOptions): Promise<GraduationReceipt> {
+export async function runGraduation(opts: GraduationOptions): Promise<GraduationReceipt> {
   const path = opts.manifestPath ?? graduationManifestPath();
   const existing = readGraduationManifest(path);
   if (existing && !TERMINAL_STATES.has(existing.state)) throw existingRunError(existing);
   const deps = { ...defaultGraduationDeps(), ...opts.deps };
   const input = planInputs(deps, opts);
-  const dataDir = sourceDataDir(opts.config);
+  const dataDir = sourceDataDir(input.config);
   refuseOnPathState(inspectGraduationPath(dataDir));
+  const expect = opts.yes ? opts.expectPlanHash : undefined;
+  if (!expect) {
+    const fresh = await planGraduation(opts);
+    throw opError('confirmation_required', 'Moving this brain to Postgres needs the user\'s approval of the plan; nothing was changed.',
+      'Show the user the plan and run the command in fix after they agree.',
+      { why: 'The move copies the brain to another database and fences this one; it runs only against an approved plan_hash.',
+        fix: { argv: [...fresh.nextArgv], consent: ['egress', 'destructive'], actor: 'agent', requires_exclusive: true, plan_hash: fresh.planHash,
+          preview_argv: planArgvFor(input), why: 'Runs the move against the approved plan.', verify: { argv: STATUS_ARGV } } });
+  }
   if (existing) renameSync(path, `${path.replace(/\.json$/, '')}.${existing.runId}.json`);
-  const manifest = newManifest(input, opts.expect, randomUUID());
+  const manifest = newManifest(input, expect, randomUUID());
   manifest.inventoryVersion = deps.inventory.version;
   const run = newRun(manifest, path, { ...opts, deps });
   try {
-    try { await quiesceFresh(run, input, opts.expect); }
+    try { await quiesceFresh(run, input, expect); }
     catch (error) { abandonUnstarted(run); throw error; }
     return await continueRun(run, { force: opts.force });
   } finally { await cleanup(run); }
@@ -1027,11 +1067,11 @@ export async function runGraduation(opts: GraduationRunOptions): Promise<Graduat
 
 function existingRunError(m: GraduationManifest): OperationError {
   const marker = (() => { try { return readIntentMarker(m.source.dataDir); } catch { return null; } })();
-  if (marker && markerLiveness(marker) === 'alive') return graduationInProgressError({ runId: m.runId, state: m.state, where: 'source' });
-  return graduationInterruptedError({ runId: m.runId, state: m.state, detail: 'Finish it with `gbrain migrate --resume` or discard it with `gbrain migrate --rollback-to-source` before starting another.' });
+  if (marker && markerLiveness(marker) === 'alive') return inProgressError({ runId: m.runId, state: m.state, pid: marker.pid, dataDir: m.source.dataDir });
+  return interruptedError({ runId: m.runId, state: m.state, dataDir: m.source.dataDir });
 }
 
-function loadRun(opts: CommonOptions & { url?: string; urlEnv?: string }): Run {
+function loadRun(opts: RunOptions): Run {
   const path = opts.manifestPath ?? graduationManifestPath();
   const m = readGraduationManifest(path);
   if (!m) {
@@ -1057,7 +1097,7 @@ function loadRun(opts: CommonOptions & { url?: string; urlEnv?: string }): Run {
 }
 
 /** Continue the recorded run from its first incomplete step (reconciling first). */
-export async function resumeGraduation(opts: GraduationResumeOptions = {}): Promise<GraduationReceipt> {
+export async function resumeGraduation(opts: RunOptions = {}): Promise<GraduationReceipt> {
   const run = loadRun(opts);
   try {
     await reconcileRun(run);
@@ -1074,7 +1114,7 @@ export interface ReconcileResult { state: ManifestState | 'none'; actions: reado
 async function reconcileRun(run: Run): Promise<ReconcileResult> {
   const actions: string[] = [];
   const path = inspectGraduationPath(run.dataDir);
-  if (path.kind === 'split_brain') throw graduationSplitBrainError(path);
+  if (path.state === 'split_brain' && !(run.opts.yes && (run.m.state === 'cutover' || run.m.state === 'tombstoned'))) throw splitBrainFor(path);
   if (run.m.state === 'rollback_fenced') {
     if (run.m.rollbackFrom === 'authoritative' || run.m.rollbackFrom === 'graduated') { await returnToAuthority(run); actions.push('returned target to authority'); }
     else { await approveAndRestore(run); actions.push('finished rollback'); }
@@ -1093,7 +1133,7 @@ async function reconcileRun(run: Run): Promise<ReconcileResult> {
 }
 
 /** Repair after a crash: fence re-install, rollback roll-forward or return to authority. Never starts a move. */
-export async function reconcileGraduation(opts: CommonOptions = {}): Promise<ReconcileResult> {
+export async function reconcileGraduation(opts: RunOptions = {}): Promise<ReconcileResult> {
   const path = opts.manifestPath ?? graduationManifestPath();
   if (!readGraduationManifest(path)) return { state: 'none', actions: [], detail: '' };
   const run = loadRun(opts);
@@ -1111,8 +1151,6 @@ export interface RollbackLoss {
   final: boolean;
 }
 
-export interface GraduationRollbackResult { runId: string; state: 'rolled_back' | 'abandoned'; dropped: readonly RollbackLoss[] }
-
 /**
  * Roll back to the source. Before cutover: mark the target abandoned (it keeps
  * its fence) and release the source. After cutover: fence the target
@@ -1120,12 +1158,14 @@ export interface GraduationRollbackResult { runId: string; state: 'rolled_back' 
  * security changes refuse finally, other user-data loss needs
  * `--yes --expect <hash>`; a refusal returns the target to authority.
  */
-export async function rollbackGraduation(opts: GraduationRollbackOptions = {}): Promise<GraduationRollbackResult> {
+export async function rollbackGraduation(opts: RunOptions = {}): Promise<GraduationRollbackResult> {
   const run = loadRun(opts);
   try {
+    phase(run, 'rollback');
     await reconcileRun(run);
     const state = run.m.state;
-    if (state === 'rolled_back' || state === 'abandoned') return { runId: run.m.runId, state, dropped: [] };
+    if (state === 'rolled_back') return { state, restoredPath: run.dataDir, dropped: [] };
+    if (state === 'abandoned') return { state, restoredPath: null, dropped: [] };
     if (STATE_RANK[state] <= STATE_RANK.verified) return await rollbackBeforeCutover(run);
     return await rollbackAfterCutover(run, opts);
   } finally { await cleanup(run); }
@@ -1148,10 +1188,10 @@ async function rollbackBeforeCutover(run: Run): Promise<GraduationRollbackResult
     }
   }
   advance(run, 'abandoned');
-  return { runId: run.m.runId, state: 'abandoned', dropped: [] };
+  return { state: 'abandoned', restoredPath: null, dropped: [] };
 }
 
-async function rollbackAfterCutover(run: Run, opts: GraduationRollbackOptions): Promise<GraduationRollbackResult> {
+async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<GraduationRollbackResult> {
   const from = run.m.state;
   const hadAuthority = from === 'authoritative' || from === 'graduated';
   await openTargets(run);
@@ -1184,13 +1224,14 @@ async function rollbackAfterCutover(run: Run, opts: GraduationRollbackOptions): 
   const confirmable = losses.filter(l => l.lossKind !== 'operational');
   if (confirmable.length) {
     const hash = lossHash(run.m.runId, confirmable);
-    if (!(opts.yes && opts.expect === hash)) {
+    if (!(opts.yes && opts.expectPlanHash === hash)) {
       await returnToAuthority(run);
       throw rollbackLostError(run, confirmable, hash);
     }
   }
   await approveAndRestore(run);
-  return { runId: run.m.runId, state: 'rolled_back', dropped: losses };
+  return { state: 'rolled_back', restoredPath: run.dataDir,
+    dropped: losses.filter(l => l.lossKind === 'operational').map(l => ({ relation: l.relation, rows: l.rows, lossKind: l.lossKind })) };
 }
 
 async function approveAndRestore(run: Run): Promise<void> {
@@ -1216,7 +1257,7 @@ async function finishRollback(run: Run): Promise<void> {
   const movedTo = graduatedPath(run.dataDir, run.m.runId);
   if (readTombstone(run.dataDir)) { removeTombstone(run.dataDir, run.m.runId); await boundary(run, 'tombstone_removed'); }
   if (existsSync(movedTo)) {
-    if (existsSync(run.dataDir)) throw graduationSplitBrainError(inspectGraduationPath(run.dataDir));
+    if (existsSync(run.dataDir)) throw splitBrainFor(inspectGraduationPath(run.dataDir));
     moveHeldPglite(movedTo, run.dataDir, run.lock!);
     await boundary(run, 'renamed_back');
   }
@@ -1268,22 +1309,8 @@ function lossHash(runId: string, losses: readonly RollbackLoss[]): string {
   return planHashOf({ runId, losses: losses.map(l => `${l.relation}:${l.change}:${l.rows}`).sort() });
 }
 
-function rollbackLostError(run: Run, losses: readonly RollbackLoss[], hash: string | null): OperationError {
-  const list = losses.map(l => `${l.relation}: ${l.rows} ${l.change} (${l.lossKind})`).join('; ');
-  if (!hash) {
-    return graduationError('graduation_rollback_writes_lost',
-      `Rollback refused: the target has withdrawals or security changes since cutover that the source does not have (${list}).`,
-      'Stay on Postgres: the target is authoritative again and keeps every change. Report this if the user still needs the PGLite copy; nothing is ever written back to the source.',
-      'Rolling back would resurrect withdrawn facts or revoked credentials, so it is refused even with --yes.',
-      { consent: [], actor: 'agent', requires_exclusive: false, why: 'Forward recovery on the target is the only safe path; report the listed changes.' }, list);
-  }
-  return graduationError('graduation_rollback_writes_lost',
-    `Rolling back would drop changes made on the target since cutover: ${list}.`,
-    'Ask the user whether to drop those changes; after they agree, run the command in fix. The target is authoritative again until then.',
-    'Nothing is written back to the source, so changes made on Postgres after cutover are lost by a rollback.',
-    { argv: ['gbrain', 'migrate', '--rollback-to-source', '--yes', '--expect', hash], consent: ['destructive'], actor: 'agent', requires_exclusive: true,
-      plan_hash: hash, why: 'Rolls back to the PGLite source and drops the listed target changes.', verify: { argv: STATUS_ARGV },
-      user_message: `Rolling back to PGLite drops these changes made since the move: ${list}. Should I roll back?` }, list);
+function rollbackLostError(_run: Run, losses: readonly RollbackLoss[], hash: string | null): OperationError {
+  return rollbackWritesLostError({ losses: losses.map(l => ({ relation: `${l.relation} ${l.change}`, rows: l.rows })), final: hash === null, ...(hash ? { planHash: hash } : {}) });
 }
 
 async function detectRollbackLosses(run: Run): Promise<RollbackLoss[]> {
@@ -1366,24 +1393,71 @@ async function compareSecurityState(run: Run): Promise<RollbackLoss[]> {
 
 // ── status ─────────────────────────────────────────────────────────────────
 
-/** `gbrain migrate --status`: files only; never reconciles, migrates, repairs fences, rewrites routing or touches markers. */
-export async function graduationStatus(opts: { manifestPath?: string; config?: GBrainConfig | null } = {}): Promise<GraduationStatusDoc> {
+/**
+ * `gbrain migrate --status`: never reconciles, migrates, repairs fences,
+ * rewrites routing or touches graduation markers. It reads the manifest, the
+ * marker and tombstone, and the target row through a read-only session; for
+ * split brain it also opens both datastores read-only for their row counts.
+ */
+export async function graduationStatus(opts: Pick<GraduationInternals, 'manifestPath' | 'config' | 'deps'> = {}): Promise<GraduationStatusDoc> {
   const m = readGraduationManifest(opts.manifestPath ?? graduationManifestPath());
-  const configured = opts.config === undefined ? loadConfigFileOnly() : opts.config;
+  const configured = opts.config ?? loadConfigFileOnly();
   const dataDir = m?.source.dataDir ?? (configured?.engine === 'pglite' && configured.database_path ? graduationDataDir(configured.database_path) : null);
   const path = dataDir ? inspectGraduationPath(dataDir) : null;
-  const live = !!path?.marker && path.liveness === 'alive';
+  const liveRun = path?.marker && path.liveness === 'alive' ? { pid: path.marker.pid } : null;
   if (!m) {
-    return { state: 'none', runId: path?.marker?.runId ?? null, manifest: null, path, targetDisplayUrl: path?.tombstone?.targetDisplayUrl ?? null, live,
-      nextArgv: path?.kind === 'graduated' ? ['gbrain', 'config', 'set', 'database_url', '<GBRAIN_TARGET_URL>'] : null,
-      detail: path?.detail || 'No graduation run is recorded on this machine.' };
+    return { schema_version: 1, state: 'none', runId: path?.marker?.runId ?? null, to: 'postgres', source: null, sourcePath: path, target: null, receipt: null,
+      liveRun, tables: [], nextArgv: path?.state === 'graduated' ? ['gbrain', 'config', 'set', 'database_url', '<target_url>'] : null };
   }
+  const deps = { ...defaultGraduationDeps(), ...opts.deps };
+  let row: Awaited<ReturnType<typeof readGraduationRow>> = null;
+  let reachable = false;
+  if (m.targetUrls) {
+    try {
+      const targets = await deps.connectTargets({ ...m.routes, mainUrl: m.targetUrls.main, ddlUrl: m.targetUrls.ddl });
+      try { row = await targets.main.transaction(async tx => { await tx.executeRaw('SET TRANSACTION READ ONLY'); return readGraduationRow(tx); }); reachable = true; }
+      finally { await targets.close(); }
+    } catch { reachable = false; }
+  }
+  const ours = row?.role === 'target' && row.run_id === m.runId ? row : null;
+  const receipt: GraduationReceipt | null = ours?.table_receipts ? {
+    runId: m.runId, state: ours.state as GraduationReceipt['state'], tables: ours.table_receipts, triggerBypass: m.triggerBypass,
+    replay: ours.replay_probe ?? { status: 'not_available', reason: 'no_uncompacted_request' }, timings: m.timings,
+    targetDisplayUrl: m.routes.main, retainedPath: graduatedPath(m.source.dataDir, m.runId),
+  } : null;
+  const to = m.invokedAs ?? 'postgres';
   const nextArgv = TERMINAL_STATES.has(m.state) ? null
-    : path?.kind === 'split_brain' ? null
-      : live ? STATUS_ARGV
-        : STATE_RANK[m.state] >= STATE_RANK.rollback_fenced ? ['gbrain', 'migrate', '--rollback-to-source'] : ['gbrain', 'migrate', '--resume'];
-  return { state: m.state, runId: m.runId, manifest: redactManifest(m), path, targetDisplayUrl: targetDisplayUrl(m.target), live, nextArgv,
-    detail: path?.detail ?? '' };
+    : path?.state === 'split_brain' ? resumeArgv(['--yes'])
+      : liveRun ? STATUS_ARGV
+        : STATE_RANK[m.state] >= STATE_RANK.rollback_fenced ? ['gbrain', 'migrate', '--rollback-to-source'] : resumeArgv();
+  return {
+    schema_version: 1, state: m.state, runId: m.runId, to, source: m.source, sourcePath: path,
+    target: { identity: m.target, displayUrl: m.routes.main, row: (ours?.state ?? null) as TargetRowState | null, reachable },
+    receipt, liveRun, tables: m.tables,
+    ...(path?.state === 'split_brain' ? { splitBrain: await splitBrainSides(deps, path, m) } : {}),
+    nextArgv,
+  };
+}
+
+/** Both datastores of a split brain, opened read-only for row counts and newest page writes. */
+async function splitBrainSides(deps: GraduationDeps, path: GraduationPathState, m: GraduationManifest): Promise<NonNullable<GraduationStatusDoc['splitBrain']>> {
+  const sides = [path.dataDir, graduatedPath(m.source.dataDir, m.runId)];
+  const out: Array<NonNullable<GraduationStatusDoc['splitBrain']>[number]> = [];
+  for (const side of sides) {
+    const entry = { path: side, brainId: null as string | null, rows: 0, newestWriteAt: null as string | null };
+    if (!existsSync(side)) continue;
+    const release = allowGraduationInspection(side);
+    try {
+      const engine = await deps.openSource(side, { migrate: false });
+      try {
+        const [brain] = await engine.executeRaw<{ brain_id: string }>(`SELECT brain_id::text AS brain_id FROM persistence_brain WHERE singleton = 1`).catch(() => []);
+        const [pages] = await engine.executeRaw<{ n: string; newest: string | null }>(`SELECT count(*)::text AS n, max(updated_at)::text AS newest FROM pages`).catch(() => []);
+        Object.assign(entry, { brainId: brain?.brain_id ?? null, rows: Number(pages?.n ?? 0), newestWriteAt: pages?.newest ?? null });
+      } finally { await engine.disconnect(); }
+    } catch { /* unreadable side: reported with what the filesystem shows */ } finally { release(); }
+    out.push(entry);
+  }
+  return out;
 }
 
 export type { InventoryEntry };

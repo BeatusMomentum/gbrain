@@ -12,18 +12,14 @@
  */
 import { closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import type { Action } from '../agent-output.ts';
-import type { RegistryCode } from '../error-registry.ts';
-import { opError, type OperationError } from '../ops/contract.ts';
+import type { OperationError } from '../ops/contract.ts';
+import { engineGraduatedError, inProgressError, interruptedError, splitBrainError } from './graduation-errors.ts';
 import { inspectLockHolder, isProcessAlive, readBootId, readPidNs, type LockHandle } from '../pglite-lock.ts';
 import { moveHeldPglite } from './maintenance.ts';
 import type { BrainEngine } from '../engine.ts';
 import { GRADUATION_RUN_SETTING, graduationTablePresent, readGraduationRow } from './graduation-schema.ts';
-import type {
-  GraduationErrorCode, GraduationPathState, IntentMarker, ManifestState, TargetIdentity, TargetRowState, Tombstone,
-} from './engine-graduation.types.ts';
+import type { GraduationPathState, IntentMarker, ManifestState, TargetIdentity, Tombstone } from './engine-graduation.types.ts';
 
-const MOVE_TO_POSTGRES_DOC = 'docs/guides/move-to-postgres.md';
 
 /** Manifest states before the source is fenced; a dead run here leaves the source authoritative. */
 export const PRE_CUTOVER_STATES: ReadonlySet<ManifestState> = new Set([
@@ -86,6 +82,14 @@ export function registerGraduationRunInProcess(runId: string): () => void {
   return () => { inProcessRuns.delete(runId); };
 }
 export function isGraduationRunInProcess(runId: string): boolean { return inProcessRuns.has(runId); }
+
+const inspectionPaths = new Set<string>();
+/** `--status` on a split brain: let this process open `dataDir` read-only despite the refusal (counts only). */
+export function allowGraduationInspection(dataDir: string): () => void {
+  const path = graduationDataDir(dataDir);
+  inspectionPaths.add(path);
+  return () => { inspectionPaths.delete(path); };
+}
 
 // ── process identity (marker liveness) ─────────────────────────────────────
 
@@ -217,33 +221,33 @@ export function inspectGraduationPath(dataDir: string): GraduationPathState {
     const tombstone = readTombstone(path);
     if (tombstone) {
       const moved = existsSync(tombstone.movedTo) ? tombstone.movedTo : movedTo;
-      return { ...base, kind: 'graduated', tombstone, liveness: null, movedTo: moved, detail: `This datastore moved to Postgres (run ${tombstone.runId}).` };
+      return { ...base, state: 'graduated', tombstone, liveness: null, movedTo: moved, detail: `This datastore moved to Postgres (run ${tombstone.runId}).` };
     }
-    return { ...base, kind: 'interrupted', tombstone: null, liveness: null, detail: `${path} is a file but not a readable graduation tombstone.` };
+    return { ...base, state: 'interrupted', tombstone: null, liveness: null, detail: `${path} is a file but not a readable graduation tombstone.` };
   }
   if (markerError) {
-    return { ...base, kind: 'interrupted', tombstone: null, liveness: 'unknown', detail: markerError };
+    return { ...base, state: 'interrupted', tombstone: null, liveness: 'unknown', detail: markerError };
   }
   if (!marker || TERMINAL_STATES.has(marker.state)) {
     if (stat === null && marker?.state === 'graduated' && movedTo) {
-      return { ...base, kind: 'interrupted', tombstone: null, liveness: null, detail: `The graduated datastore at ${movedTo} has no tombstone at ${path}.` };
+      return { ...base, state: 'interrupted', tombstone: null, liveness: null, detail: `The graduated datastore at ${movedTo} has no tombstone at ${path}.` };
     }
-    return { ...base, kind: 'none', tombstone: null, liveness: null, detail: '' };
+    return { ...base, state: 'none', tombstone: null, liveness: null, detail: '' };
   }
   const liveness = markerLiveness(marker);
   const renamed = !PRE_CUTOVER_STATES.has(marker.state) && marker.state !== 'cutover';
   if (stat?.isDirectory() && movedTo && (renamed || marker.state === 'cutover')) {
-    return { ...base, kind: 'split_brain', tombstone: null, liveness,
+    return { ...base, state: 'split_brain', tombstone: null, liveness,
       detail: `A datastore exists at ${path} while graduation run ${marker.runId} already moved the original to ${movedTo}.` };
   }
   if (stat === null && movedTo) {
-    return { ...base, kind: liveness === 'alive' ? 'in_progress' : 'interrupted', tombstone: null, liveness,
+    return { ...base, state: liveness === 'alive' ? 'in_progress' : 'interrupted', tombstone: null, liveness,
       detail: `Graduation run ${marker.runId} moved the datastore to ${movedTo}; the tombstone is not written yet.` };
   }
   if (liveness === 'dead') {
-    return { ...base, kind: 'interrupted', tombstone: null, liveness, detail: `Graduation run ${marker.runId} stopped at ${marker.state} (pid ${marker.pid} is gone).` };
+    return { ...base, state: 'interrupted', tombstone: null, liveness, detail: `Graduation run ${marker.runId} stopped at ${marker.state} (pid ${marker.pid} is gone).` };
   }
-  return { ...base, kind: 'in_progress', tombstone: null, liveness, detail: `Graduation run ${marker.runId} is at ${marker.state} (pid ${marker.pid}).` };
+  return { ...base, state: 'in_progress', tombstone: null, liveness, detail: `Graduation run ${marker.runId} is at ${marker.state} (pid ${marker.pid}).` };
 }
 
 /**
@@ -271,25 +275,36 @@ export function graduationHandOffRequested(dataDir: string): IntentMarker | null
  */
 export function assertPgliteGraduationOpenable(dataDir: string, phase: 'pre_lock' | 'locked'): void {
   const state = inspectGraduationPath(dataDir);
-  if (state.kind === 'none') return;
+  if (state.state === 'none' || inspectionPaths.has(state.dataDir)) return;
   const ours = !!state.marker && state.marker.pid === process.pid && isGraduationRunInProcess(state.marker.runId);
-  if (state.kind === 'graduated') throw engineGraduatedError(state.tombstone!);
-  if (state.kind === 'split_brain') throw graduationSplitBrainError(state);
+  if (state.state === 'graduated') throw engineGraduatedFor(state, 'cli');
+  if (state.state === 'split_brain') throw splitBrainFor(state);
   if (ours) return;
   if (phase === 'pre_lock') {
-    if (state.kind === 'in_progress' && state.liveness === 'alive') {
-      throw graduationInProgressError({ runId: state.marker!.runId, state: state.marker!.state, where: 'source' });
-    }
-    if (state.kind === 'in_progress') {
+    if (state.state === 'in_progress' && state.liveness === 'alive') throw inProgressFor(state);
+    if (state.state === 'in_progress') {
       const holder = inspectLockHolder(state.dataDir);
-      if (holder.held && holder.subcommand === 'migrate') {
-        throw graduationInProgressError({ runId: state.marker!.runId, state: state.marker!.state, where: 'source' });
-      }
+      if (holder.held && holder.subcommand === 'migrate') throw inProgressFor(state);
     }
     return;
   }
   if (!state.marker || PRE_CUTOVER_STATES.has(state.marker.state)) return;
-  throw graduationInterruptedError({ runId: state.marker.runId, state: state.marker.state, detail: state.detail });
+  throw interruptedError({ runId: state.marker.runId, state: state.marker.state, dataDir: state.dataDir });
+}
+
+function inProgressFor(state: GraduationPathState): OperationError {
+  return inProgressError({ runId: state.marker?.runId, state: state.marker?.state, pid: state.marker?.pid, dataDir: state.dataDir });
+}
+
+/** `engine_graduated` for a tombstoned path; the graduating host (its marker names the tombstone's run, not yet graduated) gets `--resume`. */
+export function engineGraduatedFor(state: GraduationPathState, transport: 'cli' | 'stdio' | 'http'): OperationError {
+  return engineGraduatedError({ tombstone: state.tombstone, dataDir: state.dataDir, transport,
+    graduatingHost: state.marker?.runId !== undefined && state.marker.runId === state.tombstone?.runId && state.marker.state !== 'graduated' });
+}
+
+/** `graduation_split_brain`: a stray datastore at the old path next to the run's retained copy. */
+export function splitBrainFor(state: Pick<GraduationPathState, 'dataDir' | 'movedTo'>, strayRows?: number): OperationError {
+  return splitBrainError({ sourcePath: state.dataDir, strayPath: state.dataDir, ...(state.movedTo ? { retainedPath: state.movedTo } : {}), ...(strayRows !== undefined ? { strayRows } : {}) });
 }
 
 // ── held-lock move-aside ───────────────────────────────────────────────────
@@ -303,69 +318,6 @@ export function moveAsideHeld(dataDir: string, lock: LockHandle, runId: string):
   const movedTo = graduatedPath(dataDir, runId);
   moveHeldPglite(graduationDataDir(dataDir), movedTo, lock);
   return movedTo;
-}
-
-// ── refusals ───────────────────────────────────────────────────────────────
-
-const STATUS_ARGV = ['gbrain', 'migrate', '--status', '--json'];
-
-/** opError for a graduation code. The registry rows are added with the error-code batch. */
-export function graduationError(code: GraduationErrorCode, message: string, suggestion: string, why: string, fix: Action, detail?: string): OperationError {
-  return opError(code as RegistryCode, message, suggestion, { why, fix: { docs: fix.docs ?? `${MOVE_TO_POSTGRES_DOC}#${code.replace(/_/g, '-')}`, ...fix }, ...(detail ? { detail } : {}) });
-}
-
-export function graduationInProgressError(ctx: { runId: string; state: ManifestState | TargetRowState; where: 'source' | 'target' }): OperationError {
-  const where = ctx.where === 'source'
-    ? 'This PGLite datastore is being moved to Postgres by another gbrain process'
-    : 'This Postgres database is the target of a gbrain engine graduation that has not granted it authority';
-  return graduationError('graduation_in_progress', `${where} (run ${ctx.runId}, state ${ctx.state}).`,
-    'Wait for the graduation run to finish, then retry the same command; `gbrain migrate --status --json` shows its progress.',
-    'Exactly one engine accepts writes at a time during a graduation; this one is fenced until the run finishes or rolls back.',
-    { argv: STATUS_ARGV, consent: [], actor: 'provider', requires_exclusive: false,
-      why: 'Shows the graduation run state; retry the original command once it reports graduated, rolled_back or abandoned.',
-      verify: { argv: STATUS_ARGV } });
-}
-
-export function graduationInterruptedError(ctx: { runId: string; state: ManifestState | TargetRowState; detail: string }): OperationError {
-  return graduationError('graduation_interrupted', `Engine graduation run ${ctx.runId} stopped at ${ctx.state}. ${ctx.detail}`,
-    'Run `gbrain migrate --resume` on the host that started the move; it continues from the first incomplete step using the recorded identities. `gbrain migrate --rollback-to-source` is the alternative.',
-    'The run fenced this datastore before it stopped, so neither engine may be written until the run is resumed or rolled back.',
-    { argv: ['gbrain', 'migrate', '--resume'], consent: [], actor: 'agent', requires_exclusive: true,
-      why: 'Continues the interrupted graduation from its recorded state and ends with exactly one authoritative engine.',
-      verify: { argv: STATUS_ARGV } });
-}
-
-export function engineGraduatedError(tombstone: Tombstone, opts: { onRunHost?: boolean } = {}): OperationError {
-  const message = `This PGLite datastore moved to Postgres at ${tombstone.targetDisplayUrl} (run ${tombstone.runId}, ${tombstone.graduatedAt}); the original is retained at ${tombstone.movedTo}.`;
-  if (opts.onRunHost) {
-    return graduationError('engine_graduated', message,
-      'Run `gbrain migrate --resume` to finish pointing this machine at the new engine.',
-      'The datastore was moved aside and replaced by a tombstone; only the Postgres target accepts writes.',
-      { argv: ['gbrain', 'migrate', '--resume'], consent: [], actor: 'agent', requires_exclusive: true,
-        why: 'Finishes the routing flip and registry rewrites recorded in the graduation manifest.', verify: { argv: ['gbrain', 'doctor', '--no-migrate', '--json'] } });
-  }
-  return graduationError('engine_graduated', message,
-    `Point this client at the new engine: \`gbrain config set database_url "$GBRAIN_TARGET_URL"\` with GBRAIN_TARGET_URL holding the Postgres URL for ${tombstone.targetDisplayUrl}. Rolling back is \`gbrain migrate --rollback-to-source\` on the host that ran the move and drops writes made since.`,
-    'The datastore was moved aside and replaced by a tombstone; only the Postgres target accepts writes.',
-    { argv: ['gbrain', 'config', 'set', 'database_url', '<GBRAIN_TARGET_URL>'], consent: ['credentials'], actor: 'user', requires_exclusive: false,
-      inputs: [{ name: 'GBRAIN_TARGET_URL', how: `The Postgres connection URL for ${tombstone.targetDisplayUrl}; the user or the brain host's operator supplies it.` }],
-      why: 'Points this client at the Postgres engine that now holds the brain.',
-      user_message: `This brain moved to Postgres at ${tombstone.targetDisplayUrl}. Please run \`gbrain config set database_url "$GBRAIN_TARGET_URL"\` with that database's URL.`,
-      verify: { argv: ['gbrain', 'doctor', '--no-migrate', '--json'] } });
-}
-
-export function graduationSplitBrainError(state: Pick<GraduationPathState, 'dataDir' | 'movedTo' | 'marker' | 'detail'>, counts?: string): OperationError {
-  const runId = state.marker?.runId ?? 'unknown';
-  const stray = state.dataDir;
-  return graduationError('graduation_split_brain',
-    `Two datastores claim this brain: a stray one at ${stray} and graduation run ${runId}'s original at ${state.movedTo ?? 'unknown'}. ${state.detail}${counts ? ` ${counts}` : ''}`,
-    'Ask the user which copy to keep. To continue the move, move the stray datastore aside (the command in fix) and run `gbrain migrate --resume`; to keep PGLite, move it aside and run `gbrain migrate --rollback-to-source`.',
-    'A process created a new datastore at the old path after the original was moved aside; the target is withheld from authority until one copy is chosen.',
-    { argv: ['mv', stray, `${stray}.stray-${runId}`], consent: ['destructive'], actor: 'agent', requires_exclusive: true,
-      why: 'Moves the stray datastore out of the way without deleting it, so the graduation can finish or roll back.',
-      user_message: `Two copies of this brain exist: a stray one at ${stray} and the original at ${state.movedTo ?? 'unknown'}. Should I move the stray copy aside and continue?`,
-      then: { argv: ['gbrain', 'migrate', '--resume'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Continues the graduation once the stray datastore is out of the way.' },
-      verify: { argv: STATUS_ARGV } });
 }
 
 /** Display form of a target identity: never the password. */
@@ -391,12 +343,16 @@ export async function assertGraduationConnectAllowed(engine: BrainEngine, env: N
   if (!row || exemptRun(row.run_id, env)) return;
   if (row.role === 'target') {
     if (row.state === 'authoritative') return;
-    throw graduationInProgressError({ runId: row.run_id, state: row.state, where: 'target' });
+    throw inProgressError({ runId: row.run_id, state: row.state });
   }
   if (row.state !== 'cutover') return;
-  const tombstone = row.source_data_dir ? readTombstone(row.source_data_dir) : null;
-  if (tombstone) throw engineGraduatedError(tombstone);
-  throw graduationInterruptedError({ runId: row.run_id, state: 'cutover', detail: 'The source recorded cutover but its datastore was not moved aside yet.' });
+  throw cutoverSourceRefusal(row.run_id, row.source_data_dir);
+}
+
+function cutoverSourceRefusal(runId: string, sourceDataDir: string | null): OperationError {
+  const path = sourceDataDir ? inspectGraduationPath(sourceDataDir) : null;
+  if (path?.state === 'graduated') return engineGraduatedFor(path, 'cli');
+  return interruptedError({ runId, state: 'cutover', ...(sourceDataDir ? { dataDir: sourceDataDir } : {}) });
 }
 
 /**
@@ -412,10 +368,8 @@ export async function assertGraduationAdmission(tx: BrainEngine): Promise<void> 
   if (!row || row.run === row.run_id) return;
   if (row.role === 'target') {
     if (row.state === 'authoritative') return;
-    throw graduationInProgressError({ runId: row.run_id, state: row.state as TargetRowState, where: 'target' });
+    throw inProgressError({ runId: row.run_id, state: row.state });
   }
   if (row.state !== 'cutover') return;
-  const tombstone = row.source_data_dir ? readTombstone(row.source_data_dir) : null;
-  if (tombstone) throw engineGraduatedError(tombstone);
-  throw graduationInterruptedError({ runId: row.run_id, state: 'cutover', detail: 'The source recorded cutover; writes here are refused.' });
+  throw cutoverSourceRefusal(row.run_id, row.source_data_dir);
 }
