@@ -107,6 +107,9 @@ CHECKS=(
   # D8: every DATABASE_URL-gated PostgreSQL arm outside test/e2e/ runs in a
   # named Postgres lane (TS AST).
   "check:postgres-lanes"
+  # C2: weight maps name only existing files; the unweighted share per lane
+  # warns (step summary) and fails only on the scheduled run.
+  "check:weight-coverage"
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"

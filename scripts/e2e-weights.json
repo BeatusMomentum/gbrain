@@ -250,7 +250,6 @@
   "test/e2e/worker-abort-recovery.test.ts": 5050,
   "test/e2e/worker-lock-renewal-starvation.test.ts": 4040,
   "test/e2e/workspace-generic-compat.test.ts": 1028,
-  "test/e2e/zeroentropy-live.test.ts": 192,
   "test/e2e/zombie-reaping.test.ts": 10290,
   "test/phantom-redirect-engine-parity.test.ts": 2500
 }
