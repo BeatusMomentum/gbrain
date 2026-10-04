@@ -45,19 +45,27 @@ freeze, score sealed; (b) online predict-then-update over the whole stream, metr
 Recall@5. The cold-start subgroup (sealed questions whose gold pages never appeared as gold in a training answer) is
 reported separately.
 
-**E2. Feedback from the implicit citation signal only.** LoCoMo: `think` on dev questions drives the `cited` signal;
-frozen and online arms; full density and a 25% subsampled sparse arm. Sealed: `think` in both arms, judge mean of 10
-repetitions ± SD (P0 judge) plus judge-free Recall@5 of the gather. Reported: implicit events per 100 answers.
-The `think` model is the frozen build's default.
+**E2. Feedback from the implicit citation signal only.** LoCoMo, runner `feedback-think-replay.ts`: every answer goes
+through the `think` operation, so the pages its synthesis cites feed the ranking. Questions inside the sealed
+conversations split into train and score halves by sha256(seed 42, id); per conversation the first 50 train and 40
+score questions in that order. Arms: off (influence 0, answers still recorded), frozen (learn on the train half, score
+with `feedback.learn=false`), sparse (frozen on a seeded 25% of the train half), online (one seeded stream, metrics on
+score questions only). One `think` answer per score question per arm (model `anthropic:claude-sonnet-5-5`, the
+newest Sonnet), judged 10 times with P0's LoCoMo prompts (`openai:gpt-4o-2024-08-06`, temperature 0.7); reported:
+judge mean ± SD across replicates, gather Recall@5, cited events per 100 answers, adversarial abstention and trap
+repeats. The judge gates use the cluster bootstrap over the 7 conversations.
 
 **E3. No-regression guards.** LongMemEval-S: retrieval lists identical between baseline and feedback arms (no
 ratings exist, so the stage must be a no-op). LongMemEval-S has no sealed portion (P0 split), so this part is decided
 on the full 500-question dev run, decision `p3-e3-lmes-full-dev`. NamedThingBench core + relational with weights trained on world-v1
 dev: 0 hit@1 losses. p50/p95 read latency deltas.
 
-**E4. Triplet scoring.** E4a (wider relational fetch only) and E4b (wider fetch + triplet scoring) against baseline on
-relational-paraphrase-v1, NamedThingBench relational and a constrained-relational set over world-v1. Precondition:
-the relational arm fires on at least 80% of E4 questions. Metrics: NDCG@10 and hit@3.
+**E4. Triplet scoring.** `search.triplet_scoring=true` (wider relational fetch plus path scoring, penalty 3.0) against
+off, on the `constrained-relational` category: seeded worlds whose questions name one seed, one relation and one
+attribute constraint, so a seed has 8 to 14 relational neighbors and 1 to 4 are gold. The custodian renders the held-out
+worlds from held-out phrasing and seeds (`--phrasing-file`, access-logged); the implementer has seen only phrasing A and
+dev seeds 11 and 13. Guards: world-v1 relational sealed half and NamedThingBench relational. Precondition: the
+relational arm fires on at least 80% of the constrained questions. Metrics: NDCG@10 (primary), hit@1, hit@3.
 
 Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2026-10-04, before any sealed data was opened):
 
@@ -69,25 +77,26 @@ Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2
   LoCoMo fails, feedback ships with `feedback.enabled=false` (opt-in, explicit ratings only, `feedback.implicit=false`).
 - If E1 passes but E2 does not: ship with `feedback.enabled=false` as above.
 - If E1 fails on both corpora: the feedback subsystem leaves the pull request.
-- **Triplet scoring ON** iff E4b sealed NDCG@10 +2.0 points or more with CI excluding 0 and 0 hit@1 losses on the
-  plain relational sets; E4a ships alone if it alone passes the same bar. Otherwise `search.triplet_scoring` stays off.
-  The wider fetch only runs with triplet scoring on, so E4a is not a separate arm in this build. Dev evidence below
-  shows no effect on the world-v1 relational dev half and a 48% fire rate, below the 80% precondition, and the
-  constrained-relational set does not exist; unless that set is built, no sealed E4 run is requested and
-  `search.triplet_scoring` stays off.
+- **Triplet scoring ON** iff sealed constrained-relational NDCG@10 improves by +2.0 points or more with CI excluding
+  0 (cluster bootstrap over held-out seeds and templates) and the guards show 0 hit@1 losses. Otherwise the setting
+  is removed from the pull request. The wider fetch only runs with triplet scoring on, so the plan's E4a is not a
+  separate arm.
 - Declared single-value relations (plan E5) are not part of this pull request.
 
-Budget caps: E1 $16, E2 $180, E3 $20, E4 $12 (plan total cap $260, which also covered the dropped E5).
+Budget caps: E1 $16, E2 $180 (dev spent $23.65; the sealed run as specified is estimated at about $130), E3 $20, E4 $12
+(plan total cap $260, which also covered the dropped E5).
 
 ## Harness requirements
 
 - E1: `eval/runner/feedback-replay-locomo.ts` and `eval/runner/feedback-replay-world.ts` (gbrain-evals
   `p0-heldout-harness`), custodian mode `--split sealed --decision-id <id> --purpose <text>` with the access log.
-- E2: not available yet. The memory-qa `think` lane calls `runThink` directly, so no answer is recorded and no
-  citation signal accrues; E2 needs `think` through the `think` operation (trusted local context) in a seeded
-  stream, scored with `feedback.learn=false`, judge 10x.
+- E2: `eval/runner/feedback-think-replay.ts` (gbrain-evals branch `p3-e2-e4-feedback-evals`), custodian mode
+  `--split sealed --decision-id <id> --purpose <text>`; sealed flags `--train-limit 50 --score-limit 40 --judge-runs 10
+  --lambda 0.1`.
 - E3: the P0 kit (`eval:decide`), LongMemEval-S as above; NamedThingBench through its committed script.
-- E4: per-arm search pins (`GBRAIN_EVAL_SEARCH_PINS`) cover `search.triplet_scoring`; see the E4 note above.
+- E4: `eval/runner/constrained-relational.ts` (same branch) with `GBRAIN_EVAL_SEARCH_PINS=search.triplet_scoring=true`
+  on the candidate arm; custodian mode `--phrasing-file <custody path> --seeds <held-out seeds> --decision-id <id>
+  --purpose <text>`.
 
 ## Dev evidence
 
@@ -117,6 +126,19 @@ shows 0, so the swaps came from cache warm-up, not from the feature.
 [`p3-e3-lmes-full-dev`](../p3-e3-lmes-full-dev/), baseline `master` 6622a119 against build `70ad30e4e`, feedback on, no
 ratings): identical retrieval lists on all 500 questions (strict Recall@5 0.9277 on both arms), mean read latency
 +0.6 ms [−0.3, 1.3], p95 74.8 ms against 73.3 ms. Cost $6.15. This settles the LongMemEval-S part of E3.
+
+**E2 dev (implicit citations, LoCoMo dev conversations, 25 train and 20 score questions each, judge 3x, build
+`23d2597e2`, cost $23.65).** Judge mean against off (0.783): frozen +0.0 [−4.4, 5.0] points, sparse −2.2 [−9.4, 6.7],
+online −1.7 [−6.7, 2.2]; judge SD across replicates 0.014. Gather Recall@5 is 0.739 in every arm: at λ = 0.1 the
+citation signal (rating 4, half learning rate) moves a cited page's multiplier by under 1%, too little to change which
+pages `think` gathers, so the judge differences are answer-sampling noise. Cited events: 369 to 416 per 100 answers.
+Summary: [`dev/think-replay-locomo-dev.json`](dev/think-replay-locomo-dev.json).
+
+**E4 dev (constrained-relational, seeds 11 and 13, 142 questions, build `23d2597e2`).** The relational arm fires on
+100% of questions. Triplet scoring on against off: NDCG@10 +1.94 points [0.87, 3.14] (0.738 → 0.758), hit@1 0.669 →
+0.711 with 6 wins and 0 losses. By template: who-at-topic +2.7 (off 0.960, near ceiling), portfolio-by-sector +1.3
+(off 0.909), attendees-by-role +1.4 (off 0.105: the attendees reach the relational arm but text rows outrank them).
+Summary: [`dev/triplet-constrained-relational-dev.json`](dev/triplet-constrained-relational-dev.json).
 
 **E4-shaped triplet probe on the world-v1 relational dev half** (146 template + paraphrase questions, one shared
 index, build `70ad30e4e`, cost $0.02): with `search.triplet_scoring` on at penalties 1, 3 and 6, ΔNDCG@10 is −0.05
