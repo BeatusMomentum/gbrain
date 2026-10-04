@@ -174,7 +174,7 @@ for (const [label, postgresUrl] of targets) {
         await h.inHome(async () => {
           await graduate();
           await expect(rollbackGraduation(rollbackOpts({ pauseAt: seam, pauseHook: crashAt(seam) }))).rejects.toThrow();
-          expect(manifest().state).toBe(seam);
+          expect(manifest().state as string).toBe(seam);
           const reconciled = await reconcileGraduation(rollbackOpts());
           expect(reconciled.actions).toContain('finished rollback');
           await assertRolledBack();

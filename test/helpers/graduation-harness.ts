@@ -146,7 +146,12 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
       return { main: 'postgres://alice-example@db.example.test:5432/brain', ddl: 'postgres://alice-example@db.example.test:5432/brain', mainUrl, ddlUrl: mainUrl, ...(urlEnv ? { urlEnv } : {}) };
     },
     targetIdentity: () => ({ id: createHash('sha256').update('db.example.test|5432|brain|alice-example').digest('hex'), host: 'db.example.test', port: 5432, database: 'brain', user: 'alice-example' }),
-    probeTarget: async () => ({ empty: (await probeRows(target)).length === 0 }),
+    probeTarget: async () => ({
+      reachable: true, auth: true, ddl: { reachable: true, auth: true }, serverVersion: '16.0', serverVersionNum: 160000,
+      vector: { installed: '0.8.0', available: '0.8.0', halfvec: true }, createPrivilege: { database: true, schema: true },
+      replicaRole: true, ownsTables: true, triggerBypass: 'session_replication_role', gbrainSchema: true,
+      empty: (await probeRows(target)).length === 0, nonEmptyTables: [], embeddingColumns: [], otherSessions: 0,
+    }),
     crossCheckRoutes: async () => {},
     graduationBlockers: async () => [],
     drainForGraduation: async () => { count('drain'); return { drained: [], blockers: [] }; },
@@ -162,11 +167,11 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
       });
       return { rows: rows.length };
     },
-    copySequences: async () => {},
-    deferIndexes: async () => {},
-    buildDeferredIndexes: async () => {},
-    reenableTriggers: async () => {},
-    openTarget: async () => borrowed(target),
+    copySequences: async () => [],
+    deferIndexes: async () => [],
+    buildDeferredIndexes: async () => ({ built: [] }),
+    reenableTriggers: async () => [],
+    connectTargets: async () => ({ main: borrowed(target), ddl: borrowed(target), close: async () => {} }),
     initTargetSchema: async t => { await t.initSchema(); await t.executeRaw(PROBE_DDL); },
     claimAutopilotPause: async () => () => { count('pause_released'); },
     runTargetDoctor: async () => [],

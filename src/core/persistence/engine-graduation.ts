@@ -34,7 +34,7 @@ import {
   assertTransition, GRADUATION_MANIFEST_VERSION, MANIFEST_TRANSITIONS,
   type GraduationBlocker, type GraduationErrorCode, type GraduationManifest, type GraduationPathState, type GraduationPlan,
   type GraduationReceipt, type GraduationStatusDoc, type IntentMarker, type Inventory, type InventoryEntry, type LossKind,
-  type ManifestState, type TableCheckpoint, type TableReceipt, type TargetIdentity, type TargetRoutes, type TriggerBypass,
+  type ManifestState, type TableCheckpoint, type TableReceipt, type TargetIdentity, type TargetProbe, type TargetRoutes, type TriggerBypass,
 } from './engine-graduation.types.ts';
 import {
   currentProcessIdentity, fsyncParent, graduatedPath, graduationDataDir, graduationError, graduationInProgressError,
@@ -50,8 +50,11 @@ import { moveHeldPglite } from './maintenance.ts';
 import { assertRelationSet, copyOrder, fkClosure, GRADUATION_INVENTORY } from './graduation-inventory.ts';
 import { digestTable } from './graduation-digest.ts';
 import { verifyGraduation } from './graduation-verify.ts';
-import { crossCheckRoutes, probeTarget, resolveTargetRoutes, targetIdentity, type TargetProbe } from './graduation-target.ts';
-import { drainForGraduation, freezeSource, graduationBlockers } from './graduation-drain.ts';
+import {
+  assertTargetReachable, chooseTriggerBypass, connectTargetEngines, crossCheckRoutes, probeTarget, resolveTargetRoutes, sourceEmbeddingLayout,
+  targetIdentity, targetProbeBlockers,
+} from './graduation-target.ts';
+import { drainForGraduation, drainTimeoutError, freezeSource, graduationBlockers, withSourceWritable } from './graduation-drain.ts';
 import { buildDeferredIndexes, copySequences, copyTable, deferIndexes, detectTriggerBypass, reenableTriggers } from './graduation-copy.ts';
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
@@ -101,7 +104,8 @@ export interface GraduationDeps {
   openSource(dataDir: string, opts: { migrate: boolean }): Promise<GraduationSourceEngine>;
   /** A fresh, unconnected PGLite engine for a held-lock open. */
   newSourceEngine(): Promise<GraduationSourceEngine>;
-  openTarget(url: string): Promise<BrainEngine>;
+  /** Main and DDL target engines; the DDL route is an explicit override (no pooler fallback). */
+  connectTargets(routes: Routes): Promise<{ main: BrainEngine; ddl: BrainEngine; close(): Promise<void> }>;
   /** Target schema bootstrap, sized from the source's embedding layout. */
   initTargetSchema(target: BrainEngine, source: BrainEngine): Promise<void>;
   claimAutopilotPause(): Promise<(() => void) | null>;
@@ -135,14 +139,18 @@ export function defaultGraduationDeps(): GraduationDeps {
       const { createEngine } = await import('../engine-factory.ts');
       return await createEngine({ engine: 'pglite' }) as GraduationSourceEngine;
     },
-    async openTarget(url) {
-      const { createEngine } = await import('../engine-factory.ts');
-      const engine = await createEngine({ engine: 'postgres' });
-      try { await engine.connect({ engine: 'postgres', database_url: url }); }
+    async connectTargets(routes) {
+      try { return await connectTargetEngines(routes); }
       catch (error) { throw mapTargetConnectError(error); }
-      return engine;
     },
-    async initTargetSchema(target) { await target.initSchema(); },
+    async initTargetSchema(target, source) {
+      const layout = await sourceEmbeddingLayout(source);
+      const chunks = layout.columns.find(c => c.relation === 'content_chunks' && c.column === 'embedding');
+      const dimensions = chunks?.dims ?? (Number(layout.config.embedding_dimensions) || null);
+      const model = layout.config.embedding_model;
+      const sized = target as BrainEngine & { initSchema(opts?: { embedding?: { dimensions: number; model: string } }): Promise<void> };
+      await sized.initSchema(dimensions && model ? { embedding: { dimensions, model } } : {});
+    },
     claimAutopilotPause: () => withStdoutOnStderr(() => quiesceAutopilot()),
     async runTargetDoctor(runId, mainUrl) { return spawnTargetDoctor(runId, mainUrl); },
     async runSourceDoctor() { return []; },
@@ -279,6 +287,7 @@ interface Run {
   lock: LockHandle | null;
   main: BrainEngine | null;
   ddl: BrainEngine | null;
+  closeTargets: (() => Promise<void>) | null;
   resumePause: (() => void) | null;
   unregister: () => void;
 }
@@ -286,7 +295,7 @@ interface Run {
 function newRun(m: GraduationManifest, path: string, opts: Run['opts']): Run {
   return {
     m, path, opts, deps: { ...defaultGraduationDeps(), ...opts.deps }, dataDir: m.source.dataDir,
-    source: null, lock: null, main: null, ddl: null, resumePause: null, unregister: registerGraduationRunInProcess(m.runId),
+    source: null, lock: null, main: null, ddl: null, closeTargets: null, resumePause: null, unregister: registerGraduationRunInProcess(m.runId),
   };
 }
 
@@ -329,9 +338,8 @@ async function cleanup(run: Run): Promise<void> {
   const attempt = async (fn: () => Promise<void> | void) => { try { await fn(); } catch (error) { errors.push(error); } };
   if (run.source) { const source = run.source; run.source = null; await attempt(() => source.disconnect()); }
   if (run.lock) { const lock = run.lock; run.lock = null; await attempt(() => releaseLock(lock)); }
-  const targets = new Set([run.main, run.ddl].filter((e): e is BrainEngine => !!e));
+  if (run.closeTargets) { const close = run.closeTargets; run.closeTargets = null; await attempt(close); }
   run.main = null; run.ddl = null;
-  for (const engine of targets) await attempt(() => engine.disconnect());
   if (run.resumePause) { const resume = run.resumePause; run.resumePause = null; await attempt(resume); }
   run.unregister();
   if (errors.length) process.stderr.write(`[graduation] cleanup: ${errors.map(String).join('; ')}\n`);
@@ -375,6 +383,17 @@ function planHashOf(input: Record<string, unknown>): string {
 }
 
 function probeTargetEmpty(probe: TargetProbe): boolean { return probe.empty; }
+
+/** initSchema writes these config keys (plus the copier's deferred-index marker); any other key is user data. */
+const SEED_CONFIG_KEYS = new Set(['chunk_strategy', 'embedding_dimensions', 'embedding_model', 'engine', 'version', 'graduation.deferred_indexes']);
+async function userConfigKeys(main: BrainEngine): Promise<string[]> {
+  const rows = await main.executeRaw<{ key: string }>('SELECT key FROM config ORDER BY key COLLATE "C"');
+  return rows.map(r => r.key).filter(key => !SEED_CONFIG_KEYS.has(key));
+}
+
+function planArgvFor(input: Pick<PlanInputs, 'invokedAs' | 'routes'>): string[] {
+  return ['gbrain', 'migrate', '--to', input.invokedAs, '--url-env', urlEnvName(input.routes), '--plan', '--json'];
+}
 
 async function countTables(source: BrainEngine, inventory: Inventory): Promise<GraduationPlan['tables']> {
   const relations = inventory.entries.filter(e => e.kind === 'table' && e.engines.pglite).map(e => e.relation);
@@ -421,12 +440,22 @@ async function assemblePlan(deps: GraduationDeps, input: PlanInputs, source: Bra
     tables = await countTables(source, deps.inventory);
   }
   const probe = await deps.probeTarget(input.routes);
-  const targetAcceptable = targetOurs || probeTargetEmpty(probe);
-  if (!targetAcceptable && !input.force) {
-    blockers.push({ kind: 'target_not_empty', id: input.target.id, needsUser: true, detail: 'The target database already holds gbrain data that this run did not write.' });
+  assertTargetReachable(probe, input.routes);
+  const layout = source ? await sourceEmbeddingLayout(source) : { columns: [] };
+  const userConfig = main && probe.gbrainSchema && !targetOurs ? await userConfigKeys(main) : [];
+  const targetAcceptable = targetOurs || (probe.empty && !userConfig.length);
+  for (const blocker of targetProbeBlockers(probe, input.routes, layout.columns)) {
+    if (blocker.kind === 'target_not_empty' && (targetOurs || input.force)) continue;
+    blockers.push(blocker);
   }
-  const triggerBypass = input.triggerBypassOverride ?? (main ? await deps.detectTriggerBypass(main) : null);
-  if (!triggerBypass) blockers.push({ kind: 'target_unsupported', id: 'trigger_bypass', needsUser: true, detail: 'The target role can neither SET session_replication_role nor disable user triggers on the gbrain tables.' });
+  if (userConfig.length && !input.force) {
+    blockers.push({ kind: 'target_not_empty', id: 'config', needsUser: true, argv: planArgvFor(input),
+      detail: `the target config holds keys initSchema does not write: ${userConfig.slice(0, 10).join(', ')}` });
+  }
+  const triggerBypass = chooseTriggerBypass(probe, input.triggerBypassOverride) ?? (main && !input.triggerBypassOverride ? await deps.detectTriggerBypass(main) : null);
+  if (!triggerBypass && !blockers.some(b => b.kind === 'target_unsupported' && b.id === 'trigger_bypass')) {
+    blockers.push({ kind: 'target_unsupported', id: 'trigger_bypass', needsUser: true, detail: 'The requested trigger bypass is not permitted for the target role.' });
+  }
   let forceSnapshot: Array<[string, string]> | null = null;
   if (input.force && !targetAcceptable && main) {
     forceSnapshot = [];
@@ -486,15 +515,15 @@ export async function planGraduation(opts: GraduationPlanOptions): Promise<Gradu
   const dataDir = sourceDataDir(opts.config);
   refuseOnPathState(inspectGraduationPath(dataDir));
   let source: GraduationSourceEngine | null = null;
-  let main: BrainEngine | null = null;
+  let targets: { main: BrainEngine; close(): Promise<void> } | null = null;
   try {
     try { source = await deps.openSource(dataDir, { migrate: false }); }
     catch (error) { if (!(error instanceof PgliteBusyError)) throw error; }
-    main = await deps.openTarget(input.routes.mainUrl);
-    return await assemblePlan(deps, input, source, main, false);
+    targets = await deps.connectTargets(input.routes);
+    return await assemblePlan(deps, input, source, targets.main, false);
   } finally {
     if (source) await source.disconnect();
-    if (main) await main.disconnect();
+    if (targets) await targets.close();
   }
 }
 
@@ -510,6 +539,7 @@ function blockerRefusal(blocker: GraduationBlocker, run: { m: GraduationManifest
     unsupported_platform: 'graduation_unsupported_platform', unclassified_relation: 'graduation_unclassified_table',
     embedding_dimension: 'graduation_embedding_dimension_mismatch', target_unsupported: 'graduation_target_unsupported',
     writer_held: 'graduation_source_writer_held', env_override: 'graduation_target_unsupported', source_doctor: 'graduation_verify_failed',
+    dangling_reference: 'graduation_target_unsupported',
   };
   const code = codeByKind[blocker.kind] ?? 'graduation_drain_timeout';
   const fix: Action = blocker.argv?.length
@@ -564,11 +594,16 @@ async function claimPause(run: Run): Promise<void> {
   run.resumePause = resume;
 }
 
-async function openTargets(run: Run): Promise<void> {
+function recordedRoutes(run: Run): Routes {
   const urls = run.m.targetUrls;
   if (!urls) throw new Error('The graduation manifest has no target URLs.');
-  if (!run.main) run.main = await run.deps.openTarget(urls.main);
-  if (!run.ddl) run.ddl = urls.ddl === urls.main ? run.main : await run.deps.openTarget(urls.ddl);
+  return { ...run.m.routes, mainUrl: urls.main, ddlUrl: urls.ddl };
+}
+
+async function openTargets(run: Run): Promise<void> {
+  if (run.main && run.ddl) return;
+  const targets = await run.deps.connectTargets(recordedRoutes(run));
+  run.main = targets.main; run.ddl = targets.ddl; run.closeTargets = targets.close;
 }
 
 /** Step 1 (fresh run): marker before the lock, pause marker, source under the lock, in-run plan bound to the approval. */
@@ -663,7 +698,7 @@ async function lockGapRecheck(run: Run): Promise<void> {
   if (!changed.length && !failed.length) return;
   await markForRecopy(run, [...changed, ...failed]);
   progress(run, { phase: 'lock_gap', message: changed.length ? `source changed while unlocked: ${changed.join(', ')}` : `re-copying ${failed.join(', ')}` });
-  if (state === 'cutover') await withGraduationRun(run.source!, run.m.runId, tx => setSourceState(tx, run.m.runId, 'quiesced'), { readWrite: true });
+  if (state === 'cutover') await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'quiesced'));
   const row = await readGraduationRow(run.main!);
   if (row?.run_id === run.m.runId && (row.state === 'verifying' || row.state === 'verified')) {
     await withGraduationRun(run.main!, run.m.runId, tx => setTargetState(tx, run.m.runId, 'copying'));
@@ -672,7 +707,7 @@ async function lockGapRecheck(run: Run): Promise<void> {
 }
 
 async function stepRecord(run: Run): Promise<void> {
-  await withGraduationRun(run.source!, run.m.runId, tx => setSourceState(tx, run.m.runId, 'quiesced', { sourceBrainId: run.m.source.brainId || null, sourceDataDir: run.dataDir }), { readWrite: true });
+  await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'quiesced', { sourceBrainId: run.m.source.brainId || null, sourceDataDir: run.dataDir }));
   advance(run, 'quiesced');
   await pauseSeam(run, 'quiesced');
 }
@@ -683,25 +718,13 @@ async function stepDrain(run: Run): Promise<void> {
   const started = Date.now();
   const timeoutMs = run.opts.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
   const { blockers } = await run.deps.drainForGraduation(run.source!, { timeoutMs, hostId: run.m.source.hostId, config: run.opts.config ?? loadConfigFileOnly() ?? ({ engine: 'pglite' } as GBrainConfig) });
-  if (blockers.length) throw drainTimeoutError(run, blockers, timeoutMs);
+  if (blockers.length) throw drainTimeoutError(blockers, timeoutMs);
   await run.deps.freezeSource(run.source!);
   const receipts = await sourceReceipts(run);
   if (run.m.sourceReceipts?.length) await markForRecopy(run, changedRelations(run.m.sourceReceipts, receipts));
   run.m.sourceReceipts = receipts;
   run.m.timings = { ...run.m.timings, drain_ms: Date.now() - started };
   save(run);
-}
-
-function drainTimeoutError(run: Run, blockers: readonly GraduationBlocker[], timeoutMs: number): OperationError {
-  const personal = blockers.find(b => b.needsUser);
-  if (personal) return blockerRefusal(personal, run);
-  const doubled = String(Math.ceil((timeoutMs * 2) / 1000));
-  return graduationError('graduation_drain_timeout', `The drain did not finish within ${Math.round(timeoutMs / 1000)} s; ${blockers.length} blocker(s) are still progressing.`,
-    `Rerun with a longer drain: \`gbrain migrate --resume --drain-timeout ${doubled}\`. Nothing was copied yet and the source stays authoritative and writable.`,
-    'Queued and running requests must reach a terminal state before the copy, so their outcomes carry verbatim.',
-    { argv: ['gbrain', 'migrate', '--resume', '--drain-timeout', doubled], consent: [], actor: 'agent', requires_exclusive: true,
-      why: 'Resumes the run and drains again with twice the time.', verify: { argv: STATUS_ARGV } },
-    blockers.map(b => `${b.kind}:${b.id}`).join(','));
 }
 
 /** Step 4: route cross-check, read-only emptiness, schema, target row `copying`, fence, emptiness again under the fence. */
@@ -712,7 +735,7 @@ async function stepFenceTarget(run: Run, opts: { force?: boolean }): Promise<voi
   const ours = existing?.role === 'target' && existing.run_id === run.m.runId;
   const reuse = !!opts.force && existing?.role === 'target' && existing.state === 'abandoned';
   if (!ours) {
-    const routes = { ...run.m.routes, mainUrl: run.m.targetUrls!.main, ddlUrl: run.m.targetUrls!.ddl };
+    const routes = recordedRoutes(run);
     if (existing && !reuse) throw targetNotEmptyError(run, `it records graduation run ${existing.run_id} (${existing.state})`);
     if (!existing && !probeTargetEmpty(await run.deps.probeTarget(routes)) && !opts.force) throw targetNotEmptyError(run, 'it already holds gbrain data');
     await run.deps.initTargetSchema(ddl!, run.source!);
@@ -758,7 +781,7 @@ async function stepCopy(run: Run): Promise<void> {
   run.m.tables = order.map(e => known.get(e.relation) ?? { relation: e.relation, state: 'pending', batches: 0, disabledTriggers: false });
   save(run);
   const pending = order.filter(e => !['copied', 'verified'].includes(known.get(e.relation)?.state ?? 'pending'));
-  if (pending.length) await run.deps.deferIndexes(run.main!);
+  if (pending.length) await run.deps.deferIndexes(run.main!, { runId: run.m.runId });
   let done = order.length - pending.length;
   for (const entry of pending) {
     setCheckpoint(run, entry.relation, { state: 'copying', batches: 0, disabledTriggers: run.m.triggerBypass === 'disable_trigger' });
@@ -769,11 +792,11 @@ async function stepCopy(run: Run): Promise<void> {
     done += 1;
     await pauseSeam(run, 'copy_table');
   }
-  await run.deps.copySequences(engines);
-  if (pending.length) await run.deps.buildDeferredIndexes(run.main!);
+  await run.deps.copySequences(engines, { runId: run.m.runId });
+  await run.deps.buildDeferredIndexes(run.ddl!, { runId: run.m.runId, log: line => progress(run, { phase: 'index', message: line }) });
   const disabled = run.m.tables.filter(t => t.disabledTriggers).map(t => t.relation);
   if (disabled.length) {
-    await run.deps.reenableTriggers(run.main!, disabled);
+    await run.deps.reenableTriggers(run.main!, disabled, { runId: run.m.runId });
     run.m.tables = run.m.tables.map(t => ({ ...t, disabledTriggers: false }));
   }
   run.m.timings = { ...run.m.timings, copy_ms: (run.m.timings.copy_ms ?? 0) + Date.now() - started };
@@ -821,11 +844,11 @@ async function stepVerify(run: Run): Promise<void> {
 
 /** Step 7a: re-apply sequences, fence the source (`cutover`), close it keeping the lock, move aside, tombstone. */
 async function stepCutover(run: Run): Promise<void> {
-  await run.deps.copySequences({ source: run.source!, target: run.main! });
+  await run.deps.copySequences({ source: run.source!, target: run.main! }, { runId: run.m.runId });
   const [brain] = await run.source!.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton = 1');
   const [seq] = await run.source!.executeRaw<{ s: string }>('SELECT COALESCE(max(sequence), 0)::text AS s FROM persistence_requests');
   const row = await readGraduationRow(run.source!);
-  if (row?.state !== 'cutover') await withGraduationRun(run.source!, run.m.runId, tx => setSourceState(tx, run.m.runId, 'cutover', { cutoverSequence: seq?.s ?? '0' }), { readWrite: true });
+  if (row?.state !== 'cutover') await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'cutover', { cutoverSequence: seq?.s ?? '0' }));
   if (run.m.state !== 'cutover') advance(run, 'cutover', { sourceEnabled: brain?.enabled === true, cutoverSequence: seq?.s ?? '0' });
   await pauseSeam(run, 'cutover');
   const source = run.source!;
@@ -1095,7 +1118,7 @@ async function rollbackBeforeCutover(run: Run): Promise<GraduationRollbackResult
   await openSourceUnderLock(run);
   const sourceRow = await readGraduationRow(run.source!);
   if (sourceRow?.run_id === run.m.runId && sourceRow.state === 'quiesced') {
-    await withGraduationRun(run.source!, run.m.runId, tx => setSourceState(tx, run.m.runId, 'rolled_back'), { readWrite: true });
+    await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'rolled_back'));
   }
   if (STATE_RANK[run.m.state] >= STATE_RANK.draining) {
     await openTargets(run);
@@ -1183,7 +1206,7 @@ async function finishRollback(run: Run): Promise<void> {
   run.source = source;
   const sourceRow = await readGraduationRow(source);
   if (sourceRow?.run_id === run.m.runId && sourceRow.state !== 'rolled_back') {
-    await withGraduationRun(source, run.m.runId, tx => setSourceState(tx, run.m.runId, 'rolled_back'), { readWrite: true });
+    await withSourceWritable(source, tx => setSourceState(tx, run.m.runId, 'rolled_back'));
   }
   const file = loadConfigFileOnly();
   if (file && file.engine === 'postgres') {

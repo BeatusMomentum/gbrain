@@ -105,14 +105,9 @@ export async function readGraduationRow(engine: BrainEngine, opts: { forUpdate?:
   };
 }
 
-/**
- * Run `fn` in one transaction that carries the run's identity, so the fence
- * admits its writes. `readWrite` opens the transaction READ WRITE first (the
- * frozen source runs with `default_transaction_read_only`).
- */
-export async function withGraduationRun<T>(engine: BrainEngine, runId: string, fn: (tx: BrainEngine) => Promise<T>, opts: { readWrite?: boolean } = {}): Promise<T> {
+/** Run `fn` in one transaction that carries the run's identity, so the fence admits its writes. */
+export async function withGraduationRun<T>(engine: BrainEngine, runId: string, fn: (tx: BrainEngine) => Promise<T>): Promise<T> {
   return engine.transaction(async tx => {
-    if (opts.readWrite) await tx.executeRaw('SET TRANSACTION READ WRITE');
     await tx.executeRaw(`SELECT set_config('${GRADUATION_RUN_SETTING}', $1, true)`, [runId]);
     return fn(tx);
   });
