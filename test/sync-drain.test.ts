@@ -178,3 +178,17 @@ describe('managed sync backlog', () => {
     expect(b!.rate_pages_per_min).toBe(60);
   });
 });
+
+describe('classified write waits', () => {
+  test('a blocked wait stops the drain with its cause; a repeated read failure stops it as database_contention', async () => {
+    const blocked = { ...pending(2), writeWait: { status: 'blocked' as const, request_id: 'r', cause: 'owner_unavailable', command: 'gbrain sources writer status s --json' } };
+    expect((await runDrain({ pass: async () => blocked, pauseMs: 1 })).drain).toMatchObject({ outcome: 'blocked', stop_reason: 'owner_unavailable' });
+    const failing = { ...pending(2), writeWait: { status: 'read_failed' as const, request_id: 'r', reason: 'conn_dropped', transient: true, attempts: 1, message: 'm', remediation: 'retry' } };
+    const s = scripted([failing, failing, failing, done()]);
+    const result = await runDrain({ pass: s.pass, pauseMs: 1 });
+    expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'database_contention' });
+    expect(drainNext(result, RESUME, 's')).toMatchObject({ command: RESUME, safe_to_loop: false });
+    const auth = { ...failing, writeWait: { ...failing.writeWait, reason: 'auth_failed', transient: false } };
+    expect((await runDrain({ pass: async () => auth, pauseMs: 1 })).drain?.passes).toBe(1);
+  });
+});

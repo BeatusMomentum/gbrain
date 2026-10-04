@@ -151,7 +151,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const startedAt = Date.now();
   const coop = cooperativeDeadline();
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
-  let passes = 0, attempt = 0, refreshWaitedMs = 0, written = 0, waived = 0, index = 0, total: number | null = null;
+  let passes = 0, attempt = 0, readFailures = 0, refreshWaitedMs = 0, written = 0, waived = 0, index = 0, total: number | null = null;
   let announcedStart = false, lastLine = 0;
   let stall: { key: string; since: number; passes: number } | null = null;
   const remaining = () => total === null ? null : Math.max(0, total - index);
@@ -202,6 +202,13 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
         return finish(result, outcome, outcome === 'resumable' ? 'deadline' : undefined);
       }
       if (signal?.aborted) return finish(result, 'resumable', 'deadline');
+      const wait = result.writeWait;
+      if (wait?.status === 'blocked') {
+        return finish(result, 'blocked', BLOCKED_HEAD_REASONS.has(wait.cause) ? wait.cause as DrainStopReason : 'recovery_required');
+      }
+      if (wait?.status === 'read_failed') {
+        if (!wait.transient || ++readFailures >= TRANSIENT_ATTEMPTS) return finish(result, 'blocked', 'database_contention');
+      } else readFailures = 0;
       if (result.reason === 'writer_pending' && input.probe) {
         const blocked = await input.probe.blockedHead(result);
         if (blocked) return finish(result, 'blocked', blocked.reason, { stall: blocked.stall });
@@ -295,6 +302,12 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   if (outcome === 'resumable') {
     return { command: resumeCommand, safe_to_loop: true, retry_after_ms: d?.retry_after_ms ?? 0, ...estimate,
       why: 'The sync stopped at its deadline with its cursor and accepted writes intact; the same command resumes where it stopped.', ...(docs ? { docs } : {}) };
+  }
+  if (d?.stop_reason === 'database_contention') {
+    const wait = result.writeWait?.status === 'read_failed' ? result.writeWait : null;
+    return { command: resumeCommand, safe_to_loop: false, retry_after_ms: 0, ...estimate,
+      why: `The drain could not read its write's state from the database${wait ? ` (${wait.reason}: ${wait.remediation})` : ''}. The accepted write keeps its request ID. Fix database access, then rerun.`,
+      ...(docs ? { docs } : {}) };
   }
   const writerBlocked = d?.stop_reason && d.stop_reason !== 'blocked_by_failures' && d.stop_reason !== 'deadline';
   if (writerBlocked) {

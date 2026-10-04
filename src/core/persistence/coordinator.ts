@@ -262,7 +262,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       return committed;
     });
     await hooks.boundary?.('after_commit', done);
-    await clearResolvedRecovery(engine, row.id);
+    if (recovery) await clearResolvedRecovery(engine, row.id);
     return done;
   } catch (error) {
     if (recovery) {
