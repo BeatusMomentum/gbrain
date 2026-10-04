@@ -4,7 +4,7 @@
  * `autopilot --install` (which `gbrain upgrade` runs) keeps it, and resume
  * clears only it — never a migration or restore hold.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -83,65 +83,6 @@ describe('autopilot operator pause', () => {
     });
   });
 
-  test('a job worker claims nothing while the operator pause holds and runs the job after resume', async () => {
-    await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
-      const engine = new PGLiteEngine();
-      await engine.connect({}); await engine.initSchema();
-      const worker = new MinionWorker(engine, { pollInterval: 25, lockDuration: 30_000 });
-      worker.register('operator-pause-probe', async () => 'ran');
-      let running: Promise<void> | undefined;
-      try {
-        out(() => runAutopilotPauseCommand(['--pause', '--reason', 'upgrade window']));
-        const queue = new MinionQueue(engine);
-        const job = await queue.add('operator-pause-probe', {}, {}, { allowProtectedSubmit: true });
-        const lines: string[] = [];
-        const log = console.log;
-        console.log = (...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); };
-        try {
-          running = worker.start();
-          await waitFor(() => lines.some(line => line.includes('pause marker present')), { timeoutMs: 15_000, label: 'worker parks on the pause' });
-        } finally { console.log = log; }
-        expect((await queue.getJob(job.id))).toMatchObject({ status: 'waiting', attempts_started: 0 });
-        out(() => runAutopilotPauseCommand(['--resume']));
-        await waitFor(async () => (await queue.getJob(job.id))?.status === 'completed', { timeoutMs: 15_000, label: 'job completes after resume' });
-      } finally {
-        worker.stop(); await running; await engine.disconnect();
-      }
-    });
-  }, 60_000);
-
-  test('a job claimed as the operator pause lands is released back to the queue un-run', async () => {
-    await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
-      const engine = new PGLiteEngine();
-      await engine.connect({}); await engine.initSchema();
-      const worker = new MinionWorker(engine, { pollInterval: 25, lockDuration: 30_000 });
-      let runs = 0;
-      worker.register('operator-pause-probe', async () => { runs++; return 'ran'; });
-      const queue = (worker as unknown as { queue: MinionQueue }).queue;
-      const claim = queue.claim.bind(queue);
-      queue.claim = (async (...args: Parameters<MinionQueue['claim']>) => {
-        const claimed = await claim(...args);
-        if (claimed && runs === 0) out(() => runAutopilotPauseCommand(['--pause', '--reason', 'upgrade window']));
-        return claimed;
-      }) as MinionQueue['claim'];
-      let running: Promise<void> | undefined;
-      try {
-        const job = await new MinionQueue(engine).add('operator-pause-probe', {}, {}, { allowProtectedSubmit: true });
-        const lines: string[] = [];
-        const log = console.log;
-        console.log = (...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); };
-        try {
-          running = worker.start();
-          await waitFor(() => lines.some(line => line.includes('pause marker appeared after claim')), { timeoutMs: 15_000, label: 'worker releases the claimed job' });
-        } finally { console.log = log; }
-        expect(runs).toBe(0);
-        expect(await queue.getJob(job.id)).toMatchObject({ status: 'delayed', lock_token: null });
-      } finally {
-        worker.stop(); await running; await engine.disconnect();
-      }
-    });
-  }, 60_000);
-
   test('the daemon loop skips cycles while the operator pause holds and resumes when it clears', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-operator-pause-daemon-'));
     const env = { PATH: process.env.PATH, HOME: home, GBRAIN_HOME: home, GBRAIN_DISABLE_UPDATE_CHECK: '1', GBRAIN_MODEL_DISCOVERY: 'off' };
@@ -165,4 +106,66 @@ describe('autopilot operator pause', () => {
       }
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
+});
+
+describe('job workers honor the operator pause', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
+  afterAll(async () => { await engine.disconnect(); });
+  beforeEach(async () => { await engine.executeRaw('DELETE FROM minion_jobs'); });
+
+  test('a job worker claims nothing while the operator pause holds and runs the job after resume', async () => {
+    await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
+      const worker = new MinionWorker(engine, { pollInterval: 25, lockDuration: 30_000 });
+      worker.register('operator-pause-probe', async () => 'ran');
+      let running: Promise<void> | undefined;
+      try {
+        out(() => runAutopilotPauseCommand(['--pause', '--reason', 'upgrade window']));
+        const queue = new MinionQueue(engine);
+        const job = await queue.add('operator-pause-probe', {}, {}, { allowProtectedSubmit: true });
+        const lines: string[] = [];
+        const log = console.log;
+        console.log = (...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); };
+        try {
+          running = worker.start();
+          await waitFor(() => lines.some(line => line.includes('pause marker present')), { timeoutMs: 15_000, label: 'worker parks on the pause' });
+        } finally { console.log = log; }
+        expect((await queue.getJob(job.id))).toMatchObject({ status: 'waiting', attempts_started: 0 });
+        out(() => runAutopilotPauseCommand(['--resume']));
+        await waitFor(async () => (await queue.getJob(job.id))?.status === 'completed', { timeoutMs: 15_000, label: 'job completes after resume' });
+      } finally {
+        worker.stop(); await running;
+      }
+    });
+  }, 60_000);
+
+  test('a job claimed as the operator pause lands is released back to the queue un-run', async () => {
+    await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
+      const worker = new MinionWorker(engine, { pollInterval: 25, lockDuration: 30_000 });
+      let runs = 0;
+      worker.register('operator-pause-probe', async () => { runs++; return 'ran'; });
+      const queue = (worker as unknown as { queue: MinionQueue }).queue;
+      const claim = queue.claim.bind(queue);
+      queue.claim = (async (...args: Parameters<MinionQueue['claim']>) => {
+        const claimed = await claim(...args);
+        if (claimed && runs === 0) out(() => runAutopilotPauseCommand(['--pause', '--reason', 'upgrade window']));
+        return claimed;
+      }) as MinionQueue['claim'];
+      let running: Promise<void> | undefined;
+      try {
+        const job = await new MinionQueue(engine).add('operator-pause-probe', {}, {}, { allowProtectedSubmit: true });
+        const lines: string[] = [];
+        const log = console.log;
+        console.log = (...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); };
+        try {
+          running = worker.start();
+          await waitFor(() => lines.some(line => line.includes('pause marker appeared after claim')), { timeoutMs: 15_000, label: 'worker releases the claimed job' });
+        } finally { console.log = log; }
+        expect(runs).toBe(0);
+        expect(await queue.getJob(job.id)).toMatchObject({ status: 'delayed', lock_token: null });
+      } finally {
+        worker.stop(); await running;
+      }
+    });
+  }, 60_000);
 });

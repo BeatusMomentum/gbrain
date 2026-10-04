@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dir, '..', '..');
 const GUARD = join(REPO, 'scripts', 'check-postgres-lane-coverage.ts');
+const FIXTURES = join(REPO, 'test', 'fixtures', 'guards', 'check-postgres-lane-coverage.ts');
 const ALLOWLISTED = { 'test/export-scale.slow.test.ts': "for (const backend of testBackends()) describe(backend, () => {});\n" };
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
@@ -64,7 +65,7 @@ describe('check-postgres-lane-coverage.ts', () => {
 
   test('save-and-restore reads, assertions and a self-supplied DATABASE_URL are not arms', () => {
     const r = run({
-      'test/restore.test.ts': "const prev = process.env.DATABASE_URL;\ndelete process.env.DATABASE_URL;\nif (prev !== undefined) process.env.DATABASE_URL = prev;\nexpect(process.env.DATABASE_URL).toBeUndefined();\n",
+      'test/restore.test.ts': readFileSync(join(FIXTURES, 'good', 'test', 'restore.test.fixture.ts'), 'utf8'),
       'test/own-url.test.ts': "test('helper', () => withEnv({ DATABASE_URL: 'postgresql://localhost/gbrain_test' }, () => { expect(testBackends()).toEqual(['pglite', 'postgres']); }));\n",
       'test/strings.test.ts': "const fixture = `await engine.connect({ database_url: process.env.DATABASE_URL });`;\n",
     });
@@ -79,7 +80,9 @@ describe('check-postgres-lane-coverage.ts', () => {
   });
 
   test('every DATABASE_URL-gated arm in this repository runs in a Postgres lane or is allowlisted', () => {
-    const r = spawnSync(process.execPath, [GUARD], { encoding: 'utf8', env: { ...process.env, GBRAIN_GUARD_ROOT: REPO } });
+    const env = { ...process.env };
+    delete env.GBRAIN_GUARD_ROOT;
+    const r = spawnSync(process.execPath, [GUARD], { encoding: 'utf8', cwd: REPO, env });
     expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
   });
 

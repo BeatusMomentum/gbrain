@@ -21,7 +21,9 @@
  * An arm that is deliberately not run yet is an ALLOWLIST row naming its
  * reason and TODO; a row for a file that is laned, has no arm or is gone fails.
  *
- * Seam: GBRAIN_GUARD_ROOT (fixture tree root).
+ * test/fixtures/ is never scanned. Seam: GBRAIN_GUARD_ROOT (fixture tree root);
+ * in a fixture tree `*.test.fixture.ts` files count as their `*.test.ts` names,
+ * so committed self-test fixtures stay out of bun's test discovery.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -29,6 +31,7 @@ import { safeLoad } from 'js-yaml';
 import ts from 'typescript';
 
 const ROOT = process.env.GBRAIN_GUARD_ROOT ?? join(import.meta.dir, '..');
+const TEST_FILE = process.env.GBRAIN_GUARD_ROOT ? /\.test(\.fixture)?\.ts$/ : /\.test\.ts$/;
 const DOCS = 'docs/TESTING.md#coverage-responsibilities-before-consolidation';
 const LANE = '.github/workflows/persistence-validation.yml';
 const LANE_STEP = 'Require PostgreSQL arms of unit-lane suites';
@@ -48,7 +51,7 @@ function files(dir: string, keep: (name: string) => boolean): string[] {
   }
   return out;
 }
-const rel = (abs: string) => relative(ROOT, abs).replace(/\\/g, '/');
+const rel = (abs: string) => relative(ROOT, abs).replace(/\\/g, '/').replace(/\.test\.fixture\.ts$/, '.test.ts');
 const TEST_PATH = /\btest\/[A-Za-z0-9_./-]+\.test\.ts\b/g;
 
 function isDatabaseUrlRead(node: ts.Node): boolean {
@@ -143,8 +146,8 @@ function postgresLanes(): Map<string, string> {
       for (const [path] of run.matchAll(TEST_PATH)) add(path, `${rel(workflow)} › ${jobName} › ${step.name ?? 'run'}`);
     }
   }
-  for (const wrapper of files(join(ROOT, 'test', 'e2e'), name => name.endsWith('.test.ts'))) {
-    for (const [, spec] of readFileSync(wrapper, 'utf8').matchAll(/(?:\bimport\s*\(\s*|\bfrom\s+)['"](\.{1,2}\/[^'"]+\.test\.ts)['"]/g)) {
+  for (const wrapper of files(join(ROOT, 'test', 'e2e'), name => TEST_FILE.test(name))) {
+    for (const [, spec] of readFileSync(wrapper, 'utf8').matchAll(/(?:\bimport\s*\(\s*|\bfrom\s+)['"](\.{1,2}\/[^'"]+\.test(?:\.fixture)?\.ts)['"]/g)) {
       add(rel(resolve(dirname(wrapper), spec)), rel(wrapper));
     }
   }
@@ -161,9 +164,9 @@ function postgresLanes(): Map<string, string> {
 const laned = postgresLanes();
 const failures: string[] = [];
 const armed = new Set<string>();
-for (const abs of files(join(ROOT, 'test'), name => name.endsWith('.test.ts'))) {
+for (const abs of files(join(ROOT, 'test'), name => TEST_FILE.test(name))) {
   const path = rel(abs);
-  if (path.startsWith('test/e2e/')) continue;
+  if (path.startsWith('test/e2e/') || path.startsWith('test/fixtures/')) continue;
   const arm = postgresArm(abs);
   if (!arm) continue;
   armed.add(path);
@@ -174,7 +177,7 @@ for (const abs of files(join(ROOT, 'test'), name => name.endsWith('.test.ts'))) 
     + `  Docs: ${DOCS}`);
 }
 for (const [path, reason] of Object.entries(ALLOWLIST)) {
-  const problem = !existsSync(join(ROOT, path)) ? 'names a missing file'
+  const problem = !armed.has(path) && !existsSync(join(ROOT, path)) ? 'names a missing file'
     : !armed.has(path) ? 'names a file with no DATABASE_URL-gated arm'
     : laned.has(path) ? `names a file a Postgres lane already runs (${laned.get(path)})` : null;
   if (!problem) continue;
