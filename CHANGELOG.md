@@ -10,6 +10,104 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.40.0] - 2026-10-04
+
+**When a page repair fails, gbrain now says exactly what stopped it, and pages whose file only gained new lines can be repaired in a few commands instead of by hand.**
+
+Each page lives twice in a managed brain: as a markdown file and as a database row. When something edits the file directly, gbrain stops saving new facts to that page so it never overwrites one copy with the other. The repair tool for that (`gbrain sources reconcile`) could fail with `Publication failed (P0001). Inspect owner diagnostics.`, and the diagnostics said nothing. P0001 comes from a safety check inside the database, and gbrain threw away its reason. Now the failure names the table, the kind of write, which safety rule fired and the gbrain build that ran the job, so the next report pins the cause.
+
+Repairs got easier too. A new read-only classification sorts drifted pages by how they drifted. A new opt-in preview mode fills in the decisions for changes that only add things: contacts appended to a list, a "last used" date that moved forward. Lines added to the body or timeline are shown as suggestions you accept explicitly, because an added line can still contradict an older one. Anything that changed or removed existing text, or touched privacy, titles, tags or other policy fields, still waits for a person.
+
+### How to use it
+
+```bash
+# 1. See how a source's drifted pages drifted (read-only, no page text in the output)
+gbrain sources reconcile <source> --brain host --audit --classify --limit 25 --json
+
+# 2. Preview one page with the additive rules, read the inserted lines in the private file
+gbrain sources reconcile <source> <slug> --brain host --preview --auto-additive --out ~/.gbrain/repair/p.json --json
+
+# 3. Accept the inserted lines once you (or the user) have read them, then apply
+gbrain sources reconcile <source> <slug> --brain host --preview --auto-additive --accept-suggested --out ~/.gbrain/repair/p2.json --json
+gbrain sources reconcile <source> <slug> --brain host --apply ~/.gbrain/repair/p2.json --request-id "$(bun -e 'console.log(crypto.randomUUID())')" --json
+
+# 4. Retry the write that was blocked, with a new request id
+```
+
+### What you'd see
+
+| Drift on the page | Classification | What the preview does |
+| --- | --- | --- |
+| Contacts appended after every stored entry, repeats kept | `structurally_additive` | Decides it |
+| `updated` or `phone_last_used` moved forward | `structurally_additive` | Decides it |
+| New lines in the body or timeline, nothing removed | `additive_with_suggestions` | Suggests it; needs `--accept-suggested` |
+| A stored sentence edited or deleted | `review_required` | Leaves it for a person |
+| `visibility`, `access`, title, tags or an `expires_at` changed | `review_required` | Leaves it for a person |
+
+A refused write now reads like this in the receipt (`write_error_detail`), with no page text and no source names:
+
+| Field | Example |
+| --- | --- |
+| `write_error` | `writer_coordinator_required` |
+| `table` / `op` | `pages` / `INSERT` |
+| `branch` / `relationship` | `allowlist` / `different_source` |
+| `stage` | `publication` or `after_file_publication` |
+
+`gbrain sources writer status --probe --json` adds `recent_failures`, which also carries the source ids and the gbrain build and host that ran the failed attempt. Those stay owner-only because a source name can itself be private.
+
+### Two new doctor checks
+
+- `managed_guard_schema_drift` warns when a guarded table (pages, tags, timeline entries, takes, facts, aliases, sources) carries a column gbrain never created, and calls out a `source_id` on tags, timeline entries or takes, the #5983 cause.
+- `publication_refusals` counts writes the database refused in the last 7 days, split by the managed-writer guard, another trigger, and older unclassified P0001 failures, and says what to run next.
+
+### Things to watch
+
+- Restart every long-running gbrain process that shares the database (serve, autopilot, sync jobs) after upgrading. A refusal is most often one older process doing a write the current guard refuses, and the new record names that process's build.
+- "Structurally additive" checks structure, not truth. The rules never decide prose for you.
+- Preview files with automatic decisions use artifact format 2. An older gbrain refuses them as malformed rather than guessing.
+
+### What we caught and fixed before merging
+
+The plan went through CEO, engineering and outside-voice review. The reviewers caught that an appended line can contradict an old one, so prose became a suggestion instead of an automatic decision. They caught that the first draft of the diagnostic would have shown source names to remote callers, so names moved behind the owner-only status command. They also caught that the failure record would have been erased by receipt compaction and lost across crash recovery, so it now survives both. We could not reproduce the reporter's P0001 on a clean schema: 14 page and brain states committed on v0.60.35.0 and v0.60.37.0 against real Postgres. The cause turned out to be a schema change on the reporter's brain (a `source_id` column on tags, timeline and take tables that gbrain never creates), fixed in v0.60.38.0 (#5983). With this release, that failure would have reported `relationship: missing_source` on `tags`, and the new doctor check names the stray column directly.
+
+## To take advantage of v0.60.40.0
+
+`gbrain upgrade` applies schema migration v198 (a nullable `error_detail` column on write receipts and a re-installed managed-writer guard). If it did not, or `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+2. **Restart every gbrain process that shares this database** so all of them run the same build.
+3. **Verify:**
+   ```bash
+   gbrain sources writer status --probe --json   # recent_failures is present (often empty)
+   gbrain sources reconcile <source> --brain host --audit --classify --limit 5 --json
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+#### Diagnostics (#5974)
+- `gbrain_require_managed_writer()` raises with `TABLE`, `SCHEMA`, `CONSTRAINT = managed_writer_guard:<checkpoint|topology|allowlist>` and a JSON `DETAIL` (`op`, `relationship`, source ids). Migration v198 re-installs it and adds `persistence_requests.error_detail jsonb`.
+- New `src/core/persistence/publication-failure.ts`: `databaseRefusal` maps a guard P0001 to `writer_coordinator_required` (`origin: database_guard`) and any other P0001 to `storage_error` naming the raising function from the error's `where`. Raw messages, SQL and row values are never kept. `withAttempt` stamps stage, build and host; `publicFailureDetail` strips source ids, build and host for receipts.
+- `requestError`, `finishUnpublishedFailure`, `markRecovering`, `recoverPublication` and `completeWrite` carry the detail; compaction keeps it. The consumer logs publication failures that used to return without a log line.
+- Receipts gain `write_error_detail`; refusals carry an agent-facing suggestion (`DATABASE_REFUSAL_HINT`). `sources writer status` gains `recent_failures`. New row in `docs/guides/write-refusals.md`.
+
+#### Additive drift resolution (#5974)
+- New `src/core/persistence/reconcile-additive.ts`: `classifyDrift` over the complete file/database delta; `additiveDecisions`; `assertAutoDecisions` rechecks rule, rule version and evidence digest at apply and owner preparation.
+- `sources reconcile --preview --auto-additive [--accept-suggested]`; preview returns `classification`, `drift_paths`, `auto_decided_paths` and `next_action`. Artifact `format_version: 2` adds `auto_decisions`.
+- `sources reconcile --audit --classify` adds per-page `classification`, `drift_paths` and `file_modified_after_database`, plus `classified` counts.
+- Docs: `docs/guides/concurrent-writes.md` (classify and additive section), `RECONCILE_HELP`.
+
+#### Doctor (#5983, #5974)
+- New `src/commands/doctor/checks/managed-guard.ts`: `managed_guard_schema_drift` (columns on `GUARDED_TABLES` outside `GUARDED_TABLE_COLUMNS`, pinned to the catalog goldens by `test/doctor-managed-guard.test.ts`) and `publication_refusals` (7-day count by origin). Both link `docs/guides/write-refusals.md#managed-guard-page-children`. `PAGE_CHILD_TABLES` and `GUARDED_TABLES` are now exported from `writer-guard-schema.ts`.
+- Migration v198 replaces only the guard function (`MANAGED_WRITER_GUARD_FUNCTION_SQL`, no table lock) on top of v197's page-child source resolution.
+
+#### Tests
+- `test/persistence-publication-refusal-5974.test.ts` (PGLite and Postgres): cross-source write inside publication, refusal after file replacement with exact restoration, redaction, compaction survival, other P0001 raisers.
+- `test/persistence-reconcile-additive-5974.test.ts` (PGLite and Postgres): classifier truth table; the reporter's page shape through audit, preview, apply, `remember` and MCP readback; a replaced page staying blocked; tampered evidence and a concurrent file change refusing apply. Both files join the PostgreSQL persistence-validation workflow.
+
 ## [0.60.39.0] - 2026-10-03
 
 **`gbrain repair failed-writes` replays the `put_page`, `add_timeline_entry` and `remember` calls the managed writer guard refused before v0.60.38.0 (#5983), from the content their failed receipts still hold. Each write is replayed once, and never over a later write of the same page.**

@@ -107,6 +107,7 @@ jobs:
             test/persistence-admission-observer.test.ts \
             test/persistence-read-diagnostics.test.ts \
             test/persistence-journal.test.ts \
+            test/persistence-publication-refusal-5974.test.ts \
             test/persistence-staging.test.ts \
             test/persistence-effect-recovery-fairness.test.ts \
             test/import-publication-guards.test.ts \
@@ -149,6 +150,7 @@ jobs:
         run: >-
           bun --no-env-file test --timeout=120000
           test/persistence-reconcile.test.ts
+          test/persistence-reconcile-additive-5974.test.ts
           test/e2e/reconcile-pgbouncer.test.ts
           test/e2e/extract-atoms-page-state.test.ts
       - if: always()
