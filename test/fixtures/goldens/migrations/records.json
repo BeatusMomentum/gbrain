@@ -2978,7 +2978,7 @@
             "migrationNotice",
             "quietMigrationNotices"
           ],
-          "sha256": "9e006bf39cb44a27f8d4ad4323fd76873961d0b8669b835257a8764fb1543e28"
+          "sha256": "78b88e6a006553fb8cfb8f292589033de56a1a221bad085d9ae56c2d6ecf1b80"
         },
         "idempotent": true,
         "name": "lane_e_legacy_token_grant_conversion",

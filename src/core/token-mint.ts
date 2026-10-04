@@ -118,7 +118,7 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
         'This brain is missing the access-token grant columns, so it cannot mint a token.',
         'Apply the pending schema migrations on the brain host, then mint the token again.',
         { why: 'Tokens are born on the unified grant columns; a brain whose schema predates them has not run its migrations.',
-          fix: { argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'], consent: [], actor: 'agent', requires_exclusive: true,
+          fix: { argv: ['gbrain', 'apply-migrations', '--yes'], consent: [], actor: 'agent', requires_exclusive: true,
             why: 'Applies the pending schema migrations, including the token grant columns; no user decision needed.', verify: { argv: ['gbrain', 'doctor', '--json'] } } });
     }
     throw e;

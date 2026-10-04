@@ -128,7 +128,14 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // F3: unified token grant columns, lazy migration, drift and the born-unified mint on Postgres.
   "src/core/grants/model.ts": ["test/e2e/access-token-grants.test.ts"],
   "src/core/grants/access-token-schema.ts": ["test/e2e/access-token-grants.test.ts"],
-  "src/core/token-mint.ts": ["test/e2e/access-token-grants.test.ts", "test/e2e/auth-rescope-token.test.ts"],
+  "src/core/token-mint.ts": ["test/e2e/access-token-grants.test.ts", "test/e2e/auth-rescope-token.test.ts", "test/e2e/serve-http-api-keys.test.ts"],
+  // Lane E: dashboard API keys, the bulk legacy grant conversion and the OAuth client grant axes on Postgres.
+  "src/commands/serve-http-api-keys.ts": ["test/e2e/serve-http-api-keys.test.ts"],
+  "src/core/grants/oauth-client-axes-schema.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
+  "src/core/grants/cli.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
+  "src/core/grants/service.ts": ["test/e2e/oauth-client-grant-axes.test.ts", "test/e2e/client-grants.test.ts"],
+  "src/core/schema-migrations/v201-lane-e-legacy-token-grant-conversion.ts": ["test/e2e/access-token-grants.test.ts"],
+  "src/core/schema-migrations/v202-lane-e-oauth-client-grant-axes.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
   "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/withdrawal-bounded-safety-postgres.test.ts", "test/e2e/withdrawal-crash-postgres.test.ts", "test/e2e/memory-safety-wave-postgres.test.ts", "test/e2e/fact-withdrawal-scope-postgres.test.ts"],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the

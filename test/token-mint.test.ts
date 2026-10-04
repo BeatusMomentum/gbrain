@@ -127,13 +127,15 @@ describe('mintLegacyToken on a brain without the grant columns', () => {
   beforeAll(async () => {
     bare = new PGLiteEngine();
     await bare.connect({});
+    // A runner-provided schema snapshot restores the current access_tokens; replace it with the pre-column shape.
+    await bare.executeRaw('DROP TABLE IF EXISTS access_tokens CASCADE');
     await bare.executeRaw(PRE_GRANT_COLUMNS_TABLE);
   }, 60_000);
   afterAll(async () => { if (bare) await bare.disconnect(); });
 
   test('refuses with migrations_pending and a filled fix instead of writing a JSONB-only grant', async () => {
     const refusal = await mintLegacyToken(bare, { name: 'pre-columns', takesHolders: ['world'], scopes: ['read'] }).catch(e => e);
-    expect(refusal).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'], actor: 'agent' } });
+    expect(refusal).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes'], actor: 'agent' } });
     expect(refusal.why).toBeTruthy();
     expect(await bare.executeRaw('SELECT 1 FROM access_tokens')).toHaveLength(0);
   });

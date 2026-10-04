@@ -23,7 +23,7 @@ export const v201: Migration = {
     if (result.migrated.length === 0 && result.skipped.length === 0) return;
     migrationNotice(`  v201: converted ${result.migrated.length} legacy token grant(s) to the unified grant columns; no grant changed.`
       + (result.skipped.length
-        ? ` ${result.skipped.length} token(s) with malformed permissions stay denied; run gbrain doctor --only legacy_token_grant_shape --json for each fix.`
+        ? ` ${result.skipped.length} token(s) with malformed permissions stay denied; gbrain doctor (legacy_token_grant_shape) lists each one with its fix.`
         : '')
       + '\n');
   },
