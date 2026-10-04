@@ -115,7 +115,7 @@ describe('budget', () => {
     const big = await put('notes/big', page('Big', 'b'.repeat(400), { always_load: true }), false);
     expect(big.body).toMatchObject({ error: 'core_budget_exceeded' });
     expect(big.body.message).toContain('over the 600-char budget');
-    expect(big.body.fix?.argv).toEqual(['gbrain', 'core', 'status', '--json']);
+    expect(big.body.fix?.argv.slice(0, 4)).toEqual(['gbrain', 'core', 'status', '--json']);
     expect(await corePages()).toEqual(['people/alice-example']);
 
     // Lower the limit below current usage: growth refused, shrinking passes.

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198663,
-    "stdoutSha256": "f4ab69309b217f6abb19b58b29d9d39cc5ee4b486b2f9b43d887f7dde7bf9d9e",
+    "stdoutBytes": 197118,
+    "stdoutSha256": "ce99e077240ea4576ae5892cf07f8af2e7a5b37fec963ab6bdaf1d06e4abf122",
     "toolNames": [
       "remember",
       "entity",
@@ -164,7 +164,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save one fact (or up to 20 with items); provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -195,7 +195,7 @@
               "type": "string"
             },
             "fact": {
-              "description": "One claim (or use items).",
+              "description": "One claim.",
               "type": "string"
             },
             "force": {
@@ -207,53 +207,8 @@
               "type": "boolean"
             },
             "items": {
-              "description": "Save up to 20 facts in one call (e.g. before context compaction); each item takes fact plus optional entity, kind, ttl, visibility, provenance (defaults to the top-level provenance). Use instead of fact.",
+              "description": "Up to 20 facts in one call (e.g. before compaction) instead of fact: [{fact, entity?, kind?, ttl?, provenance?}].",
               "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "entity": {
-                    "description": "Who or what it is about.",
-                    "type": "string"
-                  },
-                  "fact": {
-                    "description": "One claim.",
-                    "type": "string"
-                  },
-                  "infer_entity": {
-                    "description": "Default true.",
-                    "type": "boolean"
-                  },
-                  "kind": {
-                    "description": "Default fact.",
-                    "enum": [
-                      "event",
-                      "preference",
-                      "commitment",
-                      "belief",
-                      "fact"
-                    ],
-                    "type": "string"
-                  },
-                  "provenance": {
-                    "description": "Overrides the top-level provenance.",
-                    "type": "string"
-                  },
-                  "ttl": {
-                    "description": "\"30d\", \"12h\" or ISO time.",
-                    "type": "string"
-                  },
-                  "visibility": {
-                    "description": "Default world.",
-                    "enum": [
-                      "world",
-                      "private"
-                    ],
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "fact"
-                ],
                 "type": "object"
               },
               "type": "array"
@@ -5215,7 +5170,7 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): the always-loaded core block plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction; omit entities for core only.",
+        "description": "MEMORY VERB (v1): core memory plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5235,7 +5190,7 @@
               "type": "number"
             },
             "entities": {
-              "description": "Comma-separated names or slugs (max 8); omit for the core block only.",
+              "description": "Comma-separated names or slugs (max 8); omit for core only.",
               "type": "string"
             },
             "include_private": {

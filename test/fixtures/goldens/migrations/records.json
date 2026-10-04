@@ -2974,8 +2974,8 @@
         "idempotent": true,
         "name": "core_edit_notices",
         "sql": {
-          "length": 697,
-          "sha256": "f58ea30f1ad5cb36a8953d7b5bde21b068e0207a3a32045a129571687ae356f9"
+          "length": 721,
+          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
         },
         "sqlFor": "absent",
         "transaction": "absent",

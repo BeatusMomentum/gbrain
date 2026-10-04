@@ -925,9 +925,10 @@
           "4 page_id bigint/int8 NULL",
           "5 revision text/text NULL",
           "6 base_revision text/text NULL",
-          "7 actor text/text NOT NULL",
-          "8 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "9 acked_at timestamp with time zone/timestamptz NULL"
+          "7 base_text text/text NULL",
+          "8 actor text/text NOT NULL",
+          "9 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "10 acked_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

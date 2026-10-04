@@ -408,7 +408,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   const core = noop ? null : await prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage });
   return { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...await pageDatabaseOnlyPublication(engine, row, file),
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}),
-    validate: core ? async tx => { await ready.validate?.(tx); await core.validate(tx); } : ready.validate, apply: async tx => {
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async tx => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     if (!noop) {
       await ready.apply(tx);

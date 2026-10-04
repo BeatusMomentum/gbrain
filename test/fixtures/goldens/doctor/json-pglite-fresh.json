@@ -1603,6 +1603,7 @@
             "bad_config": [],
             "chars_limit": 4000,
             "chars_used": 0,
+            "compiled": [],
             "docs": "docs/guides/core-memory.md",
             "enabled": true,
             "pages": 0
