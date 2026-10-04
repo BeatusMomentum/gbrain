@@ -164,6 +164,38 @@ function digestOf(plan: OpDescriptor[], observations: OpObservation[]): string {
   return h.digest('hex');
 }
 
+export interface ManagedTopology { world: World; checkouts: string[]; sources: HistoryFixtureSource[]; accessTokenId: string; oauthClientId: string }
+/**
+ * Register `sources` sources spread across `worktrees` durability-hardened Git
+ * checkouts under `root`, activate managed persistence, and authenticate two
+ * remote agents through the production token verifier: an OAuth client on the
+ * first source and a legacy access token (unified grant columns) on the second.
+ */
+export async function prepareTopology(engine: BrainEngine, { sources, worktrees, root, prefix = 'history' }:
+  { sources: number; worktrees: number; root: string; prefix?: string }): Promise<ManagedTopology> {
+  const checkouts = Array.from({ length: worktrees }, (_, k) => { const dir = join(root, `worktree-${k}`); mkdirSync(dir, { recursive: true }); durableGitRepo(dir); return dir; });
+  const fixtureSources: HistoryFixtureSource[] = Array.from({ length: sources }, (_, i) => {
+    const worktree = i % worktrees; const dir = join(checkouts[worktree], `source-${i}`); mkdirSync(dir, { recursive: true });
+    return { id: `${prefix}-${i}`, root: dir, worktree };
+  });
+  for (const source of fixtureSources) {
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [source.id, source.root]);
+    await claimWorktree(engine, source.id, source.root);
+  }
+  assert.equal((await activatePersistence(engine, { confirmQuiesced: true })).enabled, true);
+  const sql = sqlQueryForEngine(engine);
+  const provider = new GBrainOAuthProvider({ sql, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  const client = await provider.registerClientManual(`${prefix} fixture agent`, ['client_credentials'], 'read write', [], fixtureSources[0].id);
+  const oauth = await provider.exchangeClientCredentials(client.clientId, client.clientSecret!, 'read write');
+  const tokenSource = fixtureSources[Math.min(1, sources - 1)].id;
+  const minted = await mintLegacyToken(engine, { name: `${prefix}-fixture-token`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [tokenSource] });
+  const remotes: RemoteActor[] = [{ name: 'agent-oauth', kind: 'oauth_client', sourceId: fixtureSources[0].id, token: oauth.access_token },
+    { name: 'agent-token', kind: 'legacy_token', sourceId: tokenSource, token: minted.token }];
+  const world: World = { engine, config: { engine: engine.kind, embedding_disabled: true } as GBrainConfig, remotes, auth: new Map(), observations: new Map() };
+  await authenticateRemotes(world);
+  return { world, checkouts, sources: fixtureSources, accessTokenId: minted.id, oauthClientId: client.clientId };
+}
+
 /** Build a brain with real persistence history. See the module comment for preconditions. */
 export async function buildHistoryFixture(engine: BrainEngine,
   { pages, seed, sources, worktrees, root: requestedRoot }: HistoryFixtureOptions): Promise<HistoryFixture> {
@@ -173,28 +205,9 @@ export async function buildHistoryFixture(engine: BrainEngine,
   assert(Number.isSafeInteger(sources) && sources >= worktrees, 'history fixture: sources must be >= worktrees');
   assert(process.env.GBRAIN_HOME, 'history fixture: run under an isolated GBRAIN_HOME');
   const root = requestedRoot ?? mkdtempSync(join(tmpdir(), 'gbrain-history-fixture-'));
-  const checkouts = Array.from({ length: worktrees }, (_, k) => { const dir = join(root, `worktree-${k}`); mkdirSync(dir, { recursive: true }); durableGitRepo(dir); return dir; });
-  const fixtureSources: HistoryFixtureSource[] = Array.from({ length: sources }, (_, i) => {
-    const worktree = i % worktrees; const dir = join(checkouts[worktree], `source-${i}`); mkdirSync(dir, { recursive: true });
-    return { id: `history-${i}`, root: dir, worktree };
-  });
-  for (const source of fixtureSources) {
-    await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [source.id, source.root]);
-    await claimWorktree(engine, source.id, source.root);
-  }
-  assert.equal((await activatePersistence(engine, { confirmQuiesced: true })).enabled, true);
-
-  const sql = sqlQueryForEngine(engine);
-  const provider = new GBrainOAuthProvider({ sql, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
-  const client = await provider.registerClientManual('history fixture agent', ['client_credentials'], 'read write', [], fixtureSources[0].id);
-  const oauth = await provider.exchangeClientCredentials(client.clientId, client.clientSecret!, 'read write');
-  const tokenSource = fixtureSources[Math.min(1, sources - 1)].id;
-  const minted = await mintLegacyToken(engine, { name: 'history-fixture-token', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [tokenSource] });
-  const remotes: RemoteActor[] = [{ name: 'agent-oauth', kind: 'oauth_client', sourceId: fixtureSources[0].id, token: oauth.access_token },
-    { name: 'agent-token', kind: 'legacy_token', sourceId: tokenSource, token: minted.token }];
-  const config = { engine: engine.kind, embedding_disabled: true } as GBrainConfig;
-  const world: World = { engine, config, remotes, auth: new Map(), observations: new Map() };
-  await authenticateRemotes(world);
+  const topology = await prepareTopology(engine, { sources, worktrees, root });
+  const { world, checkouts, sources: fixtureSources, accessTokenId, oauthClientId } = topology;
+  const remotes = world.remotes;
 
   const plan = historyPlan({ pages, seed, sources, worktrees }, fixtureSources.map(s => s.id), remotes);
   // Sources publish independently; ops within one source run in plan order.
@@ -247,7 +260,7 @@ export async function buildHistoryFixture(engine: BrainEngine,
   for (const table of HISTORY_FIXTURE_TABLES) {
     counts[table] = Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`))[0].n);
   }
-  return { root, seed, sources: fixtureSources, remotes, accessTokenId: minted.id, oauthClientId: client.clientId,
+  return { root, seed, sources: fixtureSources, remotes, accessTokenId, oauthClientId,
     observations, queuedRequestId, delayedEffectId: delayedEffectId!, counts, digest: digestOf(plan, observations) };
 }
 

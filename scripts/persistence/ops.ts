@@ -18,9 +18,10 @@ import type { AuthInfo, OperationContext } from '../../src/core/ops/contract.ts'
 import { operationsByName } from '../../src/core/operations.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import { revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 
 export const OP_KINDS = ['put_page', 'edit_page', 'remember', 'forget', 'takes_add', 'takes_supersede',
-  'add_timeline_entry', 'delete_page', 'restore_page'] as const;
+  'add_timeline_entry', 'delete_page', 'restore_page', 'revoke_access'] as const;
 export type OpKind = typeof OP_KINDS[number];
 /** Read surfaces the oracle checks; they never mutate. */
 export const READ_KINDS = ['get_page', 'recall', 'takes_list'] as const;
@@ -64,6 +65,8 @@ export interface OpObservation {
   receipt?: { request_id: string; state: string; revision?: string | null; principal_kind?: string; principal_id?: string; source_id?: string };
   /** Values later ops can `$ref`. */
   values: { fact_id?: string; row_num?: number; revision?: string };
+  /** The page bytes the caller could read right after a committed op on a page (for stale republication). */
+  pageContent?: string;
   /** The raw handler result or error fields, JSON-safe. */
   raw?: unknown;
 }
@@ -82,6 +85,11 @@ export interface World {
   /** AuthInfo per remote actor, from the real token verifier. */
   auth: Map<string, AuthInfo>;
   observations: Map<string, OpObservation>;
+  /** Descriptors by id, and the exact parameters each was submitted with (a same-intent replay resends them). */
+  descriptors?: Map<string, OpDescriptor>;
+  submitted?: Map<string, Record<string, unknown>>;
+  /** Called with the exact parameters right before submission (a crash worker persists them). */
+  onSubmit?: (d: OpDescriptor, params: Record<string, unknown>) => void;
 }
 
 export function descriptor(id: string, kind: OpKind, actor: string, source: string, args: Record<string, OpArg>,
@@ -106,6 +114,25 @@ export function parseDescriptor(value: unknown): OpDescriptor {
 export async function authenticateRemotes(world: World): Promise<void> {
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(world.engine) });
   for (const remote of world.remotes) world.auth.set(remote.name, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo);
+}
+
+/** Re-verify one actor's bearer token, as a remote transport does on every request. */
+async function reauthenticate(world: World, actor: string): Promise<void> {
+  const remote = world.remotes.find(r => r.name === actor);
+  if (!remote) return;
+  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(world.engine) });
+  world.auth.set(actor, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo);
+}
+
+/** Revoke a remote actor's credential through the owner's real revocation path. */
+async function revokeAccess(world: World, actor: string): Promise<void> {
+  const remote = world.remotes.find(r => r.name === actor);
+  if (!remote) throw new Error(`op descriptor: revoke_access names unknown actor ${actor}`);
+  const auth = world.auth.get(actor);
+  const sql = sqlQueryForEngine(world.engine);
+  if (remote.kind === 'oauth_client') {
+    await new GBrainOAuthProvider({ sql, transaction: fn => world.engine.transaction(tx => fn(sqlQueryForEngine(tx))) }).revokeClient(auth!.clientId);
+  } else await revokeLegacyTokenById(sql, auth!.principal!.id);
 }
 
 export function contextFor(world: World, actor: string, sourceId: string): OperationContext {
@@ -135,7 +162,15 @@ function resolveArg(world: World, value: OpArg): unknown {
 
 /** Map a descriptor to the operation's own parameter shape. */
 export async function paramsFor(world: World, d: OpDescriptor): Promise<{ op: string; params: Record<string, unknown> }> {
+  const original = d.replayOf ? world.descriptors?.get(d.replayOf) : undefined;
+  const resent = original && original.actor === d.actor && original.kind === d.kind && JSON.stringify(original.args) === JSON.stringify(d.args)
+    ? world.submitted?.get(original.id) : undefined;
+  if (resent) return { op: d.kind, params: resent };
+  // A resubmission after a crash sends exactly what the interrupted caller sent.
+  const interrupted = world.submitted?.get(d.id);
+  if (interrupted) return { op: d.kind, params: interrupted };
   const a = resolveArg(world, d.args as OpArg) as Record<string, unknown>;
+  if (a.content === '$stale_content') a.content = world.observations.get(String(a.stale_of))?.pageContent ?? 'missing stale content';
   if (a.expected_revision === '$current') {
     const snapshot = await world.engine.readPageSnapshot(String(a.slug), { sourceId: d.source, includeDeleted: true });
     a.expected_revision = snapshot?.revision ?? 'missing-page';
@@ -153,6 +188,7 @@ export async function paramsFor(world: World, d: OpDescriptor): Promise<{ op: st
     case 'add_timeline_entry': return { op: 'add_timeline_entry', params: { ...base, slug: a.slug, date: a.date, summary: a.summary } };
     case 'delete_page': return { op: 'delete_page', params: { ...base, ...revision, slug: a.slug } };
     case 'restore_page': return { op: 'restore_page', params: { ...base, ...revision, slug: a.slug } };
+    case 'revoke_access': return { op: 'revoke_access', params: { actor: a.actor } };
   }
 }
 
@@ -172,13 +208,22 @@ function receiptOf(value: Record<string, unknown> | undefined): OpObservation['r
 
 /** Run one descriptor through its real handler and record what the caller observed. */
 export async function executeOp(world: World, d: OpDescriptor): Promise<OpObservation> {
+  const base = { id: d.id, kind: d.kind, actor: d.actor, source: d.source, requestId: d.requestId };
+  if (d.kind === 'revoke_access') {
+    await revokeAccess(world, String(d.args.actor));
+    const observation: OpObservation = { ...base, status: 'committed', values: {} };
+    world.observations.set(d.id, observation);
+    return observation;
+  }
   const { op, params } = await paramsFor(world, d);
+  (world.submitted ??= new Map()).set(d.id, params);
+  world.onSubmit?.(d, params);
   const handler = operationsByName[op]?.handler;
   if (!handler) throw new Error(`op descriptor ${d.id}: operation ${op} is not registered`);
-  const ctx = contextFor(world, d.actor, d.source);
-  const base = { id: d.id, kind: d.kind, actor: d.actor, source: d.source, requestId: d.requestId };
   let observation: OpObservation;
   try {
+    await reauthenticate(world, d.actor);
+    const ctx = contextFor(world, d.actor, d.source);
     const result = await handler(ctx, params) as Record<string, unknown>;
     const receipt = receiptOf(result);
     const state = receipt?.state ?? 'committed';
@@ -189,10 +234,20 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
     if (typeof row === 'number') observation.values.row_num = row;
     if (receipt?.revision) observation.values.revision = receipt.revision;
   } catch (error) {
-    const e = error as { code?: string; writeRequest?: Record<string, unknown>; message?: string };
+    const e = error as { code?: string; name?: string; writeRequest?: Record<string, unknown>; message?: string };
+    // The HTTP transport answers a token the verifier rejects with 401 invalid_token.
+    if (!e.code && e.name === 'InvalidTokenError') e.code = 'invalid_token';
     const receipt = receiptOf(e.writeRequest);
     observation = { ...base, status: e.code === 'write_pending' ? 'pending' : 'refused', code: e.code ?? 'uncoded_error',
       receipt, values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
+  }
+  const slug = typeof params.slug === 'string' ? params.slug : typeof params.entity === 'string' ? params.entity : null;
+  if (observation.status === 'committed' && slug) {
+    try {
+      const page = await operationsByName.get_page.handler(contextFor(world, 'local', d.source),
+        { slug, include_content: true, source_id: d.source }) as Record<string, unknown>;
+      if (typeof page?.content === 'string') observation.pageContent = page.content;
+    } catch { /* deleted or not a page */ }
   }
   world.observations.set(d.id, observation);
   return observation;
