@@ -256,6 +256,10 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
 - `src/core/repair/frontmatter.ts` (1): a `managed_file_repair` request on managed sources; the unmanaged rename runs in `maintenanceTransaction`.
 - `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
+- `src/core/schema-pack/page-to-alias.ts` (1): the page-to-alias conversion soft-deletes each converted page in `maintenanceTransaction`.
+- `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.
+- `src/core/schema-pack/retype.ts` (1): each bounded retype batch runs in `maintenanceTransaction`.
+- `src/core/schema-pack/sync.ts` (1): each bounded pack type sync batch runs in `maintenanceTransaction`.
 - `src/core/sweep.ts` (1): the maintenance sweep's bounded timeline batch runs in `maintenanceTransaction`.
 - `src/core/takes-write.ts` (7): the takes file helpers' DB mirror (add, append, update, supersede, resolve and its self-heal) runs in `maintenanceTransaction`; managed brains publish through the takes request preparer.
 - `src/core/think/index.ts` (1): the saved `think` result page runs in `maintenanceTransaction`.
@@ -277,10 +281,6 @@ these write with `NULL` attribution):
 - `src/core/ops/extraction.ts` (2): extraction review promote (frontmatter) and reject (soft delete).
 - `src/core/repair/captured-facts.ts` (1): unmanaged captured-facts expiry.
 - `src/core/repair/extractor-facts.ts` (1): extractor-facts repair update.
-- `src/core/schema-pack/page-to-alias.ts` (1): page-to-alias conversion soft delete.
-- `src/core/schema-pack/page-to-link.ts` (1): page-to-link conversion soft delete.
-- `src/core/schema-pack/retype.ts` (1): schema-pack retype.
-- `src/core/schema-pack/sync.ts` (1): schema-pack type sync.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary
