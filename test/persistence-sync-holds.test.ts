@@ -115,6 +115,7 @@ test('slug conflicts and files over 5 MB and over the 10 MiB read bound are held
   expect(result).toMatchObject({ status: 'first_sync', added: 1, held_count: 3 });
   const byPath = Object.fromEntries((await s.holds()).map(hold => [hold.path, hold]));
   expect(byPath['notes/slug.md']).toMatchObject({ code: 'frontmatter_slug_conflict' });
+  expect(byPath['notes/slug.md']!.message).not.toContain('elsewhere');
   expect(byPath['notes/big.md']).toMatchObject({ code: 'file_too_large' });
   expect(byPath['notes/huge.md']).toMatchObject({ code: 'file_too_large', upstream_version: null });
   expect(byPath['notes/huge.md']!.meta.blob_oid).toBe(git(s.root, 'rev-parse', 'HEAD:notes/huge.md'));

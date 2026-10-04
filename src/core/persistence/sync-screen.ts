@@ -11,6 +11,8 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { loadImportSanityConfig, type ImportSanityConfig } from '../import-screen.ts';
 import { RECOVERY_VERSION } from '../markdown.ts';
+import { slugConflictHoldMessage } from '../import-file.ts';
+import { resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
@@ -96,7 +98,9 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
           why: 'Collects the gbrain version and brain health to attach to the bug report; the sync checkpoint did not advance past this file.' } });
     }
   }
-  return heldEntry(entry, slug, pageId, refusal, content, blob);
+  // The stored hold names the path-derived slug only, never the declared frontmatter value.
+  return heldEntry(entry, slug, pageId, refusal.code === 'frontmatter_slug_conflict'
+    ? { ...refusal, message: slugConflictHoldMessage(entry.path, resolveSlugForPath(entry.sourcePath)) } : refusal, content, blob);
 }
 
 /**

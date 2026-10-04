@@ -241,6 +241,7 @@ these write with `NULL` attribution):
 - `src/commands/extract-conversation-facts.ts` (3): the conversation fact index calls the engine directly through `writeDerivedFacts`.
 - `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` batch insert.
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
+- `src/commands/sync/holds.ts` (1): legacy full sync moves a held rename's page once its file screens clean (`updateSlug`).
 - `src/commands/sync/renames.ts` (1): legacy sync rename (`updateSlug`).
 - `src/core/calibration/undo-wave.ts` (1): calibration wave undo of take resolutions.
 - `src/core/chronicle/extract-events.ts` (1): event page write.
