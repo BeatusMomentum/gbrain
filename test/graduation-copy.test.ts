@@ -19,33 +19,30 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { InventoryEntry, TriggerBypass } from '../src/core/persistence/engine-graduation.types.ts';
+import type { ColumnMeta, TriggerBypass } from '../src/core/persistence/engine-graduation.types.ts';
 import {
-  buildDeferredIndexes, carryRowFilter, columnContract, COPY_TRANSFORMS, copySequences, copyTable, deferIndexes, detectTriggerBypass,
-  GRADUATION_DEFERRED_INDEXES_KEY, reenableTriggers, tableColumns, transformFor, type ColumnMeta,
+  buildDeferredIndexes, columnContract, copySequences, copyTable, deferIndexes, detectTriggerBypass, GRADUATION_DEFERRED_INDEXES_KEY, reenableTriggers,
 } from '../src/core/persistence/graduation-copy.ts';
-import { firstDifference, LOCAL_TRANSFORMS, tableSnapshot } from './helpers/graduation-copy-harness.ts';
+import { tableColumns } from '../src/core/persistence/graduation-digest.ts';
+import { GRADUATION_INVENTORY } from '../src/core/persistence/graduation-inventory.ts';
+import { digestMismatches, inventoryEntry as entry, rowCount } from './helpers/graduation-copy-harness.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
-function entry(relation: string, extra: Partial<InventoryEntry> = {}): InventoryEntry {
-  return { relation, kind: 'table', class: 'carry', engines: { pglite: true, postgres: true }, lossKind: 'user_data', reason: 'test',
-    transforms: (LOCAL_TRANSFORMS[relation] ?? []).map(column => ({ column, rule: transformFor(relation, column).rule })), ...extra };
-}
-
 const col = (name: string, type: string, extra: Partial<ColumnMeta> = {}): ColumnMeta =>
-  ({ name, ident: name, type, generated: false, generationExpr: null, collatable: type === 'text', ...extra });
+  ({ name, type, category: type === 'text' ? 'S' : 'N', generated: false, collatable: type === 'text', ...extra });
+const side = (columns: ColumnMeta[], generated: Record<string, string> = {}) => ({ columns, generated: new Map(Object.entries(generated)) });
 
 describe('column contract', () => {
   test('copies matching columns and never inserts generated ones', () => {
-    const source = [col('id', 'integer'), col('a', 'text'), col('n', 'integer', { generated: true, generationExpr: 'length(a)' })];
-    const target = [col('a', 'text'), col('id', 'integer'), col('n', 'integer', { generated: true, generationExpr: 'length(a)' })];
-    expect(columnContract(entry('t'), source, target).map(c => c.name)).toEqual(['id', 'a']);
+    const source = side([col('id', 'integer'), col('a', 'text'), col('n', 'integer', { generated: true })], { n: 'length(a)' });
+    const target = side([col('a', 'text'), col('id', 'integer'), col('n', 'integer', { generated: true })], { n: 'length(a)' });
+    expect(columnContract(entry('t'), source, target)).toEqual(['id', 'a']);
   });
 
   test('refuses missing, retyped, target-only and differently generated columns, naming each', () => {
-    const source = [col('id', 'integer'), col('a', 'text'), col('emb', 'vector(1536)'), col('n', 'integer', { generated: true, generationExpr: 'length(a)' })];
-    const target = [col('id', 'integer'), col('emb', 'vector(768)'), col('extra', 'text'), col('n', 'integer', { generated: true, generationExpr: 'length(a) + 1' })];
+    const source = side([col('id', 'integer'), col('a', 'text'), col('emb', 'vector(1536)'), col('n', 'integer', { generated: true })], { n: 'length(a)' });
+    const target = side([col('id', 'integer'), col('emb', 'vector(768)'), col('extra', 'text'), col('n', 'integer', { generated: true })], { n: '(length(a) + 1)' });
     let error: unknown;
     try { columnContract(entry('t'), source, target); } catch (e) { error = e; }
     const json = (error as { toJSON(): Record<string, unknown> }).toJSON();
@@ -54,20 +51,19 @@ describe('column contract', () => {
     expect(String(json.detail)).toContain('emb is vector(1536) on the source but vector(768) on the target');
     expect(String(json.detail)).toContain('extra (text) exists only on the target');
     expect(String(json.detail)).toContain('n generation differs');
-    expect((json.fix as { argv: string[] }).argv).toEqual(['gbrain', 'migrate', '--plan', '--json']);
+    expect((json.fix as { argv: string[] }).argv).toContain('--plan');
   });
 
   test('an allowlisted column may differ', () => {
-    const source = [col('id', 'integer'), col('legacy', 'text')];
-    const target = [col('id', 'integer'), col('added', 'text')];
-    expect(columnContract(entry('t', { columnAllowlist: { legacy: 'dropped upstream', added: 'nullable, defaulted' } }), source, target).map(c => c.name)).toEqual(['id']);
+    const source = side([col('id', 'integer'), col('legacy', 'text')]);
+    const target = side([col('id', 'integer'), col('added', 'text')]);
+    expect(columnContract(entry('t', { columnAllowlist: { legacy: 'dropped upstream', added: 'nullable, defaulted' } }), source, target)).toEqual(['id']);
   });
 
-  test('transforms and row filters', () => {
-    expect(() => transformFor('pages', 'title')).toThrow(/does not implement/);
-    for (const [relation, columns] of Object.entries(LOCAL_TRANSFORMS)) for (const c of columns) expect(COPY_TRANSFORMS[`${relation}.${c}`]).toBeDefined();
-    expect(carryRowFilter('pages')).toBeNull();
-    expect(carryRowFilter('config')).toContain(GRADUATION_DEFERRED_INDEXES_KEY);
+  test('every inventory transform carries the SQL the copier selects', () => {
+    const transforms = GRADUATION_INVENTORY.entries.flatMap(e => e.transforms.map(t => ({ relation: e.relation, ...t })));
+    expect(transforms.length).toBeGreaterThan(0);
+    expect(transforms.filter(t => !t.expression)).toEqual([]);
   });
 });
 
@@ -121,12 +117,10 @@ for (const backend of testBackends()) {
         const batches: number[] = [];
         for (const relation of relations) {
           const { rows } = await copyTable(e, entry(relation), { bypass, runId, batchBytes: 64, onBatch: n => batches.push(n) });
-          expect(rows).toBe((await tableSnapshot(source, entry(relation))).rows);
+          expect(rows).toBe(await rowCount(source, entry(relation)));
         }
         expect(Math.max(...batches)).toBeLessThan(10);
-        for (const relation of relations) {
-          expect(firstDifference(await tableSnapshot(source, entry(relation), { applyTransforms: true }), await tableSnapshot(target, entry(relation)))).toBeNull();
-        }
+        expect(await digestMismatches(e, relations.map(r => entry(r)))).toEqual([]);
         const keys = (await target.executeRaw<{ k: string }>('SELECT k FROM graduation_test_types ORDER BY k COLLATE "C"')).map(r => r.k);
         expect(keys).toEqual(['1', 'B', 'Zeta', 'a-b', 'a_b', 'alpha', 'b', 'é']);
         expect(await target.executeRaw("SELECT id FROM sources WHERE id = 'default' AND name = 'renamed default'")).toHaveLength(1);

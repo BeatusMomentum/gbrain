@@ -29,7 +29,8 @@ type PendingRequest = { request_id: string; source_id: string; operation: string
  * host are `request` blockers the drain itself clears (recovering ones carry
  * the retry command for when the drain cannot finish them); requests and host
  * bindings owned by another host, recovering topology changes, recovering
- * effects and the writer admin lock need someone else to act first.
+ * effects, the writer admin lock and OAuth clients bound to a missing source
+ * (an FK only Postgres enforces) need someone else to act first.
  */
 export async function graduationBlockers(source: BrainEngine, hostId: string): Promise<readonly GraduationBlocker[]> {
   const blockers: GraduationBlocker[] = [];
@@ -71,6 +72,17 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
   for (const b of bindings) {
     blockers.push({ kind: 'foreign_host_binding', id: `${b.worktree_id}:${b.host_id}`, detail: `worktree ${b.worktree_id} has a binding on host ${b.host_id}`,
       argv: ['gbrain', 'sources', 'writer', 'transfer', 'prepare', b.source_id ?? b.worktree_id], needsUser: true });
+  }
+  const [boundColumn] = await source.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema() AND table_name = 'oauth_clients' AND column_name = 'bound_source_id') AS present`);
+  if (boundColumn?.present) {
+    const dangling = await source.executeRaw<{ client_id: string; client_name: string; bound_source_id: string }>(`SELECT c.client_id, c.client_name, c.bound_source_id
+      FROM oauth_clients c WHERE c.bound_source_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = c.bound_source_id) ORDER BY c.client_id`);
+    for (const c of dangling) {
+      blockers.push({ kind: 'dangling_reference', id: `oauth_clients.${c.client_id}`,
+        detail: `OAuth client ${c.client_name} is bound to source ${c.bound_source_id}, which no longer exists; Postgres enforces this binding, and clearing it would widen the client's access. Restore the source, or revoke the client and register a replacement`,
+        argv: ['gbrain', 'auth', 'revoke-client', c.client_id], needsUser: true });
+    }
   }
   return blockers;
 }

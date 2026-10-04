@@ -6,9 +6,9 @@
  * under the DISABLE TRIGGER fallback behind a database fence.
  *
  * Protects: verbatim copy with primary keys preserved (every carried table's
- * canonical snapshot, transforms applied to the source side, equals the
- * target), initSchema seed rows replaced, exact sequence positions, every FK
- * satisfied, user triggers enabled after the copy, deferred HNSW/GIN indexes
+ * canonical digest from graduation-digest.ts, transforms applied to the
+ * source side, equals the target's, in the inventory's copy order),
+ * initSchema seed rows replaced, exact sequence positions, every FK satisfied, user triggers enabled after the copy, deferred HNSW/GIN indexes
  * rebuilt, and the fence still refusing writes that lack the run identity.
  * Fails when: a column, key, sequence position, trigger state or index set
  * differs, or the copy needs a session the fence would refuse.
@@ -30,7 +30,8 @@ import { buildHistoryFixture, HISTORY_FIXTURE_TABLES, type HistoryFixture } from
 import { copySequences, deferIndexes, buildDeferredIndexes, detectTriggerBypass } from '../../src/core/persistence/graduation-copy.ts';
 import { drainForGraduation, freezeSource } from '../../src/core/persistence/graduation-drain.ts';
 import { embeddingColumns } from '../../src/core/persistence/graduation-target.ts';
-import { copyAll, firstDifference, localCopyInventory, tableSnapshot } from '../helpers/graduation-copy-harness.ts';
+import { copiedEntries, copyAll, digestMismatches } from '../helpers/graduation-copy-harness.ts';
+import { assertRelationSet } from '../../src/core/persistence/graduation-inventory.ts';
 import { requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 
 const databaseUrl = requirePostgresTestDatabase();
@@ -97,7 +98,7 @@ async function installTestFence(target: BrainEngine, runId: string): Promise<voi
 
 async function graduateInto(target: PostgresEngine, bypass: TriggerBypass, runId: string, label: string): Promise<InventoryEntry[]> {
   const e = { source, target };
-  const entries = await localCopyInventory(e);
+  const entries = [...await copiedEntries(e)];
   const before = await indexSet(target);
   let t = performance.now();
   const deferred = await deferIndexes(target, { runId });
@@ -120,14 +121,7 @@ async function graduateInto(target: PostgresEngine, bypass: TriggerBypass, runId
 }
 
 async function assertEqualCopy(target: PostgresEngine, entries: readonly InventoryEntry[]): Promise<void> {
-  const differences: string[] = [];
-  for (const entry of entries) {
-    const [a, b] = [await tableSnapshot(source, entry, { applyTransforms: true }), await tableSnapshot(target, entry)];
-    const diff = firstDifference(a, b);
-    if (diff) differences.push(diff);
-    if (!diff) expect(b.keys).toEqual(a.keys);
-  }
-  expect(differences).toEqual([]);
+  expect(await digestMismatches({ source, target }, entries)).toEqual([]);
   expect(await fkOrphans(target)).toEqual([]);
   const disabled = await target.executeRaw(`SELECT tgrelid::regclass::text AS relation, tgname FROM pg_trigger WHERE NOT tgisinternal AND tgenabled = 'D'`);
   expect(disabled).toEqual([]);
@@ -156,6 +150,7 @@ beforeAll(async () => {
   expect(result.blockers).toEqual([]);
   drained = result.drained;
   await freezeSource(source);
+  await assertRelationSet(source, 'pglite');
 }, 1_800_000);
 
 afterAll(async () => {
@@ -177,6 +172,7 @@ describe(`graduation copy of a ${PAGES}-page history brain`, () => {
     try {
       expect(await embeddingColumns((sql, p) => target.executeRaw(sql, p))).toEqual(await embeddingColumns((sql, p) => source.executeRaw(sql, p)));
       expect(await detectTriggerBypass(target)).toBe('session_replication_role');
+      await assertRelationSet(target, 'postgres');
       const entries = await graduateInto(target, 'session_replication_role', randomUUID(), 'replica');
       await assertEqualCopy(target, entries);
       const [brain] = await target.executeRaw<{ brain_id: string; enabled: boolean }>('SELECT brain_id::text AS brain_id, enabled FROM persistence_brain');

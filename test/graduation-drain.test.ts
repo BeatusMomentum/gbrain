@@ -6,7 +6,8 @@
  * terminal state through a request-only consumer that runs no effects (the
  * drained request's effects stay queued for the target's worker), no resident
  * service is left running, the blocker taxonomy (queued request drained;
- * foreign host binding, writer admin lock and recovering effect refuse up
+ * foreign host binding, writer admin lock, recovering effect and (PGLite) an
+ * OAuth client bound to a missing source refuse up
  * front with their structured actions and the drain starts nothing), the
  * `--drain-timeout` refusal shape, and the frozen source (writes fail,
  * custody writes through `withSourceWritable` succeed).
@@ -67,6 +68,7 @@ for (const backend of testBackends()) {
             await tx.executeRaw(`INSERT INTO config (key, value) VALUES ($1, '{"locked": true, "set_at": "2026-10-04T00:00:00Z"}')
               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [WRITER_ADMIN_LOCK_KEY]);
             await tx.executeRaw(`UPDATE persistence_effects SET recovery = '{"kind": "test"}'::jsonb WHERE id = $1`, [fixture.delayedEffectId]);
+            if (engine.kind === 'pglite') await tx.executeRaw("UPDATE oauth_clients SET bound_source_id = 'removed-source' WHERE client_id = $1", [fixture.oauthClientId]);
           });
           const blocked = await drainForGraduation(engine, { timeoutMs: 1000, hostId, config: config(engine.kind) });
           expect(blocked.drained).toEqual([]);
@@ -76,6 +78,10 @@ for (const backend of testBackends()) {
               argv: expect.arrayContaining(['gbrain', 'sources', 'writer', 'transfer', 'prepare']) }),
             expect.objectContaining({ kind: 'effect_recovery', id: String(fixture.delayedEffectId), needsUser: false }),
           ]));
+          if (engine.kind === 'pglite') {
+            expect(blocked.blockers).toContainEqual(expect.objectContaining({ kind: 'dangling_reference', id: `oauth_clients.${fixture.oauthClientId}`,
+              argv: ['gbrain', 'auth', 'revoke-client', fixture.oauthClientId], needsUser: true }));
+          }
 
           if (engine.kind === 'pglite') {
             await freezeSource(engine);

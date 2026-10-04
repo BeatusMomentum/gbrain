@@ -134,7 +134,8 @@ describe.skipIf(!databaseUrl)('Postgres probes and the route cross-check', () =>
     expect(empty.vector.halfvec).toBe(true);
     expect(targetProbeBlockers(empty, routes)).toEqual([]);
     const db = postgres(routes.mainUrl, { max: 1, onnotice: () => {} });
-    expect(await db.unsafe("SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).toEqual([{ n: 0 }]);
+    const [relations] = await db.unsafe("SELECT count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'");
+    expect(relations!.n).toBe(0);
     await db.end();
 
     const engine = new PostgresEngine();

@@ -49,7 +49,7 @@ function parsePostgresUrl(url: string): URL {
       { why: 'Graduation moves a PGLite brain into a Postgres database; the given value is not a Postgres connection URL.',
         fix: { argv: targetPlanArgv({}), consent: ['credentials'], actor: 'agent', requires_exclusive: false,
           why: 'Re-plans against a URL held in an environment variable, so the password never appears in argv.',
-          user_message: `Set ${DEFAULT_TARGET_URL_ENV} to the Postgres URL of the target database (postgres://user:password@host:5432/db).`,
+          user_message: `Set ${DEFAULT_TARGET_URL_ENV} to the Postgres connection URL of the target database (user, password, host, port and database).`,
           verify: { argv: targetPlanArgv({}) } } });
   }
   return new URL(url.replace(/^postgres(?:ql)?:\/\//i, 'http://'));

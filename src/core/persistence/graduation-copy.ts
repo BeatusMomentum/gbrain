@@ -6,21 +6,21 @@
  * - Per-column contract: source and target columns must match by name, type
  *   and typmod (`format_type`) and generation expression, outside the
  *   inventory entry's `columnAllowlist`; generated columns are never inserted.
+ * - Source rows are read with the digest's own plan (`digestPlan` with
+ *   transforms applied, every value as `::text`, the entry's `rowFilter`,
+ *   keyset order by primary key with COLLATE "C" under the digest session
+ *   settings), so what is copied is exactly what verify digests.
  * - Each table copies in one target transaction that carries the run's fence
  *   identity (`gbrain.graduation_run`), bypasses user triggers
  *   (`session_replication_role = replica`, or DISABLE/ENABLE TRIGGER by name
  *   inside the same transaction, never the fence), deletes the target's rows
- *   for that table (initSchema seed rows included; config keeps its
- *   target-owned keys) and inserts the source rows.
- * - Values travel as canonical text and are cast back with the column's own
- *   type, one jsonb parameter per batch (far below the 65,535 bind-parameter
- *   limit), batches sized by bytes. Source batches are keyset-ordered by
- *   primary key with `COLLATE "C"` under UTC/ISO rendering settings.
+ *   for that table (initSchema seed rows included) and inserts the source rows.
+ * - Values travel as text in one jsonb array per batch (bound `$1::text::jsonb`,
+ *   far below the 65,535 bind-parameter limit) and are cast back with each
+ *   column's own `format_type`; batches are sized by bytes.
  * - Self-referencing FKs copy in one pass under replica mode (no FK triggers)
  *   and in two passes (insert with NULL, then update) under DISABLE TRIGGER,
  *   where FK checks stay active.
- * - Inventory transforms (lease and claim resets) are applied from
- *   `COPY_TRANSFORMS`; the digest applies the same expressions to the source.
  * - Sequences are set to the source's exact position, raised to the target
  *   column maximum when that is higher.
  * - HNSW and GIN indexes are dropped before the copy and rebuilt after it; the
@@ -28,130 +28,63 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { ANN_BUILD_MESSAGE, buildDeferredAnnIndexes, type DeferredAnnIndex } from '../embedding-ann-build.ts';
-import type { GraduationEngines, InventoryEntry, TriggerBypass } from './engine-graduation.types.ts';
+import type { ColumnMeta, GraduationEngines, InventoryEntry, TriggerBypass } from './engine-graduation.types.ts';
+import { digestPlan, quoteIdent, tableColumns, withDigestSession, type DigestPlan } from './graduation-digest.ts';
 import { graduationError } from './graduation-target.ts';
 
+/** Target-owned config row holding the deferred index list; the config copy never deletes it. */
 export const GRADUATION_DEFERRED_INDEXES_KEY = 'graduation.deferred_indexes';
-/** Config keys each engine owns: the target keeps its own values and the copy never writes them. */
-export const TARGET_OWNED_CONFIG_KEYS: readonly string[] = ['engine', 'version', GRADUATION_DEFERRED_INDEXES_KEY];
 /** Default copy batch size in bytes of canonical text. */
 export const DEFAULT_COPY_BATCH_BYTES = 4 * 1024 * 1024;
 const MAX_BATCH_ROWS = 5000;
 const FENCE_TRIGGER_PREFIX = 'gbrain_graduation_fence';
-const RENDER_SETTINGS = ["SET LOCAL TimeZone = 'UTC'", "SET LOCAL DateStyle = 'ISO'", 'SET LOCAL extra_float_digits = 3', "SET LOCAL IntervalStyle = 'postgres'", "SET LOCAL bytea_output = 'hex'"];
-
-/** Rows of a carried table that are not copied (and not digested): the target-owned config keys. */
-export function carryRowFilter(relation: string): string | null {
-  if (relation !== 'config') return null;
-  return `NOT (key = ANY (ARRAY[${TARGET_OWNED_CONFIG_KEYS.map(k => `'${k.replace(/'/g, "''")}'`).join(', ')}]::text[]))`;
-}
-
-export interface CopyTransform {
-  rule: string;
-  /** SQL over the typed source values; `col(name)` renders another column of the same row. */
-  sql: (col: (name: string) => string) => string;
-}
-
-const activeJob = (col: (name: string) => string, column: string) => `CASE WHEN ${col('status')} = 'active' THEN NULL ELSE ${col(column)} END`;
-const claimedEffect = (col: (name: string) => string, column: string) => `CASE WHEN ${col('state')} IN ('running', 'queued') THEN NULL ELSE ${col(column)} END`;
-
-/**
- * Every column transform graduation may apply, keyed `relation.column`. An
- * inventory entry lists the ones it uses; verify applies the same SQL to the
- * source snapshot, so nothing else may differ.
- */
-export const COPY_TRANSFORMS: Readonly<Record<string, CopyTransform>> = {
-  'minion_jobs.status': { rule: 'active -> waiting', sql: col => `CASE WHEN ${col('status')} = 'active' THEN 'waiting' ELSE ${col('status')} END` },
-  'minion_jobs.lock_token': { rule: 'cleared on active jobs', sql: col => activeJob(col, 'lock_token') },
-  'minion_jobs.lock_until': { rule: 'cleared on active jobs', sql: col => activeJob(col, 'lock_until') },
-  'minion_jobs.timeout_at': { rule: 'cleared on active jobs', sql: col => activeJob(col, 'timeout_at') },
-  'minion_jobs.started_at': { rule: 'cleared on active jobs', sql: col => activeJob(col, 'started_at') },
-  'persistence_worktrees.heartbeat_at': { rule: 'reset', sql: () => 'NULL' },
-  'persistence_effects.state': { rule: 'running -> queued', sql: col => `CASE WHEN ${col('state')} = 'running' THEN 'queued' ELSE ${col('state')} END` },
-  'persistence_effects.execution_token': { rule: 'cleared on running and queued effects', sql: col => claimedEffect(col, 'execution_token') },
-  'persistence_effects.claim_expires_at': { rule: 'cleared on running and queued effects', sql: col => claimedEffect(col, 'claim_expires_at') },
-  'persistence_brain.enabled': { rule: 'false until cutover', sql: () => 'false' },
-};
-
-export function transformFor(relation: string, column: string): CopyTransform {
-  const transform = COPY_TRANSFORMS[`${relation}.${column}`];
-  if (!transform) throw new Error(`graduation inventory lists a transform for ${relation}.${column} that the copier does not implement`);
-  return transform;
-}
-
-export interface ColumnMeta {
-  name: string;
-  ident: string;
-  type: string;
-  generated: boolean;
-  generationExpr: string | null;
-  collatable: boolean;
-}
 
 type Sql = Pick<BrainEngine, 'executeRaw'>;
 
-async function relationIdent(engine: Sql, relation: string): Promise<string> {
-  const [row] = await engine.executeRaw<{ ident: string; exists: boolean }>(
-    "SELECT format('%I', $1::text) AS ident, to_regclass(format('public.%I', $1::text)) IS NOT NULL AS exists", [relation]);
-  if (!row?.exists) throw new Error(`relation ${relation} does not exist`);
-  return row.ident;
+/** Generation expressions of a table's generated columns, keyed by column name. */
+export async function generationExpressions(engine: Sql, relation: string): Promise<Map<string, string>> {
+  const rows = await engine.executeRaw<{ name: string; expr: string }>(`SELECT a.attname AS name, pg_get_expr(d.adbin, d.adrelid) AS expr
+    FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE n.nspname = current_schema() AND c.relname = $1 AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated::text = 's'`, [relation]);
+  return new Map(rows.map(r => [r.name, r.expr.replace(/\s+/g, ' ').trim()]));
 }
-
-export async function tableColumns(engine: Sql, relation: string): Promise<ColumnMeta[]> {
-  const rows = await engine.executeRaw<{ name: string; ident: string; type: string; generated: boolean; generation_expr: string | null; collatable: boolean }>(
-    `SELECT a.attname AS name, format('%I', a.attname) AS ident, format_type(a.atttypid, a.atttypmod) AS type,
-       a.attgenerated <> '' AS generated, CASE WHEN a.attgenerated <> '' THEN pg_get_expr(d.adbin, d.adrelid) END AS generation_expr,
-       t.typcollation <> 0 AS collatable
-     FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid
-     LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-     WHERE a.attrelid = to_regclass(format('public.%I', $1::text)) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum`, [relation]);
-  return rows.map(r => ({ name: r.name, ident: r.ident, type: r.type, generated: r.generated === true, generationExpr: r.generation_expr, collatable: r.collatable === true }));
-}
-
-async function constraintColumns(engine: Sql, relation: string, kind: 'p' | 'f-self'): Promise<string[]> {
-  const rows = await engine.executeRaw<{ name: string }>(kind === 'p'
-    ? `SELECT a.attname AS name FROM pg_constraint k CROSS JOIN LATERAL unnest(k.conkey) WITH ORDINALITY AS u(attnum, ord)
-         JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum
-       WHERE k.contype = 'p' AND k.conrelid = to_regclass(format('public.%I', $1::text)) ORDER BY u.ord`
-    : `SELECT DISTINCT a.attname AS name FROM pg_constraint k CROSS JOIN LATERAL unnest(k.conkey) AS u(attnum)
-         JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum
-       WHERE k.contype = 'f' AND k.conrelid = k.confrelid AND k.conrelid = to_regclass(format('public.%I', $1::text)) ORDER BY 1`, [relation]);
-  return rows.map(r => r.name);
-}
-
-const normalizeExpr = (expr: string | null) => (expr ?? '').replace(/\s+/g, ' ').trim();
 
 /**
  * The per-column contract: every non-allowlisted column must exist on both
  * sides with the same type and typmod, and generated columns must carry the
- * same expression. Returns the columns the copy inserts (source order).
+ * same expression. Returns the names of the columns the copy inserts.
  */
-export function columnContract(entry: Pick<InventoryEntry, 'relation' | 'columnAllowlist'>, source: readonly ColumnMeta[], target: readonly ColumnMeta[]): ColumnMeta[] {
+export function columnContract(entry: Pick<InventoryEntry, 'relation' | 'columnAllowlist'>,
+  source: { columns: readonly ColumnMeta[]; generated: ReadonlyMap<string, string> },
+  target: { columns: readonly ColumnMeta[]; generated: ReadonlyMap<string, string> }): string[] {
   const allow = entry.columnAllowlist ?? {};
-  const targetByName = new Map(target.map(c => [c.name, c]));
-  const sourceNames = new Set(source.map(c => c.name));
+  const targetByName = new Map(target.columns.map(c => [c.name, c]));
+  const sourceNames = new Set(source.columns.map(c => c.name));
   const problems: string[] = [];
-  const copied: ColumnMeta[] = [];
-  for (const column of source) {
+  const copied: string[] = [];
+  for (const column of source.columns) {
     const other = targetByName.get(column.name);
-    if (column.name in allow) { if (other && !other.generated && !column.generated && other.type === column.type) copied.push(column); continue; }
+    if (column.name in allow) { if (other && !other.generated && !column.generated && other.type === column.type) copied.push(column.name); continue; }
     if (!other) { problems.push(`${column.name} (${column.type}) is missing on the target`); continue; }
     if (other.type !== column.type) { problems.push(`${column.name} is ${column.type} on the source but ${other.type} on the target`); continue; }
-    if (other.generated !== column.generated || normalizeExpr(other.generationExpr) !== normalizeExpr(column.generationExpr)) {
-      problems.push(`${column.name} generation differs (source ${column.generationExpr ?? 'not generated'}, target ${other.generationExpr ?? 'not generated'})`);
+    const sourceExpr = source.generated.get(column.name) ?? null;
+    const targetExpr = target.generated.get(column.name) ?? null;
+    if (other.generated !== column.generated || sourceExpr !== targetExpr) {
+      problems.push(`${column.name} generation differs (source ${sourceExpr ?? 'not generated'}, target ${targetExpr ?? 'not generated'})`);
       continue;
     }
-    if (!column.generated) copied.push(column);
+    if (!column.generated) copied.push(column.name);
   }
-  for (const column of target) {
+  for (const column of target.columns) {
     if (!sourceNames.has(column.name) && !(column.name in allow)) problems.push(`${column.name} (${column.type}) exists only on the target`);
   }
   if (problems.length) {
     throw graduationError('graduation_target_unsupported', `The target's ${entry.relation} columns do not match the source.`,
       'Use an empty target database created by this gbrain version; the column contract never copies into a different shape.',
       { why: `Graduation copies every column verbatim; ${entry.relation}: ${problems.join('; ')}.`, detail: problems.join('; '),
-        fix: { argv: ['gbrain', 'migrate', '--plan', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Re-plans after the target is replaced or its schema is upgraded.', verify: { argv: ['gbrain', 'migrate', '--plan', '--json'] } } });
+        fix: { argv: ['gbrain', 'migrate', '--to', 'postgres', '--url-env', 'GBRAIN_TARGET_URL', '--plan', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'Re-plans after the target is replaced or its schema is upgraded.' } });
   }
   return copied;
 }
@@ -191,87 +124,86 @@ async function userTriggers(tx: Sql, relation: string, enabledOnly: boolean): Pr
 
 const ENABLE_BY_MODE: Readonly<Record<string, string>> = { O: 'ENABLE TRIGGER', A: 'ENABLE ALWAYS TRIGGER', R: 'ENABLE REPLICA TRIGGER' };
 
+/** Keyset-paged source rows from the digest plan: raw primary-key texts and transformed column texts. */
+async function readSourceBatch(source: BrainEngine, plan: DigestPlan, extraWhere: string | null, afterKey: readonly string[] | null, limit: number):
+  Promise<Array<{ key: string[]; values: Array<string | null> }>> {
+  const collate = (c: ColumnMeta, expr: string) => c.collatable ? `${expr} COLLATE "C"` : expr;
+  const order = plan.key.map(k => collate(k, quoteIdent(k.name))).join(', ');
+  const where = [
+    plan.filter ? `(${plan.filter})` : '',
+    extraWhere ? `(${extraWhere})` : '',
+    afterKey ? `(${order}) > (${plan.key.map((k, i) => collate(k, `$${i + 1}::text::${k.type}`)).join(', ')})` : '',
+  ].filter(Boolean);
+  const rows = await withDigestSession(source, tx => tx.executeRaw<Record<string, string | null>>(
+    `${plan.select}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order} LIMIT ${limit}`, afterKey ? [...afterKey] : []));
+  return rows.map(r => ({ key: plan.key.map((_, i) => r[`k${i}`] as string), values: plan.columns.map((_, i) => r[`c${i}`] ?? null) }));
+}
+
 /**
  * Copies one carried (or rebind) table into the fenced target in a single
- * transaction and returns the number of source rows copied.
+ * transaction and returns the number of source rows copied. Catalog reads
+ * happen before any transaction opens (PGLite serializes its one connection).
  */
 export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
   opts: { bypass: TriggerBypass; batchBytes?: number; onBatch?: (rows: number) => void; runId: string }): Promise<{ rows: number }> {
   if (entry.class !== 'carry' && entry.class !== 'rebind') throw new Error(`copyTable: ${entry.relation} is ${entry.class}, not carried`);
   const relation = entry.relation;
-  const sourceColumns = await tableColumns(e.source, relation);
-  const targetColumns = await tableColumns(e.target, relation);
-  if (!sourceColumns.length) throw new Error(`copyTable: ${relation} does not exist on the source`);
-  const columns = columnContract(entry, sourceColumns, targetColumns);
-  const pk = await constraintColumns(e.source, relation, 'p');
-  if (!pk.length) throw new Error(`copyTable: ${relation} has no primary key; the keyset copy needs one`);
-  const transforms = new Map(entry.transforms.map(t => [t.column, transformFor(relation, t.column)]));
-  const selfFk = opts.bypass === 'disable_trigger' ? (await constraintColumns(e.target, relation, 'f-self')).filter(c => columns.some(col => col.name === c)) : [];
-  const sourceIdent = await relationIdent(e.source, relation);
-  const targetIdent = await relationIdent(e.target, relation);
-  const filter = carryRowFilter(relation);
-  const index = new Map(columns.map((c, i) => [c.name, i]));
-  const pkColumns = pk.map(name => {
-    const column = columns.find(c => c.name === name);
-    if (!column) throw new Error(`copyTable: primary key column ${relation}.${name} is not copied`);
-    return column;
-  });
-  const typed = (name: string) => {
-    const i = index.get(name);
-    if (i === undefined) throw new Error(`copyTable: ${relation}.${name} is not a copied column`);
-    return `((r.v->>${i})::${columns[i]!.type})`;
-  };
-  const insertExprs = columns.map(c => selfFk.includes(c.name) ? 'NULL' : transforms.get(c.name)?.sql(typed) ?? typed(c.name));
-  const insertSql = `INSERT INTO ${targetIdent} (${columns.map(c => c.ident).join(', ')}) SELECT ${insertExprs.join(', ')} FROM jsonb_array_elements($1::text::jsonb) AS r(v)`;
-  const orderBy = pkColumns.map(c => c.collatable ? `${c.ident} COLLATE "C"` : c.ident).join(', ');
-  const keyset = `(${orderBy}) > (${pkColumns.map((c, j) => `$${j + 1}::${c.type}${c.collatable ? ' COLLATE "C"' : ''}`).join(', ')})`;
+  const plan = await digestPlan(e.source, entry, true);
+  const [targetColumns, sourceGenerated, targetGenerated] = await Promise.all([
+    tableColumns(e.target, relation), generationExpressions(e.source, relation), generationExpressions(e.target, relation)]);
+  if (!targetColumns.length) throw new Error(`copyTable: ${relation} does not exist on the target`);
+  const copied = new Set(columnContract(entry, { columns: plan.columns, generated: sourceGenerated }, { columns: targetColumns, generated: targetGenerated }));
+  const selfFk = opts.bypass === 'disable_trigger'
+    ? (await e.target.executeRaw<{ name: string }>(`SELECT DISTINCT a.attname AS name FROM pg_constraint k CROSS JOIN LATERAL unnest(k.conkey) AS u(attnum)
+        JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum JOIN pg_class c ON c.oid = k.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE k.contype = 'f' AND k.conrelid = k.confrelid AND n.nspname = current_schema() AND c.relname = $1`, [relation])).map(r => r.name).filter(name => copied.has(name))
+    : [];
+  const table = quoteIdent(relation);
+  const inserted = plan.columns.map((c, i) => ({ c, i })).filter(({ c }) => copied.has(c.name));
+  const insertSql = `INSERT INTO ${table} (${inserted.map(({ c }) => quoteIdent(c.name)).join(', ')}) SELECT ${inserted
+    .map(({ c, i }) => selfFk.includes(c.name) ? 'NULL' : `(r.v->>${i})::${c.type}`).join(', ')} FROM jsonb_array_elements($1::text::jsonb) AS r(v)`;
   const batchBytes = opts.batchBytes ?? DEFAULT_COPY_BATCH_BYTES;
+  const deleteFilter = [entry.rowFilter ? `(${entry.rowFilter})` : '', relation === 'config' ? `key <> '${GRADUATION_DEFERRED_INDEXES_KEY}'` : ''].filter(Boolean);
+  const disabled = opts.bypass === 'disable_trigger' ? await userTriggers(e.target, relation, true) : [];
 
-  const selectList = columns.map((c, i) => `${c.ident}::text AS c${i}`).join(', ');
   const scan = async (extraWhere: string | null, visit: (rows: Array<Array<string | null>>) => Promise<void>) => {
     let limit = 100;
-    let last: Array<string | null> | null = null;
+    let after: string[] | null = null;
     for (;;) {
-      const where: string[] = [filter, extraWhere, last ? keyset : null].filter((w): w is string => !!w);
-      const sql: string = `SELECT ${selectList} FROM ${sourceIdent}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ${orderBy} LIMIT ${limit}`;
-      const params: Array<string | null> = last ? pkColumns.map(c => last![index.get(c.name)!]!) : [];
-      const rows: Array<Record<string, string | null>> = await e.source.transaction(async tx => {
-        for (const setting of RENDER_SETTINGS) await tx.executeRaw(setting);
-        return tx.executeRaw<Record<string, string | null>>(sql, params);
-      });
+      const rows = await readSourceBatch(e.source, plan, extraWhere, after, limit);
       if (!rows.length) return;
-      const values: Array<Array<string | null>> = rows.map(row => columns.map((_, i) => row[`c${i}`] ?? null));
+      const values = rows.map(r => r.values);
       await visit(values);
       if (rows.length < limit) return;
-      last = values[values.length - 1]!;
-      const bytes = values.reduce((sum, row) => sum + row.reduce((s, v) => s + (v?.length ?? 4) + 3, 2), 0);
+      after = rows[rows.length - 1]!.key;
+      const bytes = values.reduce((sum, row) => sum + row.reduce((n, v) => n + (v?.length ?? 4) + 3, 2), 0);
       limit = Math.max(1, Math.min(MAX_BATCH_ROWS, Math.floor(batchBytes * rows.length / Math.max(1, bytes))));
     }
   };
 
   return e.target.transaction(async tx => {
     await setFence(tx, opts.runId);
-    const disabled = opts.bypass === 'disable_trigger' ? await userTriggers(tx, relation, true) : [];
     if (opts.bypass === 'session_replication_role') await tx.executeRaw('SET LOCAL session_replication_role = replica');
-    for (const trigger of disabled) await tx.executeRaw(`ALTER TABLE ${targetIdent} DISABLE TRIGGER ${trigger.ident}`);
-    await tx.executeRaw(`DELETE FROM ${targetIdent}${filter ? ` WHERE ${filter}` : ''}`);
-    let copied = 0;
-    await scan(null, async rows => {
-      await tx.executeRaw(insertSql, [JSON.stringify(rows)]);
-      copied += rows.length;
-      opts.onBatch?.(rows.length);
+    for (const trigger of disabled) await tx.executeRaw(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger.ident}`);
+    await tx.executeRaw(`DELETE FROM ${table}${deleteFilter.length ? ` WHERE ${deleteFilter.join(' AND ')}` : ''}`);
+    let rows = 0;
+    await scan(null, async batch => {
+      await tx.executeRaw(insertSql, [JSON.stringify(batch)]);
+      rows += batch.length;
+      opts.onBatch?.(batch.length);
     });
     if (selfFk.length) {
-      const fkColumns = selfFk.map(name => columns[index.get(name)!]!);
-      const updateSql = `UPDATE ${targetIdent} AS t SET ${fkColumns.map((c, j) => `${c.ident} = (r.v->>${pkColumns.length + j})::${c.type}`).join(', ')}
-        FROM jsonb_array_elements($1::text::jsonb) AS r(v) WHERE ${pkColumns.map((c, j) => `t.${c.ident} = (r.v->>${j})::${c.type}`).join(' AND ')}`;
-      await scan(`(${fkColumns.map(c => `${c.ident} IS NOT NULL`).join(' OR ')})`, async rows => {
-        const payload = rows.map(row => [...pkColumns.map(c => row[index.get(c.name)!]), ...fkColumns.map(c => row[index.get(c.name)!] ?? null)]);
+      const fk = selfFk.map(name => ({ c: plan.columns.find(c => c.name === name)!, i: plan.columns.findIndex(c => c.name === name) }));
+      const keyIndex = plan.key.map(k => plan.columns.findIndex(c => c.name === k.name));
+      const updateSql = `UPDATE ${table} AS t SET ${fk.map(({ c }, j) => `${quoteIdent(c.name)} = (r.v->>${plan.key.length + j})::${c.type}`).join(', ')}
+        FROM jsonb_array_elements($1::text::jsonb) AS r(v) WHERE ${plan.key.map((k, j) => `t.${quoteIdent(k.name)} = (r.v->>${j})::${k.type}`).join(' AND ')}`;
+      await scan(fk.map(({ c }) => `${quoteIdent(c.name)} IS NOT NULL`).join(' OR '), async batch => {
+        const payload = batch.map(row => [...keyIndex.map(i => row[i] ?? null), ...fk.map(({ i }) => row[i] ?? null)]);
         await tx.executeRaw(updateSql, [JSON.stringify(payload)]);
       });
     }
-    for (const trigger of disabled) await tx.executeRaw(`ALTER TABLE ${targetIdent} ${ENABLE_BY_MODE[trigger.enabled] ?? 'ENABLE TRIGGER'} ${trigger.ident}`);
-    return { rows: copied };
+    for (const trigger of disabled) await tx.executeRaw(`ALTER TABLE ${table} ${ENABLE_BY_MODE[trigger.enabled] ?? 'ENABLE TRIGGER'} ${trigger.ident}`);
+    return { rows };
   });
 }
 
@@ -415,7 +347,7 @@ export async function reenableTriggers(target: BrainEngine, relations: readonly 
     for (const relation of relations) {
       const [present] = await tx.executeRaw<{ present: boolean }>("SELECT to_regclass(format('public.%I', $1::text)) IS NOT NULL AS present", [relation]);
       if (!present?.present) continue;
-      const ident = await relationIdent(tx, relation);
+      const ident = quoteIdent(relation);
       for (const trigger of await userTriggers(tx, relation, false)) {
         await tx.executeRaw(`ALTER TABLE ${ident} ENABLE TRIGGER ${trigger.ident}`);
         enabled.push(`${relation}.${trigger.ident}`);
