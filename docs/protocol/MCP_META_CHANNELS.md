@@ -31,7 +31,7 @@ shape for it.
 | Key | Producer | Contents |
 |-----|----------|----------|
 | `brain_hot_memory` | serve-http `metaHook` (`getBrainHotMemoryMeta`) | Hot-memory facts relevant to the call |
-| `retrieval` | `search`/`query` op handlers | `returned_count`, `retrieved_count`, `vector_enabled`, `expansion_applied`, `cache`, `token_budget`, `degraded[]` (closed stage vocabulary), `hint` (non-contractual prose) |
+| `retrieval` | `search`/`query` op handlers | `returned_count`, `retrieved_count`, `vector_enabled`, `expansion_applied`, `cache`, `token_budget`, `degraded[]` (closed stage vocabulary), `hint` (non-contractual prose), `rows` (`"lean"` or `"full"`: the row shape of content[0]; reported for remote callers and whenever `fields` is passed) |
 | `warnings` | dispatch strict-params warn mode | `[{code: 'unknown_param', param, suggestion?}]` |
 
 Inbound `_meta` (e.g. `_meta.session_id` inside tool ARGUMENTS) is a

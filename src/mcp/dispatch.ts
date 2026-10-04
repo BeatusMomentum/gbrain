@@ -238,6 +238,8 @@ export interface DispatchOpts {
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
+  /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
+  resultRows?: OperationContext['resultRows'];
 }
 
 /**
@@ -352,14 +354,33 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const blocks: string[] = empty ? [empty] : [];
   if (typeof r.type_filter_notice === 'string') blocks.push(r.type_filter_notice);
   if (r.other_names?.length) {
-    blocks.push(`Other names in these results (documents may use either; search the one you have not tried): ${r.other_names
-      .map(n => `${n.alias} = ${n.name} (declared in ${n.slug})`).join('; ')}.`);
+    const { text, more } = wholeItemsWithin('Other names in these results (documents may use either; search the one you have not tried): ',
+      r.other_names.map(n => `${n.alias} = ${n.name} (declared in ${n.slug})`), '; ', OTHER_NAMES_NOTICE_MAX_CHARS);
+    blocks.push(`${text}${more ? ` (+${more} more)` : ''}.`);
   }
   if (r.saved_facts?.length) {
-    blocks.push(`Saved facts (remember) matching this query, newest first; recall returns more:\n${r.saved_facts
-      .map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}]`).join('\n')}`);
+    const { text, more } = wholeItemsWithin('Saved facts (remember) matching this query, newest first; recall returns more:\n',
+      r.saved_facts.map(f => `- ${f.fact} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}]`),
+      '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
+    blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
   }
   return blocks;
+}
+
+/** C4: character ceilings for the model-visible notice blocks (header included). */
+export const SAVED_FACTS_NOTICE_MAX_CHARS = 1_500;
+export const OTHER_NAMES_NOTICE_MAX_CHARS = 400;
+
+/**
+ * Whole items after `head` while the block stays within `max` characters;
+ * an item is never cut, so its provenance stays intact. The first item is
+ * always shown, even alone over the ceiling. `more` counts the items left out.
+ */
+function wholeItemsWithin(head: string, items: string[], sep: string, max: number): { text: string; more: number } {
+  let text = head + items[0];
+  let shown = 1;
+  while (shown < items.length && text.length + sep.length + items[shown].length <= max) text += sep + items[shown++];
+  return { text, more: items.length - shown };
 }
 
 /**
@@ -535,6 +556,7 @@ export function buildOperationContext(
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
+    ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     auth: opts.auth,
   };
 }
@@ -762,7 +784,10 @@ export async function dispatchToolCall(
         ...(name === 'remember' && typeof r?.status === 'string' ? { remember_status: r.status } : {}),
       });
     }
-    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    // C2: compact JSON. Every result stays in the agent's context and is
+    // re-sent on each later turn; indentation was about a fifth of a search
+    // result. Error envelopes below stay indented (small and rare).
+    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result) }] };
     // D8: model-visible loudness for empty retrievals. The body stays a bare
     // array (D3 — deployed thin-clients parse content[0] only), and a SECOND
     // text block carries the diagnosis the model actually sees. Structured

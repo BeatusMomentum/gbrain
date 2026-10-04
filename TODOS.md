@@ -1,6 +1,6 @@
 # TODOS
 
-## auto_chronicle wave follow-ups (filed 2026-10-04, follow-up from v0.60.43.0, #5876)
+## auto_chronicle wave follow-ups (filed 2026-10-04, follow-up from v0.60.45.0, #5876)
 
 - [ ] **P1 — facts-backstop jobs have no executor on PGLite.**
   **What:** `facts_backstop` effects enqueue jobs that `gbrain jobs work` refuses to run on PGLite (`commands/jobs/work.ts`), the same root cause the chronicle cycle phase fixed for events. **Fix:** run them from a cycle phase or the inline drain, bounded per run. **Effort:** M. **Priority:** P1.

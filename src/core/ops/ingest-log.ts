@@ -44,9 +44,9 @@ const log_ingest: Operation = {
 const get_ingest_log: Operation = {
   name: 'get_ingest_log',
   outputRedaction: 'retrieval',
-  description: 'Get recent ingestion log entries',
+  description: 'Recent ingestion log entries.',
   params: {
-    limit: { type: 'number', description: 'Max entries (default 20)' },
+    limit: { type: 'number', description: 'Default 20.' },
   },
   handler: async (ctx, p) => {
     // Source-scope the log for remote callers (scalar grant → single-element

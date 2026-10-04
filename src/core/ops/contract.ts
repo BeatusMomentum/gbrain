@@ -391,6 +391,15 @@ export interface OperationContext {
    */
   writeWaitMs?: number;
   /**
+   * Row shape for `search`/`query` results in content[0]. Set by the MCP
+   * transports: 'full' for gbrain's own thin client (X-Gbrain-Client header)
+   * and for hosts with `mcp.result_rows: full`, otherwise 'lean'. Unset means
+   * 'lean' for remote callers; trusted local callers (`remote === false`)
+   * always get full rows. A per-call `fields: "full"` overrides 'lean'.
+   * Shape only, never authority: nothing security-relevant reads it.
+   */
+  resultRows?: 'lean' | 'full';
+  /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
    * may leave it undefined — consumers default to quiet/no-progress for

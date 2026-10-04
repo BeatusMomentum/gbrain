@@ -1,4 +1,4 @@
-# auto_chronicle fix wave notes (`capy/fix-wave-chronicle`, v0.60.43.0, #5876)
+# auto_chronicle fix wave notes (`capy/fix-wave-chronicle`, v0.60.45.0, #5876)
 
 One integrated PR. Two lanes were built in parallel on master v0.60.39.0
 (`f4739fff`) and merged here, in order, on top of master v0.60.41.0:
@@ -34,7 +34,7 @@ effects-queue kind, no dispatcher and no legacy import hook; the old
    surface tests seed rows on the real migration through
    `test/helpers/chronicle-ledger-rows.ts`, which creates a real page per row so
    the ledger's foreign keys hold.
-4. **Migration skill** renamed to `skills/migrations/v0.60.43.0.md`.
+4. **Migration skill** renamed to `skills/migrations/v0.60.45.0.md`.
 5. **KEY_FILES** chronicle entry merged from both lanes.
 6. **Tests.** Lane 1's tests that stayed red until Lane 2 replaced the old
    no-effect check pass after the merge. `test/auto-chronicle-no-effect-5876.test.ts` is deleted;
