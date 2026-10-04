@@ -10,7 +10,8 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { isolatedPersistencePostgres } from './persistence-postgres.ts';
 import { syncLockId } from '../../src/core/db-lock.ts';
 import { testBackends } from './test-backends.ts';
-import { connectorWaitBudget } from '../../src/core/persistence/connector-sync.ts';
+import { CONNECTOR_WAIT_BUDGET_MS, connectorWaitBudget } from '../../src/core/persistence/connector-sync.ts';
+import { testWaitMs } from './wait-for.ts';
 import { readManagedConnectorState } from '../../src/core/persistence/connector-state.ts';
 
 export const options = { noEmbed: true, noExtract: true, noSchemaPack: true };
@@ -49,8 +50,8 @@ export function createConnectorFixture() {
   let closePostgres: (() => Promise<void>) | undefined;
   const env = { GBRAIN_HOME: home, CONNECTOR_TEST_TOKEN: 'synthetic-local-fixture' };
   const setup = async () => {
-    // Paused-owner fixtures stop on a 10 s wait budget instead of the production 30 s.
-    connectorWaitBudget.ms = 10_000;
+    // Paused-owner fixtures stop on a 1.5 s wait budget instead of the production 30 s.
+    connectorWaitBudget.ms = testWaitMs(1_500);
     if (backends.includes('pglite')) {
       const lite = new PGLiteEngine();
       await lite.connect({ database_path: join(home, 'database') });
@@ -64,6 +65,7 @@ export function createConnectorFixture() {
     }
   };
   const teardown = async () => {
+    connectorWaitBudget.ms = CONNECTOR_WAIT_BUDGET_MS;
     for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
     await closePostgres?.();
     rmSync(home, { recursive: true, force: true });
