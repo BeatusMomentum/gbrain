@@ -94,7 +94,11 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
 // 2026-10-02: normalizeBasename collapses hyphen runs (#5623), so [[Backlog - vault]] resolves; re-extract.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-02T00:00:00Z';
+// 2026-10-04: typed relation lines (core/line-grammar.ts) state their link's
+// type; a per-edge verb that belongs to another link in the window no longer
+// types this one; "joined
+// [X] as <role>" reads as works_at. Re-extract so existing pages pick these up.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-04T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -1162,7 +1166,7 @@ function excerpt(s: string, idx: number, width: number): string {
 //   - Possessive time: "his time at", "her time at", "their time at", "my time at".
 //   - Role noun forms: "role at", "tenure as", "stint as", "position at".
 //   - Promoted/staff-engineer forms: "promoted to (staff|senior|principal) engineer at".
-const WORKS_AT_RE = /\b(?:CEO of|CTO of|COO of|CFO of|CMO of|CRO of|VP at|VP of|VPs? Engineering|VPs? Product|works at|worked at|working at|employed by|employed at|joined as|joined the team|engineer at|engineer for|director at|director of|head of|heads up .{0,20} at|leads engineering|leads product|leads the .{0,20} (?:team|org) at|manages engineering at|manages product at|running (?:engineering|product|design) at|currently at|previously at|previously worked at|spent .* (?:years|months) at|stint at|stint as|tenure at|tenure as|role at|position at|(?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security) engineer at|promoted to (?:senior|staff|principal|lead) .{0,20} at|(?:his|her|their|my) time at)\b/i;
+const WORKS_AT_RE = /\b(?:joined\b[^.\n]{0,80}?\bas (?:an? |the )?(?:senior |staff |principal |lead |founding |chief )?(?:engineer|developer|designer|product manager|engineering manager|manager|director|head of [a-z]+|scientist|researcher|analyst|employee|operator|cto|ceo|coo|cfo|cmo|vp)|CEO of|CTO of|COO of|CFO of|CMO of|CRO of|VP at|VP of|VPs? Engineering|VPs? Product|works at|worked at|working at|employed by|employed at|joined as|joined the team|engineer at|engineer for|director at|director of|head of|heads up .{0,20} at|leads engineering|leads product|leads the .{0,20} (?:team|org) at|manages engineering at|manages product at|running (?:engineering|product|design) at|currently at|previously at|previously worked at|spent .* (?:years|months) at|stint at|stint as|tenure at|tenure as|role at|position at|(?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security) engineer at|promoted to (?:senior|staff|principal|lead) .{0,20} at|(?:his|her|their|my) time at)\b/i;
 
 // Investment context. Order patterns from most-specific to least to keep
 // regex efficient. Includes funding-round verbs ("led the seed", "led X's
@@ -1225,6 +1229,39 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
 
 
+const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [FOUNDED_RE, 'founded'], [INVESTED_RE, 'invested_in'], [ADVISES_RE, 'advises'], [WORKS_AT_RE, 'works_at'],
+  [ZH_FOUNDED_RE, 'founded'], [ZH_INVESTED_RE, 'invested_in'], [ZH_ADVISES_RE, 'advises'], [ZH_WORKS_AT_RE, 'works_at'], [ZH_CITED_RE, 'cited'],
+];
+
+/**
+ * The per-edge verb for one link when its context window holds several links.
+ * A verb match belongs to another link when another link sits between it and
+ * this one, or when it is written immediately before another link ("... and
+ * also advises [Widget]"). Among the matches that are not another link's,
+ * precedence decides as before. Returns undefined when the link cannot be
+ * located in the window (callers fall back to plain precedence).
+ */
+const LINK_MARK_RE = /\]\(|\]\]|\[\[/;
+function attachedVerb(context: string, targetSlug?: string): string | null | undefined {
+  const at = targetSlug ? context.indexOf(targetSlug) : -1;
+  if (at < 0) return undefined;
+  const open = context.lastIndexOf('[', at);
+  const linkStart = open >= 0 && at - open <= 120 ? (context[open - 1] === '[' ? open - 1 : open) : at;
+  const close = context.slice(at).search(/\)|\]\]/);
+  const linkEnd = close >= 0 ? at + close + (context[at + close] === ')' ? 1 : 2) : at + targetSlug!.length;
+  for (const [re, verb] of VERB_RULES) {
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    for (const m of context.matchAll(global)) {
+      const start = m.index ?? 0; const end = start + m[0].length;
+      if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))) continue;
+      if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s{0,3}\[/.test(context.slice(end)))) continue;
+      return verb;
+    }
+  }
+  return null;
+}
+
 /**
  * Infer link_type from page context. Deterministic regex heuristics, no LLM.
  *
@@ -1254,17 +1291,12 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
     return targetType !== undefined ? (targetType === 'person' ? 'attended' : 'mentions')
       : (!targetSlug || targetSlug.startsWith('people/') ? 'attended' : 'mentions');
   }
-  // Per-edge verb rules.
-  if (FOUNDED_RE.test(context)) return 'founded';
-  if (INVESTED_RE.test(context)) return 'invested_in';
-  if (ADVISES_RE.test(context)) return 'advises';
-  if (WORKS_AT_RE.test(context)) return 'works_at';
-  // Chinese link type patterns
-  if (ZH_FOUNDED_RE.test(context)) return 'founded';
-  if (ZH_INVESTED_RE.test(context)) return 'invested_in';
-  if (ZH_ADVISES_RE.test(context)) return 'advises';
-  if (ZH_WORKS_AT_RE.test(context)) return 'works_at';
-  if (ZH_CITED_RE.test(context)) return 'cited';
+  // Per-edge verb rules, precedence founded > invested_in > advises > works_at
+  // (then the Chinese rules), over the verbs that belong to this link: in
+  // "works at [A] and also advises [B]", A is works_at and B advises.
+  const attached = attachedVerb(context, targetSlug);
+  if (attached) return attached;
+  if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context)) return verb;
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning
