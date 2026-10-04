@@ -207,7 +207,7 @@ jobs:
     # mechanical.test.ts went from ~2s to past their 15-30s kill timeouts
     # (measured September 29, 2026), while every other E2E lane ran as fast.
     runs-on: ubicloud-standard-16-ubuntu-2404
-    timeout-minutes: 45
+    timeout-minutes: 70
     services:
       postgres:
         image: pgvector/pgvector:pg16
