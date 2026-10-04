@@ -10,6 +10,75 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.44.0] - 2026-10-04
+
+**A managed Postgres brain now catches up a big sync backlog in one `gbrain sync` run, about 4.6 times faster, and the run tells your agent exactly what happened and what to do next (#5984).**
+
+On a brain with managed writes and a database across the internet, catching up thousands of changed files used to crawl: each `gbrain sync` saved one page, then quit, so people looped it in a shell, and a 9,400-file backlog projected to about two days. Now one run keeps going until the backlog is done. It prints progress and an ETA, skips work that changes nothing, and saves pages in groups while every page keeps its own write receipt. On a test rig with 57 ms to the database, the same 10,000-file backlog drops from about 49 hours to about 11, and the run ends with one clear verdict: done, safe to rerun, or blocked with the fix.
+
+### How to use it
+
+```bash
+gbrain sync --source <id> --no-pull --json
+```
+
+The JSON ends with `outcome` (`synced`, `resumable` or `blocked`) and, unless it is done, `next: { command, safe_to_loop, eta_seconds, why }`. `gbrain doctor` and `gbrain sources status` show a managed backlog's remaining pages and ETA from any process. Bulk groups are on by default on Postgres; turn them off with `--no-bulk`, `GBRAIN_SYNC_BULK=0` or `gbrain config set sync.bulk false`.
+
+### The numbers that matter
+
+| 500-file backlog, 57 ms to the database | Before | Now |
+| --- | --- | --- |
+| Pages per minute | 3.4 (shell loop) | 13 to 16 (one run) |
+| 10,000-file backlog | about 49 h | about 11 h |
+| `sync --all`, two sources | 0 pages in 15 min | 16 pages/min |
+| A foreground write during catch-up (p95) | 29.6 s, 15 failed catch-up runs | 15.7 s (15.0 s idle), no failures |
+| Same backlog next to the database | 350 pages/min | 775 pages/min |
+
+### Things to watch
+
+- A managed sync that stops at its deadline with a write still pending now exits 0 as `resumable` instead of 1. Rerun the same command; accepted writes keep their request IDs.
+- Managed sources under `sync --all` drain one at a time.
+- 150 pages/min at 57 ms is not reached. Each page's database write is still a chain of about 40 dependent statements; reaching it needs pages to publish in parallel, which is a separate design.
+
+## To take advantage of v0.60.44.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Nothing else to migrate.** There is no schema change; the new behavior applies to the next `gbrain sync`.
+3. **Verify the outcome:**
+   ```bash
+   gbrain sync --source <id> --no-pull --json
+   gbrain sources status
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- **Drain** (`src/core/persistence/sync-drain.ts`): `runDrain` re-enters the single-pass managed sync until the cursor is done, the caller's signal or `--timeout` stops it, a strict run deadline is about 15 s away (`registerRunDeadline`, armed by the sync watchdog), a writer head needs intervention, or the awaited write and its worktree head make no progress for 30 s and 3 passes. It retries only `worktree_refreshing`, admission contention, `database_contention`, connection errors and statement timeouts. Every page notes forward progress, so the progress-aware watchdog never stops a progressing run. A drain waits up to 30 s per page instead of re-entering. The CLI single-source, `--all`, `--watch` and the PGLite owner delegate use it; `SyncResult.drain` carries `outcome`, `stop_reason`, `written`, `waived`, `remaining`, `rate_pages_per_min`, `eta_seconds`, `stall` and `bulk`; `--json` adds `outcome` and `next` (`syncResumeCommand` keeps brain, source and cursor options).
+- **Stop reasons** are catalogued in `docs/guides/write-refusals.md#managed-sync-drain-stops`: `deadline`, `drain_stalled`, `database_contention`, writer-blocked (`recovery_required`, `owner_unavailable`, unexpected bytes) and `blocked_by_failures`.
+- **Backlog estimate**: the managed cursor stamps a drain window (`progress`); `readManagedSyncBacklog` feeds the new `managed_sync_backlog` doctor check and `sources status` (`managed_backlog` in `--json`).
+- **Waivers** (`src/core/persistence/sync-waivers.ts`): a delete of a page already soft-deleted at the frozen revision, with its file gone, advances without a request, under the page guard and cursor lock and only when no unfinished request touches the page. Unchanged imports moved here. Both report as `waived: { imports, deletes }`; `GBRAIN_SYNC_WAIVE_NOOP=0` turns them off.
+- **Waits** (`awaitWrite`): the publishing process hands the finished row to its waiters without a read; other waits poll a narrow select with backoff and classify the end as `terminal`, `pending`, `blocked` (with `gbrain sources writer status <source> --json`) or `read_failed`.
+- **Bulk publication** (`sync-group.ts`, `group-publish.ts`, `admitWriteGroupInTransaction`, `claimGroupFollowers`): groups of up to `sync.bulk_size` (16) consecutive page imports and deletes, sized to `sync.bulk_max_txn_ms` (15 s); one admission transaction, one publication transaction with per-page authorization, validation, attribution (`setMemberAttribution`), effects and receipts; counters locked after the pages are applied; no group forms while a foreground write is queued. A failure rolls the group back, pages publish singly, and later pages are cancelled.
+- **Round trips**: parameterized `executeRaw` and page snapshots use prepared statements wherever the connection allows them (PgBouncer transaction pooling unchanged; `GBRAIN_PREPARE=false` still forces unprepared). `lockCounters` and multi-key `lockPageKeys` are set-based; Postgres transactions track held page guards like PGLite; publication completes its locked request without relocking; recovery cleanup runs only after a recovery record; the protocol declaration, shared skillpack roots and source-wide sync validation are read once per transaction.
+- **Connectors** wait for a pending withdrawal mirror of a page before freezing its file's before-image, so a re-render no longer conflicts with a just-committed fact withdrawal.
+- `--no-pull` help now says it is required on managed brains; `sync --help` documents the drain, `--timeout` and `--no-bulk`.
+
+### For contributors
+
+- `scripts/bench/managed-sync-catchup.ts` (opt-in, Docker + toxiproxy) reproduces the issue at any RTT; `GBRAIN_SQL_TRACE=<file>` records every database round trip at the socket. Method, baseline and results are in `docs/eval/managed-sync-catchup.md`.
+- Goldens updated for prepared raw statements and set-based guards (`test/fixtures/goldens/sql-text`, `postgres-engine-gauge`, `exports`, `doctor`).
+
 ## [0.60.41.0] - 2026-10-04
 
 **A keyword-only `query` whose answer is in the top five now grades `moderate` again when the question merely uses a word the brain never writes, while questions about a missing attribute or an unknown company still grade `weak` (#5919). Conversation pages can set their own segmentation gap (#5918).**

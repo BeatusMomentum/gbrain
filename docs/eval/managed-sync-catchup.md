@@ -11,6 +11,12 @@ takes 77 to 83. By the CEO-A1 decision rule, the measured numbers
 call for multi-page (bulk) publication after the round-trip diet;
 pipelined admission alone cannot reach the target.
 
+With the drain loop, the diet and bulk publication (v0.60.44.0), one
+`gbrain sync` catches up at 13 to 16 pages/min at 57 ms (the 10k
+backlog in about 11 h instead of 49 h) and 775 pages/min near the
+database, with foreground writes unharmed. See
+[Results on the #5984 branch](#results-on-the-5984-branch-v060440).
+
 This page is the research and decision record for the #5984 plan
 (CEO-A1, A2, A3, A4, A6, A17, A19, A25, A26, A27, A29; ENG-A5, A9,
 A11, A14, A15, A18; DX-A12, A13). The bench is opt-in and never runs
@@ -414,26 +420,70 @@ the describe fix and the counter-lock order. Then measure, and expect
 the rule to select 2.3. Skip 2.2 unless post-2.1 publication is
 400 ms or less per page.
 
-## Post-Phase-1 rows (placeholder)
+## Results on the #5984 branch (v0.60.44.0)
 
-Root thread: rerun the two commands above on the integrated branch and
-fill this table. It covers the drain loop, waivers, narrow waits and
-the waived counts in `entries_waived`.
+Same bench, same 500-file backlog (534 entries), 57 ms rows time-boxed
+at 15 min. "This branch" is one `gbrain sync` run, which now drains the
+whole backlog; master is the reporter's CLI loop.
 
-| Row | RTT | Pages/min | Per-page p50 | RT per page | Notes |
-|---|---|---|---|---|---|
-| `cli` | 57 | _TBD_ | | | |
-| `reentry` | 57 | _TBD_ | | | |
-| `foreground` | 57 | _TBD_ | | | p95 delta, `55P03` count |
-| `all` | 57 | _TBD_ | | | must be > 0 |
-| `cli` 10k | 57 | _TBD_ | | | ship-gate row |
-| `cli` | ~0 | _TBD_ | | | |
+| Row | RTT | Master | This branch | Notes |
+|---|---|---|---|---|
+| `cli` | 57 ms | 3.4 pages/min | 13.1 pages/min (15.7 with a 30 s group budget) | default group budget 15 s |
+| `cli` 10k files, 300-word pages, receipt history | 57 ms | 3.4 pages/min, ≈ 49 h | 15.7 pages/min, ≈ 10.7 h (30 s budget) | ship-gate row; ≈ 4.6x |
+| `all`, two sources | 57 ms | 0 pages in 15 min | 16 pages/min | sources drain one at a time |
+| `foreground`, a `put_page` every second | 57 ms | p95 19.7 s idle, 29.6 s during; 15 of 73 runs failed | p95 15.0 s idle, 15.7 s during; 0 failures, 0 lock timeouts | catch-up yields: 4.2 pages/min while writes keep arriving |
+| `cli` | ~0 ms | 350 pages/min | 775 pages/min | |
+| `reentry` | ~0 ms | 345 pages/min | 673 pages/min | |
 
-## Post-diet (2.1) and Phase 2 rows (placeholder)
+Round trips per committed page (all processes, traced) fell from 258 to
+about 155 to 180, and the per-page publication cost inside a bulk group
+is about 40 round trips.
 
-| Row | RTT | Pages/min | Per-page p50 | RT per page | Mechanism selected |
-|---|---|---|---|---|---|
-| `cli` | 57 | _TBD_ | | | |
-| `cli` 10k | 57 | _TBD_ | | | |
-| `foreground` | 57 | _TBD_ | | | |
-| `effects` | 57 | _TBD_ | | | retrieval-ready time |
+### What was built, and what the rule selected
+
+1. **Phase 1.** The drain loop (one run catches up, with an outcome,
+   `next`, progress and ETA), the no-op delete and import waivers, and
+   classified waits with in-process completion handoff.
+2. **2.1 round-trip diet.** Parameterized `executeRaw` statements are
+   prepared (the describe round trip is gone wherever the connection
+   allows prepared statements; PgBouncer transaction pooling is
+   unchanged). Counter and multi-key page-guard locks are set-based.
+   Postgres transactions remember the page guards they hold. Publication
+   completes its locked request without relocking. Recovery cleanup is
+   skipped when there was no recovery record. The protocol declaration,
+   shared skillpack roots and the source-wide part of sync validation
+   are read once per transaction.
+3. **2.2 pipelined admission: skipped.** Post-diet publication still
+   costs about 2 s per page at 57 ms, far above the 400 ms the rule
+   requires (CEO-A9).
+4. **2.3 bulk publication: built** (CEO-A1, ENG-A3/A4/A5). A draining
+   sync freezes a group of up to 16 consecutive page imports and
+   deletes, admits them in one transaction, and the writer publishes the
+   group in one transaction. Each page keeps its own request row,
+   receipt, authorization, attribution (the database stamps each page's
+   own request) and effects. A failure rolls the group back; pages then
+   publish singly, so the failure names its page and later pages are
+   cancelled. Counters are locked after the members are applied, and no
+   group forms while a foreground write is queued, so foreground writes
+   stay within about 1 s of their idle p95.
+
+### Shortfall against 150 pages/min
+
+The branch reaches 13 to 16 pages/min at 57 ms, not 150. Inside a group,
+each page still runs a chain of about 40 dependent statements (snapshot,
+validation, apply, chunks, projections, effects, receipt), one after
+another, because the database stamps each page's write with its own
+request through transaction-local settings. Running members concurrently
+inside one transaction would mix those stamps. Two mechanisms could reach
+the target, and both need their own design approval:
+
+- **Concurrent publication of independent pages,** each in its own
+  transaction on its own connection, with ordering enforced at commit
+  instead of by the per-worktree FIFO claim. Eight concurrent publishers
+  at about 2 s per page would give roughly 200 pages/min at 57 ms.
+- **Set-based apply** for a group (one statement per table for all of a
+  group's pages), which removes the per-page chain.
+
+The worktree fence + bulk import + reconcile alternative (CEO-A27) stays
+unbuilt: it measures 51 pages/min as unmanaged sync but gives up
+per-page receipts and effects during the import.
