@@ -1,11 +1,14 @@
 /**
- * Graph Quality Benchmark — A/B/C comparison proving the v0.10.1 graph layer
- * makes gbrain measurably better for real-world questions.
+ * Graph Quality Benchmark: measures what the typed-link graph and structured
+ * timeline answer that grep over page text cannot.
  *
  * 80 fictional pages (25 people, 25 companies, 15 meetings, 15 concepts).
- * 200+ typed links. 300+ timeline entries.
- * 35 queries across 7 categories testing scenarios that REQUIRE graph + timeline
- * to answer correctly.
+ * Relationships follow the current extraction contract: meeting attendance
+ * comes from the meeting's frontmatter `attendees:` (edges person -> meeting,
+ * type `attended`), founders from the person's frontmatter `founded:`, and
+ * employment, advising and investment from prose links. Queries cover typed
+ * and relational lookups, multi-hop traversal, aggregates, type intersection
+ * and backlink-boosted ranking.
  *
  * Three configurations:
  *   A: Baseline      — keyword + vector search, NO links, NO structured timeline
@@ -23,13 +26,16 @@
  * If a benchmark fails, it points to a specific code fix (see BENCHMARK_FAILURES
  * comment block at end of file).
  *
- * Usage: bun run test/benchmark-graph-quality.ts
- *        bun run test/benchmark-graph-quality.ts --json   (machine-readable output)
+ * Usage: bun scripts/bench-graph-quality.ts
+ *        bun scripts/bench-graph-quality.ts --json   (machine-readable output)
+ * Exits 1 when a threshold fails. Results: docs/eval-bench.md ("Graph quality
+ * benchmark").
  */
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractPageLinks, parseTimelineEntries, inferLinkType } from '../src/core/link-extraction.ts';
 import { runExtract } from '../src/commands/extract.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import type { PageInput, PageType } from '../src/core/types.ts';
 
 // ─── Test data: 80 fictional pages ───────────────────────────────
@@ -37,10 +43,18 @@ import type { PageInput, PageType } from '../src/core/types.ts';
 interface SeededPage {
   slug: string;
   page: PageInput;
-  /** Ground-truth links: (targetSlug, linkType) the extractor should produce. */
-  expectedLinks: Array<{ to: string; type: string }>;
+  /** Ground-truth links the extractor should produce; `from` defaults to this page. */
+  expectedLinks: Array<{ from?: string; to: string; type: string }>;
   /** Ground-truth timeline entries the parser should produce. */
   expectedTimeline: Array<{ date: string; summary: string }>;
+}
+
+/** Page text as a grep over the brain repo sees it: frontmatter, compiled truth, timeline. */
+function pageText(s: SeededPage): string {
+  const fm = Object.entries(s.page.frontmatter ?? {})
+    .map(([k, v]) => `${k}: ${Array.isArray(v) ? `[${v.join(', ')}]` : String(v)}`);
+  const head = fm.length > 0 ? `---\n${fm.join('\n')}\n---\n` : '';
+  return `${head}${s.page.compiled_truth}\n${s.page.timeline ?? ''}`;
 }
 
 function seedPages(): SeededPage[] {
@@ -75,10 +89,11 @@ function seedPages(): SeededPage[] {
       slug: `people/${slug}`,
       page: {
         type: 'person', title: slug,
-        compiled_truth: `${slug} is the CEO of [${slug}'s company](${companySlug}). They founded the company.`,
+        compiled_truth: `${slug} is the CEO and founder of Startup ${i}.`,
         timeline: `- **2026-02-01** | Founded company`,
+        frontmatter: { founded: [companySlug] },
       },
-      expectedLinks: [{ to: companySlug, type: 'works_at' }],
+      expectedLinks: [{ to: companySlug, type: 'founded' }],
       expectedTimeline: [{ date: '2026-02-01', summary: 'Founded company' }],
     });
   }
@@ -184,10 +199,11 @@ function seedPages(): SeededPage[] {
       slug,
       page: {
         type: 'meeting', title: `Demo Day ${i}`,
-        compiled_truth: `Attendees: ${attendees.map(s => `[${s.split('/')[1]}](${s})`).join(', ')}.`,
+        compiled_truth: `Demo Day ${i} for the batch.`,
         timeline: `- **2026-03-20** | Demo Day ${i} held`,
+        frontmatter: { attendees },
       },
-      expectedLinks: attendees.map(to => ({ to, type: 'attended' })),
+      expectedLinks: attendees.map(from => ({ from, to: slug, type: 'attended' })),
       expectedTimeline: [{ date: '2026-03-20', summary: `Demo Day ${i} held` }],
     });
   }
@@ -201,12 +217,13 @@ function seedPages(): SeededPage[] {
       slug,
       page: {
         type: 'meeting', title: `1:1 #${i}`,
-        compiled_truth: `Attendees: [${a}](${a}), [${b}](${b}).`,
+        compiled_truth: `Weekly 1:1.`,
         timeline: `- **2026-04-10** | 1:1 held`,
+        frontmatter: { attendees: [a, b] },
       },
       expectedLinks: [
-        { to: a, type: 'attended' },
-        { to: b, type: 'attended' },
+        { from: a, to: slug, type: 'attended' },
+        { from: b, to: slug, type: 'attended' },
       ],
       expectedTimeline: [{ date: '2026-04-10', summary: '1:1 held' }],
     });
@@ -221,12 +238,13 @@ function seedPages(): SeededPage[] {
       slug,
       page: {
         type: 'meeting', title: `Board ${i}`,
-        compiled_truth: `Attendees: [${a}](${a}), [${b}](${b}).`,
+        compiled_truth: `Quarterly board meeting.`,
         timeline: `- **2026-05-15** | Board meeting held`,
+        frontmatter: { attendees: [a, b] },
       },
       expectedLinks: [
-        { to: a, type: 'attended' },
-        { to: b, type: 'attended' },
+        { from: a, to: slug, type: 'attended' },
+        { from: b, to: slug, type: 'attended' },
       ],
       expectedTimeline: [{ date: '2026-05-15', summary: 'Board meeting held' }],
     });
@@ -266,6 +284,8 @@ interface RelationalQuery {
   linkType?: string;
   direction?: 'in' | 'out' | 'both';
   depth?: number;
+  /** Grep baseline (A): read the seed page's refs, or scan every page for the seed. Defaults from direction. */
+  fallback?: 'seed' | 'scan';
 }
 
 function buildQueries(): RelationalQuery[] {
@@ -273,16 +293,19 @@ function buildQueries(): RelationalQuery[] {
     // Category 1: Relational queries (graph traversal required)
     { question: 'Who attended Demo Day 0?', category: 'relational', seed: 'meetings/demo-day-0',
       expected: ['people/alice-partner', 'people/frank-founder', 'people/grace-founder'],
-      linkType: 'attended', direction: 'out', depth: 1 },
+      linkType: 'attended', direction: 'in', depth: 1, fallback: 'seed' },
     { question: 'Who attended Board 0?', category: 'relational', seed: 'meetings/board-0',
       expected: ['people/uma-advisor', 'people/frank-founder'],
-      linkType: 'attended', direction: 'out', depth: 1 },
+      linkType: 'attended', direction: 'in', depth: 1, fallback: 'seed' },
     { question: 'What companies has uma-advisor advised?', category: 'typed',
       seed: 'people/uma-advisor', expected: ['companies/startup-0', 'companies/startup-3'],
       linkType: 'advises', direction: 'out', depth: 1 },
     { question: 'Who works at startup-0?', category: 'typed', seed: 'companies/startup-0',
-      expected: ['people/frank-founder', 'people/paul-eng'],
+      expected: ['people/paul-eng'],
       linkType: 'works_at', direction: 'in', depth: 1 },
+    { question: 'Who founded startup-0?', category: 'typed', seed: 'companies/startup-0',
+      expected: ['people/frank-founder'],
+      linkType: 'founded', direction: 'in', depth: 1 },
     { question: 'Which VCs invested in startup-0?', category: 'typed', seed: 'companies/startup-0',
       expected: ['companies/vc-0'],
       linkType: 'invested_in', direction: 'in', depth: 1 },
@@ -358,7 +381,7 @@ interface AggregateQuery {
 
 const AGGREGATE_QUERIES: AggregateQuery[] = [
   {
-    question: 'Top 4 most-connected people (by inbound attended links)',
+    question: 'Top 4 most-connected people (by meetings attended)',
     kind: 'people',
     topN: 4,
     // founders[1..4] = grace, henry, iris, jack each appear as attendees in
@@ -378,9 +401,10 @@ interface TypeDisagreementQuery {
 const TYPE_DISAGREEMENT_QUERIES: TypeDisagreementQuery[] = [
   {
     question: 'Startups with both VC investment AND advisor coverage',
-    // vc-i invests in startup-i and startup-(i+5); uma/victor/wendy/xavier/yara each advise 2.
-    // startup-0..4 each have at least one investor AND at least one advisor.
-    expected: ['companies/startup-0', 'companies/startup-1', 'companies/startup-2', 'companies/startup-3', 'companies/startup-4'],
+    // vc-i invests in startup-i and startup-(i+5), so startup-0..9 have an investor.
+    // Advisor i advises startup-i and startup-(i+3): startup-0..7 have an advisor.
+    expected: ['companies/startup-0', 'companies/startup-1', 'companies/startup-2', 'companies/startup-3',
+               'companies/startup-4', 'companies/startup-5', 'companies/startup-6', 'companies/startup-7'],
     typeA: 'invested_in',
     typeB: 'advises',
   },
@@ -420,9 +444,7 @@ async function measureBaselineRelational(
 ): Promise<BaselineResult> {
   // Build a content index: slug -> compiled_truth + timeline text.
   const contentBySlug = new Map<string, string>();
-  for (const s of seeds) {
-    contentBySlug.set(s.slug, `${s.page.compiled_truth}\n${s.page.timeline ?? ''}`);
-  }
+  for (const s of seeds) contentBySlug.set(s.slug, pageText(s));
   const ENTITY_REF_RE = /\[[^\]]+\]\(([^)]+)\)|\b((?:people|companies|meetings|concepts)\/[a-z0-9-]+)\b/gi;
 
   const perQuery: Array<{ question: string; expected: number; found: number; returned: number }> = [];
@@ -433,7 +455,7 @@ async function measureBaselineRelational(
     const expected = new Set(q.expected);
     let returned: Set<string>;
 
-    if ((q.direction ?? 'out') === 'out') {
+    if ((q.fallback ?? ((q.direction ?? 'out') === 'out' ? 'seed' : 'scan')) === 'seed') {
       // Read seed page, extract refs from its content.
       const content = contentBySlug.get(q.seed) ?? '';
       returned = new Set();
@@ -496,7 +518,7 @@ async function measureMultiHop(
   seeds: SeededPage[],
 ): Promise<CategoryResult> {
   const contentBySlug = new Map<string, string>();
-  for (const s of seeds) contentBySlug.set(s.slug, `${s.page.compiled_truth}\n${s.page.timeline ?? ''}`);
+  for (const s of seeds) contentBySlug.set(s.slug, pageText(s));
 
   const perQuery = [];
   let totalExpected = 0, totalAFound = 0, totalCFound = 0, totalAReturned = 0, totalCReturned = 0;
@@ -556,10 +578,10 @@ interface AggregateResult {
 }
 
 /**
- * Aggregate: "top N most-connected people" requires counting inbound links per
- * entity and sorting.
+ * Aggregate: "top N most-connected people" requires counting each person's
+ * `attended` edges (person -> meeting) and sorting.
  *
- * - C: engine.getBacklinkCounts() — one query, exact counts.
+ * - C: one grouped count over the links table, exact counts.
  * - A: scan all pages, count substring mentions of each candidate slug. This is
  *   what `grep -c slug brain/` would give. Counts text mentions, not structured
  *   relationships, so it's noisier (a slug might be mentioned in passing without
@@ -570,21 +592,22 @@ async function measureAggregate(
   seeds: SeededPage[],
 ): Promise<AggregateResult[]> {
   const contentBySlug = new Map<string, string>();
-  for (const s of seeds) contentBySlug.set(s.slug, `${s.page.compiled_truth}\n${s.page.timeline ?? ''}`);
+  for (const s of seeds) contentBySlug.set(s.slug, pageText(s));
 
   const results: AggregateResult[] = [];
   for (const q of AGGREGATE_QUERIES) {
     const candidates = seeds.filter(s => s.slug.startsWith(`${q.kind}/`)).map(s => s.slug);
 
-    // C: structured backlink counts (page-id-keyed since #4380; single
-    // default-source benchmark brain, so slug→id is unambiguous).
-    const idRows = await engine.executeRaw<{ id: number; slug: string }>(
-      `SELECT id, slug FROM pages WHERE slug = ANY($1::text[])`, [candidates],
+    // C: structured counts of each candidate's outgoing `attended` edges.
+    const rows = await engine.executeRaw<{ slug: string; n: number }>(
+      `SELECT p.slug, count(l.*)::int AS n
+         FROM pages p LEFT JOIN links l ON l.from_page_id = p.id AND l.link_type = 'attended'
+        WHERE p.slug = ANY($1::text[])
+        GROUP BY p.slug`, [candidates],
     );
-    const idBySlug = new Map(idRows.map(r => [r.slug, r.id]));
-    const counts = await engine.getBacklinkCounts(idRows.map(r => r.id));
+    const cCounts = new Map(rows.map(r => [r.slug, r.n]));
     const cTop = candidates
-      .map(s => ({ slug: s, n: counts.get(idBySlug.get(s) ?? -1) ?? 0 }))
+      .map(s => ({ slug: s, n: cCounts.get(s) ?? 0 }))
       .sort((a, b) => b.n - a.n)
       .slice(0, q.topN)
       .map(x => x.slug);
@@ -649,7 +672,7 @@ async function measureTypeDisagreement(
   seeds: SeededPage[],
 ): Promise<TypeDisagreementResult[]> {
   const contentBySlug = new Map<string, string>();
-  for (const s of seeds) contentBySlug.set(s.slug, `${s.page.compiled_truth}\n${s.page.timeline ?? ''}`);
+  for (const s of seeds) contentBySlug.set(s.slug, pageText(s));
 
   const results: TypeDisagreementResult[] = [];
   for (const q of TYPE_DISAGREEMENT_QUERIES) {
@@ -725,28 +748,24 @@ async function measureRanking(
   engine: PGLiteEngine,
   seeds: SeededPage[],
 ): Promise<RankingResult> {
-  // searchKeyword joins content_chunks (a normal `gbrain import` populates
-  // these). The benchmark seeded via putPage() which skips chunking, so we
-  // upsert one chunk per page now to make ranking measurable.
+  // searchKeyword reads chunks whose text projection matches the page's
+  // current revision, so re-import each page through the production import
+  // path (chunks + projection stamp; no embedding) before ranking. Links and
+  // timeline rows were measured above; this only adds chunks.
   for (const s of seeds) {
-    const text = `${s.page.title}\n${s.page.compiled_truth}`;
-    await engine.upsertChunks(s.slug, [
-      { chunk_index: 0, chunk_text: text, chunk_source: 'compiled_truth' },
-    ]);
+    const fm = { type: s.page.type, title: s.page.title, ...(s.page.frontmatter ?? {}) };
+    await importFromContent(engine, s.slug, `${pageText({ ...s, page: { ...s.page, frontmatter: fm, timeline: '' } })}`, { noEmbed: true });
   }
 
-  // Query "company" matches all 10 founder pages identically (each says "X is the
-  // CEO of [Y]. They founded the company."). The text is uniform so ts_rank gives
-  // identical scores — a tied cluster.
-  // Compare:
-  //   Well-connected: grace, henry, iris, jack — each has 4 inbound `attended` links
-  //                   (1 demo + 1 prev demo + 1 oneonone + 1 board)
-  //   Unconnected:    liam, mia, noah, olivia — all 4 have 0 inbound links
-  // Without boost both groups are tied (PG tie-breaking is unstable).
-  // With boost the well-connected ones rise to the top of the cluster.
+  // Query "company" matches every startup ("Startup i is a YC company.") and
+  // every acquirer ("Big company i."). Compare:
+  //   Well-connected: startup-0..3 — inbound founded, works_at, advises,
+  //                   invested_in and mentions links
+  //   Unconnected:    big-0..3 — no inbound links
+  // With the backlink boost the well-connected pages should rank higher.
   const query = 'company';
-  const wellConnected = ['people/grace-founder', 'people/henry-founder', 'people/iris-founder', 'people/jack-founder'];
-  const unconnected = ['people/liam-founder', 'people/mia-founder', 'people/noah-founder', 'people/olivia-founder'];
+  const wellConnected = ['companies/startup-0', 'companies/startup-1', 'companies/startup-2', 'companies/startup-3'];
+  const unconnected = ['companies/big-0', 'companies/big-1', 'companies/big-2', 'companies/big-3'];
 
   const results = await engine.searchKeyword(query, { limit: 80 });
 
@@ -789,7 +808,7 @@ async function main() {
   const json = process.argv.includes('--json');
   const log = json ? () => {} : console.log;
 
-  log('# Graph Quality Benchmark — v0.10.1');
+  log('# Graph Quality Benchmark');
   log(`Generated: ${new Date().toISOString().slice(0, 19)}`);
   log('');
 
@@ -808,13 +827,18 @@ async function main() {
   log(`- ${(await engine.getStats()).page_count} pages in DB`);
 
   // Phase 2: Run extractions.
+  // runExtract reports progress on stderr and its summary on stdout; silence
+  // both so --json output stays parseable.
   const captureLog = console.error;
-  console.error = () => {}; // silence progress output during benchmark
+  const captureOut = console.log;
+  console.error = () => {};
+  console.log = () => {};
   try {
-    await runExtract(engine, ['links', '--source', 'db']);
+    await runExtract(engine, ['links', '--source', 'db', '--include-frontmatter']);
     await runExtract(engine, ['timeline', '--source', 'db']);
   } finally {
     console.error = captureLog;
+    console.log = captureOut;
   }
 
   const stats = await engine.getStats();
@@ -826,7 +850,7 @@ async function main() {
 
   const expectedLinks: Array<{ from: string; to: string; type: string }> = [];
   for (const s of seeds) {
-    for (const l of s.expectedLinks) expectedLinks.push({ from: s.slug, to: l.to, type: l.type });
+    for (const l of s.expectedLinks) expectedLinks.push({ from: l.from ?? s.slug, to: l.to, type: l.type });
   }
   const expectedTimeline: Array<{ slug: string; date: string; summary: string }> = [];
   for (const s of seeds) {
@@ -927,11 +951,13 @@ async function main() {
   const linkCountBefore = stats.link_count;
   const tlCountBefore = stats.timeline_entry_count;
   console.error = () => {};
+  console.log = () => {};
   try {
-    await runExtract(engine, ['links', '--source', 'db']);
+    await runExtract(engine, ['links', '--source', 'db', '--include-frontmatter']);
     await runExtract(engine, ['timeline', '--source', 'db']);
   } finally {
     console.error = captureLog;
+    console.log = captureOut;
   }
   const stats2 = await engine.getStats();
   const idempotent_links = stats2.link_count === linkCountBefore;
@@ -1075,7 +1101,7 @@ async function main() {
     log('|------------------------------------------|------------------------|---------------------|---|');
     const wDelta = ranking.avg_rank_well_without - ranking.avg_rank_well_with;
     const uDelta = ranking.avg_rank_unconnected_without - ranking.avg_rank_unconnected_with;
-    log(`| Well-connected (4 inbound links each)    | ${ranking.avg_rank_well_without.toFixed(1).padEnd(22)} | ${ranking.avg_rank_well_with.toFixed(1).padEnd(19)} | ${wDelta >= 0 ? '+' : ''}${wDelta.toFixed(1)} ${wDelta > 0 ? '↑ better' : wDelta < 0 ? '↓ worse' : ''} |`);
+    log(`| Well-connected (inbound typed links)     | ${ranking.avg_rank_well_without.toFixed(1).padEnd(22)} | ${ranking.avg_rank_well_with.toFixed(1).padEnd(19)} | ${wDelta >= 0 ? '+' : ''}${wDelta.toFixed(1)} ${wDelta > 0 ? '↑ better' : wDelta < 0 ? '↓ worse' : ''} |`);
     log(`| Unconnected (0 inbound links each)       | ${ranking.avg_rank_unconnected_without.toFixed(1).padEnd(22)} | ${ranking.avg_rank_unconnected_with.toFixed(1).padEnd(19)} | ${uDelta >= 0 ? '+' : ''}${uDelta.toFixed(1)} ${uDelta > 0 ? '↑ better' : uDelta < 0 ? '↓ worse' : ''} |`);
     log('');
   }
@@ -1099,7 +1125,7 @@ async function main() {
   if (failed.length > 0) {
     console.error(`\n⚠ Benchmark failures: ${failed.length}`);
     for (const f of failed) console.error(`  - ${f}`);
-    console.error('\nSee BENCHMARK_FAILURES comment block in test/benchmark-graph-quality.ts for fixes.');
+    console.error('\nSee the BENCHMARK_FAILURES comment block in scripts/bench-graph-quality.ts for where to look.');
     process.exit(1);
   } else {
     log('\n✓ All thresholds passed.');

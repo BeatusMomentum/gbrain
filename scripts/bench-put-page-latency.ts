@@ -1,16 +1,15 @@
 /**
- * put_page latency benchmark — does Step B's auto-timeline measurably slow writes?
+ * put_page latency benchmark: wall-clock latency of the put_page operation,
+ * including its write-time link and timeline projection.
  *
  * Seeds 10 target pages, then runs 200 put_page OPERATION calls (not
  * engine.putPage directly) with varied content: half carry 3 timeline
- * entries, half carry none. Records wall-clock latency of each call,
- * reports p50/p95/p99 + total timeline entries written.
+ * entries, half carry none. Reports p50/p95/p99 and the timeline rows the
+ * writes committed (300 expected). PGLite is in-process, so runs on two
+ * revisions are directly comparable.
  *
- * Run on this branch + on master; numbers are directly comparable since
- * PGLite is in-process and the only variable is the operation handler.
- *
- * Usage: bun run test/benchmark-put-page-latency.ts
- *        bun run test/benchmark-put-page-latency.ts --json
+ * Usage: bun scripts/bench-put-page-latency.ts
+ *        bun scripts/bench-put-page-latency.ts --json
  */
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -76,13 +75,12 @@ async function main() {
     ].join('\n');
 
     const t0 = performance.now();
-    const result: any = await putOp.handler(ctx, { slug, content: body });
+    await putOp.handler(ctx, { slug, content: body });
     const dt = performance.now() - t0;
     latenciesMs.push(dt);
-    if (result?.auto_timeline?.created) {
-      timelineEntriesWritten += result.auto_timeline.created;
-    }
   }
+  const [{ n }] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM timeline_entries`);
+  timelineEntriesWritten = n;
 
   await engine.disconnect();
 

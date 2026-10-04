@@ -1,16 +1,13 @@
 /**
- * Knowledge Runtime Benchmark — does the branch actually improve gbrain?
+ * Knowledge Runtime Benchmark: write-time timeline, integrity repair and
+ * doctor completeness on an in-process PGLite brain with mocked resolvers.
+ * Deterministic, no network, no API keys.
  *
- * Three measurable comparisons, each isolating one claim the PR makes.
- * All run in-process against PGLite with mocked resolvers. Deterministic,
- * no network, no API keys.
- *
- * 1. TIME-TO-QUERYABLE: seed pages via put_page OPERATION, immediately
- *    query timeline. With auto_timeline ON (branch default), timeline is
- *    populated at write-time; with auto_timeline OFF (master behavior),
- *    timeline is empty until user runs `gbrain extract timeline`.
- *    Metric: % of expected timeline queries that return correct answers
- *    immediately after ingest.
+ * 1. TIME-TO-QUERYABLE: seed pages via the put_page OPERATION, then query the
+ *    timeline immediately. Timeline rows are a canonical projection that
+ *    commits with the page, so both arms (auto_timeline on and off) should
+ *    report 100%; a drop in either arm means put_page stopped committing them.
+ *    Metric: % of expected timeline queries answered right after ingest.
  *
  * 2. INTEGRITY REPAIR RATE: seed pages with bare-tweet phrases, mock the
  *    x_handle_to_tweet resolver with a realistic confidence distribution
@@ -22,8 +19,8 @@
  *    pages), run the scanIntegrity helper doctor now invokes. Metric:
  *    issues-surfaced / issues-planted.
  *
- * Usage: bun run test/benchmark-knowledge-runtime.ts
- *        bun run test/benchmark-knowledge-runtime.ts --json
+ * Usage: bun scripts/bench-knowledge-runtime.ts
+ *        bun scripts/bench-knowledge-runtime.ts --json
  */
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -354,8 +351,8 @@ async function main() {
   log('## 1. Time-to-queryable brain');
   const ttqBranch = await runTTQ(true);
   const ttqMaster = await runTTQ(false);
-  log(`  branch (auto_timeline=on):  ${ttqBranch.found}/${ttqBranch.expected} queryable (${round(ttqBranch.pct * 100)}%)`);
-  log(`  master (auto_timeline=off): ${ttqMaster.found}/${ttqMaster.expected} queryable (${round(ttqMaster.pct * 100)}%)`);
+  log(`  auto_timeline=on:  ${ttqBranch.found}/${ttqBranch.expected} queryable (${round(ttqBranch.pct * 100)}%)`);
+  log(`  auto_timeline=off: ${ttqMaster.found}/${ttqMaster.expected} queryable (${round(ttqMaster.pct * 100)}%)`);
   log('');
 
   log('## 2. Integrity repair rate (mocked resolver, 70/20/10 distribution)');
@@ -377,7 +374,7 @@ async function main() {
   log('');
 
   const report = {
-    ttq: { branch: ttqBranch, master: ttqMaster },
+    ttq: { auto_timeline_on: ttqBranch, auto_timeline_off: ttqMaster },
     integrity: intRes,
     doctor: docRes,
   };
