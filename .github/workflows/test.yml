@@ -226,6 +226,10 @@ jobs:
         run: |
           bun run check:bash32
           bun test --timeout 60000 test/scripts/check-bash32.test.ts
+      # recipes/agent-voice's vitest unit suite (109 tests) ran in no workflow;
+      # pinned vitest + ws into a temp prefix, ~10s.
+      - name: agent-voice recipe unit tests (vitest)
+        run: bun run test:agent-voice
 
   serial-tests:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}

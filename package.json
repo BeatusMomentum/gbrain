@@ -82,6 +82,7 @@
     "check:pglite-embedded": "bash scripts/check-pglite-embedded.sh",
     "check:newlines": "bash scripts/check-trailing-newline.sh",
     "test:compile-smoke": "bun test test/binary-self-update-compiled.serial.test.ts",
+    "test:agent-voice": "bash scripts/test-agent-voice.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
     "test:slow": "bash scripts/run-slow-tests.sh",
     "test:scale": "bun scripts/scale/run.ts",
