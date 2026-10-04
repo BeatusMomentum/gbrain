@@ -1609,6 +1609,17 @@
           "status": "ok"
         },
         {
+          "category": "meta",
+          "details": {
+            "column": "not_null",
+            "failed": [],
+            "pending": 0
+          },
+          "message": "Every page has its revision; the page revision backfill is complete.",
+          "name": "revision_backfill",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
           "name": "search_mode",

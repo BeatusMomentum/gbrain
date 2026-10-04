@@ -30,7 +30,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/reindex.ts": ["test/e2e/reindex-auto-workers-5181.test.ts"],
   // Fix wave 8, Lane G: deferred ANN build after the embedding re-embed (#5088).
   // Fix wave 8, Lane G: page revision rollout (#5216).
-  "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts"],
+  "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts", "test/e2e/doctor-revision-backfill-postgres.test.ts"],
+  "src/commands/doctor/checks/revision-backfill.ts": ["test/e2e/doctor-revision-backfill-postgres.test.ts", "test/e2e/doctor-json-golden.test.ts"],
   "src/core/embedding-ann-build.ts": ["test/e2e/migrate-embeddings-ann-build-5088-postgres.test.ts", "test/e2e/migrate-embeddings-postgres.test.ts"],
   // FOUNDATIONS 1 F4a: get_health SQL aggregate, shared orphan policy, op memo.
   "src/core/engine-sql/health.ts": ["test/e2e/engine-sql-health-parity.test.ts", "test/e2e/health-parity-postgres.test.ts", "test/e2e/get-health-embedding-column-postgres.test.ts"],

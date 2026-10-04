@@ -374,7 +374,9 @@ The preview also reads every page body and lists the rows it cannot read
 rows. Recover them from a backup, or create a fresh brain and sync it again
 from its source files. Until then, a write that names the revision of a page
 the upgrade could not backfill is refused with `revision_backfill_pending`;
-`gbrain apply-migrations --yes` resumes that backfill and prints its progress.
+doctor's `revision_backfill` check names those pages, and
+`gbrain apply-migrations --force-schema` resumes the backfill for the rest and
+prints its progress.
 
 ### Timeline history scan coverage
 
