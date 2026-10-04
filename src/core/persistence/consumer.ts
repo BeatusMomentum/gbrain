@@ -19,9 +19,9 @@ import { faultPoint } from './fault-points.ts';
 import { releaseAbandonedClaims } from './effect-journal.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
-/** #5801: the phase a connection checkout belongs to, carried through its async chain. */
 /** When this process started; on PGLite no claim written earlier can belong to a live owner. */
 const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
+/** #5801: the phase a connection checkout belongs to, carried through its async chain. */
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
 /** #5233: one-line, redacted, length-capped error text for the consumer's stderr line. */
