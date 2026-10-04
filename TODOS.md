@@ -1,5 +1,14 @@
 # TODOS
 
+## Test, eval and CI fix wave follow-ups (filed 2026-10-04, GBRA-47)
+
+Context: `.github/nightly-known-red.tsv` rows point here; nightly-watch keeps their incidents open until the row is deleted.
+
+- [ ] **P1 — PGLite bulk-embedding cliff at ~20k chunks.**
+  **What:** the scale tier's PGLite 20k cell stalled in the `vectors` phase (batched `UPDATE content_chunks SET embedding`) for 36+ minutes on nightly run 37196223708, while Postgres finished the same phase in 42 s. **Why:** a default PGLite brain that embeds ~20k chunks at once may hit the same wall. **Fix:** measure through the shipped `gbrain embed` path and the per-batch `vectors` progress lines (batch time, RSS, dimension) on the next 20k runs, then decide the engine fix (HNSW maintenance around bulk updates, PGLite memory settings). The phase watchdog names the stall meanwhile. **Effort:** M. **Priority:** P1.
+- [ ] **P1 — Set the ANTHROPIC_API_KEY and OPENAI_API_KEY repo secrets.**
+  **What:** the Hermes door's paid leg and the real-agent Claude/Codex doors skip visibly every night because both secrets are empty (approved, decision D-1). **Why:** only the repo owner can set secrets. **Fix:** `gh secret set ANTHROPIC_API_KEY` and `gh secret set OPENAI_API_KEY`, then delete the Heavy Tests row from `.github/nightly-known-red.tsv`. **Effort:** S. **Priority:** P1.
+
 ## Held files follow-ups (filed 2026-10-04, follow-up from v0.60.47.0)
 
 Context: `docs/guides/repair.md#held-files`, `docs/guides/write-refusals.md#held-files-and-content-refusals`.

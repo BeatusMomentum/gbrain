@@ -183,6 +183,8 @@ jobs:
           if [ ! -f "$REPORT" ]; then
             WATCHDOG="${REPORT%.json}.watchdog.txt"
             if [ -f "$WATCHDOG" ]; then
+              # The annotation is the signature nightly-watch matches against .github/nightly-known-red.tsv.
+              echo "::error title=Scale phase watchdog::$(head -1 "$WATCHDOG")"
               { echo "### Phase watchdog killed the harness"; echo '```'; cat "$WATCHDOG"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
             else
               echo "No report: the harness crashed before writing one; see the step log." >> "$GITHUB_STEP_SUMMARY"
