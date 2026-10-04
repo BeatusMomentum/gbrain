@@ -412,6 +412,15 @@ export function deltaRow(kind: DeltaKind, id: Pick<Identity, 'lane' | 'file' | '
 export function compare(head: Side, base: Side | undefined, deltas: { rows: DeltaRow[]; errors: string[] }, opts: { failOnAdditions?: boolean } = {}): Comparison {
   const result: Comparison = { ok: true, base, head, drops: [], additions: [], issues: [...(base?.issues.map(i => ({ ...i, detail: `base: ${i.detail}` })) ?? []), ...head.issues.map(i => ({ ...i, detail: base ? `head: ${i.detail}` : i.detail }))], deltaErrors: deltas.errors, unusedRows: [], suggestions: [] };
   const used = new Set<DeltaRow>();
+  const sideOf = (detail: string) => (base && detail.startsWith('base: ') ? base : head);
+  result.issues = result.issues.filter(issue => {
+    if (issue.kind !== 'empty-lane') return true;
+    const ids = [...sideOf(issue.detail).identities.values()].filter(id => id.lane === issue.lane);
+    const rows = ids.map(id => deltas.rows.find(r => r.kind === 'skip' && r.lane === id.lane && r.file === id.file && r.test === '*'));
+    if (!ids.length || rows.some(r => !r)) return true;
+    for (const r of rows) used.add(r!);
+    return false;
+  });
   if (base) {
     for (const artifact of base.artifacts) {
       if (head.artifacts.has(artifact)) continue;

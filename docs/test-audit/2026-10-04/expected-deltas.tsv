@@ -23,3 +23,4 @@
 # A move passes only when the target identity executes in head; a skip row
 # (planned pass-to-skip) passes only when head reports the test skipped.
 kind	lane	file	test	arm	new_lane	new_file	new_test	reason	evidence
+skip	tier2	test/e2e/skills.test.ts	*					D-1: OPENAI_API_KEY and ANTHROPIC_API_KEY repo secrets are unset, so every Tier 2 skill test skips; delete this row once the owner sets them (TODOS P1)	

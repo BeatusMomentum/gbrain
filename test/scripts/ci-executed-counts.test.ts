@@ -228,6 +228,17 @@ describe('completeness', () => {
     expect(kinds).toEqual(['empty-lane', 'missing-shard']);
   });
 
+  test('an all-skipped lane passes only when skip rows cover every file in it', () => {
+    const gated: Case = { file: 'test/e2e/skills.test.ts', name: 'needs keys', status: 'skip' };
+    for (const name of ['base', 'head']) writeReceipt(name, { artifact: 'receipts-tier2', id: 't', lane: 'tier2', files: [gated.file], cases: [gated] });
+    expect(compare(side('head'), side('base'), noDeltas).issues.map(i => i.kind)).toEqual(['empty-lane', 'empty-lane']);
+    const row = ['skip', 'tier2', gated.file, '*', '', '', '', '', 'D-1: provider secrets unset', ''].join('\t');
+    const result = compare(side('head'), side('base'), parseDeltas(`${HEADER}\n${row}\n`));
+    expect(result.issues).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(result.unusedRows).toEqual([]);
+  });
+
   test('drops in a lane declared empty (doc-only E2E selection) are reported, not failed', () => {
     writeReceipt('base', { artifact: 'receipts-e2e-1', id: 'e', lane: 'e2e', files: ['test/e2e/x.test.ts'], cases: [{ file: 'test/e2e/x.test.ts', name: 'x' }] });
     writeReceipt('head', { artifact: 'receipts-e2e-1', id: 'e', lane: 'e2e', files: [], junit: null, extra: ['declared_empty=1'] });
