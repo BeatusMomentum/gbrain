@@ -13,7 +13,8 @@ import { assertPersistenceAccepting, estimatedRetryAfterMs, waitForWrite, writeR
 import { parseWireWriteWaitMs } from './write-wait.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
-import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter } from './identity.ts';
+import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
+import type { BrainEngine } from '../engine.ts';
 import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
@@ -37,6 +38,50 @@ export async function requestPrincipalForContext(ctx: OperationContext): Promise
 /** A local installation registers once; revoked records are never silently replaced. */
 export async function initializeLocalPersistence(ctx: OperationContext): Promise<void> {
   if (!ctx.auth && !currentVerifiedLocalWriter()) await registerLocalWriter(ctx.engine, ctx.remote === false ? 'cli' : 'stdio');
+}
+const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+/**
+ * Pre-admission reads every page of one batch makes with the same arguments:
+ * the source row, the worktree binding, the writer registration, the shared
+ * skillpack roots, the persistence identity and config values. All of them
+ * are rechecked under lock by the admission transaction.
+ */
+const BATCH_SHARED_READS = new Set([
+  "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1",
+  'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
+  'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
+  'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
+  'SELECT brain_id FROM persistence_brain WHERE singleton=1',
+  'SELECT value FROM config WHERE key=$1',
+]);
+function batchSharedReads(engine: BrainEngine): BrainEngine {
+  const reads = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = reads.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); reads.set(id, value); value.catch(() => reads.delete(id)); }
+    return value;
+  };
+  return new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
+      BATCH_SHARED_READS.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
+    if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+}
+/**
+ * #6007: prepares one batch's page admissions under one writer verification
+ * and one read snapshot. `run` gets the caller's context (for a page that may
+ * claim the source's worktree) and a context whose engine answers the batch's
+ * shared pre-admission reads once; the local writer is verified once for the
+ * whole call instead of once per page.
+ */
+export async function withBatchAdmission<T>(ctx: OperationContext, run: (own: OperationContext, shared: OperationContext) => Promise<T>): Promise<T> {
+  const shared: OperationContext = { ...ctx, engine: batchSharedReads(ctx.engine) };
+  if (ctx.auth || currentVerifiedLocalWriter()) return run(ctx, shared);
+  await initializeLocalPersistence(ctx);
+  const registration = await readLocalWriter(ctx.engine, ctx.remote === false ? 'cli' : 'stdio');
+  return withVerifiedLocalRegistration(ctx.engine, registration, () => run(ctx, shared));
 }
 /** Validate explicit routing before any admission, including dry-run adapters. */
 export function pageMutationSource(ctx: OperationContext, params: Record<string, unknown>, operation: string): string {

@@ -238,15 +238,12 @@ export async function waitForWrite(engine: BrainEngine, row: WriteRequest, confi
   return (await awaitWrite(engine, row, config, { waitMs })).row;
 }
 /**
- * #6007: wait for several admitted writes against one deadline. Requests of
- * one source publish oldest first, so waiting on each in order costs one
- * waiter at a time; rows not reached by the deadline keep their last state.
+ * #6007: wait for several admitted writes against one deadline. Every row waits at once, so each one's consumer handoff is registered
+ * before a grouped publication settles them together; waiting one after
+ * another left all but the first to the progress polls.
  */
 export async function waitForWrites(engine: BrainEngine, rows: readonly WriteRequest[], config: GBrainConfig, waitMs = 5000): Promise<WriteRequest[]> {
-  const deadline = performance.now() + waitMs;
-  const settled: WriteRequest[] = [];
-  for (const row of rows) settled.push(await waitForWrite(engine, row, config, Math.max(0, deadline - performance.now())));
-  return settled;
+  return Promise.all(rows.map(row => waitForWrite(engine, row, config, waitMs)));
 }
 /** B4: what a terminal receipt means for the caller, without guessing a mutation. */
 function terminalReceiptHint(row: WriteRequest, reason: string): string {

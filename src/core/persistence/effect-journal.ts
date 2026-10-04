@@ -29,7 +29,7 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   const revision = snapshot?.revision;
   const data = { slug: row.slug, page_id: snapshot?.page.id };
   // #6007: the effects are inserted together, in queue order, by one statement at the end.
-  const queued: { kind: EffectKind; data: Record<string, unknown> }[] = [];
+  const queued: { kind: EffectKind; data: Record<string, unknown>; gated?: boolean }[] = [];
   const queue = (kind: EffectKind, extra: Record<string, unknown> = {}) => { queued.push({ kind, data: { ...data, ...extra } }); };
   if (prepared?.file && row.worktree_id) {
     const [binding] = await tx.executeRaw<{ local_path: string }>(`SELECT h.local_path FROM persistence_host_bindings h
@@ -46,22 +46,21 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
     }
-    if (queuesMentionLinks(row)) {
-      const queued = await tx.executeRaw(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
-        SELECT $1::uuid,'links',$2::uuid,$3::text::jsonb,$4,$5::uuid,$6::uuid WHERE NOT EXISTS (SELECT 1 FROM config
-          WHERE key IN ('auto_link',$7) AND lower(btrim(value,E' \\t\\r\\n')) IN ('false','0','no','off'))
-        ON CONFLICT(request_id,kind) DO NOTHING RETURNING id`,
-      [row.id, revision ?? null, JSON.stringify(data), row.source_id, row.source_incarnation, row.worktree_id, REMOTE_AUTO_LINKS_KEY]);
-      if (queued.length) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
-      if (!opts.deferBatchReconcile) await reconcileFinishedBatch(tx, row);
-    }
+    // The links effect is inserted with the others, gated in SQL on auto_link and mcp.remote_auto_links.
+    if (queuesMentionLinks(row)) queued.push({ kind: 'links', data: { ...data }, gated: true });
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
   }
-  if (queued.length) await tx.executeRaw(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+  const inserted = queued.length ? await tx.executeRaw<{ kind: string }>(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
     SELECT $1::uuid,t.e->>'kind',$2::uuid,t.e->'data',$3,$4::uuid,$5::uuid FROM jsonb_array_elements($6::text::jsonb) WITH ORDINALITY AS t(e,n)
-    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING`,
-  [row.id, revision ?? null, row.source_id, row.source_incarnation, row.worktree_id, JSON.stringify(queued)]);
+    WHERE NOT (COALESCE((t.e->>'gated')::boolean,false) AND EXISTS (SELECT 1 FROM config
+      WHERE key IN ('auto_link',$7) AND lower(btrim(value,E' \\t\\r\\n')) IN ('false','0','no','off')))
+    ORDER BY t.n ON CONFLICT(request_id,kind) DO NOTHING RETURNING kind`,
+  [row.id, revision ?? null, row.source_id, row.source_incarnation, row.worktree_id, JSON.stringify(queued), REMOTE_AUTO_LINKS_KEY]) : [];
+  if (queued.some(effect => effect.kind === 'links')) {
+    if (inserted.some(effect => effect.kind === 'links')) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
+    if (!opts.deferBatchReconcile) await reconcileFinishedBatch(tx, row);
+  }
 }
 
 /** Whether a publication of this request queues a mention `links` effect: a remote page write without trusted auto-linking. */

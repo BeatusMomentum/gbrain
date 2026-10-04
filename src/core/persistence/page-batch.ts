@@ -22,7 +22,7 @@ import { pageBatchChildRequestId, pageBatchChildRequestIds } from './page-batch-
 export { pageBatchChildRequestId };
 import { isTerminal, type WriteRequest } from './model.ts';
 import { estimatedRetryAfterMs, waitForWrites, writeResponse } from './service.ts';
-import { initializeLocalPersistence, pageMutationSource, preparePageAdmission, requestPrincipalForContext } from './page-mutations.ts';
+import { initializeLocalPersistence, pageMutationSource, preparePageAdmission, requestPrincipalForContext, withBatchAdmission } from './page-mutations.ts';
 import type { PageTypeWarning } from './page-input.ts';
 import { parseWriteRequestId } from './preconditions.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
@@ -157,9 +157,14 @@ async function admitBatch(ctx: OperationContext, batchId: string, admissions: Wr
   }), BATCH_ADMISSION_BUDGET_MS);
 }
 
-async function prepareAll(ctx: OperationContext, batchId: string, sourceId: string, pages: BatchPage[]) {
+async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[]) {
+  // #6007 (workstream A): one writer verification and one shared-read snapshot per batch (page-mutations.ts withBatchAdmission).
+  return withBatchAdmission(caller, (own, shared) => preparePages(own, shared, batchId, sourceId, pages));
+}
+async function preparePages(own: OperationContext, shared: OperationContext, batchId: string, sourceId: string, pages: BatchPage[]) {
   const prepared: (Awaited<ReturnType<typeof preparePageAdmission>> | OperationError)[] = new Array(pages.length);
   const prepareOne = async (index: number) => {
+    const ctx = index === 0 ? own : shared;
     const page = pages[index]!;
     const params: Record<string, unknown> = { slug: page.slug, content: page.content, source_id: sourceId };
     if (page.expected_revision !== undefined) params.expected_revision = page.expected_revision;
