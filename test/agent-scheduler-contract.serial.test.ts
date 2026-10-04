@@ -31,7 +31,7 @@ import { spawnSync, execFileSync } from 'child_process';
 
 const REPO = resolve(import.meta.dir, '..');
 const CLI = join(REPO, 'src', 'cli.ts');
-const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
+const SKIP = process.env.GBRAIN_TEST_SKIP_SUBPROCESS === '1';
 
 interface ShellResult { exitCode: number; stdout: string; stderr: string }
 

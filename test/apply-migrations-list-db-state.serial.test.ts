@@ -6,7 +6,7 @@
  * indistinguishable to operators and CI gates.
  *
  * Serial because it spawns a subprocess and writes a tmpdir. Skippable via
- * `GBRAIN_SKIP_SUBPROCESS_TESTS=1` for fast-loop budget control.
+ * `GBRAIN_TEST_SKIP_SUBPROCESS=1` for fast-loop budget control.
  */
 import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
@@ -14,7 +14,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 
 const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
-const SKIP = process.env.GBRAIN_SKIP_SUBPROCESS_TESTS === '1';
+const SKIP = process.env.GBRAIN_TEST_SKIP_SUBPROCESS === '1';
 
 async function runCli(
   args: string[],

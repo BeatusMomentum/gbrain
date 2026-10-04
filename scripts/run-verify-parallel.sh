@@ -87,6 +87,9 @@ CHECKS=(
   "check:privacy"
   "check:test-names"
   "check:test-isolation"
+  # D7: a test that gates execution on a GBRAIN_* opt-in the operator-env
+  # preload strips is a silent skip; TS AST scan, ~2s.
+  "check:test-env-opt-ins"
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"

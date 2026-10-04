@@ -222,7 +222,7 @@ jobs:
       # test's real-parser fixture cases mandatory.
       - name: Shell scripts parse under bash 3.2
         env:
-          GBRAIN_BASH32_REQUIRE: '1'
+          GBRAIN_TEST_BASH32_REQUIRE: '1'
         run: |
           bun run check:bash32
           bun test --timeout 60000 test/scripts/check-bash32.test.ts
