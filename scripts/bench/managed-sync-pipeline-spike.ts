@@ -45,12 +45,19 @@ docker(['rm', '-f', 'gbrain-spike-pgbouncer'], true);
 docker(['run', '-d', '--name', 'gbrain-spike-pgbouncer', '--network', 'host', '-e', `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:${PG_PORT}/postgres`,
   '-e', `LISTEN_PORT=${BOUNCER_PORT}`, '-e', 'LISTEN_ADDR=127.0.0.1', '-e', 'POOL_MODE=transaction', '-e', 'AUTH_TYPE=scram-sha-256', '-e', 'MAX_PREPARED_STATEMENTS=0', '-e', 'IGNORE_STARTUP_PARAMETERS=extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,lock_timeout,options',
   'edoburu/pgbouncer:latest']);
-const api = `http://127.0.0.1:${API_PORT}`;
-await fetch(`${api}/proxies/bouncer-spike`, { method: 'DELETE' });
-await fetch(`${api}/proxies`, { method: 'POST', body: JSON.stringify({ name: 'bouncer-spike', listen: `127.0.0.1:${BOUNCER_PROXY_PORT}`, upstream: `127.0.0.1:${BOUNCER_PORT}`, enabled: true }) });
-for (const stream of ['upstream', 'downstream']) {
-  if (RTT > 0) await fetch(`${api}/proxies/bouncer-spike/toxics`, { method: 'POST', body: JSON.stringify({ name: `lat_${stream}`, type: 'latency', stream, toxicity: 1, attributes: { latency: Math.round(RTT / 2), jitter: 0 } }) });
+/** Puts the bench's loopback toxiproxy (plain HTTP on 127.0.0.1, as in managed-sync-catchup-lib.ts) in front of PgBouncer. */
+async function proxyBouncer(): Promise<void> {
+  const api = `http://127.0.0.1:${API_PORT}`;
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- loopback toxiproxy admin API (127.0.0.1) the bench starts itself; no TLS endpoint exists
+  await fetch(`${api}/proxies/bouncer-spike`, { method: 'DELETE' });
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- loopback toxiproxy admin API (127.0.0.1) the bench starts itself; no TLS endpoint exists
+  await fetch(`${api}/proxies`, { method: 'POST', body: JSON.stringify({ name: 'bouncer-spike', listen: `127.0.0.1:${BOUNCER_PROXY_PORT}`, upstream: `127.0.0.1:${BOUNCER_PORT}`, enabled: true }) });
+  for (const stream of ['upstream', 'downstream']) {
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request -- loopback toxiproxy admin API (127.0.0.1) the bench starts itself; no TLS endpoint exists
+    if (RTT > 0) await fetch(`${api}/proxies/bouncer-spike/toxics`, { method: 'POST', body: JSON.stringify({ name: `lat_${stream}`, type: 'latency', stream, toxicity: 1, attributes: { latency: Math.round(RTT / 2), jitter: 0 } }) });
+  }
 }
+await proxyBouncer();
 
 const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
 type Engine = InstanceType<typeof PostgresEngine>;
