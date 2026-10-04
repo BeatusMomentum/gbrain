@@ -319,3 +319,15 @@ test('files imported by quoting are counted with their common directory', () => 
   expect(result.recovered_frontmatter!.fix!.argv).toEqual(['gbrain', 'repair', 'frontmatter', '--source', s.id]);
   expect(printed(result)).toContain('under tweets/2026/');
 }), 180_000);
+
+test('a hold an older reader wrote is re-screened by the next sync even though Git did not touch the file', () => each(async engine => {
+  const s = await source(engine, { 'notes/a.md': FOLDED, 'notes/ok.md': note('Ok') });
+  const first = await s.sync();
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,recovery_version}','0'::jsonb) WHERE op=$1 AND fingerprint LIKE $2`, [GIT_HOLD_OP, `${s.id}:%`]);
+  s.write('notes/ok.md', note('Ok 2')); commit(s.root, 'touch ok');
+  const second = await s.sync();
+  expect(second.held?.map(item => item.path)).toEqual(['notes/a.md']);
+  const [hold] = await s.holds();
+  expect(hold!.meta.recovery_version).toBeGreaterThan(0);
+  expect(hold!.run_id).not.toBe(first.runId);
+}), 180_000);
