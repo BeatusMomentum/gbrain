@@ -263,7 +263,7 @@ export function targetProbeBlockers(probe: TargetProbe, routes: Pick<TargetRoute
   if (!probe.createPrivilege.schema) blockers.push(unsupported('create_privilege', `role cannot CREATE in schema public on ${routes.main}`));
   const superuser = probe.role?.superuser === true;
   const role = probe.role ? `"${probe.role.name.replace(/"/g, '""')}"` : 'CURRENT_USER';
-  if (!probe.vector.installed && (!superuser || !probe.createPrivilege.database)) {
+  if (!probe.vector.installed && (!probe.createPrivilege.database || (probe.role && !superuser))) {
     blockers.push(unsupported('vector_extension', 'the vector extension is not installed and only a superuser can install it; a DBA runs in the target database: CREATE EXTENSION IF NOT EXISTS vector;'));
   }
   if (probe.role && !superuser && !probe.role.bypassRls) {

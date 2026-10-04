@@ -90,6 +90,20 @@ describe('plan blockers from a probe', () => {
       'target_unsupported:trigger_bypass', 'target_not_empty:target', 'embedding_dimension:content_chunks.embedding']);
   });
 
+  test('a non-superuser role gets the exact SQL a DBA runs for vector, BYPASSRLS and the auto-RLS event trigger', () => {
+    const probe: TargetProbe = { ...baseProbe, vector: { installed: null, available: '0.8.0', halfvec: true },
+      role: { name: 'gbrain_app', superuser: false, bypassRls: false }, autoRls: { eventTrigger: false, functionOwner: null } };
+    const blockers = targetProbeBlockers(probe, routes);
+    expect(blockers.map(b => b.id)).toEqual(['vector_extension', 'bypassrls', 'auto_rls_event_trigger']);
+    expect(blockers[0]!.detail).toContain('CREATE EXTENSION IF NOT EXISTS vector;');
+    expect(blockers[1]!.detail).toContain('ALTER ROLE "gbrain_app" BYPASSRLS;');
+    expect(blockers[2]!.detail).toContain('ALTER FUNCTION public.auto_enable_rls() OWNER TO "gbrain_app";');
+    const owned = targetProbeBlockers({ ...probe, vector: { installed: '0.8.0', available: '0.8.0', halfvec: true }, role: { name: 'gbrain_app', superuser: false, bypassRls: true },
+      autoRls: { eventTrigger: true, functionOwner: 'postgres' } }, routes);
+    expect(owned.map(b => b.id)).toEqual(['auto_rls_owner']);
+    expect(targetProbeBlockers({ ...probe, role: { name: 'postgres', superuser: true, bypassRls: true } }, routes)).toEqual([]);
+  });
+
   test('auth failure, unreachable DDL route and the forced bypass', () => {
     const auth = thrown(() => assertTargetReachable({ ...baseProbe, auth: false, error: { code: '28P01', message: 'password authentication failed' } }, routes));
     expect(auth).toMatchObject({ code: 'graduation_target_auth_failed' });
