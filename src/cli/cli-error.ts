@@ -85,6 +85,22 @@ export function exitCliError(e: unknown, command: string, opts: CliErrorWriteOpt
 }
 
 /**
+ * Open a brain, except one whose automatic PGLite repair failed: that exits 3
+ * with the consent payload (the consented `pglite-repair`, effects
+ * destructive), so no caller works around it (doctor's filesystem-only
+ * fallback included).
+ */
+export async function exitOnRepairFailed<T>(open: () => Promise<T>): Promise<T> {
+  try {
+    return await open();
+  } catch (e) {
+    const { isRepairFailedRefusal } = await import('../core/pglite-repair-consent.ts');
+    if (isRepairFailedRefusal(e)) exitCliError(e, cliCommandOf());
+    throw e;
+  }
+}
+
+/**
  * A warning-class notice from the CLI's own plumbing (not a command result):
  * stderr, as `Note [code]` lines on a TTY or an `[AGENT]` block otherwise.
  */

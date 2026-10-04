@@ -7,6 +7,7 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
+import { embedBackfillFix } from '../../../core/embed-consent.ts';
 import * as db from '../../../core/db.ts';
 import { loadConfig } from '../../../core/config.ts';
 import { LATEST_VERSION } from '../../../core/migrate.ts';
@@ -360,12 +361,12 @@ async function runEmbeddings(ctx: DoctorContext): Promise<Check[]> {
       'It makes paid embedding calls: confirm with the user unless embedding spend is already approved.';
     if (health.embed_coverage >= 0.9) {
       checks.push(backlog > 0
-        ? { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails }
+        ? { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) }
         : { name: 'embeddings', status: 'ok', message: `${pct}% coverage, ${backlog} missing${carveOut}` });
     } else if (health.embed_coverage > 0) {
-      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails });
+      checks.push({ name: 'embeddings', status: 'warn', message: `${pct}% coverage, ${backlog} missing${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
     } else {
-      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails });
+      checks.push({ name: 'embeddings', status: 'warn', message: `No embeddings yet${carveOut}. Backlog: ${backlog} chunk(s) without embeddings. ${fixText}`, details: backlogDetails, fix: embedBackfillFix({ backlog, verifyCheck: 'embeddings' }) });
     }
   } catch {
     checks.push(checkError('embeddings', 'check embedding health'));

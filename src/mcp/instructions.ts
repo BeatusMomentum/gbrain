@@ -73,8 +73,10 @@ function contractClauses(c: CallablePredicate): string[] {
   return out;
 }
 
-function readinessTail(entries: readonly ReadinessEntry[]): string | null {
-  const gaps = entries.filter(e => e.state === 'missing' || e.state === 'degraded').slice(0, 2);
+function readinessTail(entries: readonly ReadinessEntry[], callable: (op: string) => boolean): string | null {
+  // Local transcripts the caller cannot read through MCP are named too, so an empty page search never reads as "no transcripts".
+  const gaps = entries.filter(e => e.state === 'missing' || e.state === 'degraded'
+    || e.capability === 'local_transcripts' && e.reason === 'transcripts_cli_only' && !callable('get_recent_transcripts')).slice(0, 2);
   if (gaps.length === 0) return null;
   const items = gaps.map(e => `${e.capability} ${e.state}: ${e.why.length > 180 ? `${e.why.slice(0, 179)}…` : e.why}`);
   return `Setup now (details and fixes in gbrain://capabilities): ${items.join(' | ')}`;
@@ -93,7 +95,7 @@ export function buildMcpInstructions(opts?: { writeback?: AmbientWritebackOpts |
   let text = `GBrain agent operating contract (apply on every cold start):\n${clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')}`;
   if (tools?.statusLine) text += `\n${tools.statusLine}`;
   if (opts?.writeback) text += `\n\n${buildAmbientWritebackSection(opts.writeback)}`;
-  const tail = tools?.readiness ? readinessTail(tools.readiness) : null;
+  const tail = tools?.readiness ? readinessTail(tools.readiness, tools.callable) : null;
   if (tail) text += `\n\n${tail}`;
   return text;
 }

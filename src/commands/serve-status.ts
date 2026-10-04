@@ -11,7 +11,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig } from '../core/config.ts';
-import { gatedReconnect, initialStatusState, markStatusModeEngine, statusHeadline, type StatusReason } from '../mcp/status-mode.ts';
+import { gatedReconnect, initialStatusState, markStatusModeEngine, probeStatus, statusHeadline, type StatusReason } from '../mcp/status-mode.ts';
 
 export function serveFailFast(args: readonly string[]): boolean {
   return args.includes('--fail-fast') || process.env.GBRAIN_SERVE_FAIL_FAST === '1';
@@ -22,9 +22,23 @@ export function statusModeEligible(args: readonly string[], hostBrain: boolean):
   return hostBrain && !args.includes('--http') && !serveFailFast(args);
 }
 
+/**
+ * Before any connect (file reads only): no config, a configured PGLite brain
+ * whose data dir is missing (never created empty here), or a brain whose
+ * automatic repair failed. Lock contention is left to the connect error.
+ */
+export function preConnectStatusReason(): StatusReason | null {
+  if (!loadConfig()) return 'no_brain';
+  const probed = probeStatus();
+  return probed && (probed.reason === 'missing_brain' || probed.reason === 'repair_failed') ? probed.reason : null;
+}
+
 /** Map a connect failure to a status reason; null when status mode does not apply. */
 export function statusReasonForError(e: unknown): StatusReason | null {
-  return (e as { code?: unknown } | null)?.code === 'pglite_busy' ? 'lock_held' : null;
+  if ((e as { code?: unknown } | null)?.code === 'pglite_busy') return 'lock_held';
+  // The brain's sibling writer-lock file cannot be opened (missing parent, read-only drive, permissions).
+  if (/Cannot open the stable writer lock file/.test(String((e as Error | null)?.message ?? ''))) return 'brain_unopenable';
+  return null;
 }
 
 /** Run the stdio server over a gated lazy engine; resolves when serve's lifecycle does. */

@@ -17,6 +17,7 @@
   "test/agent-contract-a0.test.ts": 1,
   "test/agent-contract-goldens.test.ts": 1,
   "test/agent-install.test.ts": 137,
+  "test/agent-operator-gate-fixes.test.ts": 3000,
   "test/agent-register.test.ts": 347,
   "test/agent-runner.test.ts": 6,
   "test/ai-probes-models.test.ts": 16,

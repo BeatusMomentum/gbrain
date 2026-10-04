@@ -93,6 +93,24 @@ export async function runJobsSubmit({ args, engine, queue }: JobsCommandContext)
     return;
   }
 
+  // A4: an explicit embedding backfill submitted from the CLI is paid work (the worker-side handlers keep running unattended).
+  const { EMBED_BACKFILL_JOB_NAMES, requireEmbedBackfillConsent } = await import('../../core/embed-consent.ts');
+  if (EMBED_BACKFILL_JOB_NAMES.has(name)) {
+    const { isConsentRefusal, printConsentRefusal } = await import('../../core/consent.ts');
+    const { setCliExitVerdict } = await import('../../core/cli-force-exit.ts');
+    const argv = ['gbrain', 'jobs', ...args.filter(a => a !== '--yes')];
+    try {
+      await requireEmbedBackfillConsent(engine, {
+        command: 'jobs submit', argv, preview_argv: [...argv, '--dry-run'], args,
+        scope: { all: data.all === true, ...(typeof data.sourceId === 'string' ? { sourceId: data.sourceId } : {}), unestimated: Array.isArray(data.slugs) },
+      });
+    } catch (e) {
+      if (!isConsentRefusal(e)) throw e;
+      setCliExitVerdict(printConsentRefusal(e, { json: hasFlag(args, '--json') }));
+      return;
+    }
+  }
+
   try { await queue.ensureSchema(); }
   catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 

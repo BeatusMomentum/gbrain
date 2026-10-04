@@ -21,10 +21,11 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { opError } from '../core/ops/contract.ts';
 import { configPath, gbrainPath, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { inspectLockHolder, peekLock } from '../core/pglite-lock.ts';
+import { HANDS_OFF_BRAIN_FILES, readRepairFailedMarker, type RepairFailedMarker } from '../core/pglite-repair.ts';
 import { resetReadinessMemo } from '../core/readiness.ts';
 
 export const STATUS_TOOL_NAME = 'gbrain_status';
-export type StatusReason = 'lock_held' | 'no_brain' | 'config_unreadable';
+export type StatusReason = 'lock_held' | 'no_brain' | 'config_unreadable' | 'missing_brain' | 'brain_unopenable' | 'repair_failed';
 
 export interface StatusModeState {
   reason: StatusReason;
@@ -32,6 +33,8 @@ export interface StatusModeState {
   brain_path?: string;
   config_path: string;
   lock_owner?: { pid?: number; transport: 'stdio' | 'http' | 'unknown'; serve: boolean };
+  /** repair_failed: the durable marker automatic PGLite repair left. */
+  repair_failed?: RepairFailedMarker;
   recovered: boolean;
   /** Last re-probe (epoch ms). */
   checked_at: number;
@@ -67,6 +70,10 @@ export function probeStatus(): Omit<StatusModeState, 'recovered'> | null {
   if (!cfg) return { reason: existsSync(cfgPath) ? 'config_unreadable' : 'no_brain', config_path: cfgPath, brain_path: gbrainPath('brain.pglite'), checked_at: now };
   const dataDir = brainPathFor(cfg);
   if (!dataDir) return null;
+  // A configured brain that is not there (unmounted drive, moved folder) is never recreated empty here.
+  if (!existsSync(dataDir)) return { reason: 'missing_brain', config_path: cfgPath, brain_path: dataDir, checked_at: now };
+  const marker = readRepairFailedMarker(dataDir);
+  if (marker) return { reason: 'repair_failed', config_path: cfgPath, brain_path: dataDir, checked_at: now, repair_failed: marker };
   const holder = inspectLockHolder(dataDir);
   if (!holder.held || holder.pid === process.pid) return null;
   const peek = peekLock(dataDir);
@@ -84,7 +91,8 @@ export function initialStatusState(fallback: StatusReason): StatusModeState {
   const probed = probeStatus();
   if (probed) return { ...probed, recovered: false };
   return { reason: fallback, config_path: configPath(), recovered: false, checked_at: Date.now(),
-    ...(fallback === 'lock_held' ? { brain_path: brainPathFor(loadConfig()), lock_owner: { transport: 'unknown' as const, serve: false } } : {}) };
+    ...(fallback === 'lock_held' ? { brain_path: brainPathFor(loadConfig()), lock_owner: { transport: 'unknown' as const, serve: false } } : {}),
+    ...(fallback === 'brain_unopenable' ? { brain_path: brainPathFor(loadConfig()) } : {}) };
 }
 
 /**
@@ -116,6 +124,9 @@ function ownerPhrase(state: StatusModeState): string {
 export function statusHeadline(state: StatusModeState): string {
   if (state.reason === 'lock_held') return `This brain (${state.brain_path ?? 'its data directory'}) is open in ${ownerPhrase(state)}, so this server cannot open it.`;
   if (state.reason === 'config_unreadable') return `The gbrain config at ${state.config_path} exists but cannot be read (invalid JSON or unreadable), so this server cannot open a brain.`;
+  if (state.reason === 'brain_unopenable') return `The brain at ${state.brain_path ?? 'its configured path'} exists, but its writer lock file next to it cannot be opened (a read-only or unmounted drive, or permissions), so this server cannot open it.`;
+  if (state.reason === 'missing_brain') return `The brain configured in ${state.config_path} is not at ${state.brain_path ?? 'its configured path'} (an unmounted drive or a moved folder?), so this server cannot open it. Nothing was created there.`;
+  if (state.reason === 'repair_failed') return `The brain at ${state.brain_path ?? 'its data directory'} is damaged and gbrain's automatic repair failed, so gbrain refuses to open it until the user decides how to recover.`;
   return `No gbrain brain is set up on this machine yet (no config at ${state.config_path}), so this server has no brain to open.`;
 }
 
@@ -131,6 +142,42 @@ function statusFix(state: StatusModeState): { fix: Action; user_message: string;
         verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: 'INSTALL_FOR_AGENTS.md',
       },
       user_message: 'gbrain memory is installed but no brain exists yet. Should I create a local one now? It stays on this machine and needs no API key.',
+    };
+  }
+  if (state.reason === 'missing_brain' || state.reason === 'brain_unopenable') {
+    const where = state.brain_path ?? 'its configured path';
+    const user_message = state.reason === 'missing_brain'
+      ? `Your gbrain brain is configured at ${where}, but nothing is there right now. Is it on a drive that needs mounting, or did it move? Once it's back I'll reconnect. If it's gone for good I can create a new empty brain, but your old notes would not be in it.`
+      : `Your gbrain brain at ${where} is there, but gbrain can't open its lock file next to it (a read-only or unmounted drive, or a permissions problem). Can you check that drive? Once it's writable I'll reconnect.`;
+    return {
+      fix: {
+        mcp: { tool: STATUS_TOOL_NAME, arguments: {} }, consent: [], actor: 'user', requires_exclusive: false,
+        why: `${state.reason === 'missing_brain' ? `Mount or reconnect the drive that holds ${where}, or point \`database_path\` in ${state.config_path} at where the brain lives now` : `Make the folder holding ${where} writable for this user (or mount the drive read-write)`}; then call gbrain_status again and this server opens the brain in place. ${RESTART_NOTE}`,
+        user_message,
+        verify: { argv: ['gbrain', 'doctor', '--only', 'connection', '--json'] },
+      },
+      user_message,
+      decisions: state.reason === 'missing_brain' ? [{
+        id: 'missing_brain_recovery',
+        question: `The brain at ${where} is not there. Bring it back, or start a new empty brain?`,
+        options: [
+          { id: 'reconnect', label: 'Mount or move the brain back; this server reconnects on the next gbrain_status call.' },
+          { id: 'new_brain', label: 'Create a new, empty keyless brain at that path (the old notes are not in it).', argv: ['gbrain', 'init', '--pglite', '--no-embedding', '--path', where] },
+        ],
+        default: 'reconnect',
+        default_reason: 'Nothing is created or overwritten; the user\'s existing brain comes back as soon as its drive does.',
+      }] : undefined,
+    };
+  }
+  if (state.reason === 'repair_failed') {
+    const user_message = `Your gbrain brain at ${state.brain_path ?? 'its data directory'} is damaged and gbrain's automatic repair did not fix it, so gbrain has stopped opening it to keep it from getting worse. In a terminal you can preview the repair with \`gbrain pglite-repair --dry-run\` and run the one it prints after you agree, or restore the brain from a backup. Nobody should copy, move or edit the brain files by hand.`;
+    return {
+      fix: {
+        argv: ['gbrain', 'pglite-repair', '--dry-run', '--json'], consent: [], actor: 'user', requires_exclusive: false,
+        why: `${HANDS_OFF_BRAIN_FILES} The read-only preview names the consented repair (\`gbrain pglite-repair --yes --expect <plan_hash>\`, effects destructive) the user runs once they agree; then call gbrain_status again. ${RESTART_NOTE}`,
+        user_message,
+      },
+      user_message,
     };
   }
   if (state.reason === 'config_unreadable') {
@@ -205,6 +252,7 @@ export function statusPayload(state: StatusModeState): Record<string, unknown> {
     ...(state.brain_path ? { brain_path: state.brain_path } : {}),
     config_path: state.config_path,
     ...(state.lock_owner ? { lock_owner: state.lock_owner } : {}),
+    ...(state.repair_failed ? { repair_failed: state.repair_failed } : {}),
     fix: renderAction(fix, STATUS_RENDER),
     user_message,
     ...(decisions ? { decisions } : {}),
@@ -217,7 +265,7 @@ export function statusPayload(state: StatusModeState): Record<string, unknown> {
 /** The one tool advertised in status mode. */
 export const STATUS_TOOL_DEF = {
   name: STATUS_TOOL_NAME,
-  description: 'gbrain is running in status-only mode: its brain is locked by another server, missing, or its config is unreadable. Call this for the cause (lock owner, brain path), the fix and what to tell the user; calling it also re-checks and restores the full tool list once the brain can be opened.',
+  description: 'gbrain is running in status-only mode: its brain is locked by another server, missing, damaged (automatic repair failed), or its config is unreadable. Call this for the cause (lock owner, brain path), the fix and what to tell the user; calling it also re-checks and restores the full tool list once the brain can be opened.',
   inputSchema: { type: 'object' as const, properties: {} },
   annotations: { title: 'gbrain status (status-only mode)', readOnlyHint: true },
 };

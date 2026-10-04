@@ -497,6 +497,7 @@ export async function runDoctor(
     return;
   }
 
+  if (args.includes('--probe') && !(await (await import('./doctor/probe-consent.ts')).authorizeProviderProbe(engine, args, jsonOutput))) return;
   const checks = await buildChecks(engine, args, dbSource, connectError);
   const hasFail = outputResults(checks, jsonOutput, { engine: engine?.kind, db_url_source: dbSource ?? null });
 

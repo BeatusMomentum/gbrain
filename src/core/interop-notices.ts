@@ -14,6 +14,7 @@ import type { GBrainConfig } from './config.ts';
 import type { ExplicitReadBinding } from './ops/contract.ts';
 import { configReadiness } from './readiness.ts';
 import { affectsRecall, type DegradedStage } from './types.ts';
+import { localTranscriptsFix } from './transcripts.ts';
 
 // ── degraded recall (F3) ───────────────────────────────────────────────────
 
@@ -230,6 +231,48 @@ export function recallInteropNotices(
   } catch {
     return [];
   }
+}
+
+// ── local transcripts behind a CLI-only reader (F5 follow-up) ─────────────
+
+/** Read ops whose answers can wrongly read as "no transcripts" when the transcript reader is not callable here. */
+const TRANSCRIPT_HINT_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'context_pack', 'list_pages']);
+
+/** A request about the user's own recent activity (sessions, conversations, promises, this week...). */
+const PERSONAL_ACTIVITY_RE = /\b(transcripts?|sessions?|conversations?|chats?|promis\w*|said|told|discuss\w*|talked|coding|this week|last week|yesterday|today|recent(ly)?|worked on)\b/i;
+
+/**
+ * Whether a successful read on a connection that cannot call
+ * `get_recent_transcripts` should be told that local transcripts exist:
+ * list_pages when it came back empty; search/query/recall/context_pack when
+ * the request is about the user's own activity or came back empty.
+ */
+export function wantsTranscriptHint(op: string, params: Record<string, unknown>, result: unknown): boolean {
+  if (!TRANSCRIPT_HINT_OPS.has(op)) return false;
+  const empty = emptyRead(op === 'context_pack' ? 'recall' : op, result);
+  if (op === 'list_pages') return empty;
+  const text = ['query', 'question', 'topic', 'task', 'q'].map(k => params[k]).filter(v => typeof v === 'string').join(' ');
+  return empty || PERSONAL_ACTIVITY_RE.test(text);
+}
+
+/**
+ * `local_transcripts`: the brain host keeps raw session transcripts that
+ * pages and search do not cover, and this connection cannot call their
+ * reader. Names where they are (stdio only: the owner's own pipe; HTTP never
+ * learns host paths) and the CLI read, so "no transcripts" is never the answer.
+ * Read-only pointer: no trust is widened (the tool stays uncallable here).
+ */
+export function localTranscriptsNotice(presence: { dirs: string[]; count: number }): Notice | null {
+  if (presence.count === 0) return null;
+  const where = presence.dirs.length ? ` in ${presence.dirs.join(', ')}` : '';
+  return {
+    code: 'local_transcripts',
+    kind: 'info',
+    why: `This brain host keeps ${presence.count} recent session transcript file(s)${where} (from the last 7 days). They are raw host files, not pages, so search, query, recall and list_pages never return them, and get_recent_transcripts is not callable on this connection. `
+      + 'Read them with the command in fix (from a shell on this machine; otherwise ask the user to run it), or read those .txt files directly if you have a shell here. Never answer "no transcripts" or "no notes" from a page search alone.',
+    fix: localTranscriptsFix(),
+    user_message: 'Your recent session transcripts are on this machine but not in the searchable pages. I can read them with `gbrain transcripts recent --json`; want me to, or can you run it and share the output?',
+  };
 }
 
 // ── CLI emission for commands without a result document (F7) ──────────────

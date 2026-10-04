@@ -30,7 +30,7 @@
  * Serial: real subprocesses and PGLite datastores in temp homes.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -321,4 +321,47 @@ describe('H1a keyless MCP journey (stdio)', () => {
     expect(timings.initialize_ms).toBeLessThan(30_000);
     expect(timings.first_recall_ms).toBeLessThan(30_000);
   }, 150_000);
+});
+
+describe('H2 missing_brain: the configured brain is on a drive that is not mounted', () => {
+  let home = '';
+  beforeAll(() => { home = mkdtempSync(join(tmpdir(), 'gbrain-journey-missing-')); });
+  afterAll(() => { rmSync(home, { recursive: true, force: true }); });
+
+  test('serve completes the handshake in status-only mode naming the path; nothing is created there; mounting it recovers in place', async () => {
+    expect((await gb(home, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    const offline = join(home, 'offline', 'brain.pglite');
+    const mounted = join(home, 'mnt', 'external', 'gbrain', 'brain.pglite');
+    mkdirSync(join(home, 'offline'), { recursive: true });
+    renameSync(brainPath(home), offline);
+    const cfgPath = join(home, '.gbrain', 'config.json');
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, 'utf8')), database_path: mounted }, null, 2));
+
+    const session = await mcp(home, ['--surface', 'verbs']);
+    try {
+      expect(session.client.getInstructions()).toContain('STATUS-ONLY MODE');
+      expect((await session.client.listTools()).tools.map(t => t.name)).toEqual(['gbrain_status']);
+      const statusResult = await call(session, 'gbrain_status');
+      const status = body(statusResult);
+      expect(status).toMatchObject({ status: 'unavailable', reason: 'missing_brain', brain_path: mounted });
+      expect(status.why).toContain(mounted);
+      expect(status.fix.next).toBe('tell_user_to_run');
+      expect(status.decisions[0].options.map((o: { id: string }) => o.id)).toEqual(['reconnect', 'new_brain']);
+      expect(status.decisions[0].options[1].argv).toEqual(['gbrain', 'init', '--pglite', '--no-embedding', '--path', mounted]);
+      journeyGolden('status-only-missing-brain.json', statusResult, { home });
+      expect(existsSync(join(home, 'mnt'))).toBe(false);
+
+      // The drive comes back: the next gbrain_status call opens the brain in place.
+      mkdirSync(join(home, 'mnt', 'external', 'gbrain'), { recursive: true });
+      renameSync(offline, mounted);
+      let recovered = false;
+      for (let i = 0; i < 40 && !recovered; i++) {
+        recovered = body(await call(session, 'gbrain_status')).status === 'recovered';
+        if (!recovered) await new Promise(r => setTimeout(r, 500));
+      }
+      expect(recovered).toBe(true);
+    } finally {
+      await session.close();
+    }
+  }, 180_000);
 });

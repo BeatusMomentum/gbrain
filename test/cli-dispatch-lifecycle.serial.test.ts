@@ -153,7 +153,10 @@ describe('CLI dispatch lifecycle (connect / remote-route / drain / disconnect)',
   });
 
   test('serve is never torn down by the dispatcher', async () => {
-    writeConfig(LOCAL);
+    // The configured data dir exists: serve with a missing brain directory starts status-only instead of connecting.
+    const dataDir = join(home, 'brain.pglite');
+    mkdirSync(dataDir, { recursive: true });
+    writeConfig({ ...LOCAL, database_path: dataDir });
     expect(await run(['serve'])).toEqual(['connect', 'handler:serve', 'returned']);
   });
 

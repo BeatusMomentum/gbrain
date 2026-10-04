@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 234360,
-    "stdoutSha256": "e9b7650c896d76d66c78c577e47ff8d2d72f2ac1cda7f69cf6fc7df821df2747",
+    "stdoutBytes": 234393,
+    "stdoutSha256": "8f7de2af4351fa1ceff0b80a2f5b61373e59aff23425909b0b42d18194b7a8b1",
     "toolNames": [
       "remember",
       "entity",
@@ -6236,6 +6236,7 @@
                 "empty_retrieval",
                 "features_auto_fix",
                 "listing_truncated",
+                "local_transcripts",
                 "onboard_opportunities",
                 "source_binding_narrowed",
                 "synthesis_keyless",

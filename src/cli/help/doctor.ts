@@ -21,6 +21,7 @@ export const help: CliHelpSpec = {
     { name: '--skills-dir', type: 'string', desc: 'Override the auto-detected skills/ directory.' },
     { name: '--no-migrate', type: 'boolean', desc: 'Report on the database as-is; do not apply pending schema migrations first.' },
     { name: '--locks', type: 'boolean', desc: 'List idle-in-transaction backends holding locks (Postgres) and exit.' },
+    { name: '--probe', type: 'boolean', desc: 'Also send one tiny paid test request to the configured embedding provider (plain doctor never calls a provider). Non-interactive runs need --yes.', consent: ['paid', 'egress'] },
     { name: '--probe-pglite', type: 'boolean', desc: 'Run the PGLite runtime probe (a 5-20 s cold start) even when the disk diagnosis explains a failed connect.' },
     { name: '--index-audit', type: 'boolean', desc: 'Report Postgres indexes with zero recorded scans (informational; never drops anything).' },
     { name: '--content-audit', type: 'boolean', desc: 'Scan every page in the content-quality check instead of the first 1000.' },

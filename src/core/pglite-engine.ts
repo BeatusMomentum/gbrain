@@ -85,7 +85,7 @@ import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkWriteInvalidati
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 // Engine-live path (#3596): static import, never a lazy `import()` in the
 // connect() catch. No cycle: pglite-repair.ts imports nothing from this file.
-import { attemptWalRepairAndRetry, closeRepairEpisodeIfOpen, type WalRepairReceipt } from './pglite-repair.ts';
+import { attemptWalRepairAndRetry, closeRepairEpisodeIfOpen, readRepairFailedMarker, recordFailedAutoRepair, type WalRepairReceipt } from './pglite-repair.ts';
 import { getFtsLanguage } from './fts-language.ts';
 import { splitEmbeddingSignature, currentSpaceChunkPredicate, lockEmbeddingSources } from './embedding-invalidation.ts';
 import type {
@@ -811,6 +811,10 @@ export class PGLiteEngine implements BrainEngine {
     this.walRepairReceipt = null; // per-connect: stale receipts must not survive reconnect()
     const dataDir = config.database_path || undefined; // undefined = in-memory
 
+    // Automatic repair failed earlier: never open (lock + create write the data dir); refuse with the consented repair.
+    const failedRepair = dataDir ? readRepairFailedMarker(dataDir) : null;
+    if (dataDir && failedRepair) throw (await import('./pglite-repair-consent.ts')).repairFailedRefusal(dataDir, failedRepair); // engine-dynamic-import-ok: refusal path only, keeps the consent graph off every open
+
     // Acquire file lock to prevent concurrent PGLite access (crashes with Aborted())
     this._lock = await acquireLock(dataDir);
 
@@ -941,6 +945,7 @@ export class PGLiteEngine implements BrainEngine {
 
       const wrapped = new Error(buildPgliteInitErrorMessage(verdict, original, process.platform, ctx) +
         (retryError === undefined ? '' : `\n  Cold retry error: ${retryError}`));
+      const repairFailed = dataDir ? recordFailedAutoRepair(dataDir, ctx.repair, ctx.backupPath, original) : null;
       if (this._db) {
         try { await this._closeInternal(); }
         catch (closeError) {
@@ -952,6 +957,7 @@ export class PGLiteEngine implements BrainEngine {
         await releaseLock(this._lock);
         this._lock = null;
       }
+      if (dataDir && repairFailed) throw (await import('./pglite-repair-consent.ts')).repairFailedRefusal(dataDir, repairFailed, original, wrapped.message); // engine-dynamic-import-ok: refusal path only
       throw wrapped;
     }
   }

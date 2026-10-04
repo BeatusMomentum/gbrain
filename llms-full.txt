@@ -3867,6 +3867,53 @@ unpriced model refuses with a fix whose `inputs` ask you to look up the
 model's per-token rates (for example by web search) and register them with
 `gbrain pricing set`, then retry.
 
+### What is paid, and what is not
+
+- **Explicit embedding backfills are paid work.** `gbrain embed` (`--stale`,
+  `--all`, `--catch-up`, a slug, `--facts`, `--images`, `--background`),
+  `gbrain jobs submit embed|embed-backfill|embed-catch-up` and
+  `gbrain features --auto-fix` (when it would embed) stop with exit 3 and the
+  consent payload (`effects: ["paid"]`, an estimate when one is cheap to
+  compute, a `--dry-run` preview) unless `--yes`, `--max-usd`,
+  `spend.posture=tokenmax` or a per-run preapproval covers them. Every
+  `doctor --remediation-plan` step carries a `fix` whose `consent` names this
+  (`paid` when the step has a cost or its job calls a provider; repair steps
+  are `destructive`), so `next` reads `ask_user` until the user agrees.
+- **Writing new content is not a separate paid action.** With an embedding key
+  configured, `put_page`, `import`, `sync`, `capture`, `remember` and
+  `timeline-add` embed what they write: that is the feature the user turned on
+  (embeddings default on when a key is present), so ordinary writes never stop
+  for consent. To keep writes text-only, use `--no-embed` where the command has
+  it, or a keyless brain.
+- **Unattended library paths keep their authorization.** Autopilot, dream
+  cycles and queued jobs keep running under their configured budget; the
+  gates above apply to the explicit CLI invocations only.
+- **Looking never spends.** Plain `gbrain doctor`, `doctor --only`,
+  `--remediation-plan`, MCP `run_doctor`, readiness, `features` without
+  `--auto-fix` and `onboard --check` make no provider call: the embedding
+  provider check reports `configured, not probed` with a fix that runs the
+  live probe (`gbrain doctor --only embedding_provider --probe --yes`,
+  `consent: ["paid", "egress"]`; one tiny request). Run it only after the
+  user agrees. Local providers that bill nothing (ollama, llama-server,
+  LM Studio) need no consent for either.
+
+### A brain whose automatic repair failed
+
+When gbrain's automatic PGLite WAL repair fails, it records that next to the
+brain (`<brain>.repair-failed.json`, never inside the data directory) and from
+then on refuses to open the brain at all: every command exits 3 with the
+consent payload (`effects: ["destructive"]`, `fix` =
+`gbrain pglite-repair --yes --expect <plan_hash>`, preview
+`gbrain pglite-repair --dry-run --json`), so nothing keeps writing into a
+damaged brain. Over stdio MCP, `gbrain serve` starts in status-only mode with
+`reason: "repair_failed"`. What still works: `gbrain pglite-repair --dry-run`,
+the consented `pglite-repair --yes --expect …` (which clears the record),
+`gbrain reinit-pglite` (its own consent), engine-free `doctor --only` checks
+and `--help`. **Do not copy, rebuild, move or modify the brain.pglite files
+yourself**: no hand-made WAL or catalog surgery, no swapping in a rebuilt
+copy, no moving the directory aside. Relay `user_message` and let the user
+choose the recovery.
+
 ### Consent honesty
 
 An agent can always pass `--yes`. Consent gates force a stop and supply the
@@ -4017,6 +4064,12 @@ old behaviour. The release's CHANGELOG entry carries the same table.
 | Invalid input: `autopilot --interval`, `serve --port`, `dream --phase`, `init --mcp-only` missing flags, `delta --since` | exit 1 | exit 2 (`invalid_params`) | treat 2 as "fix the command" |
 | `gbrain doctor --json` with no brain configured | human text or nothing | one `no_brain` envelope with the `gbrain init` fix | parse the document |
 | `gbrain serve` on a brain another serve holds, or with no brain | exited before the MCP handshake | completes the handshake in status-only mode with one `gbrain_status` tool; `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`) restores the early exit for supervisors | read `gbrain_status`; supervisors pass `--fail-fast` |
+| `gbrain doctor` (plain, `--only`, `--remediation-plan`, MCP `run_doctor`) with an embedding key | sent one paid embedding request on every run | no provider call; `embedding_provider` reports `configured, not probed` with a `paid`+`egress` fix (`--only embedding_provider --probe --yes`) | run the probe only after the user agrees |
+| `gbrain embed`, `jobs submit embed*`, `features --auto-fix` with a billed embedding provider and no terminal | embedded without asking | exit 3 with the consent payload unless `--yes`, `--max-usd`, tokenmax or a preapproval covers it; writes that embed new content are unchanged | cron jobs that backfill on purpose pass `--yes` (or `--max-usd <n>`), or set a preapproval |
+| `doctor --remediation-plan --json` steps | `command` only | each step also carries `fix` with `consent` (`paid` / `destructive`) and `next` | follow `fix.next` |
+| A PGLite brain whose automatic repair failed | later commands kept opening it and wrote to `pg_wal/` | every command exits 3 with the consented `pglite-repair` until the user decides; nothing touches the data directory | relay `user_message`; never move or rebuild the brain files yourself |
+| `gbrain serve` whose configured brain directory is missing (unmounted drive) or whose writer-lock file cannot be opened | exited before the MCP handshake (`internal_error`) | status-only mode: `gbrain_status` names the path (`missing_brain`, `brain_unopenable`); nothing is created at the path | relay it; the server reopens the brain once it is back |
+| `gbrain transcripts recent` while `gbrain serve` holds the brain | `pglite_busy` | reads through the running serve | none |
 | Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged (legacy values frozen) | read `code`, fall back to `error` |
 | Docs pointers in errors | repo-relative paths | absolute URLs pinned to the installed version | open the URL, or run `gbrain errors <code>` offline |
 | MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read the notice blocks |

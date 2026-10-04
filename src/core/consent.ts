@@ -313,10 +313,16 @@ export function isConsentRefusal(e: unknown): e is ConsentRefusal {
   return e instanceof OperationError && e.code === 'confirmation_required' && (e as Partial<ConsentRefusal>).consent !== undefined;
 }
 
-function consentRefusal(req: ConsentRequest, outcome: 'refused' | 'declined'): ConsentRefusal {
-  const payload = confirmationPayload(req, cliRenderContext());
+/** The exit-3 refusal for `req`, rendered for `ctx` (no prompt, no log): for gates outside requireConsent. */
+export function buildConsentRefusal(req: ConsentRequest, ctx: RenderContext = cliRenderContext()): ConsentRefusal {
+  const payload = confirmationPayload(req, ctx);
   const e = opError('confirmation_required', payload.message, payload.suggestion, { why: req.why, fix: consentFix(req) }) as ConsentRefusal;
   e.consent = payload;
+  return e;
+}
+
+function consentRefusal(req: ConsentRequest, outcome: 'refused' | 'declined'): ConsentRefusal {
+  const e = buildConsentRefusal(req);
   recordAgentContractEvent({ command: req.command, transport: 'cli', code: 'confirmation_required', effects: [...req.effects], outcome });
   return e;
 }

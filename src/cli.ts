@@ -40,7 +40,7 @@ import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExit
 import { agentJsonGuardMode } from './cli/json-guard.ts';
 import { printCuratedHelp } from './cli/help/render.ts';
 import { curatedFlagError } from './cli/help/validate.ts';
-import { cliCommandOf, exitCliError, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli/cli-error.ts';
+import { cliCommandOf, exitCliError, exitOnRepairFailed, unknownFlagError, usageError, writeCliError, writeCliNotice, writeFatalCliError } from './cli/cli-error.ts';
 import type { Notice } from './core/agent-output.ts';
 import { opError } from './core/ops/contract.ts';
 import { opParamValue } from './cli/op-param-values.ts';
@@ -151,7 +151,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
-  advisor: true, anomalies: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, features: true,
+  advisor: true, anomalies: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true,
 };
@@ -2008,6 +2008,10 @@ async function routeCliOnlyBeforeTable(command: string, args: string[]): Promise
     return true;
   }
 
+  // `transcripts recent` reads through a live PGLite serve that owns the brain.
+  if (command === 'transcripts' && args[0] === 'recent' && !hasHelpFlag(args)
+    && await (await import('./commands/transcripts.ts')).runDelegatedTranscriptsRecent(args.slice(1))) return true;
+
   // cathedral-6: `agent register` guards run PRE-connectEngine. A thin client
   // would otherwise build a scratch PGLite and mint dead credentials into it;
   // a live PGLite serve holds the single-writer lock, so connectEngine would
@@ -2563,12 +2567,13 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
   // no-config path still exits inside connectEngine (keyless cold-home is
   // TODOS 1050, out of scope). Kill switch: GBRAIN_SERVE_DEGRADED=0.
   let engine: BrainEngine;
-  // F4: a stdio serve with no brain / unreadable config completes the MCP
-  // handshake in status-only mode instead of exiting (connectEngine exits).
+  // F4: a stdio serve with no brain / a missing or repair-failed brain / unreadable config
+  // completes the MCP handshake in status-only mode instead of exiting (connectEngine exits).
   const serveStatus = command === 'serve' ? await import('./commands/serve-status.ts') : null;
   const serveStatusEligible = !!serveStatus?.statusModeEligible(args, (dbMarkerBrainId() ?? 'host') === 'host');
-  if (serveStatusEligible && !loadConfig()) {
-    await serveStatus!.runStatusModeServe('no_brain', null, args, () => connectEngine());
+  const preConnectReason = serveStatusEligible ? serveStatus!.preConnectStatusReason() : null;
+  if (preConnectReason) {
+    await serveStatus!.runStatusModeServe(preConnectReason, null, args, () => connectEngine());
     return null;
   }
   try {
@@ -2609,8 +2614,9 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
       const failFast = await import('./core/serve-fail-fast.ts');
       if (failFast.serveFailFastRequested(args)) process.exit(failFast.writeServeFailFastEnvelope(serveConnectError));
     }
-    if (serveStatusEligible && serveStatus!.statusReasonForError(serveConnectError)) {
-      await serveStatus!.runStatusModeServe('lock_held', serveConnectError, args, () => connectEngine());
+    const connectStatusReason = serveStatusEligible ? serveStatus!.statusReasonForError(serveConnectError) : null;
+    if (connectStatusReason) {
+      await serveStatus!.runStatusModeServe(connectStatusReason, serveConnectError, args, () => connectEngine());
       return null;
     }
     if (command === 'serve' &&
@@ -2757,7 +2763,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   // and the search-dashboard path), so routing lands here once.
   const { resolveBrainId } = await import('./core/brain-resolver.ts');
   const brainId = resolveBrainId(getCliOptions().brain);
-  if (brainId !== 'host') return connectMountEngine(brainId);
+  if (brainId !== 'host') return exitOnRepairFailed(() => connectMountEngine(brainId));
 
   const config = loadConfig();
   if (!config) {
@@ -2796,7 +2802,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   const noRetry = process.argv.includes('--no-retry-connect') ||
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');
-  await connectWithRetry(engine, toEngineConfig(config), { noRetry });
+  await exitOnRepairFailed(() => connectWithRetry(engine, toEngineConfig(config), { noRetry }));
 
   // v0.30.1 (Codex X1 / C2): probeOnly skips both hasPendingMigrations() probe
   // AND initSchema(). Used by `get_health` MCP op + `gbrain upgrade --status`

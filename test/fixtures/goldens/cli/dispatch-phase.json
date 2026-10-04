@@ -2,7 +2,7 @@
   "golden": {
     "commandAgnosticConnectBranches": [
       "readOnlyTimeoutMs !== null",
-      "serveStatusEligible && !loadConfig()"
+      "preConnectReason"
     ],
     "commands": {
       "advisor": {
@@ -1846,7 +1846,17 @@
       "transcripts": {
         "hasSwitchCase": true,
         "phase": "post-connect",
-        "preConnectRules": [],
+        "preConnectRules": [
+          {
+            "condition": "command === 'transcripts' && args[0] === 'recent' && !hasHelpFlag(args) && await (await import('./commands/transcripts.ts')).runDelegatedTranscriptsRecent(args.slice(1))",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": []
+          }
+        ],
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },

@@ -18,7 +18,7 @@ export const PERSISTENCE_IPC_MAX_CONNECTIONS = 8;
 export const PERSISTENCE_IPC_OPERATIONS = [
   'put_page', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page',
   'remember', 'forget', 'extract_facts', 'get_write_request', 'list_write_requests', 'cancel_write_request',
-  'get_page', 'fetch',
+  'get_page', 'fetch', 'get_recent_transcripts',
   'list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack',
   'put_skill', 'delete_skill', 'join_brain', 'sync_brain_skills', 'leave_brain',
   'get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions',

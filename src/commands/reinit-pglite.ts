@@ -134,7 +134,7 @@ export async function runReinitPglite(args: string[]): Promise<void> {
   // the same path must not inherit the old brain's open repair episode,
   // cooldown, or reap quarantine — a stale episodeBackupPath would be reused
   // over the NEW brain's WAL).
-  for (const sibling of [`${dbPath}.wal-repair-attempt.json`, `${dbPath}.lock-reap.json`]) {
+  for (const sibling of [`${dbPath}.wal-repair-attempt.json`, `${dbPath}.lock-reap.json`, `${dbPath}.repair-failed.json`]) {
     try { rmSync(sibling, { force: true }); } catch { /* best-effort */ }
   }
   } catch (e: unknown) {

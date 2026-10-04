@@ -268,7 +268,7 @@ async function executeAutoFix(rec: FeatureRecommendation, engine: BrainEngine): 
 
 export async function runFeatures(engine: BrainEngine, args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain features [--json] [--auto-fix]\n\nScan brain usage and recommend unused features.\n\n  --json       Output as JSON (for agents)\n  --auto-fix   Automatically fix all auto-fixable issues');
+    console.log('Usage: gbrain features [--json] [--auto-fix [--yes]]\n\nScan brain usage and recommend unused features.\n\n  --json       Output as JSON (for agents)\n  --auto-fix   Automatically fix all auto-fixable issues\n  --yes        Authorize the paid embedding auto-fix (non-interactive runs need it)');
     return;
   }
 
@@ -291,6 +291,18 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
   // F7: the auto-fix suggestion is a coaching notice on every surface (it was
   // printed only on a terminal); --json carries it under `notices`.
   const autoFixNotice = autoFix ? null : featuresAutoFixNotice(pitchable);
+  if (autoFix && pitchable.some(r => r.auto_fixable && PAID_AUTO_FIX_IDS.has(r.id))) {
+    const { requireEmbedBackfillConsent } = await import('../core/embed-consent.ts');
+    const { isConsentRefusal, printConsentRefusal } = await import('../core/consent.ts');
+    const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+    try {
+      await requireEmbedBackfillConsent(engine, { command: 'features', argv: ['gbrain', 'features', ...args.filter(a => a !== '--yes')], args, scope: {} });
+    } catch (e) {
+      if (!isConsentRefusal(e)) throw e;
+      setCliExitVerdict(printConsentRefusal(e, { json: jsonMode }));
+      return;
+    }
+  }
   if (jsonMode) {
     const fixResults: Record<string, { success: boolean; output: string }> = {};
     if (autoFix) {
@@ -347,16 +359,19 @@ export async function runFeatures(engine: BrainEngine, args: string[]) {
   saveOffers(offers);
 }
 
+/** Auto-fixes that embed (paid): they need the user's approval (--yes, --max-usd, --max-cost, tokenmax or a preapproval). */
+const PAID_AUTO_FIX_IDS: ReadonlySet<string> = new Set(['missing-embeddings', 'low-coverage']);
+
 /** F7: the `features_auto_fix` coaching notice; null when nothing is auto-fixable. */
 function featuresAutoFixNotice(pitchable: readonly FeatureRecommendation[]): Notice | null {
   const fixable = pitchable.filter(r => r.auto_fixable);
   if (fixable.length === 0) return null;
-  const paid = fixable.some(r => r.id === 'missing-embeddings' || r.id === 'low-coverage');
+  const paid = fixable.some(r => PAID_AUTO_FIX_IDS.has(r.id));
   return {
     code: 'features_auto_fix', kind: 'coaching',
     why: `${fixable.length} recommendation(s) can be fixed automatically: ${fixable.map(r => r.title).join(', ')}.`,
     fix: {
-      argv: ['gbrain', 'features', '--auto-fix'], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
+      argv: ['gbrain', 'features', '--auto-fix', ...(paid ? ['--yes'] : [])], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
       why: paid ? 'Runs the fixes; refreshing embeddings calls the configured embedding provider (a small paid cost).' : 'Runs the fixes (link and timeline extraction; no paid calls).',
       ...(paid ? { user_message: 'gbrain can fill in missing embeddings for your notes; it costs a little in embedding API calls. OK to run it?' } : {}),
     },

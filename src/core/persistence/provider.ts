@@ -62,6 +62,14 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
       allowedSources: unrestricted ? undefined : verified.grant.sourceIds };
     const params = !unrestricted && request.operation === 'get_page' && request.params.source_id === undefined
       ? { ...request.params, source_id: sourceId } : request.params;
+    // `gbrain transcripts recent` through the live owner: the verified local CLI reads the host's transcript
+    // files directly, as it does without a serve (localOnly ops never dispatch off the stdio pipe).
+    if (request.operation === 'get_recent_transcripts') {
+      if (verified.remote || verified.principal.kind !== 'local_cli') throw trustedCliRequired('Raw transcripts are read only by this host\'s trusted CLI.');
+      const p = request.params;
+      return (await import('../transcripts.ts')).listRecentTranscripts(engine, { days: typeof p.days === 'number' ? p.days : undefined,
+        summary: typeof p.summary === 'boolean' ? p.summary : undefined, limit: typeof p.limit === 'number' ? p.limit : undefined });
+    }
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
       config, remote: verified.remote, transport: verified.remote ? 'stdio' : undefined, sourceId, auth,

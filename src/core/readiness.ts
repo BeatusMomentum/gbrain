@@ -45,7 +45,7 @@ import { resolveWritebackConfigFromFile } from './facts/writeback-config.ts';
 export type ReadinessState = 'ok' | 'disabled_by_choice' | 'not_applicable' | 'missing' | 'degraded' | 'unknown';
 export type CapabilityId =
   | 'embeddings' | 'chat_llm' | 'worker' | 'writeback' | 'backup' | 'tool_surface'
-  | 'sync' | 'migrations' | 'harness_wiring';
+  | 'sync' | 'migrations' | 'harness_wiring' | 'local_transcripts';
 
 export interface ReadinessEntry {
   capability: CapabilityId;
@@ -89,6 +89,8 @@ export const SYNC_REASONS = [
   'git_sources', 'no_repo_sources', 'remote_brain', 'engine_unreachable', 'probe_failed', 'probe_timeout',
 ] as const;
 export const MIGRATIONS_REASONS = ['current', 'pending', 'engine_unreachable', 'probe_failed', 'probe_timeout'] as const;
+/** Raw session transcripts on the brain host: present (read through the CLI) or none. */
+export const LOCAL_TRANSCRIPTS_REASONS = ['transcripts_cli_only', 'no_transcripts', 'engine_unreachable', 'probe_failed', 'probe_timeout'] as const;
 export const HARNESS_WIRING_REASONS = [
   'wired_running', 'registration_unverified', 'http_serve_running', 'multiple_sessions', 'multiple_harnesses',
   'no_harness_detected', 'binary_unresolved', 'remote_transport',
@@ -628,7 +630,23 @@ const syncProbe: Prober = {
   },
 };
 
-const PROBERS: readonly Prober[] = [workerProbe, backupProbe, migrationsProbe, syncProbe];
+const transcriptsProbe: Prober = {
+  capability: 'local_transcripts',
+  async run(engine) {
+    const base = { capability: 'local_transcripts' as const, tier: 'probed' as const, http_visible: false };
+    const { localTranscriptsFix, recentTranscriptPresence } = await import('./transcripts.ts');
+    const p = await recentTranscriptPresence(engine);
+    if (p.count === 0) {
+      return { ...base, state: 'not_applicable', reason: 'no_transcripts',
+        why: 'No session transcripts from the last 7 days in a configured transcript directory (dream.synthesize.session_corpus_dir, dream.synthesize.meeting_transcripts_dir).' };
+    }
+    return { ...base, state: 'ok', reason: 'transcripts_cli_only',
+      why: `${p.count} recent session transcript(s) exist on this host: read them with \`gbrain transcripts recent --json\` (page search never returns them; get_recent_transcripts is local-only on MCP). Files: ${p.dirs.join(', ')}.`,
+      fix: localTranscriptsFix() };
+  },
+};
+
+const PROBERS: readonly Prober[] = [workerProbe, backupProbe, migrationsProbe, syncProbe, transcriptsProbe];
 
 async function runProbes(engine: BrainEngine): Promise<ReadinessEntry[]> {
   if (isEngineDegraded(engine)) return PROBERS.map(p => failedEntry(p.capability, 'engine_unreachable'));

@@ -19,7 +19,7 @@ import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger } from '../core/notice-ledger.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
-import { recallInteropNotices } from '../core/interop-notices.ts';
+import { localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
@@ -870,6 +870,15 @@ export async function dispatchToolCall(
     // never a local path or source id). The refresher runs on the stdio
     // transport ONLY — the WP1/D7 locality axis localOnly ops use; 'http' or
     // an UNSET marker never probes (fail-closed).
+    // F5 follow-up: local transcripts exist but their reader is not callable on this stdio connection.
+    if (opts.transport === 'stdio' && opts.remote !== false && !dispatchRenderContext(opts).isCallable('get_recent_transcripts')
+      && wantsTranscriptHint(name, safeParams, result)) {
+      try {
+        const { recentTranscriptPresence } = await import('../core/transcripts.ts');
+        const hint = localTranscriptsNotice(await recentTranscriptPresence(engine));
+        if (hint) notices.push(hint);
+      } catch { /* a pointer, never a failure */ }
+    }
     maybeBackupNotice(notices, opts);
     if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));

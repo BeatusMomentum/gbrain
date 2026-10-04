@@ -31,7 +31,7 @@ import { repairPreviewCommand, repairSpec, type ExplicitRepairNotice } from '../
 import { runWaveChecks, waveRepairKind, type WaveFinding } from './wave-checks.ts';
 import { derivedCapExhaustedError, type CapSource } from '../../core/consent.ts';
 import { previewRemediationPlan, remediateConsent, remediateFlags, remediationPlanHash, type RemediateFlags } from './remediate-consent.ts';
-import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-output.ts';
+import { cliRenderContext, renderAction, renderNotice, type Action, type Notice } from '../../core/agent-output.ts';
 
 export const REMEDIATE_HELP = `Usage: gbrain doctor --remediation-plan [--target-score <n>] [--no-embed] [--json]
        gbrain doctor --remediate [--yes [--expect <plan_hash>]] [--include-repairs] [--max-usd <n>] [--target-score <n>]
@@ -90,6 +90,43 @@ export function jobStepCommand(step: { job: string; params?: Record<string, unkn
 }
 
 /**
+ * Every plan step carries an Action (agent operator contract v1): the step's
+ * own command, its effects and a verify. A job step is `paid` when it has a
+ * cost estimate or its handler calls a model provider (then the argv carries
+ * `--yes`, so it runs verbatim once the user agrees, and `next` renders
+ * `ask_user`); a repair step rewrites data (`destructive`, plus `paid` when it
+ * embeds), so it is always the user's call.
+ */
+export async function jobStepFix(step: { job: string; params?: Record<string, unknown>; est_usd_cost?: number; rationale?: string }): Promise<Action> {
+  const { paidJobNames } = await import('../jobs/shared.ts');
+  const paid = (step.est_usd_cost ?? 0) > 0 || (await paidJobNames([step.job])).length > 0;
+  const cost = typeof step.est_usd_cost === 'number' && step.est_usd_cost > 0 ? ` (estimated $${step.est_usd_cost.toFixed(4)})` : '';
+  return {
+    argv: ['gbrain', 'jobs', 'submit', step.job, ...(step.params && Object.keys(step.params).length ? ['--params', JSON.stringify(step.params)] : []), '--follow', ...(paid ? ['--yes'] : [])],
+    consent: paid ? ['paid'] : [],
+    actor: 'agent',
+    why: paid ? `Runs the ${step.job} job, which calls the configured model provider and costs money${cost}.` : `Runs the ${step.job} job (no provider calls).`,
+    ...(paid ? { user_message: `Raising the brain score needs the ${step.job} job, which calls your model provider and costs money${cost}. OK to run it?` } : {}),
+    verify: { argv: ['gbrain', 'doctor', '--only', 'brain_score', '--json'] },
+    requires_exclusive: false,
+  };
+}
+
+export function repairStepFix(step: Pick<RepairPlanStep, 'kind' | 'command' | 'paid' | 'est_usd_cost' | 'affected' | 'checks'>): Action {
+  const cost = step.paid ? (step.est_usd_cost === null ? ' and calls the embedding provider (price unknown)' : ` and costs about $${step.est_usd_cost.toFixed(4)} in embeddings`) : '';
+  return {
+    argv: step.command.split(' '),
+    preview_argv: repairPreviewCommand(step.kind).split(' '),
+    consent: ['destructive', ...(step.paid ? ['paid' as const] : [])],
+    actor: 'agent',
+    why: `Rewrites ${step.affected} stored item(s) for gbrain repair ${step.kind}${cost}.`,
+    user_message: `gbrain wants to repair ${step.affected} item(s) (${step.kind}); this rewrites stored data${cost}. OK to apply it?`,
+    verify: { argv: ['gbrain', 'doctor', '--only', step.checks.length ? step.checks.join(',') : 'brain_score', '--json'] },
+    requires_exclusive: true,
+  };
+}
+
+/**
  * `gbrain doctor --remediate --yes --include-repairs --max-usd <n>`, filled from the plan's estimates.
  * With repair steps, `--expect <plan_hash>` binds the approval to this plan (C1).
  */
@@ -142,7 +179,10 @@ export async function runRemediationPlan(engine: BrainEngine, args: string[]): P
   const plan = await computeRemediationPlan(engine, { targetScore, repairs: { noEmbed } });
   const planHash = plan.repair_steps?.length ? await remediationPlanHash(engine, args, plan) : undefined;
   if (args.includes('--json')) {
-    await writeJsonDocument(JSON.stringify({ ...plan, plan: plan.plan.map(step => ({ ...step, command: jobStepCommand(step) })),
+    const ctx = cliRenderContext();
+    const steps = await Promise.all(plan.plan.map(async step => ({ ...step, command: jobStepCommand(step), fix: renderAction(await jobStepFix(step), ctx) })));
+    const repairSteps = plan.repair_steps?.map(step => ({ ...step, fix: renderAction(repairStepFix(step), ctx) }));
+    await writeJsonDocument(JSON.stringify({ ...plan, plan: steps, ...(repairSteps ? { repair_steps: repairSteps } : {}),
       combined_command: combinedRemediateCommand(plan, plan.target_unreachable ? plan.max_reachable_score : targetScore, { noEmbed, planHash }), ...(planHash ? { plan_hash: planHash } : {}),
       ...(migrations ? { notices: [renderNotice(migrations, cliRenderContext())] } : {}) }, null, 2));
     return;
@@ -152,7 +192,8 @@ export async function runRemediationPlan(engine: BrainEngine, args: string[]): P
     console.log(`Schema migrations pending: ${migrations.why}`);
     if (fix?.command) console.log(`  apply: ${fix.command}`);
   }
-  for (const line of renderRemediationPlanLines(plan, targetScore, { noEmbed, planHash })) console.log(line);
+  const paidJobs = new Set((await Promise.all(plan.plan.map(async step => (await jobStepFix(step)).consent.length ? step.step : null))).filter((n): n is number => n !== null));
+  for (const line of renderRemediationPlanLines(plan, targetScore, { noEmbed, planHash, paidSteps: paidJobs })) console.log(line);
 }
 
 interface RemediationPlanShape {
@@ -180,7 +221,7 @@ interface RemediationPlanShape {
  * the score is at target AND no repair step is pending, so an unreachable
  * target never reads as "nothing to do".
  */
-export function renderRemediationPlanLines(plan: RemediationPlanShape, targetScore: number, opts: { noEmbed?: boolean; planHash?: string } = {}): string[] {
+export function renderRemediationPlanLines(plan: RemediationPlanShape, targetScore: number, opts: { noEmbed?: boolean; planHash?: string; paidSteps?: ReadonlySet<number> } = {}): string[] {
   const lines: string[] = [];
   const repairs = plan.repair_steps ?? [];
   lines.push(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
@@ -197,7 +238,9 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
       const protectedMark = step.protected ? ' [PROTECTED]' : '';
       const costMark = step.est_usd_cost ? ` ($${step.est_usd_cost.toFixed(2)})` : '';
       lines.push(`  ${step.step}. [${step.severity}] ${step.job}${protectedMark} — ${step.rationale}${costMark}`);
-      lines.push(`     run: ${jobStepCommand(step)}`);
+      lines.push(opts.paidSteps?.has(step.step) || (step.est_usd_cost ?? 0) > 0
+        ? `     paid: ask the user first; once they agree run: ${jobStepCommand(step)}`
+        : `     run: ${jobStepCommand(step)}`);
     }
   }
   if (repairs.length > 0) {

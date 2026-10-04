@@ -49,6 +49,8 @@ const HELP_WITHOUT_BRAIN = [
   // D5: selfHelp handlers that already answered --help before the engine but
   // were reached only after connect; now SELF_HELP_WITHOUT_ENGINE table entries.
   'brainstorm', 'lsd', 'migrate', 'pages', 'pricing', 'whoknows',
+  // Agent operator gate fixes: embed's usage (incl. its consent flags) prints before the engine.
+  'embed',
 ];
 
 /**
@@ -60,7 +62,6 @@ const HELP_WITHOUT_BRAIN = [
  */
 const STILL_NEEDS_A_BRAIN = [
   'config',
-  'embed',
 ];
 
 async function runHelp(command: string): Promise<{ code: number; out: string }> {

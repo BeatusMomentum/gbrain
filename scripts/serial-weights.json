@@ -8,6 +8,7 @@
   "test/agent-journey-tier2.serial.test.ts": 85,
   "test/agent-journey-upgrade.serial.test.ts": 70,
   "test/agent-journey.serial.test.ts": 50,
+  "test/agent-operator-gate-fixes.serial.test.ts": 45,
   "test/agent-recovery-consent-journeys.serial.test.ts": 23,
   "test/agent-register-guards.serial.test.ts": 22,
   "test/agent-scheduler-contract.serial.test.ts": 39,

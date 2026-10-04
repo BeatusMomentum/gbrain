@@ -15,6 +15,7 @@
 // process.exit. SQL via engine.executeRaw with `sourceScopeOpts(ctx)`
 // when ctx threads — onboard surface threads explicitly per A26.
 
+import { embedBackfillFix } from '../embed-consent.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
@@ -202,7 +203,7 @@ export async function checkEmbedStaleness(
     }));
   }
   return {
-    check: { name: 'embed_staleness', status, message },
+    check: { name: 'embed_staleness', status, message, ...(staleCount > 0 ? { fix: embedBackfillFix({ backlog: staleCount, verifyCheck: 'embed_staleness' }) } : {}) },
     remediations,
   };
 }

@@ -24,12 +24,14 @@
 import { join } from 'node:path';
 import { shellQuote } from '../core/agent-output.ts';
 import { currentExitCode } from '../core/cli-force-exit.ts';
-import { computePlanHash, type PlanSelection } from '../core/consent.ts';
+import { HANDS_OFF_BRAIN_FILES, WAL_REPAIR_BACKUP_SUFFIX, WAL_REPAIR_RISK, walRepairPlan } from '../core/pglite-repair-consent.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { acquireLock, releaseLock, LiveServeLockError, msSinceLastReap } from '../core/pglite-lock.ts';
 import {
+  clearRepairFailedMarker,
   inspectPgliteDataDir,
+  readRepairFailedMarker,
   listRepairBackups,
   readRepairSidecar,
   recordRepairAttempt,
@@ -116,11 +118,8 @@ function emitError(jsonOutput: boolean, code: string, message: string): void {
   }
 }
 
-const BACKUP_SUFFIX = '.wal-repair-backup-';
-
-const REPAIR_RISK = 'Data files are preserved; transactions not checkpointed before the corruption may be lost, and indexes are '
-  + 'not rebuilt (run gbrain reindex --vectors afterwards). Before the reset the current pg_wal and postmaster.pid are moved, '
-  + `and pg_control copied, into a sibling <data-dir>${BACKUP_SUFFIX}<timestamp> folder (or this incident's existing backup); nothing is deleted.`;
+const BACKUP_SUFFIX = WAL_REPAIR_BACKUP_SUFFIX;
+const REPAIR_RISK = WAL_REPAIR_RISK;
 
 /** The exact undo of a WAL reset: the reset pg_wal set aside, the backed-up pg_wal and pg_control put back (run with gbrain stopped). */
 export function restoreCommand(dataDir: string, backupPath: string): string {
@@ -131,15 +130,7 @@ export function restoreCommand(dataDir: string, backupPath: string): string {
   ].map(argv => shellQuote(argv)).join(' && ');
 }
 
-/** The diagnosed state an approval binds: the data dir, its WAL segments and the stale postmaster.pid. */
-function repairPlan(dataDir: string, d: { verdict: string; walSegments: string[]; postmasterPid: unknown }): { selection: PlanSelection; plan_hash: string } {
-  const selection: PlanSelection = {
-    brain: dataDir, source: null, operation: 'pglite-repair',
-    records: [...d.walSegments.map(id => ({ id: `pg_wal/${id}` })), ...(d.postmasterPid ? [{ id: 'postmaster.pid' }] : [])],
-    parameters: { verdict: d.verdict }, effects: ['destructive'],
-  };
-  return { selection, plan_hash: computePlanHash(selection) };
-}
+const repairPlan = walRepairPlan;
 
 export async function runPgliteRepair(args: string[]): Promise<number> {
   let opts: RepairCmdOpts;
@@ -181,6 +172,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
   const diagnosis = inspectPgliteDataDir(dataDir);
 
   if (opts.dryRun) {
+    const repairFailed = readRepairFailedMarker(dataDir);
     if (opts.jsonOutput) {
       console.log(JSON.stringify({
         status: 'ok',
@@ -189,6 +181,7 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
         validation,
         diagnosis,
         ...(validation.ok ? { plan_hash: repairPlan(dataDir, diagnosis).plan_hash, risk: REPAIR_RISK } : {}),
+        ...(repairFailed ? { repair_failed: repairFailed, note: HANDS_OFF_BRAIN_FILES } : {}),
       }));
     } else {
       console.log(`PGLite data dir: ${dataDir}`);
@@ -211,6 +204,10 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
           : '  Repairable: yes — a WAL reset in place should let it open.');
         console.log(`  Risk: ${REPAIR_RISK}`);
         console.log(`  The repair is the user's decision. Once they agree: ${approved}`);
+      }
+      if (repairFailed) {
+        console.log(`  Automatic repair failed${repairFailed.ts ? ` at ${new Date(repairFailed.ts).toISOString()}` : ''}; gbrain refuses to open this brain until a repair completes.`);
+        console.log(`  ${HANDS_OFF_BRAIN_FILES}`);
       }
     }
     return 0;
@@ -345,6 +342,8 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
     // prunes, and repeated manual runs during one incident reuse the pinned
     // backup instead of deleting the pre-damage forensic copy.
     recordRepairAttempt(dataDir, 'failed', receipt.backupPath);
+    // The user approved and the reset completed: commands may open the brain again (the next open proves it).
+    clearRepairFailedMarker(dataDir);
 
     if (opts.jsonOutput) {
       console.log(JSON.stringify({

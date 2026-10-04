@@ -301,6 +301,7 @@
         "connectors",
         "dream",
         "edges-backfill",
+        "embed",
         "export",
         "extract-conversation-facts",
         "features",
