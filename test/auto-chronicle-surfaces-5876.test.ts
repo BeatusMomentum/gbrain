@@ -93,10 +93,10 @@ describe('doctor auto_chronicle', () => {
       fix: { actor: 'user', consent: ['credentials'] } } });
   });
 
-  test('activity: 24 h use, largest writer share, 7-day spend with unpriced calls apart, run-now command', async () => {
+  test('activity: 24 h use (retries count), largest writer share, 7-day spend with unpriced calls apart, run-now command', async () => {
     withChat();
     await engine.setConfig('chronicle.auto_daily_limit', '10');
-    await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'extracted', principal: ['oauth_client', 'client-a'], cost: 0.01 });
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'extracted', principal: ['oauth_client', 'client-a'], cost: 0.01, retries: 1 });
     await insertChronicleLedgerRow(engine, { slug: 'meetings/b', state: 'extracted', principal: ['oauth_client', 'client-a'], cost: 0.02 });
     await insertChronicleLedgerRow(engine, { slug: 'meetings/c', state: 'extracted', principal: ['local_cli', 'w1'], unpriced: true });
     await insertChronicleLedgerRow(engine, { slug: 'meetings/old', state: 'extracted', cost: 5, hoursAgo: 24 * 9 });
@@ -105,15 +105,17 @@ describe('doctor auto_chronicle', () => {
     await insertChronicleLedgerRow(engine, { slug: 'meetings/f', state: 'extracted', trigger: 'backfill', cost: 1 });
     const main = byName(await doctor(), 'auto_chronicle');
     expect(main.status).toBe('ok');
-    expect(main.message).toContain('Last 24 h: 3 of 10 automatic extraction calls; largest writer oauth_client:client-a used 20% of the daily limit');
+    expect(main.message).toContain('Last 24 h: 4 of 10 automatic extraction calls; largest writer oauth_client:client-a used 30% of the daily limit');
     expect(main.message).toContain('3 extracted, 0 failed, 1 skipped (history 1); $0.03 known spend + 1 unpriced call(s)');
     expect(main.message).toContain('gbrain dream --phase chronicle');
-    expect(main.details).toMatchObject({ readiness: 'ok', auto_calls_24h: 3,
+    expect(main.details).toMatchObject({ readiness: 'ok', auto_calls_24h: 4,
       spend_7d: { knownUsd: 0.03, unpricedCalls: 1, incompleteRecords: 0 } });
   });
 
-  test('failures warn with the reason fix (no_pricing names the pricing command)', async () => {
+  test('failures warn with the failed row\'s reason fix, not a more frequent skip (no_pricing names the pricing command)', async () => {
     withChat();
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/s1', state: 'skipped', reason: 'superseded' });
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/s2', state: 'skipped', reason: 'superseded' });
     await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'failed', reason: 'no_pricing' });
     const main = byName(await doctor(), 'auto_chronicle');
     expect(main).toMatchObject({ status: 'warn', details: { code: 'no_pricing', fix: { actor: 'agent' } } });

@@ -23,6 +23,8 @@ export async function createChronicleLedgerStub(engine: BrainEngine): Promise<vo
 export interface LedgerRowStub {
   slug: string; state: 'pending' | 'skipped' | 'extracted' | 'failed'; reason?: string; trigger?: 'auto' | 'backfill';
   principal?: [string, string]; cost?: number | null; unpriced?: boolean; hoursAgo?: number;
+  /** Extra judge calls (retries) for this content; each takes its own reservation. */
+  retries?: number;
 }
 
 let pageSeq = 1;
@@ -37,8 +39,8 @@ export async function insertChronicleLedgerRow(engine: BrainEngine, row: LedgerR
      attempts, cost_usd, unpriced, updated_at)
     VALUES ('default', $1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, now() - ($12 || ' hours')::interval)`,
   [pageId, hash, row.slug, row.state, row.reason ?? null, row.trigger ?? 'auto', row.principal?.[0] ?? null,
-    row.principal?.[1] ?? null, judged ? 1 : 0, row.cost ?? null, row.unpriced ?? false, hoursAgo]);
-  if (judged && (row.trigger ?? 'auto') === 'auto') {
+    row.principal?.[1] ?? null, judged ? 1 + (row.retries ?? 0) : 0, row.cost ?? null, row.unpriced ?? false, hoursAgo]);
+  for (let i = 0; judged && (row.trigger ?? 'auto') === 'auto' && i <= (row.retries ?? 0); i++) {
     await engine.executeRaw(`INSERT INTO chronicle_judge_reservations (reserved_at, source_id, page_id, content_hash)
       VALUES (now() - ($1 || ' hours')::interval, 'default', $2, $3)`, [hoursAgo, pageId, hash]);
   }
