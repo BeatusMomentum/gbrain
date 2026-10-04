@@ -110,10 +110,10 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
   **What:** `gbrain attribution --json` (and other CLI ops through the shared framework) write refusals to stderr, not as a JSON object on stdout. **Effort:** S. **Priority:** P2 (Foundations 2).
 - [x] **P2 — PGLite `sources refresh` while `gbrain serve` owns the database.** **Completed: Foundations 2** — the refresh runs inside the resident owner through the `writer_refresh` administration operation (`src/commands/sources-refresh-delegate.ts`).
 - [x] **P3 — The consumer's idle probe ignores the refresh effect fence.** **Completed: Foundations 2** — the idle probe applies `refreshFenceClear` to effects like the claims do.
-- [ ] **P2 — Drop the JSONB grant authority for legacy tokens.**
-  **What:** migrated tokens still mirror `permissions` JSON for older binaries, and admin-dashboard-created tokens are still born on the JSONB shape. **Fix:** after one release window, read only the unified columns and have the dashboard mint through `insertUnifiedToken`. **Effort:** M. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — `--sources none` for OAuth clients.**
-  **What:** refused for clients in F3 (no behavior change); needs per-client takes holders. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [x] **P2 — Drop the JSONB grant authority for legacy tokens.** **Completed: Foundations 2** — the dashboard mints through `mintLegacyToken`, migration v201 converts every legacy grant, the HTTP auth paths read the columns (a later legacy row converts on its first read), and minting no longer writes a JSONB-only grant.
+- [ ] **P2 — Remove the `permissions` grant mirror after its window.**
+  **What:** tokens still write the `permissions` JSONB mirror and enforce drift until `GRANT_MIRROR_WINDOW_ENDS` (2026-11-04, `src/core/grants/model.ts`) so older binaries keep working. **Fix:** after that date stop writing the mirror, drop the drift comparison and `legacy_token_grant_drift`, and keep `migrateLegacyTokens` only for brains that skipped v201. **Effort:** M. **Priority:** P2.
+- [x] **P2 — `--sources none` for OAuth clients.** **Completed: Foundations 2** — `auth rescope --client <id> --sources none` and `--takes-holders a,b|none` (migration v202).
 - [x] **P2 — Seat follow-ups (#4618).** **Completed: Foundations 2** — the OpenClaw context-engine heartbeat reports seat reasons (write failure, conflict, invalid label) with their hints, and a pattern page drops a seat its reflections no longer share. The Codex trust-hash item closed with no code: the Codex SessionEnd command never carries a seat (`buildCodexSessionEndCommand` takes only the gbrain binary; `--seat` prints a note to set `GBRAIN_SEAT` instead), so adding a seat cannot change its trust hash.
 - [x] **P2 — Large-brain ceilings in the scale tier.** **Completed: Foundations 2** — every scale run asserts the F4d ceilings through the real CLI (`scripts/scale/f4d.ts`: progress-aware sync deadline, loud embed budget stop and serve boot window at every tier, the 20,000-file `sources add` at 20k and up), so the 50k tier carries them once `trend.ts` unlocks it; delegated syncs keep the progress-aware deadline.
 - [ ] **P2 — MCP search on Postgres slows sharply between 10k and 20k pages.**
@@ -3359,16 +3359,14 @@ which inverts the intent of the metric.
 Deferred from the #2529/#2477 security-fix wave (plan-eng-review + codex outside
 voice CLEARED). None block the wave.
 
-- [ ] **P2 — Per-OAuth-client `takes_holders` storage (#2529 follow-up).** Legacy
-  bearer tokens honor `access_tokens.permissions.takes_holders` through
-  `verifyAccessToken`; OAuth clients have no equivalent column on `oauth_clients`,
-  so OAuth-minted tokens fail closed to `['world']`. Needs a schema migration
-  (`oauth_clients.takes_holders` JSONB or TEXT[]) + a `register-client` flag +
-  the `verifyAccessToken` JOIN projection. Include surfacing the EFFECTIVE
-  takes-holder scope in `whoami` output as part of this follow-up, so operators
-  can self-diagnose the legacy-vs-OAuth semantic split instead of reading docs.
-  Where: `src/schema.sql`, `src/core/migrate.ts`, `src/core/oauth-provider.ts`,
-  `src/commands/auth.ts`, `src/core/operations.ts` (whoami).
+- [x] **P2 — Per-OAuth-client `takes_holders` storage (#2529 follow-up).**
+  **Completed: Foundations 2** — `oauth_clients.takes_holders` (migration v202),
+  set with `gbrain auth rescope --client <id> --takes-holders a,b|none`, read by
+  `verifyAccessToken` and the publication holder reauthorization.
+- [ ] **P3 — `register-client --takes-holders` and effective holders in `whoami`.**
+  **What:** a client's holders are set after registration with
+  `auth rescope --client`; registration takes no holder flag, and `whoami` does
+  not print the effective takes-holder scope. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — agent-voice Host-header allowlist (DNS-rebinding hardening).** The
   #2477 fix ships default-deny CORS + an Origin gate on `/session`/`/tool`, but
   the gate derives self-origin from the `Host` header, so a DNS-rebound page
