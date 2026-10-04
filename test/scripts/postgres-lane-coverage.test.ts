@@ -27,7 +27,7 @@ function run(files: Record<string, string>) {
   return { code: r.status, out: `${r.stdout}\n${r.stderr}` };
 }
 const workflow = (env: string, files: string[]) => `name: lane\non: workflow_dispatch\njobs:\n  pg:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Postgres arms\n${env}        run: bun test ${files.join(' ')}\n`;
-const PG_ENV = '        env:\n          DATABASE_URL: postgres://u:p@127.0.0.1:5432/gbrain_test\n';
+const PG_ENV = '        env:\n          DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test\n';
 
 describe('check-postgres-lane-coverage.ts', () => {
   test.each([
