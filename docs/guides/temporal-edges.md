@@ -53,7 +53,14 @@ the page states:
 - **Timeline lines with a cue.** `- **2025-03-01** | linkedin — Left [Acme](../companies/acme-example) to join [Widget](../companies/widget-co)`
   ends `works_at acme-example` and starts `works_at widget-co` on that date. Cues are
   relation-specific: leaving a job does not end an advisory role. A cue only dates a
-  relationship the page already states; it never creates one.
+  relationship the page already states; it never creates one. "Moved from [A] to [B]"
+  and "Left [A] for [B]" also start B.
+  A cue moves a relationship only when it is about the relationship itself, so these
+  lines change nothing: lines about investing, meetings or events ("Joined [Acme]'s
+  Series B", "Back at [Acme] for an alumni dinner"), and references qualified by what
+  follows ("[Acme]'s London office", "[Acme] alumni"). "[Acme]'s advisory board" is the
+  one qualified form that dates `advises`. Write the explicit grammar below when such a
+  line really is a job change.
 - **The explicit line grammar**, inside a dated timeline entry. It names the relation
   and the target, so it works on its own, even after the old sentence is deleted:
   ```
@@ -62,11 +69,13 @@ the page states:
   ```
 - **Frontmatter `since` / `until`** on relationship objects:
   `company: [{ name: Acme, since: 2021-04, until: 2024-02-15 }]` (partial dates
-  normalize to the first day of the month or year).
+  normalize to the first day of the month or year). List the company twice for a
+  rejoin.
 - **Past-tense prose.** "previously at", "former CTO of", "used to work at" mark the
-  page's assertion as past. With no dated end, the relationship reads as ended at an
-  unknown date. On one page, a present-tense mention wins ("previously at Acme, now
-  runs Acme's EU team" stays live).
+  page's assertion as past ("has worked at" and "was promoted to CTO at" stay present).
+  A relationship with no dated evidence at all then reads as ended at an unknown date;
+  a dated start stays open until a dated end, whatever the prose says. On one page, a
+  present-tense mention wins ("previously at Acme, now runs Acme's EU team" stays live).
 - **Manual edges:** `add_link` accepts `valid_from` and `valid_until` (YYYY-MM-DD).
   Re-run `add_link` with `valid_until` to record that a relationship ended.
 
