@@ -1572,12 +1572,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // pages overflowed the old hardcoded 1500 and were misrecorded as
   // no_events; the cap is now configurable and truncation is surfaced.
   'chronicle.judge_max_tokens',
-  // #5876: automatic extraction rails, validated at `config set` by
-  // core/chronicle/config.ts (CHRONICLE_NUMERIC_KEYS).
-  'chronicle.job_budget_usd',
-  'chronicle.auto_daily_limit',
-  'chronicle.auto_recent_days',
-  'chronicle.auto_settle_seconds',
+  'chronicle.job_budget_usd', 'chronicle.auto_daily_limit', 'chronicle.auto_recent_days', 'chronicle.auto_settle_seconds', // #5876 rails (chronicle/config.ts validates)
   // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.
