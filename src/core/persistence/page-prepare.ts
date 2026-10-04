@@ -1,7 +1,7 @@
 import { isEmbedSkipped } from '../embed-skip.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
@@ -9,12 +9,14 @@ import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import type { Action } from '../agent-output.ts';
+import { shellQuote, type Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { pageIdentityError } from './page-identity.ts';
 import { contentRefusalError } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
+import { gitHoldFix, readGitHold } from './sync-holds.ts';
+import { heldFileMessage } from './verb-errors.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
@@ -160,6 +162,8 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     // Withdrawal overlays intentionally precede physical mirroring. The ledger
     // is applied by the import preparation and cannot be undone by this check.
     if (digest(actual) !== digest(expected)) {
+      const held = await heldFileRefusal(engine, row, root, path, 'drift');
+      if (held) throw held;
       const error = new OperationError('source_changed', 'The canonical file contains an uncoordinated local edit.',
         `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`);
       error.detail = 'file_database_drift';
@@ -167,9 +171,30 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     }
   } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)
     && !(options.capture && sha256(before) === options.capture.hash)) {
-    throw new OperationError('source_changed', 'An unindexed file already occupies the canonical page path.', 'Import the file before replacing it.');
+    throw await heldFileRefusal(engine, row, root, path, 'occupied')
+      ?? new OperationError('source_changed', 'An unindexed file already occupies the canonical page path.', 'Import the file before replacing it.');
   }
   return { path, root, content, expectedBeforeHash: before ? sha256(before) : null };
+}
+
+/**
+ * #5988: a drift or occupied-path refusal whose file sync holds names the hold
+ * instead of reconciliation: the page stays read-only for put_page until the
+ * file is repaired. Two point reads, only when the refusal already fires.
+ */
+async function heldFileRefusal(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'slug'>, root: string, path: string,
+  kind: 'drift' | 'occupied'): Promise<OperationError | null> {
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [row.source_id]);
+  const hold = source ? await readGitHold(engine, row.source_id, source.incarnation, relative(root, path).split(sep).join('/')) : null;
+  if (!hold) return null;
+  const fix = gitHoldFix(hold);
+  const where = [hold.meta.line !== undefined ? `line ${hold.meta.line}` : '', hold.meta.key ? `key "${hold.meta.key}"` : ''].filter(Boolean).join(', ');
+  const error = opError('source_changed', heldFileMessage(kind, hold.code),
+    `Sync holds ${hold.path} in source ${row.source_id} (${hold.code}${hold.meta.reason ? `, ${hold.meta.reason}` : ''}${where ? ` at ${where}` : ''}) because gbrain cannot import it, `
+    + `so ${kind === 'drift' ? `page ${row.slug} keeps its last good revision and` : `page ${row.slug} does not exist yet and its path`} is read-only for put_page until the file is repaired; retrying this write refuses the same way. `
+    + `Repair the file first (${shellQuote(fix.argv ?? [])}: ${fix.why}), then submit the intended write with a new request_id. Neither copy was overwritten.`, { fix });
+  if (kind === 'drift') error.detail = 'file_database_drift';
+  return error;
 }
 
 /**

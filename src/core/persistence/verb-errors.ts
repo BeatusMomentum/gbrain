@@ -11,7 +11,29 @@ export function frontmatterSlugConflictMessage(path: string, found: string, expe
   return `The frontmatter slug "${found}" in ${path} conflicts with its path, which expects slug "${expected}". Remove \`slug:\` or make it match the path.`;
 }
 
+/** #5988: the page's canonical file is held by sync; the code says why gbrain cannot import it. Location-free, so receipts may keep it. */
+const HELD_FILE = /^(?:The canonical file is held by sync|A file held by sync) \([a-z_]+\) (and differs from the page|occupies the canonical page path); the page is read-only for put_page until the file is repaired\.$/;
+
+export function heldFileMessage(kind: 'drift' | 'occupied', code: string): string {
+  return kind === 'drift'
+    ? `The canonical file is held by sync (${code}) and differs from the page; the page is read-only for put_page until the file is repaired.`
+    : `A file held by sync (${code}) occupies the canonical page path; the page is read-only for put_page until the file is repaired.`;
+}
+
+/** The diagnostic of a held-file refusal message (null for any other message); `sourceId` fills the commands when the caller knows it. */
+export function heldFileDiagnostic(message: string | null | undefined, sourceId = '<source>'): { reason: string; message: string; suggestion: string } | null {
+  const held = message ? HELD_FILE.exec(message) : null;
+  if (!held) return null;
+  return { reason: held[1] === 'and differs from the page' ? 'file_database_drift' : 'canonical_path_occupied', message: message!,
+    suggestion: `Sync holds this page's file because gbrain cannot import it; gbrain sources status ${sourceId} names the file, line and key. `
+      + 'The page keeps its last good revision and refuses put_page until the file is repaired, so retrying this write refuses the same way. '
+      + `On the source host, repair the file first (frontmatter holds: preview the fix with gbrain repair frontmatter --source ${sourceId} and apply it; file_too_large: split the file), `
+      + 'then submit the intended write with a new request_id. Neither copy was overwritten.' };
+}
+
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
+  const held = code === 'source_changed' ? heldFileDiagnostic(message) : null;
+  if (held) return held;
   if (code === 'source_changed') {
     if (message === 'The canonical file contains an uncoordinated local edit.') return {
       reason: 'file_database_drift', message: 'The canonical file and database disagree. Neither copy was overwritten.',

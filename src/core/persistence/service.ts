@@ -12,6 +12,7 @@ import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
 import { contentRefusalFromReceipt } from '../import-screen.ts';
+import { heldFileDiagnostic } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
@@ -155,11 +156,13 @@ export function writeResponse(row: WriteRequest): Record<string, unknown> {
   const delivered = isTerminal(row) ? receiptDeliveredHint(row) : null;
   // #5988: a content refusal reports its typed code, reason, key and line, and the content fix.
   const content = isTerminal(row) ? contentRefusalFromReceipt(row.error_code, row.error_message) : null;
+  // The page's file is held by sync: name the repair, so the caller does not retry into the same refusal.
+  const held = isTerminal(row) && reason === 'source_changed' ? heldFileDiagnostic(row.error_message, row.source_id) : null;
   const error = new OperationError(reason, !isTerminal(row) ? 'The write is accepted and is still pending.'
     : row.error_message ?? 'The write did not commit.', !isTerminal(row)
       ? pendingWriteHint(receipt)
-      : delivered?.suggestion ?? content?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
-  if (delivered?.detail) error.detail = delivered.detail;
+      : delivered?.suggestion ?? content?.suggestion ?? held?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
+  if (delivered?.detail ?? held?.reason) error.detail = delivered?.detail ?? held?.reason;
   if (content) {
     if (content.code !== reason) error.canonical = content.code;
     if (content.reason) error.reason = content.reason;

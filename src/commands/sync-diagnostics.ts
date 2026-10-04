@@ -3,7 +3,7 @@ import type { GitHoldItem } from '../core/persistence/sync-holds.ts';
 
 const HOLD_LINES = 20;
 
-function holdLine(item: GitHoldItem, verb: string): string {
+export function holdLine(item: GitHoldItem, verb: string): string {
   const where = [item.line !== undefined ? `line ${item.line}` : '', item.key ? `key "${item.key}"` : ''].filter(Boolean).join(', ');
   const page = item.stale ? 'its page keeps its last good revision and is read-only for put_page until the file is repaired' : 'its page is missing until the file imports';
   return `  ${verb} ${item.path}: ${item.code}${item.reason ? ` (${item.reason})` : ''}${where ? ` at ${where}` : ''}; ${page}. Next: ${item.fix.argv?.join(' ') ?? item.fix.why} (${item.docs})`;

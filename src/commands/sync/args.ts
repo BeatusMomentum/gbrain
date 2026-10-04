@@ -10,6 +10,7 @@ import { resolveNoEmbed } from '../../core/sync-git.ts';
 import type { SyncOpts } from '../sync.ts';
 import { parseMissingPathMode } from './missing-path.ts';
 import { intFlagValue } from '../../cli/flag-values.ts';
+import { usageError } from '../../cli/cli-error.ts';
 import type { MissingPathMode } from './missing-path.ts';
 
 export function printSyncHelp(): void {
@@ -119,7 +120,23 @@ See also:
 /** setTimeout treats delays above 2^31-1 ms as ~1 ms; --interval stays within that bound. */
 const MAX_WATCH_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
 
+/**
+ * #5988: there is no `sync --retry-held`. Held files re-screen on the next
+ * sync by themselves; `sources retry-held` schedules a re-screen without
+ * running anything, so the refusal names it instead of acting as an alias.
+ */
+function retryHeldRefusal(args: string[]) {
+  const source = args.find((a, i) => args[i - 1] === '--source');
+  return usageError('gbrain sync has no --retry-held flag; held files are re-screened on the next sync, and sources retry-held schedules a re-screen for a source.',
+    `Run gbrain sources retry-held ${source ?? '<source-id>'}, then sync that source again without --retry-held.`, {
+      fix: { argv: ['gbrain', 'sources', 'retry-held', source ?? '<source-id>'], consent: [], actor: 'agent', requires_exclusive: false,
+        ...(source ? {} : { inputs: [{ name: 'source-id', how: 'gbrain sources status lists each source with its held files' }] }),
+        why: 'Most held files re-screen on the next sync by themselves (changed, deleted, or readable by a newer gbrain); retry-held schedules a re-screen of every held file of the source on its next sync and runs nothing now.',
+        verify: { argv: ['gbrain', 'sources', 'status', ...(source ? [source] : []), '--json'] } } });
+}
+
 export function parseSyncFlags(args: string[]) {
+  if (args.includes('--retry-held')) throw retryHeldRefusal(args);
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
   const watch = args.includes('--watch');
   // #5931 (D4): timers coerce delays above 2^31-1 ms (and NaN/0) to ~1 ms, so a bad
