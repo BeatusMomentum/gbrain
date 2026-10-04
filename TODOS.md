@@ -1,6 +1,6 @@
 # TODOS
 
-## Foundations 2 crash robot follow-ups (filed 2026-10-04, GBRA-40 Lane A)
+## Foundations 2 crash robot follow-ups (filed 2026-10-04, follow-up from v0.60.53.0)
 
 Context: `scripts/persistence/README.md` ("Crash robot"), `scripts/persistence/{generator,model,crash-robot}.ts`.
 
