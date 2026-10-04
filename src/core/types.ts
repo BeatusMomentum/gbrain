@@ -1537,6 +1537,50 @@ export interface RelationalFanoutOpts extends PageReadPolicy {
   limit?: number;
 }
 
+/**
+ * Options for BrainEngine.relationalChainHop: one bounded, oriented expansion
+ * step of a multi-hop relational chain. `subjectTypes`/`objectTypes` are the
+ * hop relation's page-type signature; `degreeLinkTypes` names the typed edges
+ * counted for a frontier node's degree (hub weighting).
+ */
+export interface ChainHopOpts extends PageReadPolicy {
+  linkTypes: string[];
+  toward: 'object' | 'subject';
+  subjectTypes: string[];
+  objectTypes: string[];
+  degreeLinkTypes: string[];
+  /** Max logical edges returned per frontier node (deterministic: lowest link id first). */
+  neighborCap: number;
+}
+
+/**
+ * One LOGICAL edge from a frontier node, oriented by the relation's type
+ * signature and already authorized (both endpoints and any origin page pass
+ * the read policy). Stored rows between the same pair that resolve to the same
+ * subject/object collapse into one edge (`link_ids`).
+ */
+export interface ChainHopEdge {
+  from_page_id: number;
+  to_page_id: number;
+  to_slug: string;
+  to_type: string;
+  source_id: string;
+  link_type: string;
+  orientation: 'canonical' | 'stored' | 'flipped' | 'uncertain';
+  link_ids: number[];
+  stored_from_slug: string;
+  stored_to_slug: string;
+  /** Edge context from the evidence row; null when the caller may not read the evidence page's text. */
+  context: string | null;
+  origin_page_id: number | null;
+  origin_slug: string | null;
+  canonical_chunk_id: number | null;
+  /** Distinct typed neighbors of the frontier node the caller may read; saturates at 300 readable link rows. */
+  from_degree: number;
+  /** True when the frontier node had more logical edges than `neighborCap`. */
+  neighbor_cap_hit: boolean;
+}
+
 // Timeline
 export interface TimelineEntry {
   id: number;
