@@ -28,10 +28,10 @@ import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { resolveExtractAtomsCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
-import { chronicleSettings, chronicleTz, isAutoChronicleEnabled } from '../chronicle/config.ts';
+import { CHRONICLE_ACTIVATED_AT_KEY, chronicleSettings, chronicleTz, isAutoChronicleEnabled } from '../chronicle/config.ts';
 import {
-  CHRONICLE_CONFIG, CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, RUN_NOW_COMMAND,
-  type ChronicleLedgerRow, type ChronicleReason, type ChronicleRunDetails,
+  CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, RUN_NOW_COMMAND,
+  type ChronicleLedgerRow, type ChronicleRunDetails,
 } from '../chronicle/contract.ts';
 import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES } from '../chronicle/eligibility.ts';
 import { claimChronicleRow, executeChronicleRow } from '../chronicle/execute.ts';
@@ -39,6 +39,7 @@ import { defaultJudge, type ChronicleJudge } from '../chronicle/extract-events.t
 import {
   RETIRE_REASONS, chronicleDailyRemaining, decideChronicle, pruneChronicleReservations, upsertChronicleRow,
 } from '../chronicle/ledger.ts';
+import { CHRONICLE_REASONS, type ChronicleReasonCode } from '../chronicle/reasons.ts';
 
 export interface ChroniclePhaseOpts {
   dryRun?: boolean;
@@ -128,7 +129,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   let activatedAt = settings.activatedAt;
   if (!activatedAt) {
     activatedAt = now();
-    if (!dryRun) await engine.setConfig(CHRONICLE_CONFIG.activatedAt, activatedAt.toISOString());
+    if (!dryRun) await engine.setConfig(CHRONICLE_ACTIVATED_AT_KEY, activatedAt.toISOString());
   }
   const details: ChronicleRunDetails & Record<string, unknown> = {
     dry_run: dryRun, sources: 0, candidates: 0, judged: 0, extracted: 0, no_events: 0, failed: 0, reasons: {},
@@ -138,7 +139,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   };
   const count = (reason: string | null) => {
     if (!reason) return;
-    details.reasons[reason as ChronicleReason] = (details.reasons[reason as ChronicleReason] ?? 0) + 1;
+    details.reasons[reason as ChronicleReasonCode] = (details.reasons[reason as ChronicleReasonCode] ?? 0) + 1;
   };
 
   if (!dryRun) {
@@ -175,8 +176,8 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   const judge = opts.judge ?? (isAvailable('chat') ? defaultJudge(engine) : null);
   if (!judge) {
     details.reason = 'no_chat_provider';
-    details.next_command = 'gbrain config set models.chat <provider:model>';
-    return result('skipped', `chronicle: no chat provider is configured; ${details.candidates} page(s) wait. Ask the user which chat model to configure, then run: gbrain config set models.chat <provider:model>`, details);
+    details.fix = CHRONICLE_REASONS.no_chat_provider.fix();
+    return result('skipped', `chronicle: no chat provider is configured; ${details.candidates} page(s) wait. ${details.fix.why}`, details);
   }
   const model = getChatModel();
   const pricingOverrides = await loadPricingOverrides(engine);

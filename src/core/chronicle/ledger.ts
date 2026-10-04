@@ -7,12 +7,10 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
 import { derivedExtractionSkip } from '../persistence/derived-extraction-gate.ts';
-import { autoChronicleSetting, chronicleSettings, type ChronicleSettings } from './config.ts';
-import {
-  CHRONICLE_CONFIG, CHRONICLE_EXTRACTOR_VERSION, CHRONICLE_REASONS, RUN_NOW_COMMAND,
-  type ChronicleBackstopReceipt, type ChronicleLedgerRow, type ChronicleReason, type ChronicleTrigger,
-} from './contract.ts';
-import { chroniclePageDate, isChronicleEligible, isChronicleShaped } from './eligibility.ts';
+import { CHRONICLE_ACTIVATED_AT_KEY, autoChronicleSetting, chronicleSettings, type ChronicleSettings } from './config.ts';
+import { CHRONICLE_EXTRACTOR_VERSION, type ChronicleLedgerRow, type ChronicleTrigger } from './contract.ts';
+import { isChronicleEligible, isChronicleShaped } from './eligibility.ts';
+import { chronicleBackstopReceipt, type ChronicleBackstopReceipt, type ChronicleReasonCode, type ChronicleReasonContext } from './reasons.ts';
 
 /** Publications that import page content and therefore carry a decision (C1). */
 const DECIDING_OPERATIONS = new Set(['put_page', 'capture', 'edit_page', 'restore_page', 'revert_version']);
@@ -32,7 +30,7 @@ export interface ChronicleDecisionPage {
 export type ChronicleDecision =
   | { state: 'pending'; reason: null; nextAttemptAt: Date }
   | { state: 'pending'; reason: 'not_yet_happened'; nextAttemptAt: Date }
-  | { state: 'skipped'; reason: ChronicleReason | string; nextAttemptAt: null };
+  | { state: 'skipped'; reason: ChronicleReasonCode | string; nextAttemptAt: null };
 
 /**
  * The automatic-path decision for one revision of a chronicle-shaped page.
@@ -43,9 +41,11 @@ export type ChronicleDecision =
 export function decideChronicle(input: {
   page: ChronicleDecisionPage; authority: Pick<WriteAuthority, 'restrictedNamespace' | 'delegated' | 'slugPrefixes' | 'operations'> | null;
   noExtract: boolean; enabled: boolean; settings: Pick<ChronicleSettings, 'recentDays' | 'settleSeconds'>; now: Date;
+  /** The stored auto_chronicle word was neither true nor false (reads as off). */
+  invalidSetting?: boolean;
 }): ChronicleDecision {
   const skip = (reason: string): ChronicleDecision => ({ state: 'skipped', reason, nextAttemptAt: null });
-  if (!input.enabled) return skip('auto_chronicle_off');
+  if (!input.enabled) return skip(input.invalidSetting ? 'auto_chronicle_invalid' : 'auto_chronicle_off');
   if (input.noExtract) return skip('no_extract');
   const confined = input.authority ? derivedExtractionSkip(input.authority) : null;
   if (confined) return skip(confined);
@@ -65,22 +65,13 @@ export function decideChronicle(input: {
   return { state: 'pending', reason: null, nextAttemptAt: new Date(input.now.getTime() + input.settings.settleSeconds * 1000) };
 }
 
-/** The exact next command for a skip, with real values where the reason has them. */
-export function chronicleNextCommand(reason: string, page?: ChronicleDecisionPage): string | null {
-  if (reason === 'history' && page) {
-    const dated = chroniclePageDate({ effectiveDate: page.effective_date, effectiveDateSource: page.effective_date_source, frontmatter: page.frontmatter });
-    if (dated) return `gbrain chronicle-backfill --dated-since ${dated.toISOString().slice(0, 10)} --limit 50 --dry-run`;
-  }
-  return (CHRONICLE_REASONS as Record<string, { next: string | null }>)[reason]?.next ?? null;
-}
-
-export function chronicleReceipt(decision: ChronicleDecision, dailyRemaining: number, page?: ChronicleDecisionPage): ChronicleBackstopReceipt {
-  if (decision.state === 'pending' && decision.reason === null) {
-    return { pending: 'next_cycle', daily_remaining: dailyRemaining, next_command: RUN_NOW_COMMAND };
-  }
-  const reason = (decision.reason ?? 'not_yet_happened') as ChronicleReason;
-  const known = (CHRONICLE_REASONS as Record<string, { ask_user: boolean }>)[reason];
-  return { skipped: reason, next_command: chronicleNextCommand(reason, page), ask_user: known?.ask_user ?? false };
+/**
+ * The `chronicle_backstop` receipt for a decision: built by reasons.ts from the one reason table
+ * (stored fix Actions, rendered here with this page's source, today's date and the brain's limits).
+ */
+export function chronicleReceipt(decision: Pick<ChronicleDecision, 'state' | 'reason'>,
+  ctx: ChronicleReasonContext & { dailyRemaining?: number }): ChronicleBackstopReceipt | undefined {
+  return chronicleBackstopReceipt(decision, ctx);
 }
 
 /** Automatic judge calls left in the rolling 24 h window. */
@@ -193,21 +184,25 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   const [enabledRaw, settings] = await Promise.all([tx.getConfig('auto_chronicle').catch(() => null), chronicleSettings(tx)]);
   // The first decision after the upgrade activates the automatic path; earlier revisions stay history.
   if (!settings.activatedAt) {
-    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [CHRONICLE_CONFIG.activatedAt, new Date().toISOString()]);
+    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [CHRONICLE_ACTIVATED_AT_KEY, new Date().toISOString()]);
   }
+  const now = new Date();
+  const setting = autoChronicleSetting(enabledRaw);
   const decision = decideChronicle({ page, authority: row.authority ?? null, noExtract,
-    enabled: autoChronicleSetting(enabledRaw) === 'on', settings, now: new Date() });
+    enabled: setting === 'on', invalidSetting: setting === 'invalid', settings, now });
+  const receiptCtx: ChronicleReasonContext = { sourceId: base.sourceId, since: now.toISOString().slice(0, 10),
+    dailyLimit: settings.dailyLimit, recentDays: settings.recentDays };
   if (decision.state === 'skipped') await recordSkip(tx, { ...base, noExtract }, String(decision.reason));
   else if (!(await upsertChronicleRow(tx, { ...base, noExtract, state: 'pending', reason: decision.reason, nextAttemptAt: decision.nextAttemptAt }))) {
     // The content's current generation is already extracted (or queued by backfill): say so, not "pending".
     const kept = await readChronicleRow(tx, base);
     if (kept?.state === 'extracted') {
-      outcome.chronicle_backstop = { skipped: 'already_extracted', next_command: null, ask_user: false } satisfies ChronicleBackstopReceipt;
+      outcome.chronicle_backstop = chronicleReceipt({ state: 'skipped', reason: 'already_extracted' }, receiptCtx);
       return;
     }
   }
-  const remaining = decision.state === 'pending' && decision.reason === null ? await chronicleDailyRemaining(tx, settings.dailyLimit) : 0;
-  outcome.chronicle_backstop = chronicleReceipt(decision, remaining, page);
+  const dailyRemaining = decision.state === 'pending' && decision.reason === null ? await chronicleDailyRemaining(tx, settings.dailyLimit) : undefined;
+  outcome.chronicle_backstop = chronicleReceipt(decision, { ...receiptCtx, dailyRemaining });
 }
 
 export async function readChronicleRow(engine: BrainEngine, key: { sourceId: string; pageId: number; contentHash: string }): Promise<ChronicleLedgerRow | null> {

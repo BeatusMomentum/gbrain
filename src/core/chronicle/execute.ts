@@ -16,7 +16,8 @@ import { recordOnTracker } from '../ai/budget-record.ts';
 import { getCurrentBudgetTracker, withBudgetTracker } from '../ai/gateway.ts';
 import type { ExtractAtomsCostGate } from '../cycle/extract-atoms-cost-gate.ts';
 import type { MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
-import { CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, type ChronicleLedgerRow, type ChronicleReason } from './contract.ts';
+import { CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, type ChronicleLedgerRow } from './contract.ts';
+import type { ChronicleReasonCode } from './reasons.ts';
 import type { ChronicleSettings } from './config.ts';
 import { isChronicleEligible } from './eligibility.ts';
 import { buildChronicleEvents, chronicleJudgeContext, isValidProposal, type ChronicleJudge, type ChronicleJudgeResult } from './extract-events.ts';
@@ -96,7 +97,7 @@ function propagateSpend(parent: BudgetTracker | null, child: BudgetTracker): voi
 }
 
 /** Classify a judge result or throw into the ledger vocabulary (E2/D5). */
-function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): { state: 'failed' | 'skipped'; reason: ChronicleReason } | null {
+function classifyJudge(result: ChronicleJudgeResult | null, thrown: unknown): { state: 'failed' | 'skipped'; reason: ChronicleReasonCode } | null {
   if (thrown) {
     const budget = thrown as { tag?: string; reason?: string };
     if (budget.tag === 'BUDGET_EXHAUSTED') return { state: 'failed', reason: budget.reason === 'no_pricing' ? 'no_pricing' : 'budget_exhausted' };

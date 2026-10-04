@@ -9,14 +9,14 @@ export const AUTO_CHRONICLE_KEEP_ARGV = ['gbrain', 'config', 'set', 'auto_chroni
 export const CHRONICLE_ACK_KEY = 'chronicle.default_on_acknowledged';
 /** Stamped when the one-shot post-upgrade notice prints. */
 export const CHRONICLE_NOTICE_SHOWN_KEY = 'chronicle.default_on_notice_shown';
-/** Written by the ledger migration: automatic extraction covers revisions decided after it. */
+/** Stamped by the first write decision or chronicle phase run: automatic extraction covers revisions decided after it. */
 export const CHRONICLE_ACTIVATED_AT_KEY = 'chronicle.activated_at';
 
 const TRUE_WORDS = ['true', '1', 'yes', 'on'];
 const FALSE_WORDS = ['false', '0', 'no', 'off'];
 
 /**
- * How a stored `auto_chronicle` value reads (same contract as capy/chronicle-lane-core): unset is on;
+ * How a stored `auto_chronicle` value reads: unset is on;
  * a recognized true/false word is on/off; any other value reads as off and doctor warns
  * `auto_chronicle_invalid` (fail closed on spend).
  */
@@ -108,7 +108,6 @@ export function validateChronicleConfigValue(key: string, value: string): string
   return null;
 }
 
-/** Field names match capy/chronicle-lane-core's `chronicleSettings`, plus `judgeMaxTokens` and `invalid`. */
 export interface ChronicleSettings {
   jobBudgetUsd: number;
   /** The operator set chronicle.job_budget_usd: an unpriced model then refuses with no_pricing instead of warn-and-run. */
@@ -117,7 +116,7 @@ export interface ChronicleSettings {
   recentDays: number;
   settleSeconds: number;
   judgeMaxTokens: number;
-  /** When the automatic path activated on this brain (written by the ledger migration); null when unset or unreadable. */
+  /** When the automatic path activated on this brain (stamped by the first decision or phase run); null when unset or unreadable. */
   activatedAt: Date | null;
   /** Stored values outside the valid range; each fell back to its default. */
   invalid: Array<{ key: ChronicleNumericKey; raw: string; fallback: number }>;

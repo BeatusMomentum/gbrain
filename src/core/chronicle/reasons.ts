@@ -20,7 +20,7 @@ export interface ChronicleAction {
 }
 
 /**
- * Where a code is decided (same stages as Lane 1's `src/core/chronicle/contract.ts`): `decision` when
+ * Where a code is decided: `decision` when
  * the page is written (receipt), `discovery` when the phase finds the page, `execution` when it judges
  * the page, `phase` for a whole run.
  */
@@ -95,6 +95,8 @@ export const CHRONICLE_REASONS = {
     fix: backfill('agent', FIX_BY_BACKFILL) },
   not_chronicle_shaped: { stage: 'decision',
     meaning: () => 'The page is no longer a meeting, conversation or calendar page, so the events extracted from it were retired.' },
+  already_extracted: { stage: 'decision',
+    meaning: () => 'This exact content was already extracted; its events are current, so no new call is made.' },
   superseded: { stage: 'execution',
     meaning: () => 'A newer revision replaced this content before extraction ran; the newer revision carries its own decision.' },
   daily_limit: { stage: 'execution',
@@ -150,7 +152,7 @@ export type ChronicleReasonCode = keyof typeof CHRONICLE_REASONS;
 const NOT_CHRONICLE_SHAPED = /^(kind:|diary_excluded$|event_self$|subagent_scratch$)/;
 
 /**
- * The write-time decision (capy/chronicle-lane-core `decideChronicle`): `pending` with no reason is
+ * The write-time decision (ledger.ts `decideChronicle`): `pending` with no reason is
  * queued for the next cycle; `pending` with a reason (`not_yet_happened`) waits and reports that
  * reason like a skip; `skipped` carries its reason.
  */

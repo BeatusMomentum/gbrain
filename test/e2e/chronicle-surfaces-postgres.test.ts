@@ -2,8 +2,7 @@
  * #5876 (T11) on real Postgres: the chronicle ledger rollups behind doctor `auto_chronicle` and the
  * advisor (FILTER aggregates, numeric -> float8 spend, the reservation/ledger join for writer
  * shares, interval windows) return the same numbers as on PGLite
- * (test/auto-chronicle-surfaces-5876.test.ts). Uses the TEMPORARY ledger stub until Lane 1's
- * `chronicle_page_state` migration merges.
+ * (test/auto-chronicle-surfaces-5876.test.ts). Rows are seeded on the real ledger migration.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -11,19 +10,16 @@ import { readChronicleLedgerStats } from '../../src/core/chronicle/ledger-stats.
 import { autoChronicleEntry } from '../../src/commands/doctor/checks/auto-chronicle.ts';
 import type { DoctorContext } from '../../src/commands/doctor/context.ts';
 import type { Check } from '../../src/commands/doctor.ts';
-import { createChronicleLedgerStub, insertChronicleLedgerRow } from '../helpers/chronicle-ledger-stub.ts';
+import { insertChronicleLedgerRow } from '../helpers/chronicle-ledger-rows.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
 beforeAll(async () => {
   if (!hasDatabase()) return;
   await setupDB();
-  await createChronicleLedgerStub(getEngine());
 });
 afterAll(async () => {
   if (!hasDatabase()) return;
-  await getEngine().executeRaw('DROP TABLE IF EXISTS chronicle_page_state');
-  await getEngine().executeRaw('DROP TABLE IF EXISTS chronicle_judge_reservations');
   await teardownDB();
 });
 beforeEach(async () => {

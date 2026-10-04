@@ -62,7 +62,7 @@ afterEach(() => { __setChatTransportForTests(null); resetGateway(); _resetBudget
 describe('execution path (D10) and settle (D4)', () => {
   test('PGLite: write a meeting, run the phase, read the events', () => brain(async ({ engine, ctx }) => {
     const receipt = await put(ctx, 'meetings/sync', meeting('Sync'));
-    expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200, next_command: 'gbrain dream --phase chronicle' });
+    expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200 });
     const judge = countingJudge(() => ({ events: [ev('Alice agreed to ship the beta')] }));
     expect((await runPhaseChronicle(engine, { judge })).details).toMatchObject({ judged: 0 }); // still settling
     await settle(engine);
@@ -160,7 +160,7 @@ describe('judge failure classes (E2/D5)', () => {
     await settle(engine);
     const r = await runPhaseChronicle(engine);
     expect(r.status).toBe('skipped');
-    expect(r.details).toMatchObject({ reason: 'no_chat_provider', next_command: 'gbrain config set models.chat <provider:model>' });
+    expect(r.details).toMatchObject({ reason: 'no_chat_provider', fix: { actor: 'user', consent: ['credentials'] } });
     expect((await rows(engine))[0]).toMatchObject({ state: 'pending', attempts: 0 });
   }), 120_000);
 
@@ -309,7 +309,8 @@ describe('ledger and discovery (E1/E6/D12)', () => {
     await settle(engine); await runPhaseChronicle(engine, { judge });
     await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} B.`));
     const back = await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} A.`));
-    expect(back.chronicle_backstop).toEqual({ skipped: 'already_extracted', next_command: null, ask_user: false });
+    expect(back.chronicle_backstop).toMatchObject({ skipped: 'already_extracted', stage: 'decision' });
+    expect(back.chronicle_backstop).not.toHaveProperty('fix');
     await settle(engine); await runPhaseChronicle(engine, { judge });
     expect(judge.calls).toBe(1);
     expect((await events(engine)).map((e) => [e.what, e.deleted])).toEqual([['Version A decision', false]]);
@@ -331,7 +332,7 @@ describe('ledger and discovery (E1/E6/D12)', () => {
     await engine.setConfig('chronicle.auto_settle_seconds', '0');
     const end = new Date(Date.now() + 1500).toISOString();
     const receipt = await put(ctx, 'calendar/2026/10/standup', meeting('Standup', BODY, `start: ${new Date().toISOString()}\nend: ${end}\n`));
-    expect(receipt.chronicle_backstop).toMatchObject({ skipped: 'not_yet_happened', ask_user: false });
+    expect(receipt.chronicle_backstop).toMatchObject({ skipped: 'not_yet_happened', stage: 'decision' });
     const judge = countingJudge(() => ({ events: [] }));
     await runPhaseChronicle(engine, { judge });
     expect(judge.calls).toBe(0);

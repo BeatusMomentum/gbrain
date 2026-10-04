@@ -9,7 +9,7 @@
  * even after the post-upgrade banner was stamped (swap-only upgrade).
  * Fails when: a surface reverts to the no-op text, mislabels a by-choice state as a problem, loses
  * the spend/share numbers, or the default-on notice clears without an explicit answer.
- * Seams: gateway chat transport/unconfigure test seams; TEMPORARY ledger stub (Lane 1 owns the table).
+ * Seams: gateway chat transport/unconfigure test seams; ledger rows seeded on the real migration.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -21,7 +21,7 @@ import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import type { Check } from '../src/commands/doctor.ts';
 import { CHRONICLE_ACK_KEY, CHRONICLE_NOTICE_SHOWN_KEY } from '../src/core/chronicle/config.ts';
 import { __setChatTransportForTests, __unconfigureGatewayForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
-import { createChronicleLedgerStub, insertChronicleLedgerRow } from './helpers/chronicle-ledger-stub.ts';
+import { insertChronicleLedgerRow } from './helpers/chronicle-ledger-rows.ts';
 
 let engine: PGLiteEngine;
 const advisorCtx = () => ({ engine, remote: false, now: new Date('2026-10-04T12:00:00Z') } as unknown as AdvisorContext);
@@ -37,7 +37,6 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  await createChronicleLedgerStub(engine);
 }, 120_000);
 afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => {

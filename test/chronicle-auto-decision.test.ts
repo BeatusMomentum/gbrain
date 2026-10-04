@@ -19,6 +19,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { decideChronicle, recordChronicleDecision } from '../src/core/chronicle/ledger.ts';
 import { isChronicleEligible } from '../src/core/chronicle/eligibility.ts';
 import { autoChronicleSetting } from '../src/core/chronicle/config.ts';
+import { CHRONICLE_REASONS, chronicleBackfillArgv } from '../src/core/chronicle/reasons.ts';
 import { prepareFactsBackstop } from '../src/core/persistence/effect-facts.ts';
 import type { WriteAuthority, WriteRequest } from '../src/core/persistence/model.ts';
 import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
@@ -46,7 +47,7 @@ describe('managed put_page', () => {
   test('an eligible meeting records one pending row with the writer; a no-op re-put changes nothing', () => brain(async ({ engine, ctx }) => {
     expect(await engine.getConfig('chronicle.activated_at')).toBeNull();
     const receipt = await put(ctx, 'meetings/sync', meeting());
-    expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200, next_command: 'gbrain dream --phase chronicle' });
+    expect(receipt.chronicle_backstop).toEqual({ pending: 'next_cycle', daily_remaining: 200 });
     expect(await engine.getConfig('chronicle.activated_at')).not.toBeNull(); // the first decision activates the automatic path
     const [row] = await rows(engine);
     const [request] = await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE request_id=$1', [receipt.request_id]);
@@ -62,11 +63,13 @@ describe('managed put_page', () => {
     expect(await rows(engine)).toEqual([]);
   }), 120_000);
 
-  test('auto_chronicle false and an invalid word both skip with auto_chronicle_off; unset is on', () => brain(async ({ engine, ctx }) => {
+  test('auto_chronicle false skips with auto_chronicle_off (no fix: off by choice); an invalid word skips auto_chronicle_invalid; unset is on', () => brain(async ({ engine, ctx }) => {
     await engine.setConfig('auto_chronicle', 'false');
-    expect((await put(ctx, 'meetings/a', meeting())).chronicle_backstop).toEqual({ skipped: 'auto_chronicle_off', next_command: 'gbrain config set auto_chronicle true', ask_user: true });
+    expect((await put(ctx, 'meetings/a', meeting())).chronicle_backstop)
+      .toEqual({ skipped: 'auto_chronicle_off', stage: 'decision', why: CHRONICLE_REASONS.auto_chronicle_off.meaning() });
     await engine.setConfig('auto_chronicle', 'flase');
-    expect((await put(ctx, 'meetings/b', meeting())).chronicle_backstop).toMatchObject({ skipped: 'auto_chronicle_off' });
+    expect((await put(ctx, 'meetings/b', meeting())).chronicle_backstop)
+      .toMatchObject({ skipped: 'auto_chronicle_invalid', fix: { argv: ['gbrain', 'config', 'set', 'auto_chronicle', 'true'], consent: ['paid'] } });
     await engine.unsetConfig('auto_chronicle');
     expect((await put(ctx, 'meetings/c', meeting())).chronicle_backstop).toMatchObject({ pending: 'next_cycle' });
     expect(autoChronicleSetting(null)).toBe('on');
@@ -75,14 +78,15 @@ describe('managed put_page', () => {
 
   test('a page dated last year skips history with a scoped backfill command', () => brain(async ({ ctx }) => {
     const receipt = await put(ctx, 'meetings/old', meeting(`date: ${lastYear}\n`));
-    expect(receipt.chronicle_backstop).toEqual({ skipped: 'history', ask_user: true,
-      next_command: `gbrain chronicle-backfill --dated-since ${lastYear} --limit 50 --dry-run` });
+    expect(receipt.chronicle_backstop).toMatchObject({ skipped: 'history', stage: 'decision', fix: {
+      preview_argv: chronicleBackfillArgv({ sourceId: 'default', since: today, dryRun: true }),
+      argv: chronicleBackfillArgv({ sourceId: 'default', since: today, dryRun: false }), consent: ['paid'] } });
   }), 120_000);
 
   test('a future invite is not_yet_happened and waits until its end', () => brain(async ({ engine, ctx }) => {
     const end = new Date(Date.now() + 2 * 86_400_000).toISOString();
     const receipt = await put(ctx, 'calendar/2026/10/standup', meeting(`start: ${end}\nend: ${end}\n`));
-    expect(receipt.chronicle_backstop).toEqual({ skipped: 'not_yet_happened', next_command: null, ask_user: false });
+    expect(receipt.chronicle_backstop).toEqual({ skipped: 'not_yet_happened', stage: 'decision', why: CHRONICLE_REASONS.not_yet_happened.meaning() });
     const [row] = await engine.executeRaw<{ state: string; next_attempt_at: Date }>('SELECT state,next_attempt_at FROM chronicle_page_state');
     expect(row.state).toBe('pending');
     expect(new Date(row.next_attempt_at).getTime()).toBeGreaterThanOrEqual(new Date(end).getTime());
