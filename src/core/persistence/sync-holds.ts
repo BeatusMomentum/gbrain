@@ -220,7 +220,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `gbrain refuses ${record.path}, whose exact bytes imported under an earlier version. This is a gbrain bug: report it with the gbrain version, the file and the code, then upgrade or pin the last good version.`,
         why: 'The same bytes imported before, so only gbrain changed; sync holds the file under sync.parser_regression=hold.' };
     case 'rename_held':
-      return repair(true, `The page ${record.path} was renamed from changed after the rename; the preview proposes re-binding the rename to the current page for approval.`);
+      return repair(true, `The page that ${record.path} renames changed after the rename was recorded, so it was not moved; the preview proposes re-binding the rename to the current page for approval.`);
     case 'frontmatter_slug_conflict':
       return repair(true, `The frontmatter slug of ${record.path} names another page; the preview proposes removing that line for approval.`);
     default:

@@ -208,6 +208,31 @@ test('a held rename carries its origin across a chained rename, and an edited ol
   expect(await page(id, 'notes/y')).toBeUndefined();
 }), 120_000);
 
+test('a full sync holds a renamed file whose old page changed instead of importing it as a new page', async () => eachEngine(async () => {
+  const body = Array.from({ length: 30 }, (_, i) => `Line ${i} of a synthetic note that keeps the rename detectable.`).join('\n');
+  const { id, root } = await source({ 'notes/x.md': `---\ntitle: X\n---\n${body}\n` });
+  await sync(id, root);
+  const x = await page(id, 'notes/x');
+  git(root, 'mv', 'notes/x.md', 'notes/y.md');
+  write(root, { 'notes/y.md': `---\ntitle: alice-example first line\nalice-example second line\n---\n${body}\n` }, 'rename onto a broken file');
+  await sync(id, root);
+  await engine.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=$1', [x.id]);
+  write(root, { 'notes/y.md': `---\ntitle: Y\n---\n${body}\n` }, 'fix y after the old page changed');
+
+  const full = await sync(id, root, { full: true });
+  expect(full.held).toMatchObject([{ path: 'notes/y.md', code: 'rename_held', reason: 'rename_source_changed', stale: true }]);
+  expect(await page(id, 'notes/y')).toBeUndefined();
+  expect(await page(id, 'notes/x')).toMatchObject({ id: x.id, source_path: 'notes/x.md', deleted_at: null });
+  const [hold] = await holds(id);
+  expect(hold).toMatchObject({ path: 'notes/y.md', code: 'rename_held', page_id: x.id, meta: { rename_from: { sourcePath: 'notes/x.md', pageId: x.id } } });
+  expect(hold.message).not.toContain('alice-example');
+
+  // Unchanged on the next full walk: still held, still no second page.
+  await sync(id, root, { full: true });
+  expect(await page(id, 'notes/y')).toBeUndefined();
+  expect((await holds(id)).map(h => [h.path, h.code])).toEqual([['notes/y.md', 'rename_held']]);
+}), 120_000);
+
 test('a retry request or an older reader version re-screens a held file the delta did not touch', () => eachEngine(async () => {
   const { id, root } = await source({ 'notes/a.md': good('Alpha'), 'notes/broken.md': BROKEN });
   await sync(id, root);
