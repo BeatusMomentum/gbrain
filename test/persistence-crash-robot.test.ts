@@ -22,6 +22,7 @@ import { crossBoundarySequences, randomSchedule } from '../scripts/persistence/g
 import { ROBOT_TOPOLOGY, restrict } from '../scripts/persistence/robot-driver.ts';
 import { shrinkRun } from '../scripts/persistence/shrink.ts';
 import { runSchedule } from '../scripts/persistence/crash-robot.ts';
+import { installLockOrderTrace, lockOrderReport } from '../scripts/persistence/lock-order.ts';
 import { prepareTopology } from '../scripts/persistence/history-fixture.ts';
 import { claimPersistenceEffect, releaseAbandonedClaims } from '../src/core/persistence/effect-journal.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
@@ -93,6 +94,25 @@ describe('reference model on master behavior', () => {
       expect({ label: schedule.label, violations: result.violations }).toEqual({ label: schedule.label, violations: [] });
     }
   }, 180_000);
+});
+
+describe('lock order', () => {
+  test('real publications keep worktree > sources-by-id order; an inversion is reported', async () => {
+    await robotBrain(async ({ world }) => {
+      installLockOrderTrace();
+      const before = lockOrderReport().violations.length;
+      await runSchedule(world, crossBoundarySequences(ROBOT_TOPOLOGY)[1]);
+      const clean = lockOrderReport();
+      expect(clean.transactions).toBeGreaterThan(10);
+      expect(clean.violations.slice(before)).toEqual([]);
+      await world.engine.transaction(async tx => {
+        await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', ['robot-1']);
+        await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', ['robot-0']);
+        await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', ['00000000-0000-4000-8000-000000000000']);
+      });
+      expect(lockOrderReport().violations.slice(before).map(v => v.rule)).toEqual(['worktrees_before_sources', 'sources_in_id_order']);
+    });
+  }, 120_000);
 });
 
 describe('PGLite releases claims a dead owner left behind', () => {

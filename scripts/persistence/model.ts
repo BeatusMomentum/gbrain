@@ -33,7 +33,7 @@ export const EFFECT_SEAMS = {
 
 export type ViolationClass = 'lost_write' | 'duplicate_apply' | 'untrue_receipt' | 'wedge' | 'withdrawal_permanence'
   | 'source_isolation' | 'authorization' | 'caller_bound_replay' | 'projection_drift' | 'missing_attribution' | 'orphan_rows' | 'effects_not_terminal'
-  | 'untyped_error';
+  | 'untyped_error' | 'lock_order';
 /** Violations that always block a ship (see the plan's bug-fix bound). */
 export const SAFETY_CLASSES: ReadonlySet<ViolationClass> = new Set(['lost_write', 'duplicate_apply', 'untrue_receipt', 'wedge',
   'withdrawal_permanence', 'source_isolation', 'authorization', 'caller_bound_replay']);

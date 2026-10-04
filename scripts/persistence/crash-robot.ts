@@ -19,6 +19,7 @@ import { installFaultHook, type FaultPoint } from '../../src/core/persistence/fa
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
 import postgres from '#postgres';
 import { prepareTopology } from './history-fixture.ts';
+import { installLockOrderTrace, lockOrderReport } from './lock-order.ts';
 import { executeOp, type OpDescriptor, type OpObservation, type World } from './ops.ts';
 import { ReferenceModel, SAFETY_CLASSES, type Violation } from './model.ts';
 import type { Schedule } from './generator.ts';
@@ -162,6 +163,8 @@ function freeze(event: Record<string, unknown>): never {
 }
 
 function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<RobotOutcome>): RobotOutcome {
+  const locks = lockOrderReport();
+  for (const v of locks.violations) model.violate({ class: 'lock_order', detail: `${v.rule}: ${v.detail}` });
   const trace = model.violations.length ? [...model.world.observations.values()].map(o =>
     `${o.id} ${o.kind} ${o.actor}@${o.source} ${o.status}${o.code ? `/${o.code}` : ''}${o.values.revision ? ` rev=${o.values.revision}` : ''}`
     + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
@@ -267,6 +270,7 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
       checkouts = state.checkouts; model = ReferenceModel.fromJSON(world, state.model);
     }
     world.descriptors = new Map(config.schedule.ops.map(d => [d.id, d]));
+    installLockOrderTrace();
     const counts: Record<string, number> = {};
     if (role === 'count') installFaultHook(point => { counts[point] = (counts[point] ?? 0) + 1; });
     if (role === 'run' && config.fault) {
