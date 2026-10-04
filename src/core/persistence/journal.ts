@@ -73,15 +73,11 @@ export async function assertLifetimeIdHeadroom(engine: SqlEngine, principal: Pri
     if (used + needed > limit) throw await cumulativeCapacityError(engine, `${scope} permanent request IDs`, key, `${scope}LifetimeIds`, used, limit);
   }
 }
+/** Creates and locks the counter rows in key order: two statements for any number of keys (#5984 round-trip diet). */
 export async function lockCounters(tx: SqlEngine, keys: string[]): Promise<Counter[]> {
   const sorted = [...new Set(keys)].sort();
-  for (const key of sorted) await tx.executeRaw('INSERT INTO persistence_counters(key) VALUES ($1) ON CONFLICT DO NOTHING', [key]);
-  const result: Counter[] = [];
-  for (const key of sorted) {
-    const [row] = await tx.executeRaw<Counter>('SELECT * FROM persistence_counters WHERE key=$1 FOR UPDATE', [key]);
-    result.push(row);
-  }
-  return result;
+  await tx.executeRaw('INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING', [sorted]);
+  return tx.executeRaw<Counter>('SELECT * FROM persistence_counters WHERE key=ANY($1::text[]) ORDER BY key COLLATE "C" FOR UPDATE', [sorted]);
 }
 export async function getWriteRequest(engine: SqlEngine, principal: Principal, requestId: string): Promise<WriteRequest | null> {
   const [row] = await engine.executeRaw<WriteRequest>(
