@@ -144,6 +144,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'stale_mentions',
   'stub_guard_24h',
   'sync_failures',
+  // #5984: unfinished managed sync cursors, their remaining entries and indexing ETA.
+  'managed_sync_backlog',
   'sync_freshness',
   'takes_count',
   'takes_weight_grid',

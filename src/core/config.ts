@@ -1595,6 +1595,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync.cost_gate_min_usd',
   'sync.federated_v2',
   'sync.include_working_tree',
+  // #5984: managed Postgres sync publishes pages in bulk groups (on by default; each page keeps its own request).
+  'sync.bulk',
+  'sync.bulk_size',
+  'sync.bulk_max_txn_ms',
   // Persisted indexing scope (comma/newline-separated glob list; trailing '/'
   // normalizes to a '/**' subtree glob). Read best-effort at the top of
   // performSyncInner and UNIONED with any per-call --exclude so internal

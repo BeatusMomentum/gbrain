@@ -10,14 +10,14 @@ import { throwIfAborted } from '../abort-check.ts';
 import { digest, sha256 } from './digest.ts';
 import { getWriteRequest, admitWriteInTransaction, receiptFor } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
-import { assertPersistenceAccepting, foregroundWriteCompletions, startPersistenceConsumer, waitForWrite } from './service.ts';
+import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import { prepareManagedSyncMutation, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
-import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noop-kernel.ts';
-import type { GBrainConfig } from '../config.ts';
-import { join, resolve } from 'node:path';
+import { screeningRequest } from './noop-kernel.ts';
+import { waiveNoopEntry, type NoopWaiver } from './sync-waivers.ts';
+import { resolve } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
 import { readCommittedBlob } from '../company-brain/revision.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
@@ -29,6 +29,8 @@ import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointRetryCommand, checkpointTimeou
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
 import { assertManagedSyncAllowed } from './worktree-refresh.ts';
+import type { GBrainConfig } from '../config.ts';
+import { admitGroup, freezeFollowers, groupableIntent, nextGroupSize, type BulkSettings } from './sync-group.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, pinnedBlob, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
@@ -59,10 +61,23 @@ interface Cursor extends SyncDiscovery { runId: string; index: number; authority
   counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number;
     /** #5751: unchanged working-tree files skipped only because a no-op publication could never resolve their admit reason. */
     skippedContextualMode?: number; skippedCanonicalBytes?: number;
+    /** DX-A7: entries advanced without an admission because their publication would change nothing. */
+    waived?: { imports: number; deletes: number };
     /** #5988: imports held, and files imported only after quoting frontmatter. */
     held?: number; recovered?: { count: number; sample_paths: string[]; comment_values?: number } };
   /** #5988: failed content-refusal requests this run converted in place. */
-  convertedFromFailed?: string[]; }
+  convertedFromFailed?: string[];
+  /** #5984: the active drain window (reset when a new drain starts), so a backlog ETA never counts downtime. */
+  progress?: CursorProgress;
+  /** #5984 bulk: the frozen head (also `pending`) and the members admitted with it, in manifest order. */
+  group?: Pending[]; }
+export interface CursorProgress { startedAt: number; startIndex: number; lastAt: number; lastIndex: number }
+/** #5984: the cursor's progress after advancing to `index`, in the drain window that started at `drainStartedAt`. */
+function stampProgress(prior: CursorProgress | undefined, fromIndex: number, index: number, drainStartedAt: number): CursorProgress {
+  const now = Date.now();
+  return prior && prior.startedAt === drainStartedAt ? { ...prior, lastAt: now, lastIndex: index }
+    : { startedAt: drainStartedAt, startIndex: fromIndex, lastAt: now, lastIndex: index };
+}
 const OP = 'managed-sync';
 type CursorHeader = Omit<Cursor, 'entries' | 'companyPlan'> & { total: number };
 const header = ({ entries, companyPlan: _plan, ...value }: Cursor): CursorHeader => ({ ...value, total: entries.length });
@@ -102,22 +117,52 @@ async function saveCursor(engine: BrainEngine, key: string, before: Cursor | nul
         return current;
       }
     }
-    if (before === null) {
-      await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
-      await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [OP, key, JSON.stringify([header(next)])]);
-    } else {
-      const saved = await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
-        WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]);
-      await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
-      // #5988: a hold write or clear commits with the cursor step that passes its entry, never without it.
-      if (saved.length) await inTx?.(tx);
-    }
-    const current = await readCursor(tx, key, next);
-    if (!current) throw syncRunRefusal('storage_error', 'The durable sync cursor disappeared.', next,
-      `The durable sync cursor of source ${next.sourceId} vanished inside the transaction that saved it (another run of the source finished or replaced it), so this run stopped.`);
+    const current = await writeCursor(tx, key, before, next, inTx);
     assertActive?.();
     return current;
   });
+}
+/** Compare-and-swap inside the caller's transaction; a lost swap returns the cursor that won. */
+async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, next: Cursor, inTx?: (tx: BrainEngine) => Promise<unknown>): Promise<Cursor> {
+  if (before === null) {
+    await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
+    await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [OP, key, JSON.stringify([header(next)])]);
+  } else {
+    const saved = await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]);
+    await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
+    // #5988: a hold write or clear commits with the cursor step that passes its entry, never without it.
+    if (saved.length) await inTx?.(tx);
+  }
+  return currentCursor(tx, key, next);
+}
+async function currentCursor(engine: BrainEngine, key: string, cached: Cursor): Promise<Cursor> {
+  const current = await readCursor(engine, key, cached);
+  if (!current) throw syncRunRefusal('storage_error', 'The durable sync cursor disappeared.', cached,
+    `The durable sync cursor of source ${cached.sourceId} vanished (another run of the source finished or replaced it), so this run stopped.`);
+  return current;
+}
+/** The cursor after a waived entry: counted under `waived`, plus the #5751 kernel breakdown kept for `legacySkips`. */
+function waivedCursor(cursor: Cursor, waived: NoopWaiver): Cursor {
+  const prior = cursor.counts.waived ?? { imports: 0, deletes: 0 };
+  const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts,
+    waived: { imports: prior.imports + (waived.kind === 'import' ? 1 : 0), deletes: prior.deletes + (waived.kind === 'delete' ? 1 : 0) } } };
+  delete next.pending; delete next.group;
+  if (waived.kernel.includes('contextual_mode')) next.counts.skippedContextualMode = (next.counts.skippedContextualMode ?? 0) + 1;
+  if (waived.kernel.includes('canonical_file_differs')) next.counts.skippedCanonicalBytes = (next.counts.skippedCanonicalBytes ?? 0) + 1;
+  return next;
+}
+/** The rollback signal of an admission whose cursor no longer holds the frozen entry (ENG-A7). */
+class CursorMoved extends Error {}
+/** DX-A3 / ENG-A12: how the wait for a still-unfinished sync write ended, with its request ID kept. */
+export type ManagedSyncWriteWait = { status: 'pending'; request_id: string }
+  | { status: 'blocked'; request_id: string; cause: string; command: string }
+  | { status: 'read_failed'; request_id: string; reason: string; transient: boolean; sqlstate?: string; attempts: number; message: string; why: string };
+function writeWaitOf(wait: WriteWait): ManagedSyncWriteWait {
+  if (wait.kind === 'blocked') return { status: 'blocked', request_id: wait.request_id, cause: wait.cause, command: wait.command };
+  if (wait.kind !== 'read_failed') return { status: 'pending', request_id: wait.row.request_id };
+  const { kind: _kind, row: _row, ...failure } = wait;
+  return { status: 'read_failed', ...failure };
 }
 async function replaceCursor(engine: BrainEngine, key: string, before: CursorHeader, next: Cursor, assertActive: () => void): Promise<Cursor> {
   return engine.transaction(async tx => {
@@ -144,7 +189,10 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
     ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}),
-    filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
+    waived: { imports: cursor.counts.waived?.imports ?? 0, deletes: cursor.counts.waived?.deletes ?? 0 },
+    filesImported: cursor.index, bankedFiles: cursor.index,
+    managedCursor: { index: cursor.index, total: 'total' in cursor ? cursor.total : cursor.entries.length, ...(cursor.progress ? { progress: cursor.progress } : {}) },
+    ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
     ...(cursor.counts.skippedContextualMode || cursor.counts.skippedCanonicalBytes ? { legacySkips: {
       contextualMode: cursor.counts.skippedContextualMode ?? 0, canonicalBytes: cursor.counts.skippedCanonicalBytes ?? 0 } } : {}) };
 }
@@ -152,7 +200,7 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   const terminal = isTerminalWriteState(row.state);
   const code = terminal ? row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error') : 'write_pending';
   const blockedReason = ['writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'recovery_required', 'writer_lock_unavailable',
-    'database_contention', 'consumer_stopping', 'revision_changed_repreparing'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
+    'database_contention', 'consumer_stopping', 'revision_changed_repreparing', 'unexpected_file_bytes', 'unexpected_staging_bytes'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
   const detail = terminal ? writeFailureDiagnostic(code, row.error_message) : {
     reason: blockedReason, message: 'The write is accepted but not committed; the sync checkpoint has not advanced.',
     suggestion: 'Re-run the same sync options to resume this request. Do not submit a replacement request or skip the pending write.',
@@ -287,6 +335,9 @@ async function managedDryRun(engine: BrainEngine, value: Cursor, base: Cursor, r
     checkpointRetryCommand({ sourceId: value.sourceId, processingOptions: value.processingOptions, syncOptions: value.syncOptions ?? run.syncOptions, repoPath: run.repoPath })) };
 }
 
+/** #5988: the hold clear that commits with the cursor step passing a waived entry. */
+const holdClear = (cursor: Cursor, path: string | null | undefined, observedAt: string) => path
+  ? (tx: BrainEngine) => clearGitHold(tx, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, path, observedAt }) : undefined;
 /** #5988: the hold write that commits with the cursor step passing a held entry. */
 const heldWrite = (held: Cursor, hold: HeldEntry, observedAt: string) => (tx: BrainEngine) => writeGitHold(tx, { source_id: held.sourceId, incarnation: held.incarnation, ...hold,
   observed_at: observedAt, run_id: held.runId, mode: 'managed' });
@@ -365,6 +416,81 @@ async function sameContentAtOrigin(engine: BrainEngine, cursor: Cursor, entry: C
   }
 }
 
+/** Counts a committed page into the cursor, as the single path does. */
+function countCommitted(counts: Cursor['counts'], pending: Pending, outcome: WriteRequest['outcome']): void {
+  if (outcome?.noop !== true) {
+    if (pending.intent.kind === 'managed_sync_delete') counts.deleted++;
+    else if (pending.intent.renameFrom) counts.renamed = (counts.renamed ?? 0) + 1;
+    else if (pending.pageId === null) counts.added++; else counts.modified++;
+  }
+  counts.chunks += Number(outcome?.chunks ?? 0);
+  if ((outcome?.recovered_frontmatter || outcome?.comment_value) && pending.intent.path) counts.recovered = addRecovered(counts.recovered,
+    { paths: outcome.recovered_frontmatter ? [pending.intent.path] : [], commentValues: outcome.comment_value ? 1 : 0 });
+}
+interface BulkPass { settings: BulkSettings; perMemberMs: number | null }
+/**
+ * #5984 bulk: admits the cursor's group, waits for it and advances over the
+ * committed prefix. A terminal failure leaves that member as the single
+ * pending entry, so the single path records and reports it.
+ */
+async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk: BulkPass, config: GBrainConfig, wait: { waitMs: number; signal?: AbortSignal },
+  drainStartedAt: number, onProgress: SyncOpts['onProgress']): Promise<{ cursor: Cursor } | { result: SyncResult }> {
+  const signal = wait.signal;
+  const members = cursor.group!;
+  const principal = cursor.authority.writer.principal;
+  let rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
+    [principal.kind, principal.id, members.map(member => member.requestId)]);
+  if (rows.length < members.length) {
+    const admitted = await admitGroup(engine, members, cursor, async tx => {
+      const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
+      return held?.request_id === members[0]!.requestId;
+    });
+    if (!admitted) return { cursor: await currentCursor(engine, key, cursor) };
+    rows = admitted;
+  }
+  const admitted = performance.now();
+  onProgress?.({ phase: 'managed_sync.group', bankedFiles: cursor.index, total: cursor.entries.length, group: members.length });
+  await validateSyncAuthority(engine, cursor.authority, members[0]!.slug);
+  assertSyncDispatchActive();
+  const last = rows.find(row => row.request_id === members.at(-1)!.requestId)!;
+  const waited = await awaitWrite(engine, last, config, wait);
+  assertSyncDispatchActive();
+  const states = new Map((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[])', [rows.map(row => row.id)])).map(row => [row.request_id, row]));
+  const next: Cursor = { ...cursor, counts: { ...cursor.counts } };
+  let committed = 0;
+  for (const member of members) {
+    const row = states.get(member.requestId);
+    if (row?.state !== 'committed') break;
+    countCommitted(next.counts, member, row.outcome);
+    committed++;
+  }
+  if (committed === members.length) bulk.perMemberMs = (performance.now() - admitted) / members.length;
+  next.index = cursor.index + committed;
+  if (committed) next.progress = stampProgress(cursor.progress, cursor.index, next.index, drainStartedAt);
+  const stuck = members[committed];
+  const stuckRow = stuck ? states.get(stuck.requestId) : undefined;
+  if (!stuck) { delete next.pending; delete next.group; }
+  else { next.pending = stuck; if (stuckRow && isTerminalWriteState(stuckRow.state)) delete next.group; else next.group = members.slice(committed); }
+  const saved = committed || next.group?.length !== members.length ? await saveCursor(engine, key, cursor, next) : cursor;
+  for (let index = cursor.index + 1; index <= saved.index && index <= next.index; index++) onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: index, total: cursor.entries.length });
+  if (stuck && stuckRow && !isTerminalWriteState(stuckRow.state) && saved.index === next.index) {
+    return { result: { ...result(saved, 'partial', signal?.aborted ? 'timeout' : 'writer_pending'), ...(cursor.authority.writer.remote ? {} : {
+      managedWrite: writeDiagnostic(saved, stuck, stuckRow), writeWait: writeWaitOf(last.request_id === stuckRow.request_id ? waited : { kind: 'pending', row: stuckRow }) }) } };
+  }
+  return { cursor: saved };
+}
+
+/** A finished cursor is deleted (compare-and-swap) before the next run discovers; returns whichever cursor replaced it. */
+async function retireCompletedCursor(engine: BrainEngine, key: string, completed: Cursor, assertActive: () => void): Promise<Cursor | null> {
+  await engine.transaction(async tx => {
+    assertActive();
+    await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [OP, key, JSON.stringify([header(completed)])]);
+    assertActive();
+  });
+  assertActive();
+  await clearManagedSyncFailureAfterSuccess(engine, key);
+  return readCursor(engine, key);
+}
 /** What the hold report needs from a managed run: its source, cursor and authority. */
 interface HoldRunState { sourceId?: string; incarnation?: string; remote?: boolean; cursor?: () => Cursor | CursorHeader | null }
 
@@ -485,17 +611,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       assertActive();
       return result(cursor, cursor.from === null ? 'first_sync' : 'synced');
     }
-    if (cursor?.done) {
-      const completed = cursor;
-      await engine.transaction(async tx => {
-        assertActive();
-        await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [OP, key, JSON.stringify([header(completed)])]);
-        assertActive();
-      });
-      assertActive();
-      await clearManagedSyncFailureAfterSuccess(engine, key);
-      cursor = await readCursor(engine, key);
-    }
+    if (cursor?.done) cursor = await retireCompletedCursor(engine, key, cursor, assertActive);
     if (!cursor) {
       assertActive();
       phase = 'discovery';
@@ -533,8 +649,10 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
     const config = loadConfig() ?? { engine: engine.kind };
     const analyzeEvery = await importAnalyzeEveryPages(engine);
     let batchStart = performance.now(), batchPages = 0, foregroundWaitStart = 0, foregroundBaseline = 0;
-    let creditedPages = 0, creditStarted = 0;
-    const sliceStarted = performance.now(), sliceFirstIndex = cursor.index;
+    let creditedPages = 0, creditStarted = 0, foregroundQueued = false;
+    const sliceStarted = performance.now(), sliceFirstIndex = cursor.index, drainStartedAt = opts.drainStartedAt ?? Date.now();
+    const bulk: BulkPass = { settings: opts.bulk && !company ? opts.bulk : { enabled: false, reason: null, size: 1, maxTxnMs: 0 }, perMemberMs: null };
+    opts.onProgress?.({ phase: 'managed_sync.start', bankedFiles: cursor.index, total: cursor.entries.length });
     while (!cursor.done) {
       assertActive();
       if (!cursor.pending) {
@@ -544,6 +662,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         const [foreground] = await engine.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid
           AND state IN ('queued','running','recovering') AND NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1`, [cursor.binding.worktree_id]);
         assertActive();
+        foregroundQueued = Boolean(foreground);
         if (foreground && creditedPages === 0) {
           startPersistenceConsumer(engine, config);
           if (!foregroundWaitStart) {
@@ -569,22 +688,36 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         cursor = await saveCursor(engine, key, cursor, { ...cursor, ...(frozen.rebound ? { overtaken: true as const } : {}), pending: frozen }, false, assertActive);
       }
       if (!cursor.pending) continue; // another owner-loop advanced the cursor
-      const pending = cursor.pending;
+      const pending: Pending = cursor.pending;
       phase = 'admission';
       const prior = await getWriteRequest(engine, cursor.authority.writer.principal, pending.requestId);
       assertActive();
-      // #5470: a frozen import whose publication would change nothing advances the cursor without an admission.
-      const waived = prior ? null : await unchangedSyncImport(engine, cursor, pending, config);
+      // #5470/#5984: a frozen entry whose publication would change nothing advances the cursor without an admission.
+      const screened: Cursor = cursor;
+      const waived: Cursor | null = prior ? null : await waiveNoopEntry(engine, screened, pending, config, key,
+        (tx, noop) => writeCursor(tx, key, screened, { ...waivedCursor(screened, noop), progress: stampProgress(screened.progress, screened.index, screened.index + 1, drainStartedAt) },
+          holdClear(screened, pending.intent.path, observedAt)), tx => currentCursor(tx, key, screened));
       if (waived) {
-        const skipped: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete skipped.pending;
-        if (waived.includes('contextual_mode')) skipped.counts.skippedContextualMode = (skipped.counts.skippedContextualMode ?? 0) + 1;
-        if (waived.includes('canonical_file_differs')) skipped.counts.skippedCanonicalBytes = (skipped.counts.skippedCanonicalBytes ?? 0) + 1;
-        const path = pending.intent.path;
-        cursor = await saveCursor(engine, key, cursor, skipped, false, undefined, path ? tx => clearGitHold(tx, { sourceId: skipped.sourceId, incarnation: skipped.incarnation, path, observedAt }) : undefined);
-        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+        cursor = waived;
+        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true });
         assertActive();
         // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
         if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
+        continue;
+      }
+      if (bulk.settings.enabled && !foregroundQueued && !prior && !cursor.group && !pending.rebound && groupableIntent(pending.intent)) {
+        const head: Cursor = cursor;
+        const followers = await freezeFollowers(engine, head, config, nextGroupSize(bulk.settings, bulk.perMemberMs) - 1,
+          async index => { const frozen = await freezeEntry(engine, { ...head, index }, key, assertActive, frozenRun); return 'hold' in frozen ? null : frozen; });
+        // Members name their group (the head's request ID), so a consumer can claim them together.
+        const members = [pending, ...followers].map(member => ({ ...member, intent: { ...member.intent, group: pending.requestId } }));
+        if (followers.length) cursor = await saveCursor(engine, key, head, { ...head, pending: members[0], group: members }, false, assertActive);
+      }
+      if (cursor.group?.[0]?.requestId === pending.requestId && cursor.pending?.requestId === pending.requestId) {
+        const step = await groupStep(engine, cursor, key, bulk, config, opts.drainStartedAt ? { waitMs: 30_000, signal } : { waitMs: 5000 }, drainStartedAt, opts.onProgress);
+        if ('result' in step) return step.result;
+        cursor = step.cursor;
+        assertActive();
         continue;
       }
       const admitting = cursor;
@@ -596,18 +729,25 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
           sourceId: admitting.sourceId, sourceIncarnation: admitting.incarnation, slug: pending.slug, pageId: pending.pageId,
           worktreeId: admitting.binding.worktree_id, topologyGeneration: admitting.binding.topology_generation,
           principal: admitting.authority.writer.principal, authority: admitting.authority.writer, callerIntent: pending.intent, intent: pending.intent });
+        // ENG-A7: after the counter locks (the publication lock order), admit only while the cursor still holds this entry.
+        const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id
+          FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
+        if (held?.request_id !== pending.requestId) throw new CursorMoved();
         assertActive();
         return accepted;
-      }));
+      })).catch(error => { if (error instanceof CursorMoved) return null; throw error; });
+      if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();
       // #5762: a checkpoint's validation runs under the coordinator's 5 s statement timeout, so its wait outlasts that
       // budget; a timed-out checkpoint then reports its terminal refusal and hint in this run instead of the next.
-      const done = await waitForWrite(engine, row, config, pending.intent.kind === 'managed_sync_checkpoint' ? 8000 : 5000);
+      // #5984: a drain re-enters anyway, so it waits longer per page instead of paying a full re-entry; its stop signal bounds the wait.
+      const waited = await awaitWrite(engine, row, config, opts.drainStartedAt ? { waitMs: 30_000, signal } : { waitMs: pending.intent.kind === 'managed_sync_checkpoint' ? 8000 : 5000 });
+      const done = waited.row;
       assertSyncDispatchActive();
       if (!isTerminalWriteState(done.state)) {
         return { ...result(cursor, 'partial', signal?.aborted ? 'timeout' : 'writer_pending'),
-          ...(authority.writer.remote ? {} : { managedWrite: writeDiagnostic(cursor, pending, done) }) };
+          ...(authority.writer.remote ? {} : { managedWrite: writeDiagnostic(cursor, pending, done), writeWait: writeWaitOf(waited) }) };
       }
       if (done.state !== 'committed') {
         const { failure, ledgerRecorded } = await recordManagedSyncFailure(engine, { source_id: cursor.sourceId, source_incarnation: cursor.incarnation, path: pending.intent.path ?? '<checkpoint>',
@@ -633,17 +773,10 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         return withLinks(cursor, result(cursor, cursor.from === null ? 'first_sync' : 'synced'));
       }
       // The frozen manifest is shared; only the cursor header changes per page.
-      const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete next.pending;
-      if (done.outcome?.noop !== true) {
-        if (pending.intent.kind === 'managed_sync_delete') next.counts.deleted++;
-        else if (pending.intent.renameFrom) next.counts.renamed = (next.counts.renamed ?? 0) + 1;
-        else if (pending.pageId === null) next.counts.added++; else next.counts.modified++;
-      }
-      next.counts.chunks += Number(done.outcome?.chunks ?? 0);
-      if ((done.outcome?.recovered_frontmatter || done.outcome?.comment_value) && pending.intent.path) next.counts.recovered = addRecovered(next.counts.recovered,
-        { paths: done.outcome.recovered_frontmatter ? [pending.intent.path] : [], commentValues: done.outcome.comment_value ? 1 : 0 });
+      const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }; delete next.pending; delete next.group;
+      countCommitted(next.counts, pending, done.outcome);
       cursor = await saveCursor(engine, key, cursor, next);
-      opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+      opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length });
       // F4b: PGLite plans the rest of a large sync against fresh statistics (spec Addendum A item 2).
       if (analyzeEvery > 0 && cursor.index % analyzeEvery === 0) await maybeRefreshPlannerStats(engine, 'managed_sync', { throttle: false }).catch(() => undefined);
       assertActive();
@@ -680,35 +813,5 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       }
     }
     throw error;
-  }
-}
-
-/**
- * #5470 no-op screen for working-tree and company-profile sync: runs the sync
- * preparer on the frozen, unadmitted entry. A rename or a canonical overlay is
- * always admitted. Returns null to admit, or the kernel waivers the skip used.
- * #5751: a managed working-tree entry waives the two admit reasons its no-op
- * publication can never resolve (a pending contextual-mode stamp, and file
- * bytes that differ from the prepared content yet parse to the same page), so
- * an unchanged legacy file stops taking a request ID on every run.
- */
-async function unchangedSyncImport(engine: BrainEngine, cursor: Cursor, pending: Pending, config: GBrainConfig): Promise<NoopKernelWaiver[] | null> {
-  const intent = pending.intent;
-  if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
-  try {
-    const snapshot = await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
-    const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,
-      worktree_id: cursor.binding.worktree_id, authority: cursor.authority.writer, intent, request_id: pending.requestId });
-    const prepared = await prepareManagedSyncMutation(engine, row, config);
-    if (prepared.file || prepared.target === 'skill_bundle') return null;
-    const file = { root: cursor.root, path: join(cursor.root, intent.path), content: intent.content };
-    const inspected = await inspectUnchanged(engine, { prepared: { ...prepared, target: 'page', file }, snapshot, sourcePath: intent.sourcePath, databaseOnly: false,
-      embeddingRequested: !prepared.deferEmbedding && !config.embedding_disabled && !!config.embedding_model?.trim(),
-      waive: intent.working === true ? ['contextual_mode', 'canonical_file_differs'] : undefined });
-    if (inspected.admitReason) return null;
-    await prepared.validate?.(engine);
-    return inspected.waived ?? [];
-  } catch {
-    return null;
   }
 }

@@ -68,6 +68,20 @@ export interface SyncIntent extends Record<string, unknown> {
   from: string | null; target: string; total: number; slugMode: 'git-root' | 'source-root';
 }
 /**
+ * #5984: the source-wide part of sync validation (managed mode, configured
+ * root, cursor, owner epoch) runs once per transaction; a bulk group's
+ * members share it. Its rows stay locked FOR SHARE until the transaction ends.
+ */
+const sharedValidations = new WeakMap<object, Map<string, Promise<{ run_id: string; request_id: string | null; group: string[] | null } | null>>>();
+function sharedSyncValidation(tx: BrainEngine, key: string, run: () => Promise<{ run_id: string; request_id: string | null; group: string[] | null } | null>) {
+  if ((tx as { _pageTransaction?: boolean })._pageTransaction !== true) return run();
+  let byKey = sharedValidations.get(tx);
+  if (!byKey) { byKey = new Map(); sharedValidations.set(tx, byKey); }
+  let shared = byKey.get(key);
+  if (!shared) { shared = run(); byKey.set(key, shared); }
+  return shared;
+}
+/**
  * Read-only: the receipt itself for the local CLI writer's own request;
  * another principal's request is inspected on the owner instead.
  */
@@ -207,17 +221,23 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
   };
   const validate = async (tx: BrainEngine) => {
-    await assertManagedSyncActive(tx, true);
+    const cursor = await sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}`, async () => {
+      await assertManagedSyncActive(tx, true);
+      const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
+      assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
+      // #5984: a bulk group's members are held by the cursor's `group`, its head also by `pending`.
+      const [held] = await tx.executeRaw<{ run_id: string; request_id: string | null; group: string[] | null }>(
+        `SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id,
+          (SELECT jsonb_agg(m->>'requestId') FROM jsonb_array_elements(COALESCE(completed_keys->0->'group','[]'::jsonb)) m) AS group
+         FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR SHARE`, [p.cursorKey]);
+      const current = await getWorktreeBinding(tx, row.source_id);
+      if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
+        `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
+      return held ?? null;
+    });
     await validateSyncAuthority(tx, p.syncAuthority, row.slug);
-    const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
-    assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
-    const [cursor] = await tx.executeRaw<{ run_id: string; request_id: string | null }>(
-      "SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR SHARE", [p.cursorKey]);
-    if (cursor && (cursor.run_id !== p.runId || cursor.request_id !== row.request_id)) throw syncPublicationRefusal('revision_conflict', 'The accepted sync cursor changed before publication.', row, p,
+    if (cursor && (cursor.run_id !== p.runId || (cursor.request_id !== row.request_id && !cursor.group?.includes(row.request_id)))) throw syncPublicationRefusal('revision_conflict', 'The accepted sync cursor changed before publication.', row, p,
       `Another sync run of ${row.source_id} replaced the cursor this request belongs to.`);
-    const current = await getWorktreeBinding(tx, row.source_id);
-    if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
-      `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
     if (p.kind !== 'managed_sync_checkpoint') await assertKnowledgePublicationAllowed(tx, row,
       p.path === null ? undefined : { root, path: join(root, p.path) });
     if (p.path !== null && syncRawHash(root, p.path) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
