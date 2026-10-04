@@ -17,7 +17,7 @@
  * every object in its public schema. Every command prints one JSON document.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import postgres from '#postgres';
 
@@ -494,6 +494,48 @@ async function cmdLegacy(dir: string) {
   return { built: dir };
 }
 
+/** Give a brain copy realistic vectors: every chunk, fact and take gets a deterministic pseudo-random embedding. */
+async function cmdEmbed(dir: string) {
+  const engine = await openPglite(dir);
+  const t0 = performance.now();
+  await engine.db.exec(`SET session_replication_role = replica; SELECT setseed(0.42);
+    UPDATE content_chunks SET embedding = (SELECT array_agg(random()::real - 0.5) FROM generate_series(1, 1024 + 0 * id))::vector, model = 'spike-random-1024', embedded_at = now();
+    UPDATE facts SET embedding = (SELECT array_agg(random()::real - 0.5) FROM generate_series(1, 1024 + 0 * id))::halfvec;
+    UPDATE takes SET embedding = (SELECT array_agg(random()::real - 0.5) FROM generate_series(1, 1024 + 0 * id))::vector;
+    SET session_replication_role = origin;`);
+  const [n] = await engine.db.query<{ chunks: number; facts: number; takes: number }>(`SELECT (SELECT count(*) FROM content_chunks WHERE embedding IS NOT NULL)::int AS chunks,
+    (SELECT count(*) FROM facts WHERE embedding IS NOT NULL)::int AS facts, (SELECT count(*) FROM takes WHERE embedding IS NOT NULL)::int AS takes`).then(r => r.rows);
+  await engine.disconnect();
+  return { embedded: n, ms: ms(t0) };
+}
+
+/** Time-to-value phases on one brain: target initSchema, copy (indexes deferred or not), index build, digest verify, both doctors. */
+async function cmdTtv(dir: string, url: string) {
+  const phases: Record<string, number> = {};
+  const doctor = (env: Record<string, string>) => {
+    const t = performance.now();
+    const r = Bun.spawnSync(['bun', 'src/cli.ts', 'doctor', '--no-migrate', '--json'], { env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' });
+    let failing: string[] = [];
+    try { failing = (JSON.parse(r.stdout.toString()).checks as { name: string; status: string }[]).filter(c => c.status === 'fail').map(c => c.name); } catch { failing = ['<unparseable>']; }
+    return { ms: ms(t), failing };
+  };
+  const home = join(dir, 'home');
+  mkdirSync(join(home, '.gbrain'), { recursive: true });
+  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(dir, 'brain') }));
+  const sourceDoctor = doctor({ GBRAIN_HOME: home, GBRAIN_DATABASE_URL: '', DATABASE_URL: '' });
+  phases.sourceDoctor = sourceDoctor.ms;
+  phases.initSchema = (await cmdTargetInit(url)).totalMs;
+  const copy = await cmdRouteB(dir, url);
+  Object.assign(phases, { copy: copy.timings.copy, sequences: copy.timings.sequences, dropIndexes: copy.timings.dropIndexes ?? 0, buildIndexes: copy.timings.buildIndexes ?? 0 });
+  const t = performance.now(); const v = await cmdVerify(dir, url); phases.verify = ms(t);
+  const dochome = join(dir, 'ttv-target-home'); mkdirSync(dochome, { recursive: true });
+  const targetDoctor = doctor({ GBRAIN_HOME: dochome, GBRAIN_DATABASE_URL: url });
+  phases.targetDoctor = targetDoctor.ms;
+  phases.total = Object.entries(phases).filter(([k]) => k !== 'total').reduce((a, [, b]) => a + b, 0);
+  return { deferIndexes: flag('defer-indexes'), rows: copy.rows, verifyOk: v.ok, deferred: copy.deferredIndexes, phases,
+    sourceDoctorFailing: sourceDoctor.failing, targetDoctorFailing: targetDoctor.failing };
+}
+
 async function cmdTargetInit(url: string) {
   const sql = target(url);
   const t0 = performance.now();
@@ -513,6 +555,8 @@ const [cmd, a1, a2] = process.argv.slice(2);
 const commands: Record<string, () => Promise<unknown>> = {
   fixture: () => cmdFixture(resolve(a1)),
   legacy: () => cmdLegacy(resolve(a1)),
+  embed: () => cmdEmbed(resolve(a1)),
+  ttv: () => cmdTtv(resolve(a1), a2),
   'target-init': () => cmdTargetInit(a1),
   'route-a': () => cmdRouteA(resolve(a1), a2),
   'route-b': () => cmdRouteB(resolve(a1), a2),
@@ -524,4 +568,3 @@ if (import.meta.main) {
   console.log(JSON.stringify(await commands[cmd](), null, 2));
   process.exit(0);
 }
-void readFileSync;
