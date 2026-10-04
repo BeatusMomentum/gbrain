@@ -745,3 +745,5 @@ E2E_TEST_MAP["src/core/engine-sql/normalize.ts"] = ["test/e2e/engine-sql-normali
 E2E_TEST_MAP["src/core/engine-sql/brands.ts"] = ["test/e2e/engine-sql-rls-scope.test.ts"];
 E2E_TEST_MAP["src/core/engine-sql/chunks.ts"] = ["test/e2e/evidence-delivery-leak.test.ts", "test/e2e/evidence-delivery-parity.test.ts", "test/e2e/embedding-tombstones-postgres.test.ts"];
 E2E_TEST_MAP["src/core/engine-sql/links.ts"] = ["test/e2e/links-read-order.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/federated-link-reads-postgres.test.ts"];
+E2E_TEST_MAP["src/core/feedback/store.ts"] = ["test/e2e/feedback-parity.test.ts"];
+E2E_TEST_MAP["src/core/search/feedback-boost.ts"] = ["test/e2e/feedback-parity.test.ts"];
