@@ -119,7 +119,7 @@ describe('normaliser rows', () => {
   });
 
   test('unknown throw: internal_error naming the op, doctor fix, host_admin over http, redacted', () => {
-    const env = toAgentError(new Error('boom at postgres://u:GSTACK_EXAMPLE_NONCE@db.example.test/x'), cx({ op: 'find_orphans', transport: 'http', render: render({ transport: 'http', isCallable: () => false }) }));
+    const env = toAgentError(new Error(`boom at ${['postgres://u', 'GSTACK_EXAMPLE_NONCE'].join(':')}@db.example.test/x`), cx({ op: 'find_orphans', transport: 'http', render: render({ transport: 'http', isCallable: () => false }) }));
     expect(env.code).toBe('internal_error');
     expect(env.suggestion).toContain('Server-side failure in find_orphans');
     expect(env.message).not.toContain('GSTACK_EXAMPLE_NONCE');

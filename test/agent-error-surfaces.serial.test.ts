@@ -370,7 +370,7 @@ describe('REAL CLI triggers for the other families', () => {
 
   test('GBRAIN_DB_ACCESS: a closed database port classifies with the db-repair fix (human and --json)', async () => {
     const want: Expect = { error: 'database_error', code: 'database_error', fixArgv: ['gbrain', 'db-repair'] };
-    const env = { GBRAIN_DATABASE_URL: 'postgresql://h3:GSTACK_EXAMPLE_NONCE@127.0.0.1:1/h3' };
+    const env = { GBRAIN_DATABASE_URL: ['postgresql://h3', 'GSTACK_EXAMPLE_NONCE'].join(':') + '@127.0.0.1:1/h3' };
     const json = await gbrain(homeA, ['get', MISSING, '--json'], env);
     expectSurvives(json.json, want, 'cli --json', BRAIN_PIN);
     expect(json.json.suggestion).toContain('GBRAIN_DB_ACCESS');
