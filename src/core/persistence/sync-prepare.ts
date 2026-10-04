@@ -37,6 +37,7 @@ import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
 import { clearGitHold, recordSyncImportProvenance } from './sync-holds.ts';
 import { VERSION } from '../../version.ts';
+import { windowPredecessor, windowPredecessorCommitted } from './sync-window.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -221,15 +222,21 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
   };
   const validate = async (tx: BrainEngine) => {
-    const cursor = await sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}`, async () => {
+    const after = windowPredecessor(row);
+    const cursor = await sharedSyncValidation(tx, `${row.source_id}\0${p.cursorKey}\0${p.ownerEpoch}\0${root}\0${after ?? ''}`, async () => {
       await assertManagedSyncActive(tx, true);
       const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
       assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
-      // #5984: a bulk group's members are held by the cursor's `group`, its head also by `pending`.
+      // #5984: a bulk group's members are held by the cursor's `group`, its head also by `pending`, and
+      // admitted-ahead groups by `window`. FOR KEY SHARE keeps the cursor row in place without blocking the
+      // drain's cursor saves, so the next group is admitted while this one publishes.
       const [held] = await tx.executeRaw<{ run_id: string; request_id: string | null; group: string[] | null }>(
         `SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id,
-          (SELECT jsonb_agg(m->>'requestId') FROM jsonb_array_elements(COALESCE(completed_keys->0->'group','[]'::jsonb)) m) AS group
-         FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR SHARE`, [p.cursorKey]);
+          (SELECT jsonb_agg(m->>'requestId') FROM (SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'group','[]'::jsonb)) m
+            UNION ALL SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'window','[]'::jsonb)) g, jsonb_array_elements(g) m) members) AS group
+         FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR KEY SHARE`, [p.cursorKey]);
+      if (after && !await windowPredecessorCommitted(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
+        `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
       const current = await getWorktreeBinding(tx, row.source_id);
       if (!current || String(current.owner_epoch) !== p.ownerEpoch) throw syncPublicationRefusal('owner_unavailable', 'The accepted sync owner epoch changed.', row, p,
         `The owner epoch of ${row.source_id} changed after this sync was admitted. Do not claim or transfer the source to repair content.`, true);
