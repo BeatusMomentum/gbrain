@@ -20,10 +20,14 @@ every session?
   token context window (a 128k slice runs as a secondary check), so compaction
   fires several times per question. It answers the question at the end from
   its context plus whatever it saved in gbrain.
-- Splits, judge prompt and judge model come from the shared streaming harness
-  (P0): a frozen dev split for iteration and a sealed split that only the
-  custodian runs. The harness commit is pinned in the dev report before the
-  first dev run and is not changed afterwards.
+- The streaming agent loop, splits, judge prompt and judge model come from the
+  shared held-out harness (gbrain-evals `p0-heldout-harness`, inspected at
+  `2ab6eff`). At that commit the agent-compaction scenario is scheduled for the
+  harness's milestone M2 and LongMemEval-S has no held-out portion (all 500
+  questions are development data). The sealed source for E1 is therefore
+  named by the harness custodian with M2 and recorded here, with the harness
+  commit, before any sealed cell runs. Until then E1 runs on development data
+  only and sets no default.
 - Every arm gets the same question-blind profile page (who the user is, built
   from the first session only, never from the question). Only arms C and D mark
   it as core.
@@ -40,9 +44,17 @@ every session?
 
 ## Models
 
-- gpt-6-luna on the full sealed split.
-- claude-sonnet-5-5 on a fixed 150-question slice of the sealed split (slice
-  drawn by the harness seed before any run).
+The newest frontier model of each family, per the gbrain eval model rules
+(checked 2026-10-04): claude-sonnet-5-5, claude-opus-5-5, gpt-6.1-sol and
+claude-fable-5-1, each on the same fixed slice of the sealed source (drawn by
+the harness seed before any run; size set with the sealed source so the
+budget below holds). claude-sonnet-5-5, the model most users run, is reported
+first.
+
+Change log: the first draft named gpt-6-luna (full split) and
+claude-sonnet-5-5 (150-question slice). It was revised on 2026-10-04, before
+any cell ran, to follow the eval model rules (newest model of each family);
+the budget is re-estimated with the slice size.
 
 ## Metrics
 
@@ -54,14 +66,15 @@ every session?
 - Pressure notice fire rate (questions where it fired at least once) and miss
   rate (compactions with no notice in the preceding segment).
 
-## Pass bars (sealed split, paired bootstrap 95% CI over questions)
+## Pass bars (sealed source, paired bootstrap 95% CI over questions)
 
 - **Pressure notice stays on by default** if, on claude-sonnet-5-5, B − A′ ≥
   +3.0 accuracy points with the CI lower bound above 0, no question category
   drops by more than 2.0 points, cost per question rises by at most 25%, and
-  gpt-6-luna's B − A′ is not negative. Otherwise `memory.pressure.enabled`
-  ships `false`.
-- **Core delivery stays on by default** if C − A′ ≥ 0 on both models and no
+  B − A′ is not negative on any other model. A model at 100% on every arm is
+  reported as a ceiling and does not count either way. Otherwise
+  `memory.pressure.enabled` ships `false`.
+- **Core delivery stays on by default** if C − A′ ≥ 0 on every model and no
   category drops by more than 2.0 points. Otherwise `memory.core.enabled`
   ships `false`.
 - D is reported but does not gate a default.
@@ -76,7 +89,8 @@ every session?
 
 ## Budget
 
-Estimated $860 to $1,280 for all sealed and dev runs; hard cap $1,400. The live
+Hard cap $1,400 for all E1 runs, dev and sealed; the sealed slice size is chosen
+so the four-model estimate fits it. The live
 delivery check (E2) is capped at $4. Latency check (E3): session-start p95 under
 1,500 ms with a full 4,000-char core, and non-core `put_page` overhead under
 5 ms.
