@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.41.0] - 2026-10-04
+
+**A keyword-only `query` whose answer is in the top five now grades `moderate` again when the question merely uses a word the brain never writes, while questions about a missing attribute or an unknown company still grade `weak` (#5919). Conversation pages can set their own segmentation gap (#5918).**
+
+v0.60.32.0 started grading an OR-relaxed keyword top (no chunk matched every query word) `weak`. That correctly flagged questions the brain cannot answer, but it also flagged answerable ones such as "Which city is Acme Example headquartered in?" against a page that says "Acme Example is headquartered in ...": the word "city" is never written, so the strict match fails even though the answer is right there. An agent that gates on `moderate` or better then abstained on answers it had.
+
+The grade now checks the top five rows before calling a relaxed top weak. It grades `moderate`, with the new reason `keyword_relaxed_corroborated`, when all of these hold:
+- at most one content word of the question appears in none of the five rows;
+- that word is not a name (a capitalized or acronym word such as an unknown company), because an unmatched name means the question is about something the evidence never mentions;
+- one row holds every other matched word, so the entity and the asked attribute appear together instead of on different pages.
+
+Otherwise it stays `weak` with reason `keyword_relaxed_top`. On the gbrain-evals A4 abstention world (keyword-only, 240 questions), answerable questions graded `moderate` rise from 40 to 100 of 120, and unanswerable questions graded `moderate` stay at 0 of 120. The remaining 20 answerable questions ask for "annual recurring revenue" while the pages write "ARR"; with no shared words, a keyword-only grade cannot tell them from a missing attribute, so they stay `weak`. With an embedding provider configured, relaxed rows are not used whenever the vector search returns results, so this path is mainly the keyless and degraded one.
+
+`gbrain extract-conversation-facts` now reads an optional `conversation_segment_gap_minutes` from a page's frontmatter and splits that page on its own gap instead of the 30-minute default. Set it from a collector that knows its message cadence, as an unquoted whole number of minutes from 1 to 10080. Any other value is ignored. A warning names the page, the rejected value, the accepted range and the command to rerun after fixing it. Changing the value changes the page's content hash, so the next run extracts the page again.
+
 ## [0.60.39.0] - 2026-10-03
 
 **`gbrain repair failed-writes` replays the `put_page`, `add_timeline_entry` and `remember` calls the managed writer guard refused before v0.60.38.0 (#5983), from the content their failed receipts still hold. Each write is replayed once, and never over a later write of the same page.**
