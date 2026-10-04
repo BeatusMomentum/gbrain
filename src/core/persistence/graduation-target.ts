@@ -20,9 +20,8 @@ import type { BrainEngine } from '../engine.ts';
 import { PostgresEngine } from '../postgres-engine.ts';
 import { normalizeDirectUrl, isNetworkUnreachableError } from '../connection-manager.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
-import { opError, type OpErrorOpts, type OperationError } from '../ops/contract.ts';
-import type { RegistryCode } from '../error-registry.ts';
-import type { EmbeddingColumn, GraduationBlocker, GraduationErrorCode, TargetIdentity, TargetProbe, TargetRoutes, TriggerBypass } from './engine-graduation.types.ts';
+import type { EmbeddingColumn, GraduationBlocker, TargetIdentity, TargetProbe, TargetRoutes, TriggerBypass } from './engine-graduation.types.ts';
+import { targetAuthFailedError, targetDdlUnreachableError, targetUnsupportedError } from './graduation-errors.ts';
 
 export type ResolvedTargetRoutes = TargetRoutes & { mainUrl: string; ddlUrl: string };
 
@@ -33,24 +32,13 @@ export const MIN_TARGET_SERVER_VERSION_NUM = 140000;
 /** pgvector release that added halfvec (facts.embedding, query_cache.embedding). */
 export const MIN_VECTOR_HALFVEC_VERSION = '0.7.0';
 
-/** Graduation codes are registered by the agent-contract batch; until then they are typed by the shared list. */
-export function graduationError(code: GraduationErrorCode, message: string, suggestion: string, opts: OpErrorOpts = {}): OperationError {
-  return opError(code as RegistryCode, message, suggestion, opts);
-}
-
 export function targetPlanArgv(routes: Pick<TargetRoutes, 'urlEnv'>, to: 'postgres' | 'supabase' = 'postgres'): string[] {
   return ['gbrain', 'migrate', '--to', to, '--url-env', routes.urlEnv ?? DEFAULT_TARGET_URL_ENV, '--plan', '--json'];
 }
 
 function parsePostgresUrl(url: string): URL {
   if (!/^postgres(?:ql)?:\/\//i.test(url)) {
-    throw graduationError('graduation_target_unsupported', 'The target is not a Postgres URL.',
-      'Pass a postgres:// or postgresql:// URL through --url-env, then rerun the plan.',
-      { why: 'Graduation moves a PGLite brain into a Postgres database; the given value is not a Postgres connection URL.',
-        fix: { argv: targetPlanArgv({}), consent: ['credentials'], actor: 'agent', requires_exclusive: false,
-          why: 'Re-plans against a URL held in an environment variable, so the password never appears in argv.',
-          user_message: `Set ${DEFAULT_TARGET_URL_ENV} to the Postgres connection URL of the target database (user, password, host, port and database).`,
-          verify: { argv: targetPlanArgv({}) } } });
+    throw targetUnsupportedError({ requirement: 'postgres_url', detail: 'the given target is not a postgres:// or postgresql:// URL', host: 'the given target' });
   }
   return new URL(url.replace(/^postgres(?:ql)?:\/\//i, 'http://'));
 }
@@ -79,21 +67,12 @@ export function targetIdentity(url: string): TargetIdentity {
 export function resolveTargetRoutes(opts: { url?: string; urlEnv?: string; env?: NodeJS.ProcessEnv }): ResolvedTargetRoutes {
   const env = opts.env ?? process.env;
   if (opts.url && opts.urlEnv) {
-    throw graduationError('graduation_target_unsupported', 'Both --url and --url-env were given.',
-      'Pass the target once, preferably as --url-env <VAR>.',
-      { why: 'Two target sources could name different databases.',
-        fix: { argv: targetPlanArgv({ urlEnv: opts.urlEnv }), consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Re-plans with the target named only by its environment variable.', verify: { argv: targetPlanArgv({ urlEnv: opts.urlEnv }) } } });
+    throw targetUnsupportedError({ requirement: 'one_target', detail: 'both --url and --url-env were given; pass the target once, preferably as --url-env <VAR>', host: 'the given target', spelling: { urlEnv: opts.urlEnv } });
   }
   const mainUrl = opts.urlEnv ? env[opts.urlEnv] : opts.url;
   if (!mainUrl) {
     const urlEnv = opts.urlEnv ?? DEFAULT_TARGET_URL_ENV;
-    throw graduationError('graduation_target_unsupported', opts.urlEnv ? `${opts.urlEnv} is not set.` : 'No target URL was given.',
-      `Set ${urlEnv} to the target Postgres URL and rerun with --url-env ${urlEnv}.`,
-      { why: 'Graduation needs the target database URL; it is read from an environment variable so the password never reaches argv or logs.',
-        fix: { argv: targetPlanArgv({ urlEnv }), consent: ['credentials'], actor: 'agent', requires_exclusive: false,
-          why: 'Plans the move once the variable holds the target URL.',
-          user_message: `Set ${urlEnv} to the Postgres URL of the empty target database.`, verify: { argv: targetPlanArgv({ urlEnv }) } } });
+    throw targetUnsupportedError({ requirement: 'target_url', detail: opts.urlEnv ? `${opts.urlEnv} is not set; it must hold the target Postgres URL` : `no target URL was given; set ${urlEnv} to it and pass --url-env ${urlEnv}`, host: 'the target', spelling: { urlEnv } });
   }
   parsePostgresUrl(mainUrl);
   const ddlUrl = normalizeDirectUrl(mainUrl, env.GBRAIN_DIRECT_DATABASE_URL || null) ?? mainUrl;
@@ -228,6 +207,14 @@ export async function probeTarget(routes: ResolvedTargetRoutes, opts: { timeoutS
       const [owned] = await query<{ ok: boolean }>(`SELECT COALESCE(bool_and(pg_has_role(current_user, c.relowner, 'USAGE')), true) AS ok
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')`);
       probe.ownsTables = owned?.ok === true;
+      const [role] = await query<{ name: string; superuser: boolean; bypass: boolean; trigger: boolean; owner: string | null }>(`SELECT current_user AS name,
+          (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS superuser,
+          EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) AS bypass,
+          EXISTS (SELECT 1 FROM pg_event_trigger WHERE evtname = 'auto_rls_on_create_table') AS trigger,
+          (SELECT pg_get_userbyid(p.proowner) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'public' AND p.proname = 'auto_enable_rls' LIMIT 1) AS owner`);
+      probe.role = { name: role!.name, superuser: role!.superuser === true, bypassRls: role!.bypass === true };
+      probe.autoRls = { eventTrigger: role!.trigger === true, functionOwner: role!.owner ?? null };
       Object.assign(probe, await targetEmptiness(query));
       probe.embeddingColumns = await embeddingColumns(query);
       await query('SAVEPOINT gbrain_replica_probe');
@@ -274,7 +261,19 @@ export function targetProbeBlockers(probe: TargetProbe, routes: Pick<TargetRoute
   if (!probe.vector.installed && !probe.vector.available) blockers.push(unsupported('vector_extension', 'the vector extension is neither installed nor available'));
   else if (!probe.vector.halfvec) blockers.push(unsupported('vector_halfvec', `vector ${probe.vector.installed ?? probe.vector.available} predates halfvec (needs ${MIN_VECTOR_HALFVEC_VERSION} or newer)`));
   if (!probe.createPrivilege.schema) blockers.push(unsupported('create_privilege', `role cannot CREATE in schema public on ${routes.main}`));
-  if (!probe.vector.installed && !probe.createPrivilege.database) blockers.push(unsupported('create_extension', 'vector is not installed and the role lacks CREATE on the database to install it'));
+  const superuser = probe.role?.superuser === true;
+  const role = probe.role ? `"${probe.role.name.replace(/"/g, '""')}"` : 'CURRENT_USER';
+  if (!probe.vector.installed && (!probe.createPrivilege.database || (probe.role && !superuser))) {
+    blockers.push(unsupported('vector_extension', 'the vector extension is not installed and only a superuser can install it; a DBA runs in the target database: CREATE EXTENSION IF NOT EXISTS vector;'));
+  }
+  if (probe.role && !superuser && !probe.role.bypassRls) {
+    blockers.push(unsupported('bypassrls', `role ${probe.role.name} lacks BYPASSRLS, which the schema's RLS backfill needs; a DBA runs: ALTER ROLE ${role} BYPASSRLS;`));
+  }
+  if (probe.autoRls && !superuser && !probe.autoRls.eventTrigger) {
+    blockers.push(unsupported('auto_rls_event_trigger', `the auto-RLS event trigger is missing and only a superuser can create it; a DBA runs in the target database: ${AUTO_RLS_DBA_SQL(role)}`));
+  } else if (probe.autoRls && !superuser && probe.autoRls.functionOwner && probe.role && probe.autoRls.functionOwner !== probe.role.name) {
+    blockers.push(unsupported('auto_rls_owner', `public.auto_enable_rls() is owned by ${probe.autoRls.functionOwner}, so schema setup fails with "must be owner of function"; a DBA runs: ALTER FUNCTION public.auto_enable_rls() OWNER TO ${role};`));
+  }
   if (!probe.triggerBypass) blockers.push(unsupported('trigger_bypass', 'the role may neither set session_replication_role = replica nor owns the existing tables (needed for DISABLE TRIGGER)'));
   if (!probe.empty) blockers.push({ kind: 'target_not_empty', id: 'target', detail: `target already holds rows in ${probe.nonEmptyTables.slice(0, 10).join(', ')}`, argv, needsUser: true });
   for (const m of embeddingLayoutMismatches(sourceColumns, probe.embeddingColumns)) {
@@ -283,36 +282,24 @@ export function targetProbeBlockers(probe: TargetProbe, routes: Pick<TargetRoute
   return blockers;
 }
 
+/** What a DBA runs once on a target whose gbrain role is not a superuser (the v35 objects, owned by that role). */
+function AUTO_RLS_DBA_SQL(role: string): string {
+  return `CREATE OR REPLACE FUNCTION public.auto_enable_rls() RETURNS event_trigger LANGUAGE plpgsql AS $f$ DECLARE obj record; BEGIN FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands() WHERE object_type = 'table' AND schema_name = 'public' LOOP EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity); END LOOP; END; $f$; `
+    + `ALTER FUNCTION public.auto_enable_rls() OWNER TO ${role}; `
+    + `CREATE EVENT TRIGGER auto_rls_on_create_table ON ddl_command_end WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO') EXECUTE FUNCTION public.auto_enable_rls();`;
+}
+
 /** Throws the typed refusal when either route is unreachable or refuses authentication. */
 export function assertTargetReachable(probe: TargetProbe, routes: Pick<TargetRoutes, 'urlEnv' | 'main' | 'ddl'>): void {
-  const urlEnv = routes.urlEnv ?? DEFAULT_TARGET_URL_ENV;
-  const argv = targetPlanArgv(routes);
-  if (probe.reachable && !probe.auth) {
-    throw graduationError('graduation_target_auth_failed', `The target ${routes.main} refused authentication.`,
-      `Ask the user for the current URL of the same database, put it in ${urlEnv} and rerun with --url-env ${urlEnv}.`,
-      { why: `The server answered but rejected the credentials (${probe.error?.code ?? 'auth'}); a rotated password is the usual cause.`,
-        fix: { argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, why: 'Re-plans with the corrected URL for the same target identity.',
-          user_message: `The Postgres server at ${routes.main} rejected the password. Set ${urlEnv} to the current URL for this database.`, verify: { argv } } });
-  }
+  const spelling = routes.urlEnv ? { urlEnv: routes.urlEnv } : {};
+  if (probe.reachable && !probe.auth) throw targetAuthFailedError({ host: routes.main, ...(routes.urlEnv ? { urlEnv: routes.urlEnv } : {}) });
   if (!probe.reachable) {
-    throw graduationError('graduation_target_unsupported', `The target ${routes.main} is unreachable.`,
-      'Check that the database is running and reachable from this machine, then rerun the plan.',
-      { why: `Connecting failed before authentication (${probe.error?.code ?? 'unreachable'}: ${probe.error?.message ?? 'no detail'}).`,
-        fix: { argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Re-probes the target once it is reachable.', verify: { argv } } });
+    throw targetUnsupportedError({ requirement: 'reachable', detail: `the server is unreachable (${probe.error?.code ?? 'unreachable'}: ${probe.error?.message ?? 'no detail'})`, host: routes.main, spelling });
   }
   if (probe.serverVersion === null) {
-    throw graduationError('graduation_target_unsupported', `The target ${routes.main} could not be probed.`,
-      'Fix the named connection problem (for example create the database), then rerun the plan.',
-      { why: `The server answered but the probe session failed (${probe.error?.code ?? 'unknown'}: ${probe.error?.message ?? 'no detail'}).`,
-        fix: { argv, consent: [], actor: 'agent', requires_exclusive: false, why: 'Re-probes the target after the fix.', verify: { argv } } });
+    throw targetUnsupportedError({ requirement: 'probe', detail: `the probe session failed (${probe.error?.code ?? 'unknown'}: ${probe.error?.message ?? 'no detail'})`, host: routes.main, spelling });
   }
-  if (!probe.ddl.reachable || !probe.ddl.auth) {
-    throw graduationError('graduation_target_ddl_unreachable', `The DDL connection ${routes.ddl} is unreachable.`,
-      'Ask the user for a session-mode connection (Supabase: the session pooler on port 5432), set GBRAIN_DIRECT_DATABASE_URL to it and rerun the plan.',
-      { why: `gbrain runs schema changes and the copy on a direct/session connection; it failed (${probe.ddl.error?.code ?? 'unreachable'}). Graduation never falls back to another route on its own.`,
-        fix: { argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, why: 'Re-plans with the DDL route the user provides.',
-          user_message: `Set GBRAIN_DIRECT_DATABASE_URL to the session-mode connection URL of ${routes.main}.`, verify: { argv } } });
-  }
+  if (!probe.ddl.reachable || !probe.ddl.auth) throw targetDdlUnreachableError({ host: routes.main, ddlHost: routes.ddl, spelling });
 }
 
 /**
@@ -324,12 +311,12 @@ export function assertTargetReachable(probe: TargetProbe, routes: Pick<TargetRou
  */
 export async function crossCheckRoutes(main: BrainEngine, ddl: BrainEngine, runId: string): Promise<void> {
   const keys = [randomInt(1, 2 ** 31 - 1), randomInt(1, 2 ** 31 - 1)];
-  const refuse = (detail: string) => graduationError('graduation_target_ddl_unreachable',
-    'The DDL connection does not reach the same database as the main connection.',
-    'Ask the user for the session-mode URL of the same database, set GBRAIN_DIRECT_DATABASE_URL to it and rerun the plan.',
-    { why: `Run ${runId}: ${detail}. Schema changes through a different database would leave the target incomplete, so nothing was changed.`,
-      fix: { argv: targetPlanArgv({}), consent: ['credentials'], actor: 'agent', requires_exclusive: false, why: 'Re-plans with a DDL route that names the target database.',
-        user_message: 'Set GBRAIN_DIRECT_DATABASE_URL to the session-mode connection URL of the target database.', verify: { argv: targetPlanArgv({}) } } });
+  const refuse = (detail: string) => {
+    const error = targetDdlUnreachableError({ host: 'the main connection', ddlHost: 'the DDL connection' });
+    error.detail = `Run ${runId}: ${detail}`;
+    error.why = `Run ${runId}: ${detail}. ${error.why ?? ''}`.trim();
+    return error;
+  };
   let seen: boolean;
   try {
     seen = await ddl.transaction(async tx => {

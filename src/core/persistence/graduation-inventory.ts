@@ -7,7 +7,6 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
-import type { RegistryCode } from '../error-registry.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import type { ColumnTransform, Inventory, InventoryClass, InventoryEntry, LossKind } from './engine-graduation.types.ts';
 
@@ -159,6 +158,7 @@ export const GRADUATION_INVENTORY: Inventory = {
 
     entry('page_links', 'schema_owned', 'operational', 'View over links; each engine\'s schema defines it.', { kind: 'view' }),
     entry('file_migration_ledger', 'schema_owned', 'operational', 'Postgres-only file storage migration ledger written by the target initSchema.', { engines: { pglite: false, postgres: true } }),
+    entry('persistence_graduation', 'schema_owned', 'operational', 'Each engine\'s own graduation custody row (source: quiesced/cutover; target: copying..authoritative); never copied, digested or compared.'),
   ],
 };
 
@@ -198,7 +198,7 @@ export async function assertRelationSet(engine: BrainEngine, kind: EngineKind, i
     wrongKind.length ? `wrong kind: ${wrongKind.join(', ')}` : '',
   ].filter(Boolean).join('; ');
   const verify = { argv: ['gbrain', 'migrate', '--to', 'postgres', '--plan', '--url-env', 'GBRAIN_TARGET_URL', '--json'] };
-  throw opError('graduation_unclassified_table' as RegistryCode,
+  throw opError('graduation_unclassified_table',
     `The ${kind} schema does not match this gbrain's graduation inventory (${parts}).`,
     newer
       ? `The ${kind} brain is at schema v${version}, newer than this gbrain (v${LATEST_VERSION}). Ask the user to upgrade gbrain on this machine (gbrain upgrade), then plan the move again. --force never bypasses this.`

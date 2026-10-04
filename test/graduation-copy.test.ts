@@ -116,7 +116,7 @@ for (const backend of testBackends()) {
         const relations = ['config', 'sources', 'graduation_test_types', 'facts', 'minion_jobs'];
         const batches: number[] = [];
         for (const relation of relations) {
-          const { rows } = await copyTable(e, entry(relation), { bypass, runId, batchBytes: 64, onBatch: n => batches.push(n) });
+          const { rows } = await copyTable(e, entry(relation), { bypass, runId, batchBytes: 64, onBatch: n => { batches.push(n); } });
           expect(rows).toBe(await rowCount(source, entry(relation)));
         }
         expect(Math.max(...batches)).toBeLessThan(10);

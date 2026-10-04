@@ -37,11 +37,11 @@ export const MANIFEST_TRANSITIONS: Readonly<Record<ManifestState, readonly Manif
   planned: ['quiesced', 'abandoned'],
   quiesced: ['draining', 'abandoned'],
   draining: ['copying', 'abandoned'],
-  copying: ['verifying', 'abandoned'],
-  verifying: ['verified', 'verify_failed', 'abandoned'],
-  verify_failed: ['copying', 'abandoned'],
-  verified: ['cutover', 'abandoned'],
-  cutover: ['tombstoned', 'rollback_fenced'],
+  copying: ['verifying', 'abandoned', 'draining'],
+  verifying: ['verified', 'verify_failed', 'abandoned', 'draining'],
+  verify_failed: ['copying', 'abandoned', 'draining'],
+  verified: ['cutover', 'abandoned', 'draining'],
+  cutover: ['tombstoned', 'rollback_fenced', 'draining'],
   tombstoned: ['authoritative', 'rollback_fenced'],
   authoritative: ['graduated', 'rollback_fenced'],
   graduated: ['rollback_fenced'],
@@ -54,9 +54,9 @@ export const MANIFEST_TRANSITIONS: Readonly<Record<ManifestState, readonly Manif
 
 export const TARGET_TRANSITIONS: Readonly<Record<TargetRowState, readonly TargetRowState[]>> = {
   copying: ['verifying', 'abandoned'],
-  verifying: ['verified', 'verify_failed', 'abandoned'],
+  verifying: ['verified', 'verify_failed', 'abandoned', 'copying'],
   verify_failed: ['copying', 'abandoned'],
-  verified: ['authoritative', 'abandoned'],
+  verified: ['authoritative', 'abandoned', 'copying'],
   authoritative: ['rollback_fenced'],
   rollback_fenced: ['rollback_approved', 'authoritative'],
   rollback_approved: ['source_restoring'],
@@ -67,7 +67,7 @@ export const TARGET_TRANSITIONS: Readonly<Record<TargetRowState, readonly Target
 
 export const SOURCE_TRANSITIONS: Readonly<Record<SourceRowState, readonly SourceRowState[]>> = {
   quiesced: ['cutover', 'rolled_back'],
-  cutover: ['rolled_back'],
+  cutover: ['rolled_back', 'quiesced'],
   rolled_back: ['quiesced'],
 };
 
@@ -169,6 +169,10 @@ export interface TargetProbe {
   embeddingColumns: readonly EmbeddingColumn[];
   /** Other sessions on the target database (informational). */
   otherSessions: number;
+  /** The connecting role: initSchema needs superuser, or BYPASSRLS plus a pre-created auto-RLS event trigger it owns the function of. */
+  role?: { name: string; superuser: boolean; bypassRls: boolean };
+  /** The v35 `auto_rls_on_create_table` event trigger and the owner of `public.auto_enable_rls()` (null when absent). */
+  autoRls?: { eventTrigger: boolean; functionOwner: string | null };
 }
 
 export interface SourceIdentity {
@@ -218,6 +222,27 @@ export interface GraduationManifest {
   timings: Record<string, number>;
   startedAt: string;
   updatedAt: string;
+  /** Full target URLs (main and DDL route). Only this 0600 file holds them; never printed. */
+  targetUrls?: { main: string; ddl: string };
+  /** The `--to` spelling the user typed; every emitted command echoes it. */
+  invokedAs?: 'postgres' | 'supabase';
+  /** Source snapshot receipts taken after the drain; the lock-gap re-check compares against them. */
+  sourceReceipts?: readonly TableReceipt[];
+  /** The request pending at run start, used by the replay probe. */
+  replayRequestId?: string | null;
+  /** Source persistence_brain.enabled, granted to the target in the authority transaction. */
+  sourceEnabled?: boolean;
+  graduatedAt?: string;
+  /** Manifest state a rollback started from; reconciliation returns to it before approval. */
+  rollbackFrom?: ManifestState;
+  /** Failures of the last verify, re-copied (with their FK closure) by --resume. */
+  verifyFailures?: readonly VerifyFailure[];
+  /** `--batch-size`: copy batch size in bytes (part of the plan hash). */
+  batchSize?: number;
+  /** The run was approved with --force (its plan hash bound the target's destructive snapshot). */
+  force?: boolean;
+  /** Mount ids whose database_path named the source, rewritten at the routing flip. */
+  rewrittenMounts?: readonly string[];
 }
 
 /** Sibling intent marker `<dataDir>.gbrain-graduation.json` (mode 0600). */
@@ -305,6 +330,92 @@ export interface GraduationReceipt {
   triggerBypass: TriggerBypass;
   replay: ReplayProbeResult;
   timings: Record<string, number>;
+  /** Redacted target URL (never the password); the success output names it. */
+  targetDisplayUrl?: string;
+  /** Where the source data dir was moved (`<path>.graduated-<run_id>`). */
+  retainedPath?: string;
+  /** True when a live serve handed the source over through the intent marker. */
+  serveHandoff?: boolean;
+  /** Failing doctor check names on each side; the cutover gate is `target` empty. */
+  doctor?: { source: readonly string[]; target: readonly string[]; /** Checks the verify-step doctor exempted, with the run's reason. */ exempted?: readonly string[] };
+}
+
+// ── CLI <-> orchestrator (src/commands/migrate-graduation.ts consumes; engine-graduation.ts implements) ──
+
+/** The `--to` spelling the user typed; every emitted command echoes it. */
+export type GraduationTargetSpelling = 'postgres' | 'supabase';
+
+/** graduation-custody.ts `inspectGraduationPath(dataDir)`: file reads only, never a lock attempt. */
+export interface GraduationPathState {
+  dataDir: string;
+  state: 'none' | 'in_progress' | 'interrupted' | 'graduated' | 'split_brain';
+  marker: IntentMarker | null;
+  tombstone: Tombstone | null;
+  /** Liveness of the marker's requesting process; null without a non-terminal marker. */
+  liveness?: 'alive' | 'dead' | 'unknown' | null;
+  /** The `<dataDir>.graduated-<run_id>` directory when it exists. */
+  movedTo?: string | null;
+  /** One-line explanation for refusals and --status. */
+  detail?: string;
+}
+
+export type GraduationPhase =
+  | 'plan' | 'quiesce' | 'drain' | 'schema' | 'copy' | 'indexes' | 'verify' | 'doctor' | 'cutover' | 'flip' | 'rollback';
+
+/** Progress callbacks the CLI wires to createProgress (stderr); the orchestrator calls them. */
+export interface GraduationProgressSink {
+  phase(phase: GraduationPhase, total?: number): void;
+  /** A carried table starts copying (or digesting) with this many source rows. */
+  table(relation: string, rows: number): void;
+  /** One batch of `rows` rows finished for the current table. */
+  batch(relation: string, rows: number): void;
+}
+
+/** Options every orchestrator entry point takes (plan, run, resume, rollback). */
+export interface GraduationCommandOptions {
+  to: GraduationTargetSpelling;
+  /** Full target URL from `--url` / `--url -`; never printed. */
+  url?: string;
+  /** `--url-env <VAR>`: the env var name printed in every emitted command. */
+  urlEnv?: string;
+  drainTimeoutMs: number;
+  triggerBypass?: TriggerBypass;
+  batchSize?: number;
+  force: boolean;
+  /** `--expect <plan_hash>`: the plan (or rollback loss list) the user approved. */
+  expectPlanHash?: string;
+  /** `--yes`: the user approved; without `expectPlanHash` the orchestrator refuses destructive steps. */
+  yes: boolean;
+  progress?: GraduationProgressSink;
+  /** SIGINT: stop at the next batch boundary, leave a resumable state, throw `interrupted`. */
+  signal?: AbortSignal;
+}
+
+/** `gbrain migrate --status --json` (zero mutations). */
+export interface GraduationStatusDoc {
+  schema_version: 1;
+  state: ManifestState | 'none';
+  runId: string | null;
+  to: GraduationTargetSpelling;
+  source: SourceIdentity | null;
+  sourcePath: GraduationPathState | null;
+  target: { identity: TargetIdentity; displayUrl: string; row: TargetRowState | null; reachable: boolean } | null;
+  receipt: GraduationReceipt | null;
+  /** A live process owns the run (its kernel lock is held). */
+  liveRun: { pid: number } | null;
+  tables: readonly TableCheckpoint[];
+  /** graduation_split_brain: both paths side by side so the agent can relay a concrete choice. */
+  splitBrain?: readonly { path: string; brainId: string | null; rows: number; newestWriteAt: string | null }[];
+  /** The next command for this state (resume, rollback, nothing), echoing the user's spelling. */
+  nextArgv: readonly string[] | null;
+}
+
+export interface GraduationRollbackResult {
+  state: 'abandoned' | 'rolled_back';
+  /** The PGLite data dir that is authoritative again (null before cutover: it never moved). */
+  restoredPath: string | null;
+  /** Operational differences dropped by the rollback (telemetry, logs, queue state). */
+  dropped: readonly { relation: string; rows: number; lossKind: LossKind }[];
 }
 
 export interface GraduationEngines {

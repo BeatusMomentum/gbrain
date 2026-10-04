@@ -87,9 +87,14 @@ export async function authority(c: Case): Promise<{ source: boolean; target: boo
   const paths = custodyPaths(c.fx.dataDir);
   let sourceState: string | null = null;
   if (paths.dataDirIsDirectory) {
+    // A source fenced past cutover refuses to open at all (graduation_interrupted until resume): it is not a writer.
     sourceState = await withSource(c.fx, async engine => {
       try { return (await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_graduation LIMIT 1'))[0]?.state ?? null; }
       catch { return null; }
+    }).catch(error => {
+      const code = (error as { code?: string }).code;
+      if (code === 'graduation_interrupted' || code === 'graduation_in_progress' || code === 'engine_graduated') return 'cutover';
+      throw error;
     });
   }
   const source = paths.dataDirIsDirectory && sourceState !== 'cutover' && !existsSync(paths.marker);
@@ -102,6 +107,8 @@ export async function expectAtMostOneWriter(c: Case, label: string): Promise<voi
 }
 
 export function failingChecks(doc: Record<string, any> | null): string[] {
+  // The run document's `doctor` is { source, target } lists of failing check names; doctor --json has `checks`.
+  if (Array.isArray(doc?.target)) return doc.target as string[];
   return ((doc?.checks ?? []) as { name: string; status: string }[]).filter(c => c.status === 'fail').map(c => c.name);
 }
 
@@ -116,7 +123,7 @@ export async function doctorFailures(home: string): Promise<{ result: GbrainResu
  * expected.json target expectation, one row per request id, a replay of the
  * queued request returning the stored outcome, and a green target doctor.
  */
-export async function expectGraduated(c: Case, label: string): Promise<void> {
+export async function expectGraduated(c: Case, label: string, opts: { liveWork?: boolean } = {}): Promise<void> {
   const status = await gbrain(['migrate', '--status', '--json'], { home: c.fx.home });
   expect({ label, code: status.code, state: stateOf(status.json) }).toEqual({ label, code: 0, state: 'graduated' });
   expect(configuredEngine(c.fx).engine).toBe('postgres');
@@ -127,7 +134,10 @@ export async function expectGraduated(c: Case, label: string): Promise<void> {
   expect(await targetFenceTriggers(c.target.url)).toBe(0);
   await withTarget(c.target.url, async target => {
     const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(target) });
-    expect({ label, mismatches: await legacyTargetMismatches(target, c.before, token => provider.verifyAccessToken(token)) }).toEqual({ label, mismatches: [] });
+    // A resident serve that owned the source before the hand-off legitimately finished queued effects and projection jobs.
+    const mismatches = (await legacyTargetMismatches(target, c.before, token => provider.verifyAccessToken(token)))
+      .filter(m => !(opts.liveWork && (m.startsWith('target effect ') || m.startsWith('target projection job '))));
+    expect({ label, mismatches }).toEqual({ label, mismatches: [] });
     const duplicates = await target.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM (SELECT principal_kind,principal_id,request_id
       FROM persistence_requests GROUP BY 1,2,3 HAVING count(*) > 1) d`);
     expect(Number(duplicates[0].n)).toBe(0);
@@ -140,7 +150,7 @@ export async function expectGraduated(c: Case, label: string): Promise<void> {
 /** Resubmit the queued request (recorded with its callerIntent) on the target: stored outcome back, no new row, counters unchanged. */
 export async function expectReplayReturnsStored(target: PostgresEngine, fx: GraduationFixture): Promise<void> {
   const admission = readQueuedAdmission(fx.root);
-  const counters = async () => (await target.executeRaw<Record<string, unknown>>('SELECT * FROM persistence_counters ORDER BY key COLLATE "C"')).map(r => JSON.stringify(r));
+  const counters = async () => (await target.executeRaw<Record<string, unknown>>('SELECT * FROM persistence_counters ORDER BY key COLLATE "C"')).map(r => JSON.stringify(r, (_k, v) => typeof v === 'bigint' ? v.toString() : v));
   const rows = async () => Number((await target.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests'))[0].n);
   const [stored] = await target.executeRaw<{ id: string; state: string; outcome: Record<string, unknown> | null }>(
     'SELECT id::text AS id,state,outcome FROM persistence_requests WHERE request_id=$1::uuid', [admission.requestId]);

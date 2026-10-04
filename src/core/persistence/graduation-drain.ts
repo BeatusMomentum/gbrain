@@ -12,8 +12,6 @@ import { PersistenceConsumer } from './consumer.ts';
 import { disposePersistenceConsumer, preparePersistedMutation } from './service.ts';
 import { readWriterAdminLock } from './admin-lock.ts';
 import type { GraduationBlocker } from './engine-graduation.types.ts';
-import { graduationError } from './graduation-target.ts';
-import type { OperationError } from '../ops/contract.ts';
 
 const PENDING_REQUESTS_SQL = `SELECT r.request_id::text AS request_id, r.source_id, r.operation, r.state,
     r.recovery IS NOT NULL AS recovering, w.owner_host_id::text AS owner_host_id
@@ -131,24 +129,6 @@ export async function drainForGraduation(source: BrainEngine, opts: { timeoutMs:
   const blockers = (await graduationBlockers(source, opts.hostId))
     .map(b => lastError && b.kind === 'request' ? { ...b, detail: `${b.detail}; last drain error ${lastError}` } : b);
   return { drained: terminal.map(r => r.request_id), blockers };
-}
-
-/** The `--drain-timeout` refusal: resumable when every blocker is still progressing, otherwise the first person-needed action. */
-export function drainTimeoutError(blockers: readonly GraduationBlocker[], timeoutMs: number): OperationError {
-  const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
-  const needsPerson = blockers.find(b => b.needsUser || b.argv);
-  const resume = ['gbrain', 'migrate', '--resume', '--drain-timeout', String(seconds * 2), '--json'];
-  const listed = blockers.slice(0, 10).map(b => `${b.kind} ${b.id} (${b.detail})${b.argv ? `: ${b.argv.join(' ')}` : ''}`).join(' | ');
-  return graduationError('graduation_drain_timeout', `The drain did not finish within ${seconds}s; ${blockers.length} item(s) remain.`,
-    needsPerson ? `Clear ${needsPerson.kind} ${needsPerson.id} first (${needsPerson.argv?.join(' ') ?? 'see detail'}), then resume.` : `Resume with a longer drain: ${resume.join(' ')}.`,
-    { why: `Graduation copies only a drained brain; the source is unchanged and still writable. Remaining: ${listed}`,
-      detail: listed,
-      fix: needsPerson?.argv
-        ? { argv: [...needsPerson.argv], consent: [], actor: needsPerson.needsUser ? 'user' : 'agent', requires_exclusive: false,
-          why: `Clears ${needsPerson.kind} ${needsPerson.id}, which the request-only drain cannot finish.`,
-          verify: { argv: ['gbrain', 'migrate', '--status', '--json'] } }
-        : { argv: resume, consent: [], actor: 'agent', requires_exclusive: true, why: 'Every remaining request is still progressing; a longer drain finishes it.',
-          verify: { argv: ['gbrain', 'migrate', '--status', '--json'] } } });
 }
 
 /**

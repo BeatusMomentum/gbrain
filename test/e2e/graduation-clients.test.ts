@@ -28,7 +28,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readF
 import { dirname, join } from 'node:path';
 import type { Tombstone } from '../../src/core/persistence/engine-graduation.types.ts';
 import {
-  codeOf, custodyPaths, DATABASE_URL, digestChanges, fixOf, freePort, gbrain, GRADUATION_LANDED, graduationTest, mcpStdioSession, olderReleaseBinary,
+  codeOf, custodyPaths, DATABASE_URL, digestChanges, fixOf, freePort, gbrain, graduationTest, mcpStdioSession, olderReleaseBinary,
   previousReleaseTags, release, REPO, startGbrain, stateDigest, TARGET_ENV, waitForEvent, type GbrainResult,
 } from '../helpers/graduation-e2e.ts';
 import { configuredEngine, expectGraduated, legacyCase, planAndRun, scratchRoot, targetRowState, withTarget, type Case } from '../helpers/graduation-scenarios.ts';
@@ -71,9 +71,21 @@ function shimPath(c: Case): string {
 }
 
 /** Run a refusal's fix once: `fix.argv` through the CLI, or the shell `fix.command`. */
+/** The first rendered fix (`next` run or tell_user_to_run) anywhere in an MCP reply, including JSON-encoded text content. */
+function findFix(value: unknown): Record<string, any> | null {
+  if (typeof value === 'string') { try { return findFix(JSON.parse(value)); } catch { return null; } }
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, any>;
+  if ((record.next === 'run' || record.next === 'tell_user_to_run') && Array.isArray(record.argv)) return record;
+  for (const child of Object.values(record)) { const found = findFix(child); if (found) return found; }
+  return null;
+}
+
 async function runFix(fix: Record<string, any>, home: string, c: Case): Promise<GbrainResult> {
   const env = { [TARGET_ENV]: c.target.url, PATH: shimPath(c) };
-  if (Array.isArray(fix.argv) && fix.argv[0] === 'gbrain') return gbrain(fix.argv.slice(1), { home, env });
+  // An agent fills `<name>` argv placeholders from fix.inputs (the user supplies the target URL).
+  const filled = Array.isArray(fix.argv) ? (fix.argv as string[]).map(a => a === '<target_url>' ? c.target.url : a) : null;
+  if (filled && filled[0] === 'gbrain') return gbrain(filled.slice(1), { home, env });
   expect(typeof fix.command).toBe('string');
   const child = Bun.spawn(['sh', '-c', fix.command], { env: { ...process.env, ...env, HOME: home, GBRAIN_HOME: home, DATABASE_URL: '', GBRAIN_DATABASE_URL: '' }, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -82,18 +94,6 @@ async function runFix(fix: Record<string, any>, home: string, c: Case): Promise<
 }
 
 /** The Tombstone contract written by hand (O_EXCL, 0600, fsync file + parent), for the pre-integration half. */
-function handTombstone(c: Case, runId: string): void {
-  const movedTo = `${c.fx.dataDir}.graduated-${runId}`;
-  renameSync(c.fx.dataDir, movedTo);
-  const tombstone: Tombstone = { kind: 'gbrain-engine-graduated', runId, brainId: c.before.brainId, movedTo,
-    target: { id: 'hand-written', host: '127.0.0.1', port: 5432, database: 'gbrain_test', user: 'postgres' },
-    targetDisplayUrl: 'postgresql://postgres@127.0.0.1:5432/gbrain_test', graduatedAt: new Date().toISOString(),
-    fixArgv: ['gbrain', 'config', 'set', 'database_url', '$GBRAIN_TARGET_URL'] };
-  const fd = openSync(c.fx.dataDir, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-  try { writeSync(fd, JSON.stringify(tombstone)); fsyncSync(fd); } finally { closeSync(fd); }
-  const parent = openSync(dirname(c.fx.dataDir), 'r');
-  try { fsyncSync(parent); } finally { closeSync(parent); }
-}
 
 async function olderRun(binary: string, home: string, argv: string[], stdin?: string): Promise<GbrainResult> {
   return gbrain(argv, { home, binary, stdin, timeoutMs: 120_000 });
@@ -104,12 +104,8 @@ describe.skipIf(!DATABASE_URL)('graduation: older released binaries', () => {
     expect(olderError).toBeNull();
     expect(older.length).toBe(2);
     const c = await fresh('older-tombstone');
-    if (GRADUATION_LANDED) {
-      const { argv, env } = await planAndRun(c);
-      expect((await gbrain(argv, { home: c.fx.home, env, timeoutMs: 900_000 })).code).toBe(0);
-    } else {
-      handTombstone(c, 'hand-run');
-    }
+    const { argv, env } = await planAndRun(c);
+    expect((await gbrain(argv, { home: c.fx.home, env, timeoutMs: 900_000 })).code).toBe(0);
     const home = staleHome(c);
     const tombstoneBytes = readFileSync(c.fx.dataDir);
     const retained = custodyPaths(c.fx.dataDir).graduated;
@@ -251,7 +247,7 @@ describe.skipIf(!DATABASE_URL)('graduation: serve processes', () => {
     expect(served).not.toBeNull();
     expect(`${served!.stdout}${served!.stderr}`).toContain('graduation_in_progress');
     expect(JSON.stringify(run.json)).toMatch(/restart|mcp/i);
-    await expectGraduated(c, 'after live-serve hand-off');
+    await expectGraduated(c, 'after live-serve hand-off', { liveWork: true });
     const relaunched = await mcpStdioSession({ home: c.fx.home });
     const after = await relaunched.call('get_page', { slug: 'people/alice-example', source_id: 'default' });
     await relaunched.close();
@@ -288,9 +284,9 @@ describe.skipIf(!DATABASE_URL)('graduation: stale clients recover in one step', 
     const exited = await stale.close();
     const text = `${JSON.stringify(reply)}${exited.stdout}${exited.stderr}`;
     expect(text).toContain('engine_graduated');
-    const match = /\{[^{}]*"next"\s*:\s*"(?:run|tell_user_to_run)"[^{}]*\}/.exec(text.replace(/\\"/g, '"'));
-    expect(match).not.toBeNull();
-    const fixed = await runFix(JSON.parse(match![0]), home, c);
+    const fix = findFix(reply);
+    expect(fix).not.toBeNull();
+    const fixed = await runFix(fix!, home, c);
     expect(fixed.code).toBe(0);
     const relaunched = await mcpStdioSession({ home });
     const after = await relaunched.call('get_page', { slug: 'people/alice-example', source_id: 'default' });

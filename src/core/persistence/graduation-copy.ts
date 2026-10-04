@@ -31,7 +31,7 @@ import { ANN_BUILD_MESSAGE, buildDeferredAnnIndexes, type DeferredAnnIndex } fro
 import type { ColumnMeta, GraduationEngines, Inventory, InventoryEntry, TriggerBypass } from './engine-graduation.types.ts';
 import { digestPlan, quoteIdent, tableColumns, withDigestSession, type DigestPlan } from './graduation-digest.ts';
 import { fkClosure, GRADUATION_INVENTORY } from './graduation-inventory.ts';
-import { graduationError } from './graduation-target.ts';
+import { targetUnsupportedError } from './graduation-errors.ts';
 
 /** Target-owned config row holding the deferred index list; the config copy never deletes it. */
 export const GRADUATION_DEFERRED_INDEXES_KEY = 'graduation.deferred_indexes';
@@ -81,11 +81,9 @@ export function columnContract(entry: Pick<InventoryEntry, 'relation' | 'columnA
     if (!sourceNames.has(column.name) && !(column.name in allow)) problems.push(`${column.name} (${column.type}) exists only on the target`);
   }
   if (problems.length) {
-    throw graduationError('graduation_target_unsupported', `The target's ${entry.relation} columns do not match the source.`,
-      'Use an empty target database created by this gbrain version; the column contract never copies into a different shape.',
-      { why: `Graduation copies every column verbatim; ${entry.relation}: ${problems.join('; ')}.`, detail: problems.join('; '),
-        fix: { argv: ['gbrain', 'migrate', '--to', 'postgres', '--url-env', 'GBRAIN_TARGET_URL', '--plan', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Re-plans after the target is replaced or its schema is upgraded.' } });
+    const error = targetUnsupportedError({ requirement: 'column', detail: `the ${entry.relation} columns do not match the source (${problems.join('; ')})`, host: 'the target' });
+    error.detail = problems.join('; ');
+    throw error;
   }
   return copied;
 }
@@ -146,7 +144,7 @@ async function readSourceBatch(source: BrainEngine, plan: DigestPlan, extraWhere
  * happen before any transaction opens (PGLite serializes its one connection).
  */
 export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
-  opts: { bypass: TriggerBypass; batchBytes?: number; onBatch?: (rows: number) => void; runId: string }): Promise<{ rows: number }> {
+  opts: { bypass: TriggerBypass; batchBytes?: number; onBatch?: (rows: number) => void | Promise<void>; runId: string }): Promise<{ rows: number }> {
   if (entry.class !== 'carry' && entry.class !== 'rebind') throw new Error(`copyTable: ${entry.relation} is ${entry.class}, not carried`);
   const relation = entry.relation;
   const plan = await digestPlan(e.source, entry, true);
@@ -191,7 +189,7 @@ export async function copyTable(e: GraduationEngines, entry: InventoryEntry,
     await scan(null, async batch => {
       await tx.executeRaw(insertSql, [JSON.stringify(batch)]);
       rows += batch.length;
-      opts.onBatch?.(batch.length);
+      await opts.onBatch?.(batch.length);
     });
     if (selfFk.length) {
       const fk = selfFk.map(name => ({ c: plan.columns.find(c => c.name === name)!, i: plan.columns.findIndex(c => c.name === name) }));
