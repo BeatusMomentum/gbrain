@@ -54,7 +54,7 @@ afterAll(async () => {
 const timelineActors = (brain: UnmanagedBrain, slug: string) => rowActors(brain.engine, 'timeline_entries',
   'page_id=(SELECT id FROM pages WHERE source_id=$1 AND slug=$2)', [brain.sourceId, slug]);
 const both = (actor: UnmanagedBrain['maintenance']) => ({ created: actor, last: actor });
-const quiet = { quiet: true, jsonMode: false } as const;
+const quiet = { quiet: true, jsonMode: false, dryRun: false } as const;
 
 describe('timeline attribution on an unmanaged brain', () => {
   test('extract timeline --source db stamps the rows it inserts', async () => {

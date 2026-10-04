@@ -50,12 +50,12 @@ describe('import attribution on an unmanaged brain', () => {
       const body = '---\ntype: note\ntitle: Moved example\nid: moved-example-id\n---\nThe body travels with the file.\n';
       writeFileSync(join(root, 'notes/moved-example.md'), body);
       const first = await importFromFile(engine, join(root, 'notes/moved-example.md'), 'notes/moved-example.md',
-        { sourceId: brain.sourceId, noEmbed: true, sourceRoot: root });
+        { sourceId: brain.sourceId, noEmbed: true });
       const [{ id }] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [brain.sourceId, first.slug]);
 
       renameSync(join(root, 'notes/moved-example.md'), join(root, 'archive/moved-example.md'));
       const moved = await importFromFile(engine, join(root, 'archive/moved-example.md'), 'archive/moved-example.md',
-        { sourceId: brain.sourceId, noEmbed: true, sourceRoot: root });
+        { sourceId: brain.sourceId, noEmbed: true });
 
       expect(moved.slug).not.toBe(first.slug);
       const [renamed] = await engine.executeRaw<{ id: number; slug: string }>('SELECT id,slug FROM pages WHERE source_id=$1 AND id=$2', [brain.sourceId, id]);

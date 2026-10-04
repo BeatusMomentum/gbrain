@@ -23,7 +23,7 @@ import { unmanagedBrain } from './helpers/unmanaged-attribution.ts';
 
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
-const quiet = { quiet: true, jsonMode: false } as const;
+const quiet = { quiet: true, jsonMode: false, dryRun: false } as const;
 
 beforeAll(async () => {
   configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
