@@ -202,6 +202,7 @@ import { v198 } from './v198-publication-failure-detail.ts';
 import { v199 } from './v199-chronicle-page-state.ts';
 import { v200 } from './v200-sync-hold-page-index.ts';
 import { v201 } from './v201-lane-e-legacy-token-grant-conversion.ts';
+import { v202 } from './v202-lane-e-oauth-client-grant-axes.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -402,4 +403,5 @@ export const MIGRATIONS: Migration[] = [
   v199,
   v200,
   v201,
+  v202,
 ];

@@ -291,13 +291,15 @@ gbrain auth rescope --token agent-example --sources none        # deny-all
 gbrain auth rescope --token agent-example --reset-default sources,takes-holders
 gbrain auth rescope --id TOKEN_ID --sources default --if-version 3 --dry-run --json
 gbrain auth rescope --client CLIENT_ID --sources workspace,default --operations get_page,search
+gbrain auth rescope --client CLIENT_ID --takes-holders world,brain
+gbrain auth rescope --client CLIENT_ID --sources none          # deny-all, secret unchanged
 ```
 
 | Flag | Value | Effect |
 | --- | --- | --- |
-| `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the list is the read set. `default` is the source named `default`; to restore the no-grant floor use `--reset-default sources`. Tokens: `none` grants no source, so reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change. Clients: `none` refuses (`client_sources_none_unsupported`); cut a client off with `gbrain auth revoke-client <client_id>`. |
+| `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the list is the read set. `default` is the source named `default`; to restore the no-grant floor use `--reset-default sources`. `none` grants no source, so reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change; the token or client keeps its scopes and secret. A client with `none` takes no `--read-sources`, and a delegating agent client cannot hold it. |
 | `--read-sources` | `a,b` | Client only: a read set that differs from `--sources`. |
-| `--takes-holders` | `a,b` or `none` | Token only: takes-holder allow-list; `none` hides every take. |
+| `--takes-holders` | `a,b` or `none` | Takes-holder allow-list for a token or client (default `world`); `none` hides every take. |
 | `--operations` | `op,...` or `none` | Operation snapshot; `none` refuses every operation. |
 | `--scopes` | `read,write,...` | Replaces the scopes. |
 | `--reset-default` | `sources,takes-holders,operations` | Token only: restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |

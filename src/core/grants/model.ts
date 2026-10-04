@@ -14,6 +14,10 @@ export interface ClientGrant {
   scopes: string[];
   sourceId: string | null;
   federatedRead: string[];
+  /** The explicit no-source grant: `sourceId` null, `federatedRead` empty, every read and write refused. */
+  sourcesNone: boolean;
+  /** Takes-holder allow-list; null = the default ['world'], [] = deny-all. */
+  takesHolders: string[] | null;
   boundSlugPrefixes: string[] | null;
   allowedOperations: string[] | null;
   boundTools: string[] | null;
@@ -70,6 +74,7 @@ export function grantFromRow(row: Record<string, unknown>): ClientGrant {
     clientId: String(row.client_id), clientName: String(row.client_name ?? ''),
     scopes: parseScopeString(nullable(row.scope) ?? ''),
     sourceId: nullable(row.source_id), federatedRead: stringArray(row.federated_read) ?? [],
+    sourcesNone: row.source_grant === 'none', takesHolders: stringArray(row.takes_holders),
     boundSlugPrefixes: legacyPrefixes, allowedOperations: stringArray(row.allowed_operations),
     boundTools: stringArray(row.bound_tools), boundSourceId: nullable(row.bound_source_id),
     boundBrainId: normalizeGrantBrain(nullable(row.bound_brain_id)),
@@ -115,8 +120,13 @@ export function validateClientGrant(grant: ClientGrant, ctx: GrantValidationCont
   assertAllowedScopes(grant.scopes);
   const reasons: string[] = [];
   if (grant.revoked) reasons.push('client_revoked');
-  if (!grant.sourceId || !ctx.activeSourceIds.has(grant.sourceId)) reasons.push('source_inactive');
-  if (grant.federatedRead.length === 0 || grant.federatedRead.some(id => !ctx.activeSourceIds.has(id))) reasons.push('read_source_inactive');
+  if (grant.sourcesNone === true) {
+    if (grant.sourceId !== null || grant.federatedRead.length > 0) reasons.push('sources_none_inconsistent');
+  } else {
+    if (!grant.sourceId || !ctx.activeSourceIds.has(grant.sourceId)) reasons.push('source_inactive');
+    if (grant.federatedRead.length === 0 || grant.federatedRead.some(id => !ctx.activeSourceIds.has(id))) reasons.push('read_source_inactive');
+  }
+  if (grant.takesHolders != null && grant.takesHolders.some(h => typeof h !== 'string' || !h || /[\s,{}"]/.test(h))) reasons.push('takes_holders_invalid');
   if (grant.boundSlugPrefixes !== null && !validGrantPrefixes(grant.boundSlugPrefixes)) reasons.push('direct_prefixes_invalid');
   if (grant.allowedOperations?.some(name => !ctx.operationNames.has(name))) reasons.push('operations_unavailable');
   if (grant.profile !== null && grant.allowedOperations === null) reasons.push('operations_snapshot_missing');
@@ -266,12 +276,13 @@ export function grantFromTokenRow(row: Record<string, unknown>): PrincipalGrant 
 }
 
 export function grantFromClient(grant: ClientGrant): PrincipalGrant {
-  const sources: GrantSources = grant.sourceId === null ? { kind: 'default' }
+  const sources: GrantSources = grant.sourcesNone === true ? { kind: 'none' }
+    : grant.sourceId === null ? { kind: 'default' }
     : grant.federatedRead.length === 0 ? { kind: 'scalar', writeSource: grant.sourceId }
     : { kind: 'federated', writeSource: grant.sourceId, readSources: [...grant.federatedRead] };
   return {
     principal: { kind: 'oauth_client', id: grant.clientId }, scopes: [...grant.scopes], sources,
-    allowedOperations: grant.allowedOperations, takesHolders: null, revision: grant.revision,
+    allowedOperations: grant.allowedOperations, takesHolders: grant.takesHolders ?? null, revision: grant.revision,
     shape: 'unified', drift: [], permissionsMalformed: false,
   };
 }
@@ -288,14 +299,12 @@ export function authSourcesFromGrant(g: PrincipalGrant): { sourceId: string; all
 
 /**
  * Shape rules for a grant about to be written. Whether named sources are
- * active is the caller's database check. Tokens may hold the explicit
- * deny-all `none`; OAuth clients may not in F3 (client deny-all is
- * `auth revoke-client`).
+ * active is the caller's database check. Tokens and OAuth clients may both
+ * hold the explicit deny-all `none`.
  */
 export function validatePrincipalGrant(g: PrincipalGrant, ctx: { operationNames: ReadonlySet<string> }): void {
   const reasons: string[] = [];
   const client = g.principal.kind === 'oauth_client';
-  if (g.sources.kind === 'none' && client) reasons.push('client_sources_none_unsupported');
   if (g.sources.kind === 'scalar' || g.sources.kind === 'federated') {
     const ids = g.sources.kind === 'scalar' ? [g.sources.writeSource] : [g.sources.writeSource, ...g.sources.readSources];
     if (ids.some(id => !isValidSourceId(id))) reasons.push('source_invalid');
@@ -303,10 +312,7 @@ export function validatePrincipalGrant(g: PrincipalGrant, ctx: { operationNames:
   }
   if (g.allowedOperations?.some(name => !ctx.operationNames.has(name))) reasons.push('operations_unavailable');
   if (!reasons.length) return;
-  const fix = reasons.includes('client_sources_none_unsupported')
-    ? ` OAuth clients cannot hold an explicit no-source grant yet; to cut client ${g.principal.id} off run gbrain auth revoke-client ${g.principal.id}, or narrow it with gbrain auth rescope --client ${g.principal.id} --sources <id>.`
-    : '';
-  throw new GrantError('invalid_grant', `Invalid ${client ? 'client' : 'token'} grant: ${reasons.join(', ')}.${fix}`, reasons);
+  throw new GrantError('invalid_grant', `Invalid ${client ? 'client' : 'token'} grant: ${reasons.join(', ')}.`, reasons);
 }
 
 /**
