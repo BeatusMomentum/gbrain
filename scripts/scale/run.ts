@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { corpusMarkdownFiles, generateScaleFixture, SCALE_SOURCES, scaleVector, writeScaleCorpus, type ScaleFixture } from './fixture.ts';
 import {
-  BUDGET_MULTIPLIER, evaluateScaleGates, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, reproduceCommand, resultHits, verdictLines,
+  BUDGET_MULTIPLIER, evaluateScaleGates, FIND_ORPHANS_PARAMS, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, orphansProblem, reproduceCommand, resultHits, verdictLines,
   type DataCheck, type GatePolicy, type OpPlan, type OpResult, type PlanStatement, type ScaleReport,
 } from './gates.ts';
 
@@ -236,7 +236,8 @@ async function main(): Promise<FullReport> {
   const phases: Record<string, number> = {};
   const timed = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     const t = performance.now();
-    try { return await fn(); } finally { phases[name] = Math.round(performance.now() - t); }
+    console.log(`[scale] phase ${name} start`);
+    try { return await fn(); } finally { phases[name] = Math.round(performance.now() - t); console.log(`[scale] phase ${name} done in ${phases[name]} ms`); }
   };
   console.log(`[scale] engine=${engineKind} pages=${pagesArg} seed=${seed} import-mode=${importMode} ${enforce ? 'enforce' : 'report-only'}`);
   const fixture: ScaleFixture = generateScaleFixture({ pages: pagesArg, seed });
@@ -363,8 +364,8 @@ async function main(): Promise<FullReport> {
       verify: r => hub.links.every(target => resultHits(r).some(h => h.slug === target)) ? null : 'a direct link target of the hub is missing' },
     { op: 'get_backlinks', run: () => op('get_backlinks').handler(local, { slug: hub.links[0] }),
       verify: r => JSON.stringify(r).includes(`"${fixture.hub}"`) ? null : `${fixture.hub} missing from backlinks of ${hub.links[0]}` },
-    { op: 'find_orphans', run: () => op('find_orphans').handler(local, {}),
-      verify: r => fixture.islands.every(slug => resultHits(r).some(h => h.slug === slug)) ? null : 'an island page is missing from find_orphans' },
+    { op: 'find_orphans', run: () => op('find_orphans').handler(local, { ...FIND_ORPHANS_PARAMS }),
+      verify: r => orphansProblem(r, fixture.islands) },
   ];
   const ops: OpResult[] = [];
   const statRows: Record<string, number> = {};
