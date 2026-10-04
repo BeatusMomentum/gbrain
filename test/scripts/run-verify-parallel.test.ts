@@ -247,7 +247,7 @@ describe("run-verify-parallel.sh — no-timeout-binary fallback rc capture (regr
   // gtimeout/timeout — forcing the fallback branch even where coreutils is
   // installed.
 
-  function makeFallbackHarness(): { root: string; env: Record<string, string> } {
+  function makeFallbackHarness(timeoutSecs = "5"): { root: string; env: Record<string, string> } {
     const root = mkdtempSync(join(tmpdir(), "verify-fallback-"));
     mkdirSync(join(root, "scripts", "lib"), { recursive: true });
     copyFileSync(SCRIPT, join(root, "scripts", "run-verify-parallel.sh"));
@@ -286,7 +286,7 @@ exit 0
         PATH: bin,
         HOME: process.env.HOME ?? root,
         TMPDIR: process.env.TMPDIR ?? "/tmp",
-        GBRAIN_VERIFY_TIMEOUT: "30",
+        GBRAIN_VERIFY_TIMEOUT: timeoutSecs,
         GBRAIN_VERIFY_LOG_DIR: join(root, "logs"),
       },
     };
@@ -366,4 +366,20 @@ exit 0
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("the watchdog never outlives its check: no orphaned sleep holds the caller's pipes", () => {
+    const timeoutSecs = "47";
+    const { root, env } = makeFallbackHarness(timeoutSecs);
+    const watchdogSleeps = () => spawnSync("pgrep", ["-f", `^sleep ${timeoutSecs}$`], { encoding: "utf8" }).stdout.trim().split("\n").filter(Boolean);
+    try {
+      const started = performance.now();
+      const r = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], { encoding: "utf8", env });
+      expect(r.status).toBe(0);
+      expect(performance.now() - started).toBeLessThan(Number(timeoutSecs) * 1000 / 2);
+      if (Bun.which("pgrep")) expect(watchdogSleeps()).toEqual([]);
+    } finally {
+      for (const pid of watchdogSleeps()) try { process.kill(Number(pid)); } catch {}
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

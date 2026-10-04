@@ -2,7 +2,7 @@
  * v0.43 (#2095) — `gbrain watch` SIGINT lifecycle. SERIAL: spawns a real CLI
  * subprocess with a tmpdir brain (the parallel unit shards flake on
  * concurrent subprocess spawns — same isolation rationale as
- * apply-migrations-pglite-spawn.serial.test.ts).
+ * apply-migrations-pglite-spawn.test.ts).
  */
 import { describe, test, expect } from 'bun:test';
 

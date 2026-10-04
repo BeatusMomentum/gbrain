@@ -8,7 +8,7 @@
  * yet are listed in a shrink-only baseline
  * (test/fixtures/cli-contract/help-baseline.json): a NEW violation fails, and
  * a baseline entry that now passes must be removed
- * (`GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/cli-contract.serial.test.ts`
+ * (`GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/cli-contract.test.ts`
  * rewrites it, refusing growth).
  *
  * Part 2 (json): every record that declares `json` has one succeeding and one

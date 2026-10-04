@@ -14,7 +14,7 @@
  *  - D11 preflight: explicit bad --embedding-dimensions refuses BEFORE touching disk
  *
  * Picker interactive flow (real TTY) is covered by the real-PTY serial test
- * at test/init-picker-pty.serial.test.ts (keyless provider choice plus a
+ * at test/init-picker-pty.test.ts (keyless provider choice plus a
  * non-default search mode, driven through a true pseudo-terminal). This file
  * stays piped-stdin on purpose: it exercises the NON-TTY branches.
  *

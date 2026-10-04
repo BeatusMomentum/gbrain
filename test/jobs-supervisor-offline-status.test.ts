@@ -23,7 +23,7 @@ describe('supervisor status without a database connection', () => {
         expect(tables.rows[0]?.pages).toBeNull();
       } finally { await db.close(); }
     } finally { rmSync(home, { recursive: true, force: true }); }
-  }, 40_000);
+  });
 
   test('a locally live owner remains inspectable while its database is unavailable', async () => {
     const home = mkdtempSync(join(tmpdir(), 'supervisor-offline-status-'));

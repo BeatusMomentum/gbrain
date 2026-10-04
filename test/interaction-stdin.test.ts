@@ -7,7 +7,7 @@
  *
  * Serial lane: concurrent subprocess spawns (one of them sleeps 8 s to pin the
  * slow-first-byte contract) and PTY sessions, same rationale as
- * test/cli-stdin-hang.test.ts and test/init-picker-pty.serial.test.ts.
+ * test/cli-stdin-hang.test.ts and test/init-picker-pty.test.ts.
  * The in-process half (decision table, injected streams) is
  * test/interaction.test.ts.
  */

@@ -15,7 +15,7 @@
  *      are trimmed.
  *
  * `.serial` suffix: binds TCP ports, runs in the serial pass.
- * Pattern per test/admin-embed-spawn.serial.test.ts (spawn + /health poll +
+ * Pattern per test/admin-embed-spawn.test.ts (spawn + /health poll +
  * SIGTERM→SIGKILL cleanup). The default HOST bind (127.0.0.1) is covered
  * implicitly — every request here reaches the server via 127.0.0.1.
  */

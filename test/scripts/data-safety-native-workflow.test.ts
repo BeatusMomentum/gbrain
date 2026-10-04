@@ -25,9 +25,9 @@ const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/work
 const suites = [
   'test/persistence-publication-native.serial.test.ts',
   'test/persistence-git-publication.test.ts',
-  'test/persistence-sync-origin-native.serial.test.ts',
+  'test/persistence-sync-origin-native.test.ts',
   'test/backup-portability-native.serial.test.ts',
-  'test/export-publication-native.serial.test.ts',
+  'test/export-publication-native.test.ts',
   'test/native-export-publication.test.ts',
 ];
 
@@ -205,7 +205,7 @@ describe('data-safety native CI coverage', () => {
     expect(step!.run!.trim().split('\n')).toEqual([
       ': "${DATABASE_URL:?Data-safety tests require the explicit test database}"',
       'bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts',
-      'bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts',
+      'bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.test.ts',
       'bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts',
       'bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts',
     ]);

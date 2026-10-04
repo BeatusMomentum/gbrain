@@ -37,7 +37,7 @@ g.flushThenExit(0);`);
     expect(JSON.parse(r.out)).toEqual({ ok: true });
     expect(r.err).toContain('human progress line');
     expect(r.err).toContain('more noise');
-  }, 20_000);
+  });
 
   test('a direct non-zero exit with no document writes the fallback document', async () => {
     const r = await run(`g.installStdoutPipeDelivery({ json: 'document' });
@@ -52,7 +52,7 @@ process.exit(2);`);
       suggestion: 'Re-run without --json to read the error on stderr, or run `gbrain doctor --json`.',
       exit_code: 2, contract_version: 1,
     });
-  }, 20_000);
+  });
 
   test('a document already written is never followed by a fallback', async () => {
     const r = await run(`g.installStdoutPipeDelivery({ json: 'document' });
@@ -60,7 +60,7 @@ await g.writeStdoutFinal(JSON.stringify({ error: 'x', code: 'x' }) + '\\n');
 process.exit(1);`);
     expect(r.code).toBe(1);
     expect(JSON.parse(r.out)).toEqual({ error: 'x', code: 'x' });
-  }, 20_000);
+  });
 
   test('exit 0 without a document writes nothing to fd 1 (a bug D5 fails; E11 hook fires)', async () => {
     const r = await run(`g.installStdoutPipeDelivery({ json: 'document' });
@@ -70,7 +70,7 @@ process.exit(0);`);
     expect(r.code).toBe(0);
     expect(r.out).toBe('');
     expect(r.err).toContain('HOOK_FIRED');
-  }, 20_000);
+  });
 
   test('ndjson: lines reach fd 1; a failing exit appends a status:error line', async () => {
     const r = await run(`g.installStdoutPipeDelivery({ json: 'ndjson' });
@@ -80,7 +80,7 @@ process.exit(1);`);
     const lines = r.out.trim().split('\n').map(l => JSON.parse(l));
     expect(lines[0]).toEqual({ n: 1 });
     expect(lines[1]).toMatchObject({ status: 'error', error: 'command_failed', exit_code: 1 });
-  }, 20_000);
+  });
 
   test('spawnCliChild pipes the child stdout to stderr under the guard', async () => {
     const r = await run(`g.installStdoutPipeDelivery({ json: 'document' });
@@ -90,14 +90,14 @@ await g.writeStdoutFinal(JSON.stringify({ ok: 1 }) + '\\n');
 g.flushThenExit(0);`);
     expect(JSON.parse(r.out)).toEqual({ ok: 1 });
     expect(r.err).toContain('child says hi');
-  }, 20_000);
+  });
 
   test('without the guard, installStdoutPipeDelivery keeps stdout as-is', async () => {
     const r = await run(`g.installStdoutPipeDelivery();
 console.log('plain');
 g.flushThenExit(0);`);
     expect(r.out).toBe('plain\n');
-  }, 20_000);
+  });
 });
 
 // ── D2: command migrations (real CLI subprocesses, isolated GBRAIN_HOME) ──

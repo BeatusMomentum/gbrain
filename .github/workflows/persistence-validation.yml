@@ -136,7 +136,7 @@ jobs:
         run: |
           : "${DATABASE_URL:?Data-safety tests require the explicit test database}"
           bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts
-          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.test.ts
           bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts
           bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts
       - name: Require canonical reconciliation through direct and pooled PostgreSQL
@@ -206,7 +206,7 @@ jobs:
           case "$SHARD" in
             1) files=(
                 test/colon-slug-windows-5032.test.ts
-                test/decide/conflict-proposals-managed.serial.test.ts
+                test/decide/conflict-proposals-managed.test.ts
                 test/declared-lineage-visibility.test.ts
                 test/extract-endpoint-revision.serial.test.ts
                 test/grandfather-managed.test.ts
@@ -227,7 +227,7 @@ jobs:
                 test/persistence-page-authority.test.ts
                 test/persistence-skill-bundles.serial.test.ts
                 test/shared-content-freshness.test.ts
-                test/shared-skills-writer-boundary.serial.test.ts
+                test/shared-skills-writer-boundary.test.ts
                 test/source-retire-missing-checkout.test.ts
                 test/sync-legacy-holds.test.ts
                 test/takes-vector-lifecycle-5885.serial.test.ts

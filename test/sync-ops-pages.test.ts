@@ -14,7 +14,7 @@
  * skip 'pruned-dir' classifications (a page under a genuinely-pruned dir can
  * only exist via a deliberate put_page — never delete it on a file edit).
  *
- * Modeled on test/sync-metafile-skip.serial.test.ts (the #1433 iron rule).
+ * Modeled on test/sync-metafile-skip.test.ts (the #1433 iron rule).
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';

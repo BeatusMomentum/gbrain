@@ -265,8 +265,14 @@ for c in "${CHECKS[@]}"; do
     else
       bun run "$c" > "$LOG_FILE" 2>&1 &
       pid=$!
-      ( sleep "$TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
-        sleep 5 && kill -KILL "$pid" 2>/dev/null ) &
+      # The watchdog owns no caller pipes (an orphaned sleep holding stdout
+      # stalled spawnSync callers for the whole $TIMEOUT) and its TERM trap
+      # takes its sleep down with it, closing the window where pkill -P runs
+      # before the sleep is forked.
+      ( trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+        sleep "$TIMEOUT" & nap=$!
+        wait "$nap" && kill -TERM "$pid" 2>/dev/null && \
+          sleep 5 && kill -KILL "$pid" 2>/dev/null ) </dev/null >/dev/null 2>&1 &
       cap_pid=$!
       wait "$pid" 2>/dev/null
       # Capture the check's exit code from ITS `wait`, before any watchdog

@@ -14,7 +14,7 @@
  * in-process unit tests of `runReindexFrontmatter` (see
  * reindex-frontmatter-connect.test.ts) can never reach.
  *
- * Single-test design mirrors apply-migrations-pglite-spawn.serial.test.ts:
+ * Single-test design mirrors apply-migrations-pglite-spawn.test.ts:
  * each `bun run src/cli.ts` spawn pays a cold-start cost on CI, so one test
  * walks the whole lifecycle. Serial because it spawns subprocesses + writes a
  * tmpdir.

@@ -1,5 +1,5 @@
 /**
- * test/audit/connection-audit.serial.test.ts — src/core/connection-audit.ts
+ * test/audit/connection-audit.test.ts — src/core/connection-audit.ts
  * (the ddl/bulk pool acquire/release/error JSONL trail).
  *
  * SERIAL (own bun process), for two reasons:

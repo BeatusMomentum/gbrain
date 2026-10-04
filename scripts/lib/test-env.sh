@@ -106,6 +106,19 @@ ensure_default_pglite_snapshot() {
 }
 
 # ──────────────────────────────────────────────────────────────────────────
+# Coverage wait multiplier: bun's lcov instrumentation slows the code under
+# test while test deadlines stay wall-clock, so a coverage lane (COVERAGE_DIR
+# set) exports GBRAIN_TEST_WAIT_MULTIPLIER=2 unless the caller chose a value.
+# test/helpers/wait-for.ts scales every waitFor deadline by it and keeps the
+# result below bun's 60s per-test timeout. The bun preload keeps GBRAIN_TEST_*
+# and run-e2e.sh's env scrub keep-lists the name. Runs when this file is
+# sourced, so every runner that sources it gets the same default.
+# ──────────────────────────────────────────────────────────────────────────
+if [ -n "${COVERAGE_DIR:-}" ] && [ -z "${GBRAIN_TEST_WAIT_MULTIPLIER:-}" ]; then
+  export GBRAIN_TEST_WAIT_MULTIPLIER=2
+fi
+
+# ──────────────────────────────────────────────────────────────────────────
 # Executed-test receipts (X2). With GBRAIN_TEST_RECEIPT_DIR set, every bun
 # invocation a runner makes records one receipt in that directory:
 #   <id>.receipt     key=value lines: lane, kind (primary|rerun|rescue),
