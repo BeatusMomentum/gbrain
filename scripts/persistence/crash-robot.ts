@@ -21,7 +21,7 @@ import postgres from '#postgres';
 import { prepareTopology } from './history-fixture.ts';
 import { installLockOrderTrace, lockOrderReport } from './lock-order.ts';
 import { executeOp, type OpDescriptor, type OpObservation, type World } from './ops.ts';
-import { ReferenceModel, SAFETY_CLASSES, type Violation } from './model.ts';
+import { ReferenceModel, retryingRead, SAFETY_CLASSES, type Violation } from './model.ts';
 import type { Schedule } from './generator.ts';
 import { pageBody } from './generator.ts';
 import { descriptor } from './ops.ts';
@@ -43,9 +43,9 @@ export async function drain(engine: BrainEngine, world: World, timeoutMs = 60_00
   startPersistenceConsumer(engine, world.config).wake();
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const [row] = await engine.executeRaw<{ n: number }>(`SELECT
+    const [row] = await retryingRead(() => engine.executeRaw<{ n: number }>(`SELECT
       (SELECT count(*) FROM persistence_requests WHERE state IN ('queued','running','recovering'))
-      + (SELECT count(*) FROM persistence_effects WHERE (state IN ('queued','running') AND next_attempt_at <= now() + interval '30 seconds') OR recovery IS NOT NULL) AS n`);
+      + (SELECT count(*) FROM persistence_effects WHERE (state IN ('queued','running') AND next_attempt_at <= now() + interval '30 seconds') OR recovery IS NOT NULL) AS n`));
     if (Number(row.n) === 0) return true;
     if (Date.now() > deadline) return false;
     await Bun.sleep(100);

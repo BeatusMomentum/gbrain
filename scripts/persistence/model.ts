@@ -16,6 +16,7 @@ import { EFFECT_FAULT_POINTS, type FaultPoint } from '../../src/core/persistence
 import { operationsByName } from '../../src/core/operations.ts';
 import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { parseTakesFence } from '../../src/core/takes-fence.ts';
+import { isRegistryCode } from '../../src/core/error-catalogue.ts';
 import { CONNECTOR_SLUG, contextFor, type OpDescriptor, type OpKind, type OpObservation, type World } from './ops.ts';
 
 /**
@@ -30,6 +31,20 @@ export const EFFECT_SEAMS = {
   'withdrawal-mirror': { op: 'forget', point: EFFECT_FAULT_POINTS['withdrawal-mirror'] },
   'facts-backstop': { op: 'put_page', point: EFFECT_FAULT_POINTS['facts-backstop'] },
 } as const satisfies Record<EffectKind, { op: OpKind; point: FaultPoint }>;
+
+/** Retry a harness read across a dropped connection (the pooler_disconnect fault); other errors propagate. */
+export async function retryingRead<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(); } catch (error) {
+      const text = `${(error as { code?: string }).code ?? ''} ${String((error as Error).message)}`;
+      if (attempt >= 8 || !/CONNECTION_CLOSED|CONNECTION_ENDED|ECONNRESET|57P01|08P01|08006|server conn crashed|terminating connection|Connection terminated/i.test(text)) throw error;
+      await Bun.sleep(150 * (attempt + 1));
+    }
+  }
+}
+
+/** Non-error outcomes a sync or connector run reports as its status (not error codes). */
+const EXTERNAL_RESULT_CODES = new Set(['blocked_by_failures', 'dry_run']);
 
 export type ViolationClass = 'lost_write' | 'duplicate_apply' | 'untrue_receipt' | 'wedge' | 'withdrawal_permanence'
   | 'source_isolation' | 'authorization' | 'caller_bound_replay' | 'projection_drift' | 'missing_attribution' | 'orphan_rows' | 'effects_not_terminal'
@@ -121,8 +136,10 @@ export class ReferenceModel {
     this.pending.delete(d.id);
     if (o.status !== 'committed') {
       if (marker && !this.committedMarkers.has(marker)) this.refusedMarkers.add(marker);
-      if (o.status === 'refused' && (!o.code || o.code === 'uncoded_error')) {
-        this.violate({ class: 'untyped_error', op: d.id, detail: `${d.kind} failed without a typed code: ${JSON.stringify(o.raw).slice(0, 300)}` });
+      // The agent sees the MCP envelope: its code must be a registered one.
+      const agentCode = o.agentCode ?? o.code;
+      if (o.status === 'refused' && (!agentCode || !isRegistryCode(agentCode)) && !EXTERNAL_RESULT_CODES.has(o.code ?? '')) {
+        this.violate({ class: 'untyped_error', op: d.id, detail: `${d.kind} failed without a registered agent error code (${agentCode}): ${JSON.stringify(o.raw).slice(0, 300)}` });
       }
       return;
     }
@@ -166,7 +183,7 @@ export class ReferenceModel {
         const marker = memberMarkers[i];
         if (!replacing && marker && !markersIn(String(read?.content)).includes(marker)) this.violate({ class: 'lost_write', op: x.d.id, detail: `committed concurrent ${x.d.kind} marker ${marker} is not visible` });
         if (x.o.values.revision && x.o.values.revision !== read?.revision) {
-          const [kept] = await this.world.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
+          const [kept] = await this.q<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
             WHERE p.source_id=$1 AND p.slug=$2 AND v.knowledge_revision::text=$3`, [source, slug, x.o.values.revision]);
           if (!kept.n) this.violate({ class: 'untrue_receipt', op: x.d.id, detail: `committed revision ${x.o.values.revision} of ${source}/${slug} never existed` });
         }
@@ -190,7 +207,7 @@ export class ReferenceModel {
       const o = observed[i];
       if (o.status !== 'committed' || !o.values.revision) continue;
       const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG : String(d.args.slug ?? d.args.entity ?? '');
-      const [seen] = await this.world.engine.executeRaw<{ n: number }>(`SELECT
+      const [seen] = await this.q<{ n: number }>(`SELECT
         (SELECT count(*)::int FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.knowledge_revision::text=$3)
         + (SELECT count(*)::int FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2 AND v.knowledge_revision::text=$3) AS n`,
       [d.source, slug, o.values.revision]);
@@ -227,13 +244,23 @@ export class ReferenceModel {
   }
 
   /** Read surfaces an agent uses, under a given actor. */
+  /**
+   * The oracle's own reads retry a dropped connection (the pooler_disconnect
+   * fault terminates sessions between statements); only the system under test
+   * is judged on such errors.
+   */
+  private retrying<T>(read: () => Promise<T>): Promise<T> { return retryingRead(read); }
+  q<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]> {
+    return this.retrying(() => this.world.engine.executeRaw<R>(sql, params));
+  }
+
   /** The last read error, quoted in a violation so a failed read is never mistaken for a missing page. */
   lastReadError: string | null = null;
   async readPage(actor: string, source: string, slug: string): Promise<Record<string, unknown> | null> {
     this.lastReadError = null;
     try {
-      return await operationsByName.get_page.handler(contextFor(this.world, actor, source),
-        { slug, include_content: true, ...(actor === 'local' ? { source_id: source } : {}) }) as Record<string, unknown>;
+      return await this.retrying(() => operationsByName.get_page.handler(contextFor(this.world, actor, source),
+        { slug, include_content: true, ...(actor === 'local' ? { source_id: source } : {}) })) as Record<string, unknown>;
     } catch (error) {
       const e = error as { code?: string; message?: string };
       this.lastReadError = `${e.code ?? 'error'}: ${String(e.message).slice(0, 160)}`;
@@ -242,16 +269,15 @@ export class ReferenceModel {
   }
   async recall(actor: string, source: string, entity: string): Promise<string[]> {
     try {
-      const r = await operationsByName.recall.handler(contextFor(this.world, actor, source),
-        { entity, limit: 100, ...(actor === 'local' ? { source_id: source } : {}) }) as { facts?: { fact?: string }[] };
+      const r = await this.retrying(() => operationsByName.recall.handler(contextFor(this.world, actor, source),
+        { entity, limit: 100, ...(actor === 'local' ? { source_id: source } : {}) })) as { facts?: { fact?: string }[] };
       return (r.facts ?? []).map(f => String(f.fact ?? ''));
     } catch { return []; }
   }
 
   /** Invariants over the whole brain; run after every step and after recovery. */
   async checkGlobal(stage: string): Promise<void> {
-    const engine = this.world.engine;
-    const rows = await engine.executeRaw<{ source_id: string; slug: string; compiled_truth: string; timeline: string; revision: string | null; deleted: boolean; id: number }>(
+    const rows = await this.q<{ source_id: string; slug: string; compiled_truth: string; timeline: string; revision: string | null; deleted: boolean; id: number }>(
       'SELECT id,source_id,slug,compiled_truth,timeline,knowledge_revision::text AS revision,deleted_at IS NOT NULL AS deleted FROM pages');
     const seen = new Set<string>();
     for (const row of rows) {
@@ -290,36 +316,35 @@ export class ReferenceModel {
       const page = await this.readPage('local', fact.source, fact.entity);
       const live = parseFactsFence(String(page?.content ?? '')).facts.filter(f => !f.forgotten && f.validUntil === undefined && f.claim === fact.text);
       if (live.length) this.violate({ class: 'withdrawal_permanence', op: fact.op, detail: `${stage}: withdrawn fact "${fact.text}" is a live row in ${fact.source}/${fact.entity}'s fence` });
-      const [db] = await this.world.engine.executeRaw<{ n: number }>(
+      const [db] = await this.q<{ n: number }>(
         'SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND fact=$2 AND expired_at IS NULL', [fact.source, fact.text]);
       if (db.n > 0) this.violate({ class: 'withdrawal_permanence', op: fact.op, detail: `${stage}: withdrawn fact "${fact.text}" has ${db.n} active row(s)` });
     }
   }
 
   private async checkProjection(stage: string, live: { id: number; source_id: string; slug: string }[]): Promise<void> {
-    const engine = this.world.engine;
     for (const row of live) {
       const page = await this.readPage('local', row.source_id, row.slug);
       const content = String(page?.content ?? '');
       const takes = parseTakesFence(content).takes;
-      const dbTakes = await engine.executeRaw<{ row_num: number; claim: string; active: boolean }>(
+      const dbTakes = await this.q<{ row_num: number; claim: string; active: boolean }>(
         'SELECT row_num,claim,active FROM takes WHERE page_id=$1 ORDER BY row_num', [row.id]);
       const fence = takes.map(t => `${t.rowNum}:${t.claim}:${t.active}`).sort();
       const db = dbTakes.map(t => `${t.row_num}:${t.claim}:${t.active}`).sort();
       if (JSON.stringify(fence) !== JSON.stringify(db)) this.violate({ class: 'projection_drift', detail: `${stage}: ${row.source_id}/${row.slug} takes fence ${JSON.stringify(fence)} != rows ${JSON.stringify(db)}` });
       const liveFacts = parseFactsFence(content).facts.filter(f => !f.forgotten && f.validUntil === undefined).map(f => f.claim).sort();
-      const dbFacts = (await engine.executeRaw<{ fact: string }>(`SELECT fact FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
+      const dbFacts = (await this.q<{ fact: string }>(`SELECT fact FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
         AND expired_at IS NULL AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > now())`, [row.source_id, row.slug])).map(f => f.fact).sort();
       if (JSON.stringify(liveFacts) !== JSON.stringify(dbFacts)) this.violate({ class: 'projection_drift', detail: `${stage}: ${row.source_id}/${row.slug} facts fence ${JSON.stringify(liveFacts)} != rows ${JSON.stringify(dbFacts)}` });
     }
-    const [orphans] = await engine.executeRaw<{ takes: number; timeline: number }>(`SELECT
+    const [orphans] = await this.q<{ takes: number; timeline: number }>(`SELECT
       (SELECT count(*)::int FROM takes t WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id=t.page_id)) AS takes,
       (SELECT count(*)::int FROM timeline_entries e WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id=e.page_id)) AS timeline`);
     if (orphans.takes || orphans.timeline) this.violate({ class: 'orphan_rows', detail: `${stage}: orphan takes=${orphans.takes} timeline=${orphans.timeline}` });
   }
 
   private async checkAttribution(stage: string): Promise<void> {
-    const [missing] = await this.world.engine.executeRaw<{ facts: number; takes: number; timeline: number; pages: number }>(`SELECT
+    const [missing] = await this.q<{ facts: number; takes: number; timeline: number; pages: number }>(`SELECT
       (SELECT count(*)::int FROM facts WHERE write_principal_kind IS NULL) AS facts,
       (SELECT count(*)::int FROM takes WHERE write_principal_kind IS NULL) AS takes,
       (SELECT count(*)::int FROM timeline_entries WHERE write_principal_kind IS NULL) AS timeline,
@@ -329,7 +354,7 @@ export class ReferenceModel {
 
   /** After a drain: nothing pending, every effect terminal, and a fresh write still admits (no wedge). */
   async checkDrained(stage: string): Promise<void> {
-    const [pending] = await this.world.engine.executeRaw<{ requests: number; effects: number }>(`SELECT
+    const [pending] = await this.q<{ requests: number; effects: number }>(`SELECT
       (SELECT count(*)::int FROM persistence_requests WHERE state IN ('queued','running','recovering')) AS requests,
       (SELECT count(*)::int FROM persistence_effects WHERE state IN ('queued','running') OR recovery IS NOT NULL) AS effects`);
     if (pending.requests) this.violate({ class: 'wedge', detail: `${stage}: ${pending.requests} request(s) still pending after the drain` });
@@ -349,7 +374,7 @@ const pageWrite = (kind: 'put' | 'edit'): Fold => async (m, d, o) => {
   if (m.deferringVisibility) return;
   const read = await m.readPage(d.actor === 'local' || m.revoked.has(d.actor) ? 'local' : d.actor, d.source, slug);
   if (!read || read.revision !== o.values.revision) {
-    const [row] = await m.world.engine.executeRaw<Record<string, unknown>>(`SELECT knowledge_revision::text AS revision,deleted_at IS NOT NULL AS deleted,
+    const [row] = await m.q<Record<string, unknown>>(`SELECT knowledge_revision::text AS revision,deleted_at IS NOT NULL AS deleted,
       source_path FROM pages WHERE source_id=$1 AND slug=$2`, [d.source, slug]);
     m.violate({ class: 'untrue_receipt', op: d.id, detail: `committed ${d.kind} revision ${o.values.revision} not visible (read ${String(read?.revision)}${m.lastReadError ? `; ${m.lastReadError}` : ''}; row ${JSON.stringify(row ?? null)})` });
   }

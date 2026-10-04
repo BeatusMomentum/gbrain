@@ -18,6 +18,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import type { AuthInfo, OperationContext } from '../../src/core/ops/contract.ts';
 import { operationsByName } from '../../src/core/operations.ts';
+import { toAgentError } from '../../src/core/agent-output.ts';
+import { dispatchRenderContext, type DispatchOpts } from '../../src/mcp/dispatch.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { revokeLegacyTokenById } from '../../src/core/token-mint.ts';
@@ -71,6 +73,8 @@ export interface OpObservation {
   pageContent?: string;
   /** The raw handler result or error fields, JSON-safe. */
   raw?: unknown;
+  /** For a failure: the code of the agent-contract envelope an MCP caller receives (`toAgentError`). */
+  agentCode?: string;
 }
 
 /**
@@ -175,7 +179,14 @@ async function reauthenticate(world: World, actor: string): Promise<void> {
   const remote = world.remotes.find(r => r.name === actor);
   if (!remote) return;
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(world.engine) });
-  world.auth.set(actor, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo);
+  // The transport's own verification retries a dropped connection; only the operation is under test.
+  for (let attempt = 0; ; attempt++) {
+    try { world.auth.set(actor, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo); return; }
+    catch (error) {
+      if (attempt >= 8 || !/CONNECTION_CLOSED|ECONNRESET|08P01|57P01|server conn crashed/i.test(`${(error as { code?: string }).code} ${(error as Error).message}`)) throw error;
+      await Bun.sleep(150 * (attempt + 1));
+    }
+  }
 }
 
 /** Revoke a remote actor's credential through the owner's real revocation path. */
@@ -314,7 +325,9 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
     const receipt = receiptOf(e.writeRequest);
     // A memory verb reports an accepted, unfinished write as `unavailable` carrying its pending receipt.
     const pending = e.code === 'write_pending' || (receipt !== undefined && !['committed', 'failed', 'conflict', 'cancelled'].includes(receipt.state));
-    observation = { ...base, status: pending ? 'pending' : 'refused', code: e.code ?? 'uncoded_error',
+    const envelope = toAgentError(error, { transport: 'http', op, mutating: true, idempotent: true, outcome: 'unknown',
+      render: dispatchRenderContext({ transport: 'http', remote: true } as DispatchOpts) });
+    observation = { ...base, status: pending ? 'pending' : 'refused', code: e.code ?? 'uncoded_error', agentCode: envelope.code,
       receipt, values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
   }
   const slug = typeof params.slug === 'string' ? params.slug : typeof params.entity === 'string' ? params.entity : null;
