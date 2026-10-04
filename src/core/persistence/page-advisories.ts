@@ -7,8 +7,34 @@ import { prepareFactsBackstop } from './effect-facts.ts';
 import { lineGrammarOptions, parseLineGrammar } from '../line-grammar.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
+import { findSimilarPages, isSimilarPagesEnabled } from '../similar-pages.ts';
+import { isQuarantined } from '../quarantine.ts';
+import { readFix } from '../ops/op-fix.ts';
 
 const LINE_GRAMMAR_FINDINGS_MAX = 5;
+
+/**
+ * On a create: existing pages in the same source that this one probably
+ * duplicates (same title or alias, same name elsewhere, very similar title).
+ * A question for the writer, never a merge; slugs only.
+ */
+async function similarPagesAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
+  if (!['put_page', 'capture'].includes(row.operation) || row.slug.startsWith('wiki/agents/')
+    || page.frontmatter?.dream_generated === true || (page.type as string) === 'extract_receipt' || isQuarantined(page.frontmatter)
+    || !(await isSimilarPagesEnabled(engine))) return undefined;
+  const found = await findSimilarPages(engine, { sourceId: row.source_id, slug: row.slug, title: page.title ?? '',
+    excludePrivate: row.authority.excludePrivate ?? row.authority.remote });
+  if (!found?.candidates.length) return undefined;
+  const first = found.candidates[0];
+  return {
+    candidates: found.candidates,
+    checks_ran: found.checks_ran,
+    semantic: 'not_checked',
+    message: `This new page looks like ${found.candidates.length === 1 ? 'an existing page' : 'existing pages'} (${found.candidates.map(c => `${c.slug}: ${c.evidence}`).join(', ')}). If it is the same thing, move this content into that page with edit_page and delete this one; if it is different, keep both.`,
+    fix: readFix(`Shows existing page ${first.slug} in source ${first.source_id} so you can compare it with the new page, read-only.`,
+      { argv: ['gbrain', 'get', '--source', first.source_id, '--', first.slug], mcp: { tool: 'get_page', arguments: { slug: first.slug, source_id: first.source_id } } }),
+  };
+}
 
 /**
  * What the line grammar read from this page body: typed relation lines and
@@ -58,6 +84,7 @@ export async function preparePageAdvisories(engine: BrainEngine, row: WriteReque
   const facts = ['put_page', 'capture', 'edit_page'].includes(row.operation)
     ? await prepareFactsBackstop(engine, row, page).catch(() => ({ skipped: 'backstop_error' })) : undefined;
   const grammar = await lineGrammarAdvisory(engine, row, visible).catch(() => undefined);
+  const similar = await similarPagesAdvisory(engine, row, page).catch(() => undefined);
   return { ...remoteLinkHint(row), ...(sanitized ? { writer_lint: sanitized } : {}), ...(facts ? { facts_backstop: facts } : {}),
-    ...(grammar ? { line_grammar: grammar } : {}) };
+    ...(grammar ? { line_grammar: grammar } : {}), ...(similar ? { similar_pages: similar } : {}) };
 }

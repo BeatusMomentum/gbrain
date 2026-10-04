@@ -4,7 +4,7 @@
  */
 import { describe, test } from 'bun:test';
 import { bareNameReferenceSettles, disabledClearsRows, forwardReferenceHeals, onlyUnresolvedAuthoredReferences,
-  privateOriginsStayPrivate } from '../helpers/wanted-links-scenarios.ts';
+  privateOriginsStayPrivate, restoredTargetHeals } from '../helpers/wanted-links-scenarios.ts';
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('Postgres wanted pages', () => {
@@ -12,5 +12,6 @@ describe.skipIf(!url)('Postgres wanted pages', () => {
   test('only unresolved authored references are wanted', () => onlyUnresolvedAuthoredReferences(url), 180_000);
   test('a bare-name reference settles', () => bareNameReferenceSettles(url), 180_000);
   test('private origins stay private', () => privateOriginsStayPrivate(url), 180_000);
+  test('restoring a deleted target heals', () => restoredTargetHeals(url), 180_000);
   test('disabling clears rows', () => disabledClearsRows(url), 180_000);
 });

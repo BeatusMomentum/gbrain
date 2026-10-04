@@ -9,12 +9,13 @@ import { extractStaleFromDB } from '../src/commands/extract.ts';
 import { collectWantedLinks } from '../src/core/wanted-links.ts';
 import type { LinkCandidate } from '../src/core/link-extraction.ts';
 import { bareNameReferenceSettles, disabledClearsRows, forwardReferenceHeals, onlyUnresolvedAuthoredReferences,
-  privateOriginsStayPrivate } from './helpers/wanted-links-scenarios.ts';
+  privateOriginsStayPrivate, restoredTargetHeals } from './helpers/wanted-links-scenarios.ts';
 
 test('a link written before its target exists becomes an edge after the target is created', () => forwardReferenceHeals(), 120_000);
 test('resolved references, prose paths and code spans are never wanted', () => onlyUnresolvedAuthoredReferences(), 120_000);
 test('a bare-name reference matched only by basename settles after one re-extraction', () => bareNameReferenceSettles(), 120_000);
 test('remote callers never see targets or counts from private origins', () => privateOriginsStayPrivate(), 120_000);
+test('restoring a deleted target heals links written while it was deleted', () => restoredTargetHeals(), 120_000);
 test('wanted_pages.enabled=false clears an origin\'s rows on its next extraction', () => disabledClearsRows(), 120_000);
 
 describe('collectWantedLinks', () => {

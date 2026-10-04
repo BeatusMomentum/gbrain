@@ -1577,6 +1577,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // undeclared relation types fall back to inference unless allowed.
   'line_grammar.enabled',
   'line_grammar.allow_undeclared_types',
+  // put_page "did you mean an existing page?" advisory on creates (core/similar-pages.ts).
+  'put_page.similar_pages',
   // #5584: skillopt optimizer output cap (default 32000 thinking / 4096 otherwise).
   'skillopt.reflect_max_tokens',
   // #5585: skillopt strict model provenance (true|1|yes|on; other values count as on).

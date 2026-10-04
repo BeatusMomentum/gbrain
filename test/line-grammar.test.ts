@@ -111,6 +111,12 @@ describe('relation lines', () => {
     expect(relations('- works_at [[companies/acme]] (primary) and [[b]] (secondary)')).toEqual([]);
   });
 
+  test('a trailing [Source: ...] citation is set aside on both line kinds', () => {
+    expect(relations('- works_at [[companies/acme]] (since 2024) [Source: User, chat, 2026-10-04]')).toMatchObject([{ type: 'works_at', context: 'since 2024' }]);
+    expect(relations('- advises [[companies/acme]] [Source: [Acme blog](https://example.com/post)]')).toMatchObject([{ type: 'advises' }]);
+    expect(facts('- [preference] Tea #drinks (mornings) [Source: User, 2026-10-04]')).toMatchObject([{ claim: 'Tea', context: 'mornings', tags: ['drinks'] }]);
+  });
+
   test('links inside code are not links', () => {
     expect(relations('- works_at `[[companies/acme]]`')).toEqual([]);
   });

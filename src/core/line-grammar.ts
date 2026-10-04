@@ -87,6 +87,10 @@ const QUALIFIER_RE = /^@([A-Za-z][A-Za-z0-9_]*)([[(])([^\][()]*),([^\][()]*)([\]
 const QUALIFIER_LIKE_RE = /^@([A-Za-z][A-Za-z0-9_]*)[[(:]/;
 const LINK_RE = /\[\[[^\]\n]+\]\]|\[[^\][\n]+\]\([^)\n]+\)/g;
 const LINE_TEXT_MAX = 160;
+// A trailing `[Source: ...]` citation (plain or wrapping a markdown link) is
+// part of the brain's quality convention, not of the grammar: it is set aside
+// before a line is read.
+const TRAILING_CITATION_RE = /\s*\[Source:\s*(?:[^\][]|\[[^\]]*\]\([^)]*\))*\]\s*$/i;
 
 /** Normalize a written relation type: `worksAt`, `works-at`, `"works at"` -> `works_at`. */
 export function normalizeRelationType(raw: string): string {
@@ -205,8 +209,8 @@ export function parseLineGrammar(text: string, opts: { declaredTypes?: ReadonlyS
     // Masking keeps offsets, so the item's content sits at the same place in
     // the original line; structure is read from the masked text (links inside
     // code are not links), the fact text from the original.
-    const visibleContent = item[2].trim();
-    const content = line.slice(line.length - item[2].length).trim();
+    const visibleContent = item[2].replace(TRAILING_CITATION_RE, '').trim();
+    const content = line.slice(line.length - item[2].length).replace(TRAILING_CITATION_RE, '').trim();
     if (!visibleContent || visibleContent.startsWith('\\')) continue;
     const note = (reason: GrammarReason, message: string) => result.diagnostics.push({ line: lineNo, reason, text: lineText(line), message });
     if (visibleContent.startsWith('[')) {

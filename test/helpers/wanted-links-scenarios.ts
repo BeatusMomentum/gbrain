@@ -111,3 +111,22 @@ export async function disabledClearsRows(databaseUrl?: string) {
     expect(await wantedRows(engine)).toEqual([]);
   }, { databaseUrl });
 }
+
+/** Restoring a soft-deleted target heals links written while it was deleted. */
+export async function restoredTargetHeals(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    const carol = await put(ctx, 'people/carol-example', 'Carol.', 'person');
+    await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: 'people/carol-example', request_id: randomUUID(),
+      expected_revision: (carol.outcome ?? carol).revision } });
+    await put(ctx, 'notes/lunch', 'Lunch with [[people/carol-example]].');
+    await extractStale(engine);
+    expect((await wantedRows(engine)).map(row => row.target_ref)).toEqual(['people/carol-example']);
+    const [deleted] = await engine.executeRaw<{ revision: string }>(
+      "SELECT knowledge_revision::text AS revision FROM pages WHERE slug='people/carol-example'");
+    await submitPageMutation(ctx, { operation: 'restore_page', params: { slug: 'people/carol-example', request_id: randomUUID(),
+      expected_revision: deleted.revision } });
+    expect(await stale(engine)).toBeGreaterThanOrEqual(1);
+    await extractStale(engine);
+    expect(await backlinks(engine, 'people/carol-example')).toEqual([{ slug: 'notes/lunch' }]);
+  }, { databaseUrl });
+}
