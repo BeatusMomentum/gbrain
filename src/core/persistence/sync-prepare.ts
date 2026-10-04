@@ -3,10 +3,12 @@ import { basename, join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page } from '../types.ts';
-import { OperationError, opError } from '../ops/contract.ts';
+import { OperationError, opError, type OpErrorOpts } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { importFromContent, importCodeFile } from '../import-file.ts';
+import { screenImportContent, type ContentRefusal } from '../import-screen.ts';
+import { ContentSanityBlockError } from '../content-sanity.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown } from '../markdown.ts';
 import { resolveSlugForPath, slugifyPath, isCodeFilePath } from '../sync.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
@@ -72,11 +74,29 @@ function syncInspectFix(row: WriteRequest, requestId: string, owner: boolean): A
  * keeps only code and message, so the suggestion stands alone: inspect the
  * request, then rerun the exact failed-run command once the cause is fixed.
  */
-function syncPublicationRefusal(code: RegistryCode, message: string, row: WriteRequest, p: SyncIntent | null, cause: string, inspectOwner = false): OperationError {
+function syncPublicationRefusal(code: RegistryCode, message: string, row: WriteRequest, p: SyncIntent | null, cause: string, inspectOwner = false, extra: OpErrorOpts = {}): OperationError {
   const fix = syncInspectFix(row, row.request_id, inspectOwner);
   const rerun = checkpointRetryCommand({ sourceId: row.source_id, processingOptions: p?.processingOptions, syncOptions: p?.syncOptions, repoPath: p?.repoPath });
   return opError(code, message, `${cause} Request ${row.request_id} in ${row.source_id} was refused; inspect it first (${fix.argv!.join(' ')}) and do not resubmit it. `
-    + `Once it is final and the cause is fixed, run: ${rerun}`, { fix });
+    + `Once it is final and the cause is fixed, run: ${rerun}`, { fix, ...extra });
+}
+
+/**
+ * #5988: a deterministic content refusal at publication. The wire `error`
+ * stays `invalid_params` (what older receipts stored), so the stored code and
+ * message keep matching `isContentRefusal`; `code` is the typed one.
+ */
+function syncContentRefusal(refusal: ContentRefusal, row: WriteRequest, p: SyncIntent): OperationError {
+  const where = refusal.line !== undefined ? `line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''} of ${p.sourcePath}` : p.sourcePath;
+  const cause = refusal.code === 'frontmatter_slug_conflict' ? 'Correct the frontmatter `slug:` in the file and commit the change.'
+    : refusal.code === 'file_too_large' ? `${p.sourcePath} is over the import size limit; split it into smaller files or add it to sync.exclude, then commit.`
+    : refusal.code === 'content_rejected' ? `The content-sanity gate rejects ${p.sourcePath} under junk_disposition=reject; remove the matched junk and commit.`
+    : `Fix ${where} (one line per key, the whole value quoted) and commit the change; gbrain frontmatter validate on the file lists every problem.`;
+  return syncPublicationRefusal(refusal.code, refusal.message, row, p, cause, false, {
+    ...(refusal.code === 'content_rejected' ? {} : { legacy_error: 'invalid_params' }),
+    ...(refusal.reason ? { reason: refusal.reason } : {}),
+    ...(refusal.key || refusal.line !== undefined ? { detail: [refusal.key ? `key ${refusal.key}` : '', refusal.line !== undefined ? `line ${refusal.line}` : ''].filter(Boolean).join(', ') } : {}),
+  });
 }
 
 export async function prepareManagedSyncMutation(engine: BrainEngine, row: WriteRequest, _config: GBrainConfig): Promise<PreparedMutation> {
@@ -225,6 +245,8 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       throw syncPublicationRefusal('source_changed', 'Newer code file bytes disagree with the pinned import.', row, p,
         `The working tree holds newer bytes for ${row.slug} than the pinned import; sync did not overwrite them. Preserve the local edit and commit it.`);
     }
+    const codeScreen = screenImportContent({ content: p.content, path: p.sourcePath });
+    if (codeScreen.status === 'refused') throw syncContentRefusal(codeScreen.refusal, row, p);
     let prepared: PreparedContentImport | undefined;
     const result = await importCodeFile(engine, p.sourcePath, p.content, { ...source, noEmbed: true,
       prepare: async value => { prepared = value; return value.result; } });
@@ -257,27 +279,27 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   // row.slug is already resolved; parseMarkdown expects a filename, as in importFromContent.
   const parsedInput = parseMarkdown(p.content, `${row.slug}.md`, { activePack });
   resolveParsedSubtype(parsedInput, base?.page);
-  const expectedSlug = resolveSlugForPath(p.sourcePath);
-  const retainedRecordedOrigin = snapshot?.page.source_path != null &&
-    syncOriginPath(snapshot.page.source_path) === syncOriginPath(p.sourcePath) && parsedInput.slug === snapshot.page.slug;
-  if (expectedSlug && parsedInput.slug !== expectedSlug && slugifyPath(parsedInput.slug) !== expectedSlug && !retainedRecordedOrigin) {
-    throw syncPublicationRefusal('invalid_params', frontmatterSlugConflictMessage(p.sourcePath, parsedInput.slug, expectedSlug), row, p,
-      'Correct the frontmatter `slug:` in the file and commit the change.');
-  }
-  if (!p.companyApproval && base && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(base, parsedInput)) {
-    // The pinned commit can simply trail the coordinator: a committed page write reaches the
-    // working tree before its Git effect lands. When the newer working-tree bytes are the
-    // current page itself, there is nothing to import and nothing to protect; the commit that
-    // carries them is imported as a no-op by a later run.
-    // The checkpoint may advance past the pinned commit's bytes because the working tree wins, as for any local edit.
-    const working = renamed ? null : readSyncFile(root, p.path);
-    if (!working || sha256(working) !== p.rawHash
-      || !sameCanonicalImport(base, parseMarkdown(working.toString('utf8'), `${row.slug}.md`, { activePack }))) {
-      throw syncPublicationRefusal('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.', row, p,
-        `The working tree holds newer bytes for ${row.slug} that match neither the pinned import nor the current page; sync did not overwrite them. Preserve the local edit and commit it.`);
-    }
-    return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
-      apply: async () => ({ status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true }) };
+  // The pinned commit can simply trail the coordinator: a committed page write reaches the
+  // working tree before its Git effect lands. When the newer working-tree bytes are the
+  // current page itself, there is nothing to import and nothing to protect; the commit that
+  // carries them is imported as a no-op by a later run. This is checked before any content
+  // refusal, so a file already repaired and published is never refused for its pinned bytes.
+  // The checkpoint may advance past the pinned commit's bytes because the working tree wins, as for any local edit.
+  const newerWorkingTree = !p.companyApproval && !!base && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && !sameCanonicalImport(base, parsedInput);
+  const sourcePath = p.sourcePath;
+  const screen = screenImportContent({ content: p.content, path: `${row.slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath),
+    slugExempt: declared => snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) === syncOriginPath(sourcePath) && declared === snapshot.page.slug,
+    slugConflictMessage: (found, expected) => frontmatterSlugConflictMessage(sourcePath, found, expected),
+    ...(newerWorkingTree ? { published: () => {
+      const working = renamed ? null : readSyncFile(root, p.path!);
+      return !!working && sha256(working) === p.rawHash && sameCanonicalImport(base!, parseMarkdown(working.toString('utf8'), `${row.slug}.md`, { activePack }));
+    } } : {}) });
+  if (screen.status === 'published') return { observedRevision: snapshot?.revision ?? null, noop: true, contentUnchanged: true, validate,
+    apply: async () => ({ status: 'skipped', slug: row.slug, source_id: row.source_id, chunks: 0, noop: true, imported_file: true }) };
+  if (screen.status === 'refused') throw syncContentRefusal(screen.refusal, row, p);
+  if (newerWorkingTree) {
+    throw syncPublicationRefusal('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.', row, p,
+      `The working tree holds newer bytes for ${row.slug} that match neither the pinned import nor the current page; sync did not overwrite them. Preserve the local edit and commit it.`);
   }
   let importContent = p.content;
   if (row.authority.remote) {
@@ -292,8 +314,11 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
   const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, activePack,
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   const result = await importFromContent(engine, renamed?.slug ?? row.slug, importContent, { ...importOptions,
-    prepare: async value => { prepared = value; return value.result; } });
-  if (!prepared) throw syncPublicationRefusal('invalid_params', result.error ?? 'The sync file could not be prepared.', row, p,
+    prepare: async value => { prepared = value; return value.result; } }).catch(error => {
+    if (!(error instanceof ContentSanityBlockError)) throw error;
+    throw syncContentRefusal({ code: 'content_rejected', message: error.message }, row, p);
+  });
+  if (!prepared) throw result.refusal ? syncContentRefusal(result.refusal, row, p) : syncPublicationRefusal('invalid_params', result.error ?? 'The sync file could not be prepared.', row, p,
     `The file could not be prepared as page ${row.slug}.`);
   const ready = prepared;
   if (ready.observedRevision !== (base?.revision ?? null)) throw syncPublicationRefusal('revision_conflict', 'The page changed during sync preparation.', row, p,

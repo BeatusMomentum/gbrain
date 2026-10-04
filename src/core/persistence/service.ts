@@ -11,6 +11,7 @@ import { registerPgliteReopen } from '../pglite-lifecycle.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
+import { contentRefusalFromReceipt } from '../import-screen.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
@@ -152,11 +153,18 @@ export function writeResponse(row: WriteRequest): Record<string, unknown> {
   if (row.state === 'committed') return { ...receipt, write_request: receipt };
   const reason = !isTerminal(row) ? 'write_pending' : row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error');
   const delivered = isTerminal(row) ? receiptDeliveredHint(row) : null;
+  // #5988: a content refusal reports its typed code, reason, key and line, and the content fix.
+  const content = isTerminal(row) ? contentRefusalFromReceipt(row.error_code, row.error_message) : null;
   const error = new OperationError(reason, !isTerminal(row) ? 'The write is accepted and is still pending.'
     : row.error_message ?? 'The write did not commit.', !isTerminal(row)
       ? pendingWriteHint(receipt)
-      : delivered?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
+      : delivered?.suggestion ?? content?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
   if (delivered?.detail) error.detail = delivered.detail;
+  if (content) {
+    if (content.code !== reason) error.canonical = content.code;
+    if (content.reason) error.reason = content.reason;
+    if (content.key || content.line !== undefined) error.detail = [content.key ? `key ${content.key}` : '', content.line !== undefined ? `line ${content.line}` : ''].filter(Boolean).join(', ');
+  }
   if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';
   error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };
   error.writeRequest = receipt as WriteReceipt;

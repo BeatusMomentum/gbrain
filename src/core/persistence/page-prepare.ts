@@ -11,7 +11,9 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
-import { pageIdentityError, yamlLocator } from './page-identity.ts';
+import { pageIdentityError } from './page-identity.ts';
+import { contentRefusalError } from '../import-screen.ts';
+import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
@@ -300,17 +302,18 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
     ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
     prepareFrontmatter: page => { provenance = putProvenance(row, snapshot, page); },
     prepare: async value => { prepared = value; return value.result; },
+  }).catch(error => {
+    if (!(error instanceof ContentSanityBlockError)) throw error;
+    throw contentRefusalError({ code: 'content_rejected', message: error.message },
+      'The operator set content_sanity.junk_disposition to reject, so this content refuses on every retry. Remove the matched junk and submit the corrected content with a new request_id.');
   });
   signal?.throwIfAborted();
   if (!prepared) {
-    const oversized = result.error?.startsWith('Content too large') === true;
-    const yaml = !oversized && /yaml/i.test(result.error ?? '');
-    throw opError(oversized ? 'request_too_large' : 'invalid_params', oversized ? result.error!
-      : yaml ? `Invalid YAML frontmatter${yamlLocator(result.error)}. Quote scalar values or fix the frontmatter block.`
-      : 'The content was rejected before publication.',
-      oversized ? 'Split the content into smaller pages, then submit each with its own request_id.'
-      : yaml ? 'Quote frontmatter values that contain ": " or start with a special character, then submit the corrected content with a new request_id.'
-      : 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
+    const refusal = result.refusal;
+    if (refusal?.code === 'file_too_large') throw contentRefusalError(refusal, 'Split the content into smaller pages, then submit each with its own request_id.', { legacy_error: 'request_too_large' });
+    if (refusal) throw contentRefusalError(refusal, `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
+      { legacy_error: 'invalid_params' });
+    throw opError('invalid_params', 'The content was rejected before publication.', 'Check the content and frontmatter, then submit the corrected content with a new request_id.');
   }
   const ready = prepared;
   if (ready.observedRevision !== observedRevision) throw pageRefusal('revision_conflict', 'The page changed during import preparation.', row,
