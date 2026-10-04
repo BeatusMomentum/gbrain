@@ -1116,6 +1116,17 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "null_scope_count": 0,
+            "tokens": []
+          },
+          "message": "Every active legacy token has explicit scopes.",
+          "name": "legacy_token_null_scope",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "message": "No image assets indexed yet",
           "name": "image_assets",

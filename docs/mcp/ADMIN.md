@@ -220,6 +220,54 @@ requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
 owner approval. TTL changes affect future tokens only.
 
+## Dashboard API keys
+
+**Say to your agent:** *"Make a read-only API key for my notes app."* The
+agent mints it from the dashboard's **+ API Key** form or runs
+`gbrain auth create notes-app --scopes read` on the brain host.
+
+The dashboard form and `POST /admin/api/api-keys` mint a legacy bearer token
+with the same grant shape as `gbrain auth create`. The request body takes:
+
+| Field | Default when omitted | Accepted values |
+| --- | --- | --- |
+| `name` | required | 1-128 printable characters; names need not be unique |
+| `scopes` | `read,write` | a non-empty list of registered scopes; `admin` only when listed |
+| `sources` | no source grant (the `auth create` default) | active source ids; the first is the write source |
+| `takes_holders` | `world` | `world`, `brain`, `people/<slug>`, `companies/<slug>` or a bare slug |
+
+The response carries the token once, the key `id`, the effective grant
+(`scopes_applied`, `sources_applied`, `takes_holders_applied`) and
+`defaults_applied`, the fields that took their defaults. An unknown scope,
+source or holder, or a bad name, refuses with `invalid_params` and mints
+nothing; the message lists the valid values. The plaintext token is never
+written to request logs or the live activity feed.
+
+```bash
+curl -s -X POST "$BRAIN/admin/api/api-keys" -H 'content-type: application/json' \
+  --cookie "$ADMIN_COOKIE" -d '{"name":"notes-app","scopes":["read"]}'
+# the gbrain auth create equivalent on the brain host:
+gbrain auth create notes-app --scopes read --takes-holders world
+```
+
+`GET /admin/api/api-keys` lists every key with its `id`, `status`, `scopes`,
+`sources` and `takes_holders`. `POST /admin/api/api-keys/revoke` takes
+`{"id": "<key id>"}` and revokes exactly that key; a same-name sibling keeps
+working. The CLI equivalent is `gbrain auth revoke --id <id>`.
+
+### Tokens without scopes
+
+A token minted without scopes (every dashboard key before scopes were
+required, and `gbrain auth create` without `--scopes`) holds full read, write
+and admin access. `gbrain doctor` warns `legacy_token_null_scope` with the
+count and, per token, the command that narrows it
+(`details.tokens: [{id, name, argv}]`). Narrowing removes admin operations from
+that key, so ask the user first:
+
+```bash
+gbrain auth rescope --id TOKEN_ID --scopes read,write
+```
+
 ## Legacy token grants
 
 **Say to your agent:** *"Let the hosted token read the workspace source too."*

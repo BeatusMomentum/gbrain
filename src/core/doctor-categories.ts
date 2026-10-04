@@ -253,6 +253,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // F3: legacy tokens on the JSONB-only grant shape (info) and grant drift (warn).
   'legacy_token_grant_shape',
   'legacy_token_grant_drift',
+  // Lane E: tokens minted without scopes (grandfathered read+write+admin).
+  'legacy_token_null_scope',
   'reranker_health',
   'rls',
   'rls_event_trigger',

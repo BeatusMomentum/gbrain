@@ -551,6 +551,10 @@
       },
       {
         "category": "ops",
+        "name": "legacy_token_null_scope"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {

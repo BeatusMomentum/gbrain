@@ -9,12 +9,20 @@
  * `legacy_token_grant_drift` (warn): migrated tokens whose `permissions`
  * mirror disagrees with the grant columns (an older gbrain edited the JSONB).
  * Each drifted axis denies every request until the operator picks a side.
+ *
+ * `legacy_token_null_scope` (warn): active tokens minted without scopes
+ * (`scopes IS NULL`), which grandfather to read+write+admin. Each token gets
+ * its own `gbrain auth rescope --id <id> --scopes read,write` command; the
+ * check's `fix` asks the user before narrowing the first one.
  */
+import type { Action } from '../../../core/agent-output.ts';
 import { grantFromTokenRow, type LegacyGrantAxis } from '../../../core/grants/model.ts';
 import type { Check } from '../../doctor.ts';
+import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 const DOCS = 'docs/mcp/ADMIN.md#legacy-token-grants';
+const NULL_SCOPE_DOCS = 'docs/mcp/ADMIN.md#tokens-without-scopes';
 
 async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
@@ -22,9 +30,11 @@ async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
     'SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY created_at, id');
   const legacy: Array<{ name: string; id: string; malformed: boolean }> = [];
   const drift: Array<{ name: string; id: string; axes: LegacyGrantAxis[] }> = [];
+  const nullScope: Array<{ name: string; id: string; argv: string[] }> = [];
   for (const row of rows) {
     const grant = grantFromTokenRow(row);
     const entry = { name: String(row.name), id: String(row.id) };
+    if (row.scopes == null) nullScope.push({ ...entry, argv: ['gbrain', 'auth', 'rescope', '--id', entry.id, '--scopes', 'read,write'] });
     if (grant.shape === 'legacy_permissions') legacy.push({ ...entry, malformed: grant.permissionsMalformed });
     if (grant.drift.length) drift.push({ ...entry, axes: grant.drift });
   }
@@ -51,11 +61,30 @@ async function runLegacyTokenGrants(ctx: DoctorContext): Promise<Check[]> {
         + `${drift.length > 5 ? `; and ${drift.length - 5} more in details.drift` : ''}. See ${DOCS}.`,
     details: { drift, docs: DOCS },
   });
+  const first = nullScope[0];
+  const fix: Action | undefined = first && {
+    argv: first.argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: NULL_SCOPE_DOCS, verify: doctorVerify('legacy_token_null_scope'),
+    why: 'A token minted without scopes is grandfathered to read+write+admin; narrowing it to read,write removes admin operations from that key.',
+    user_message: `${nullScope.length} API key(s) have full read, write and admin access because they were created without scopes`
+      + ` (first: ${first.name}). Narrow each to read and write? A client that needs admin operations would lose them.`,
+  };
+  checks.push({
+    name: 'legacy_token_null_scope',
+    status: nullScope.length ? 'warn' : 'ok',
+    message: nullScope.length === 0
+      ? 'Every active legacy token has explicit scopes.'
+      : `${nullScope.length} active legacy token(s) have no scopes, so they hold full read+write+admin access (grandfathered). `
+        + 'Ask the user, then narrow each: '
+        + nullScope.slice(0, 5).map(t => `${t.name}: ${t.argv.join(' ')}`).join('; ')
+        + `${nullScope.length > 5 ? `; and ${nullScope.length - 5} more in details.tokens` : ''}. See ${NULL_SCOPE_DOCS}.`,
+    details: { null_scope_count: nullScope.length, tokens: nullScope, docs: NULL_SCOPE_DOCS },
+    ...(fix ? { fix } : {}),
+  });
   return checks;
 }
 
 export const legacyTokenGrantsEntry: DoctorEntry = {
   name: 'legacy_token_grant_shape',
-  emits: ['legacy_token_grant_shape', 'legacy_token_grant_drift'],
+  emits: ['legacy_token_grant_shape', 'legacy_token_grant_drift', 'legacy_token_null_scope'],
   run: runLegacyTokenGrants,
 };
