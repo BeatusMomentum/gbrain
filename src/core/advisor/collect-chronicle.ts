@@ -7,7 +7,7 @@
 // Advisory display only (no dispatch_id) — the user runs the shown command.
 import type { AdvisorCollector, AdvisorContext, AdvisorFinding } from './types.ts';
 import {
-  AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, autoChronicleNeedsAcknowledgement, readAutoChronicle, readChronicleSettings,
+  AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, autoChronicleNeedsAcknowledgement, autoChronicleSetting, chronicleSettings,
 } from '../chronicle/config.ts';
 import { describeChronicleActivity, readChronicleLedgerStats } from '../chronicle/ledger-stats.ts';
 import { CHRONICLE_REASONS, chronicleBackfillArgv, type ChronicleAction } from '../chronicle/reasons.ts';
@@ -24,12 +24,13 @@ async function chatAvailable(): Promise<boolean> {
 }
 
 async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding[]> {
-  const setting = await readAutoChronicle(ctx.engine);
-  if (setting.source === 'invalid') {
+  const raw = await ctx.engine.getConfig('auto_chronicle');
+  const setting = autoChronicleSetting(raw);
+  if (setting === 'invalid') {
     return [{
       id: 'auto_chronicle_invalid',
       severity: 'warn',
-      title: `auto_chronicle is '${setting.raw}', which reads as off`,
+      title: `auto_chronicle is '${raw}', which reads as off`,
       detail: 'Ask the user whether automatic event extraction should be on (one paid chat call per eligible page) or off, ' +
         `then run \`${AUTO_CHRONICLE_KEEP_ARGV.join(' ')}\` or \`${AUTO_CHRONICLE_OPT_OUT_ARGV.join(' ')}\`.`,
       fix: { command_argv: [...AUTO_CHRONICLE_KEEP_ARGV] },
@@ -37,18 +38,18 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
       ask_user: true,
     }];
   }
-  if (!setting.enabled) return [];
+  if (setting === 'off') return [];
   const findings: AdvisorFinding[] = [];
-  const settings = await readChronicleSettings(ctx.engine);
+  const settings = await chronicleSettings(ctx.engine);
   const stats = await readChronicleLedgerStats(ctx.engine);
-  const activity = stats.available ? describeChronicleActivity(stats, settings.autoDailyLimit, { nameWriters: ctx.remote === false }) : '';
+  const activity = stats.available ? describeChronicleActivity(stats, settings.dailyLimit, { nameWriters: ctx.remote === false }) : '';
   if (await autoChronicleNeedsAcknowledgement(ctx.engine)) {
     findings.push({
       id: 'auto_chronicle_default_on',
       severity: 'info',
       title: 'Automatic event extraction is on by default; confirm it with the user',
       detail: `Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $${settings.jobBudgetUsd.toFixed(2)} per page, ` +
-        `at most ${settings.autoDailyLimit} calls per day: $${(settings.autoDailyLimit * settings.jobBudgetUsd).toFixed(2)} per day at most for a priced model; ` +
+        `at most ${settings.dailyLimit} calls per day: $${(settings.dailyLimit * settings.jobBudgetUsd).toFixed(2)} per day at most for a priced model; ` +
         'an unpriced model has no cap). Page text goes to the configured chat provider. ' +
         `Keep it: \`${AUTO_CHRONICLE_KEEP_ARGV.join(' ')}\`. Opt out: \`${AUTO_CHRONICLE_OPT_OUT_ARGV.join(' ')}\`.` +
         (activity ? ` ${activity}` : ''),
@@ -70,7 +71,7 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
   }
   const failed = Object.entries(stats.last7d.failedReasons).find(([reason]) => reason in CHRONICLE_REASONS);
   if (stats.last7d.failed > 0 && failed) {
-    const reasonCtx = { since: daysAgo(ctx.now ?? new Date(), 7), dailyLimit: settings.autoDailyLimit, recentDays: settings.autoRecentDays };
+    const reasonCtx = { since: daysAgo(ctx.now ?? new Date(), 7), dailyLimit: settings.dailyLimit, recentDays: settings.recentDays };
     const entry = CHRONICLE_REASONS[failed[0] as keyof typeof CHRONICLE_REASONS];
     const fix: ChronicleAction | undefined = 'fix' in entry ? entry.fix(reasonCtx) : undefined;
     findings.push({
@@ -83,12 +84,12 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
       ask_user: fix ? fix.consent.length > 0 || fix.actor !== 'agent' : false,
     });
   }
-  if (stats.pending > 0 && stats.autoCalls24h >= settings.autoDailyLimit) {
-    const fix = CHRONICLE_REASONS.daily_limit.fix({ dailyLimit: settings.autoDailyLimit, since: daysAgo(ctx.now ?? new Date(), 7) });
+  if (stats.pending > 0 && stats.autoCalls24h >= settings.dailyLimit) {
+    const fix = CHRONICLE_REASONS.daily_limit.fix({ dailyLimit: settings.dailyLimit, since: daysAgo(ctx.now ?? new Date(), 7) });
     findings.push({
       id: 'chronicle_daily_limit',
       severity: 'info',
-      title: `The automatic daily limit (${settings.autoDailyLimit} calls) is used up; ${stats.pending} page(s) wait for a free slot`,
+      title: `The automatic daily limit (${settings.dailyLimit} calls) is used up; ${stats.pending} page(s) wait for a free slot`,
       detail: `${fix.why} ${activity}`,
       fix: { command_argv: fix.argv ?? null },
       collector: 'chronicle',

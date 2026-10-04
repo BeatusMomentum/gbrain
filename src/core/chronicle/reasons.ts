@@ -145,7 +145,12 @@ export type ChronicleReasonCode = keyof typeof CHRONICLE_REASONS;
 /** Eligibility reasons for pages that are not chronicle-shaped: the receipt omits the field for them. */
 const NOT_CHRONICLE_SHAPED = /^(kind:|diary_excluded$|event_self$|subagent_scratch$)/;
 
-export type ChronicleDecision = { state: 'pending' } | { state: 'skipped'; reason: string };
+/**
+ * The write-time decision (capy/chronicle-lane-core `decideChronicle`): `pending` with no reason is
+ * queued for the next cycle; `pending` with a reason (`not_yet_happened`) waits and reports that
+ * reason like a skip; `skipped` carries its reason.
+ */
+export type ChronicleDecision = { state: 'pending' | 'skipped'; reason?: string | null };
 
 export type ChronicleBackstopReceipt =
   | { pending: 'next_cycle'; daily_remaining?: number }
@@ -157,18 +162,21 @@ export type ChronicleBackstopReceipt =
  * still reports itself with a doctor pointer rather than disappearing.
  */
 export function chronicleBackstopReceipt(decision: ChronicleDecision, ctx: ChronicleReasonContext & { dailyRemaining?: number }): ChronicleBackstopReceipt | undefined {
-  if (decision.state === 'pending') {
-    return { pending: 'next_cycle', ...(ctx.dailyRemaining === undefined ? {} : { daily_remaining: ctx.dailyRemaining }) };
+  if (!decision.reason) {
+    return decision.state === 'pending'
+      ? { pending: 'next_cycle', ...(ctx.dailyRemaining === undefined ? {} : { daily_remaining: ctx.dailyRemaining }) }
+      : chronicleBackstopReceipt({ state: 'skipped', reason: 'unknown' }, ctx);
   }
-  if (NOT_CHRONICLE_SHAPED.test(decision.reason)) return undefined;
-  const entry: ChronicleReason | undefined = (CHRONICLE_REASONS as Record<string, ChronicleReason>)[decision.reason];
+  const reason = decision.reason;
+  if (NOT_CHRONICLE_SHAPED.test(reason)) return undefined;
+  const entry: ChronicleReason | undefined = (CHRONICLE_REASONS as Record<string, ChronicleReason>)[reason];
   if (!entry) {
-    return { skipped: decision.reason, stage: 'decision', why: `Extraction was skipped (${decision.reason}).`,
+    return { skipped: reason, stage: 'decision', why: `Extraction was skipped (${reason}).`,
       fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Read the auto_chronicle check for details.' } };
   }
   const fix = entry.fix?.(ctx);
-  return { skipped: decision.reason, stage: entry.stage, why: entry.meaning(ctx), ...(fix ? { fix } : {}) };
+  return { skipped: reason, stage: entry.stage, why: entry.meaning(ctx), ...(fix ? { fix } : {}) };
 }
 
 function shellWord(word: string): string {

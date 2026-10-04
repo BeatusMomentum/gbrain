@@ -13,7 +13,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from '
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runConfig } from '../src/commands/config.ts';
 import {
-  CHRONICLE_ACK_KEY, autoChronicleNeedsAcknowledgement, isAutoChronicleEnabled, parseAutoChronicle, readChronicleSettings,
+  CHRONICLE_ACK_KEY, autoChronicleNeedsAcknowledgement, isAutoChronicleEnabled, autoChronicleSetting, chronicleSettings,
   validateChronicleConfigValue,
 } from '../src/core/chronicle/config.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
@@ -42,21 +42,23 @@ async function runConfigCapture(args: string[]) {
 describe('auto_chronicle parsing', () => {
   test('unset is on by default; true/false words parse; anything else reads as off and invalid', async () => {
     expect(await isAutoChronicleEnabled(engine)).toBe(true);
-    expect(parseAutoChronicle(null)).toEqual({ enabled: true, source: 'default', raw: null });
-    for (const v of ['true', 'YES', ' on ', '1']) expect(parseAutoChronicle(v)).toMatchObject({ enabled: true, source: 'explicit' });
-    for (const v of ['false', 'No', 'off', '0']) expect(parseAutoChronicle(v)).toMatchObject({ enabled: false, source: 'explicit' });
-    expect(parseAutoChronicle('flase')).toEqual({ enabled: false, source: 'invalid', raw: 'flase' });
+    expect(autoChronicleSetting(null)).toBe('on');
+    for (const v of ['true', 'YES', ' on ', '1']) expect(autoChronicleSetting(v)).toBe('on');
+    for (const v of ['false', 'No', 'off', '0']) expect(autoChronicleSetting(v)).toBe('off');
+    expect(autoChronicleSetting('flase')).toBe('invalid');
+    await engine.setConfig('auto_chronicle', 'flase');
+    expect(await isAutoChronicleEnabled(engine)).toBe(false);
     await engine.setConfig('auto_chronicle', 'false');
     expect(await isAutoChronicleEnabled(engine)).toBe(false);
   });
 
   test('chronicle.* rails: defaults, explicit budget flag, malformed rows fall back', async () => {
-    expect(await readChronicleSettings(engine)).toMatchObject({ jobBudgetUsd: 0.25, jobBudgetExplicit: false, autoDailyLimit: 200,
-      autoRecentDays: 30, autoSettleSeconds: 180, judgeMaxTokens: 4000, invalid: [] });
+    expect(await chronicleSettings(engine)).toMatchObject({ jobBudgetUsd: 0.25, explicitBudget: false, dailyLimit: 200,
+      recentDays: 30, settleSeconds: 180, judgeMaxTokens: 4000, invalid: [] });
     await engine.setConfig('chronicle.job_budget_usd', '0.4');
     await engine.setConfig('chronicle.auto_daily_limit', 'lots');
-    const s = await readChronicleSettings(engine);
-    expect(s).toMatchObject({ jobBudgetUsd: 0.4, jobBudgetExplicit: true, autoDailyLimit: 200 });
+    const s = await chronicleSettings(engine);
+    expect(s).toMatchObject({ jobBudgetUsd: 0.4, explicitBudget: true, dailyLimit: 200 });
     expect(s.invalid).toEqual([{ key: 'chronicle.auto_daily_limit', raw: 'lots', fallback: 200 }]);
   });
 

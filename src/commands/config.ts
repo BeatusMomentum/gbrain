@@ -320,9 +320,9 @@ async function refuseInvalidChronicleValue(key: string, value: string, force: bo
  * durable doctor/advisor `auto_chronicle_default_on` notice. Best-effort: the value already persisted.
  */
 async function acknowledgeAutoChronicle(engine: BrainEngine, value: string): Promise<void> {
-  const { CHRONICLE_ACK_KEY, parseAutoChronicle } = await import('../core/chronicle/config.ts');
+  const { CHRONICLE_ACK_KEY, autoChronicleSetting } = await import('../core/chronicle/config.ts');
   try { await engine.setConfig(CHRONICLE_ACK_KEY, new Date().toISOString()); } catch { /* the notice stays; harmless */ }
-  if (parseAutoChronicle(value).enabled) {
+  if (autoChronicleSetting(value) === 'on') {
     console.log('Automatic event extraction is on: each eligible new or changed meeting, conversation or calendar page gets one paid chat call, bounded by chronicle.job_budget_usd per page and chronicle.auto_daily_limit per day.');
     console.log('To turn it off: gbrain config set auto_chronicle false');
   } else {

@@ -1,6 +1,6 @@
 /**
  * TEMPORARY (Lane 2 of the #5876 wave): Lane 1's `chronicle_page_state` and
- * `chronicle_judge_reservations` DDL (capy/chronicle-lane-core 95e8d6d04, migration
+ * `chronicle_judge_reservations` DDL (capy/chronicle-lane-core a643de5bd, migration
  * `chronicle_page_state`) minus the foreign keys, so the surface tests run before that migration
  * merges. The integrator deletes this helper once the migration is on the branch.
  */
@@ -12,7 +12,7 @@ export async function createChronicleLedgerStub(engine: BrainEngine): Promise<vo
     slug TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('pending','skipped','extracted','failed')), reason TEXT,
     trigger TEXT NOT NULL CHECK (trigger IN ('auto','backfill')), principal_kind TEXT, principal_id TEXT, request_id UUID,
     no_extract BOOLEAN NOT NULL DEFAULT false, attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0), next_attempt_at TIMESTAMPTZ,
-    cost_usd NUMERIC, unpriced BOOLEAN NOT NULL DEFAULT false, event_slugs TEXT[] NOT NULL DEFAULT '{}',
+    cost_usd NUMERIC, unpriced BOOLEAN NOT NULL DEFAULT false, event_slugs TEXT[] NOT NULL DEFAULT '{}', event_hashes TEXT[] NOT NULL DEFAULT '{}',
     decided_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (source_id, page_id, content_hash, extractor_version))`);
   await engine.executeRaw(`CREATE TABLE IF NOT EXISTS chronicle_judge_reservations (

@@ -9,7 +9,7 @@
  */
 import {
   AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, CHRONICLE_NUMERIC_KEYS, autoChronicleNeedsAcknowledgement,
-  readAutoChronicle, readChronicleSettings,
+  autoChronicleSetting, chronicleSettings,
 } from '../../../core/chronicle/config.ts';
 import { describeChronicleActivity, readChronicleLedgerStats } from '../../../core/chronicle/ledger-stats.ts';
 import { CHRONICLE_REASONS, CHRONICLE_RUN_NOW_ARGV, chronicleBackfillArgv, type ChronicleAction } from '../../../core/chronicle/reasons.ts';
@@ -37,26 +37,27 @@ function warn(code: string, message: string, fix: ChronicleAction, extra: Record
 
 async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
-  const setting = await readAutoChronicle(engine);
-  const settings = await readChronicleSettings(engine);
+  const raw = await engine.getConfig('auto_chronicle');
+  const setting = autoChronicleSetting(raw);
+  const settings = await chronicleSettings(engine);
   const checks: Check[] = [];
   const backfillPreview = command(chronicleBackfillArgv({ since: daysAgo(30), dryRun: true }));
 
-  if (setting.source === 'invalid') {
+  if (setting === 'invalid') {
     checks.push({ name: 'auto_chronicle', ...warn('auto_chronicle_invalid',
-      `auto_chronicle is '${setting.raw}', which is neither true nor false, so automatic event extraction is off. ` +
+      `auto_chronicle is '${raw}', which is neither true nor false, so automatic event extraction is off. ` +
       `Ask the user which they want, then run \`${command(AUTO_CHRONICLE_KEEP_ARGV)}\` or \`${command(AUTO_CHRONICLE_OPT_OUT_ARGV)}\`.`,
       CHRONICLE_REASONS.auto_chronicle_invalid.fix(), { enabled: false, readiness: 'degraded' }) });
-  } else if (!setting.enabled) {
+  } else if (setting === 'off') {
     checks.push({ name: 'auto_chronicle', status: 'ok',
       message: `auto_chronicle is off by choice. History stays available on request (paid; ask the user first): \`${backfillPreview}\`.`,
       details: { enabled: false, severity: 'info', readiness: 'disabled_by_choice', docs: AUTO_CHRONICLE_DOCS } });
   } else {
     const stats = await readChronicleLedgerStats(engine);
     const chat = await chatAvailable();
-    const activity = stats.available ? describeChronicleActivity(stats, settings.autoDailyLimit)
+    const activity = stats.available ? describeChronicleActivity(stats, settings.dailyLimit)
       : 'The chronicle ledger is not created yet; run `gbrain apply-migrations --yes --no-autopilot-install`.';
-    const summary = { enabled: true, source: setting.source, daily_limit: settings.autoDailyLimit,
+    const summary = { enabled: true, source: raw == null ? 'default' : 'explicit', daily_limit: settings.dailyLimit,
       job_budget_usd: settings.jobBudgetUsd, ledger_available: stats.available, pending: stats.pending,
       auto_calls_24h: stats.autoCalls24h, principals_24h: stats.principals24h, last_7d: stats.last7d, spend_7d: stats.spend7d,
       chat_available: chat, run_now: [...CHRONICLE_RUN_NOW_ARGV] };
@@ -69,20 +70,20 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
     } else if (stats.last7d.failed > 0 && failures.length > 0) {
       const [reason] = failures[0];
       const entry = CHRONICLE_REASONS[reason as keyof typeof CHRONICLE_REASONS];
-      const ctxFix = { since: daysAgo(7), dailyLimit: settings.autoDailyLimit, recentDays: settings.autoRecentDays };
+      const ctxFix = { since: daysAgo(7), dailyLimit: settings.dailyLimit, recentDays: settings.recentDays };
       const fix: ChronicleAction = ('fix' in entry ? entry.fix(ctxFix) : undefined)
         ?? { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Re-check after the next cycle.' };
       checks.push({ name: 'auto_chronicle', ...warn(reason,
         `auto_chronicle is on; ${stats.last7d.failed} automatic extraction(s) failed in 7 days, most often ${reason}: ${entry.meaning(ctxFix)} ${activity}`,
         fix, { ...summary, readiness: 'degraded' }) });
     } else {
-      const limited = stats.pending > 0 && stats.autoCalls24h >= settings.autoDailyLimit
+      const limited = stats.pending > 0 && stats.autoCalls24h >= settings.dailyLimit
         ? ' The daily limit is used up, so pending pages wait for a free slot; raising chronicle.auto_daily_limit needs the user\'s agreement.' : '';
       const runNow = stats.pending > 0 && !limited
         ? ` Pending pages run in the next autopilot cycle; to run them now: \`${command(CHRONICLE_RUN_NOW_ARGV)}\` (paid).` : limited;
       const noChat = chat ? '' : ' No chat provider is configured, so nothing will be extracted until one is.';
       checks.push({ name: 'auto_chronicle', status: 'ok',
-        message: `auto_chronicle is on${setting.source === 'default' ? ' (default)' : ''}. ${activity}${runNow}${noChat}`,
+        message: `auto_chronicle is on${raw == null ? ' (default)' : ''}. ${activity}${runNow}${noChat}`,
         details: { ...summary, severity: 'info', readiness: chat ? 'ok' : 'missing', docs: AUTO_CHRONICLE_DOCS } });
     }
   }
@@ -101,11 +102,11 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
   }
 
   if (await autoChronicleNeedsAcknowledgement(engine)) {
-    const ceiling = settings.autoDailyLimit * settings.jobBudgetUsd;
+    const ceiling = settings.dailyLimit * settings.jobBudgetUsd;
     checks.push({ name: 'auto_chronicle_default_on', status: 'ok',
       message: 'Automatic event extraction is on by default and the user has not confirmed it yet. ' +
         `Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $${settings.jobBudgetUsd.toFixed(2)} per page; ` +
-        `at most ${settings.autoDailyLimit} calls per day, so at most $${ceiling.toFixed(2)} per day for a priced model; an unpriced model has no cap), ` +
+        `at most ${settings.dailyLimit} calls per day, so at most $${ceiling.toFixed(2)} per day for a priced model; an unpriced model has no cap), ` +
         'and page text goes to the configured chat provider. Relay this to the user, then run ' +
         `\`${command(AUTO_CHRONICLE_KEEP_ARGV)}\` to keep it or \`${command(AUTO_CHRONICLE_OPT_OUT_ARGV)}\` to opt out.`,
       details: { code: 'auto_chronicle_default_on', severity: 'info', ask_user: true, docs: AUTO_CHRONICLE_DOCS,

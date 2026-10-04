@@ -36,6 +36,15 @@ describe('chronicle_backstop receipt', () => {
     });
   });
 
+  test('a pending decision that waits for its end time reports the reason, not next_cycle', () => {
+    expect(chronicleBackstopReceipt({ state: 'pending', reason: 'not_yet_happened' }, ctx)).toEqual({
+      skipped: 'not_yet_happened', stage: 'decision',
+      why: 'The calendar event has not ended yet; it is picked up automatically after its end time, with no edit needed.',
+    });
+    expect(chronicleBackstopReceipt({ state: 'pending', reason: null }, { ...ctx, dailyRemaining: 3 }))
+      .toEqual({ pending: 'next_cycle', daily_remaining: 3 });
+  });
+
   test('confined writers route the fix to the brain host; off-by-choice carries no fix', () => {
     expect(chronicleBackstopReceipt({ state: 'skipped', reason: 'slug_bound_client' }, ctx)).toMatchObject({ fix: { actor: 'host_admin' } });
     const off = chronicleBackstopReceipt({ state: 'skipped', reason: 'auto_chronicle_off' }, ctx);

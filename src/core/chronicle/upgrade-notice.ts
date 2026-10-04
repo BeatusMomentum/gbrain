@@ -5,7 +5,7 @@
 import type { BrainEngine } from '../engine.ts';
 import {
   AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, CHRONICLE_NOTICE_SHOWN_KEY, autoChronicleNeedsAcknowledgement,
-  readChronicleSettings,
+  chronicleSettings,
 } from './config.ts';
 import { chronicleBackfillArgv } from './reasons.ts';
 
@@ -34,18 +34,18 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
   const shown = await engine.getConfig(CHRONICLE_NOTICE_SHOWN_KEY);
   if (shown != null && shown.trim() !== '') return null;
   if (!(await autoChronicleNeedsAcknowledgement(engine))) return null;
-  const settings = await readChronicleSettings(engine);
+  const settings = await chronicleSettings(engine);
   const provider = view ?? await providerView(engine);
-  const ceiling = settings.autoDailyLimit * settings.jobBudgetUsd;
+  const ceiling = settings.dailyLimit * settings.jobBudgetUsd;
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
   const runs = engine.kind === 'pglite'
     ? 'On this PGLite brain, pending pages run inside the autopilot cycle; `gbrain dream --phase chronicle` runs them now.'
     : 'On this Postgres brain, pending pages run in the autopilot cycle; `gbrain dream --phase chronicle` runs them now.';
   const cost = provider.priced
-    ? `Worst case: ${settings.autoDailyLimit} calls/day x $${settings.jobBudgetUsd.toFixed(2)} per-page cap = $${ceiling.toFixed(2)}/day with ${provider.model}. ` +
+    ? `Worst case: ${settings.dailyLimit} calls/day x $${settings.jobBudgetUsd.toFixed(2)} per-page cap = $${ceiling.toFixed(2)}/day with ${provider.model}. ` +
       'The cap is per page, not a daily budget; typical pages cost far less.'
     : `gbrain has no price for ${provider.model ?? 'the configured chat model'}, so the per-page cap ($${settings.jobBudgetUsd.toFixed(2)}) cannot apply: ` +
-      `calls are unbounded in dollars (still at most ${settings.autoDailyLimit} per day).`;
+      `calls are unbounded in dollars (still at most ${settings.dailyLimit} per day).`;
   return [
     '',
     '═══════════════════════════════════════════════════════════════',
@@ -55,7 +55,7 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
     '═══════════════════════════════════════════════════════════════',
     `[AGENT] Relay this to the user: it spends money and sends page text to the configured chat provider${provider.model ? ` (${provider.model})` : ''}.`,
     `[AGENT] ${cost}`,
-    `[AGENT] Only pages written after this upgrade, dated within ${settings.autoRecentDays} days, run automatically; history is not swept.`,
+    `[AGENT] Only pages written after this upgrade, dated within ${settings.recentDays} days, run automatically; history is not swept.`,
     `[AGENT] ${runs}`,
     ...(provider.chatAvailable ? [] : ['[AGENT] No chat provider is configured, so nothing runs until the user sets one up.']),
     `[AGENT] Keep it (records the user's answer): ${AUTO_CHRONICLE_KEEP_ARGV.join(' ')}`,

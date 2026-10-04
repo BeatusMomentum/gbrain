@@ -16,25 +16,16 @@ const TRUE_WORDS = ['true', '1', 'yes', 'on'];
 const FALSE_WORDS = ['false', '0', 'no', 'off'];
 
 /**
- * `default`: unset, so on. `explicit`: a recognized true/false word.
- * `invalid`: any other value, read as off (fail closed on spend) and reported by doctor.
+ * How a stored `auto_chronicle` value reads (same contract as capy/chronicle-lane-core): unset is on;
+ * a recognized true/false word is on/off; any other value reads as off and doctor warns
+ * `auto_chronicle_invalid` (fail closed on spend).
  */
-export interface AutoChronicleSetting {
-  enabled: boolean;
-  source: 'default' | 'explicit' | 'invalid';
-  raw: string | null;
-}
-
-export function parseAutoChronicle(raw: string | null | undefined): AutoChronicleSetting {
-  if (raw == null || raw.trim() === '') return { enabled: true, source: 'default', raw: raw ?? null };
+export function autoChronicleSetting(raw: string | null | undefined): 'on' | 'off' | 'invalid' {
+  if (raw == null) return 'on';
   const word = raw.trim().toLowerCase();
-  if (TRUE_WORDS.includes(word)) return { enabled: true, source: 'explicit', raw };
-  if (FALSE_WORDS.includes(word)) return { enabled: false, source: 'explicit', raw };
-  return { enabled: false, source: 'invalid', raw };
-}
-
-export async function readAutoChronicle(engine: BrainEngine): Promise<AutoChronicleSetting> {
-  return parseAutoChronicle(await engine.getConfig(AUTO_CHRONICLE_KEY));
+  if (TRUE_WORDS.includes(word)) return 'on';
+  if (FALSE_WORDS.includes(word)) return 'off';
+  return 'invalid';
 }
 
 /**
@@ -43,7 +34,7 @@ export async function readAutoChronicle(engine: BrainEngine): Promise<AutoChroni
  * bounded by `chronicle.job_budget_usd` per page and `chronicle.auto_daily_limit` per rolling day.
  */
 export async function isAutoChronicleEnabled(engine: BrainEngine): Promise<boolean> {
-  return (await readAutoChronicle(engine)).enabled;
+  return autoChronicleSetting(await engine.getConfig(AUTO_CHRONICLE_KEY)) === 'on';
 }
 
 /**
@@ -52,8 +43,7 @@ export async function isAutoChronicleEnabled(engine: BrainEngine): Promise<boole
  * was a no-op, so it does not count as an answer).
  */
 export async function autoChronicleNeedsAcknowledgement(engine: BrainEngine): Promise<boolean> {
-  const setting = await readAutoChronicle(engine);
-  if (!setting.enabled) return false;
+  if (!(await isAutoChronicleEnabled(engine))) return false;
   const ack = await engine.getConfig(CHRONICLE_ACK_KEY);
   return ack == null || ack.trim() === '';
 }
@@ -107,7 +97,7 @@ function parseNumeric(key: ChronicleNumericKey, raw: string): number | null {
 /** `config set` validation for auto_chronicle and chronicle.*; returns the refusal text or null. */
 export function validateChronicleConfigValue(key: string, value: string): string | null {
   if (key === AUTO_CHRONICLE_KEY) {
-    return parseAutoChronicle(value).source === 'explicit' ? null
+    return autoChronicleSetting(value) !== 'invalid' ? null
       : `auto_chronicle must be true or false (got '${value}'). Nothing was written. ` +
         'To turn automatic event extraction off: gbrain config set auto_chronicle false';
   }
@@ -118,23 +108,26 @@ export function validateChronicleConfigValue(key: string, value: string): string
   return null;
 }
 
+/** Field names match capy/chronicle-lane-core's `chronicleSettings`, plus `judgeMaxTokens` and `invalid`. */
 export interface ChronicleSettings {
   jobBudgetUsd: number;
-  /** True when the operator set the cap: an unpriced model then refuses with no_pricing instead of warn-and-run. */
-  jobBudgetExplicit: boolean;
-  autoDailyLimit: number;
-  autoRecentDays: number;
-  autoSettleSeconds: number;
+  /** The operator set chronicle.job_budget_usd: an unpriced model then refuses with no_pricing instead of warn-and-run. */
+  explicitBudget: boolean;
+  dailyLimit: number;
+  recentDays: number;
+  settleSeconds: number;
   judgeMaxTokens: number;
+  /** When the automatic path activated on this brain (written by the ledger migration); null when unset or unreadable. */
+  activatedAt: Date | null;
   /** Stored values outside the valid range; each fell back to its default. */
   invalid: Array<{ key: ChronicleNumericKey; raw: string; fallback: number }>;
 }
 
-/** Reads every chronicle.* knob; a malformed or unreadable row falls back to its default. */
-export async function readChronicleSettings(engine: BrainEngine): Promise<ChronicleSettings> {
+/** Reads every chronicle.* knob; a malformed or unreadable row falls back to its default and is listed in `invalid`. */
+export async function chronicleSettings(engine: BrainEngine): Promise<ChronicleSettings> {
   const invalid: ChronicleSettings['invalid'] = [];
   const values = {} as Record<ChronicleNumericKey, number>;
-  let budgetExplicit = false;
+  let explicitBudget = false;
   for (const key of Object.keys(CHRONICLE_NUMERIC_KEYS) as ChronicleNumericKey[]) {
     const fallback = CHRONICLE_NUMERIC_KEYS[key].fallback;
     const raw = await engine.getConfig(key).catch(() => null);
@@ -142,15 +135,18 @@ export async function readChronicleSettings(engine: BrainEngine): Promise<Chroni
     const parsed = parseNumeric(key, raw);
     if (parsed === null) { invalid.push({ key, raw, fallback }); values[key] = fallback; continue; }
     values[key] = parsed;
-    if (key === 'chronicle.job_budget_usd') budgetExplicit = true;
+    if (key === 'chronicle.job_budget_usd') explicitBudget = true;
   }
+  const activated = await engine.getConfig(CHRONICLE_ACTIVATED_AT_KEY).catch(() => null);
+  const activatedAt = activated ? new Date(activated) : null;
   return {
     jobBudgetUsd: values['chronicle.job_budget_usd'],
-    jobBudgetExplicit: budgetExplicit,
-    autoDailyLimit: values['chronicle.auto_daily_limit'],
-    autoRecentDays: values['chronicle.auto_recent_days'],
-    autoSettleSeconds: values['chronicle.auto_settle_seconds'],
+    explicitBudget,
+    dailyLimit: values['chronicle.auto_daily_limit'],
+    recentDays: values['chronicle.auto_recent_days'],
+    settleSeconds: values['chronicle.auto_settle_seconds'],
     judgeMaxTokens: values['chronicle.judge_max_tokens'],
+    activatedAt: activatedAt && !Number.isNaN(activatedAt.getTime()) ? activatedAt : null,
     invalid,
   };
 }
