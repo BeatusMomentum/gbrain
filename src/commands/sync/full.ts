@@ -115,7 +115,7 @@ export async function performFullSync(
       // shared gate below; don't let runImport double-record or write its own.
       managedBookmark: true,
       // #5988: a held rename destination whose old page changed is held, never imported as a new page.
-      heldPaths: holds?.heldPaths,
+      heldPaths: new Set(holds?.heldPaths),
       // #5988: content refusals are held, not failed (never gating the bookmark).
       onFileResult: async (path, filePath, fileResult) => {
         noteScreenedImport(holds, path, fileResult);

@@ -221,7 +221,7 @@ export async function runImport(
     sourceId?: string;
     managedBookmark?: boolean;
     /** #5988: paths the caller already held this run; they are skipped without importing (not failures). */
-    heldPaths?: ReadonlySet<string> | readonly string[];
+    heldPaths?: ReadonlySet<string>;
     /** #5988: each file's outcome (a throw arrives as `{ status: 'error', error }`); `'held'` = the caller held it, not a failure. */
     onFileResult?: (path: string, filePath: string, result: Pick<ImportResult, 'status' | 'error' | 'refusal' | 'frontmatter_recovery'>) => Promise<'held' | undefined>;
     /**
@@ -669,7 +669,6 @@ export async function runImport(
   // never plans against the empty tables it started with (O-CEO-17).
   const analyzeEvery = await importAnalyzeEveryPages(engine);
 
-  const heldPaths = new Set(opts.heldPaths ?? []);
   async function processFile(eng: BrainEngine, filePath: string) {
     if (signal?.aborted) return;
     const relativePath = singleFile ? basename(filePath) : relative(dir, filePath);
@@ -678,10 +677,7 @@ export async function runImport(
     // relative (matching the incremental path's git-diff paths). The
     // checkpoint (`completed`) stays dir-relative.
     const importRelPath = opts.slugRoot ? relative(opts.slugRoot, filePath) : relative(importRoot, filePath);
-    if (heldPaths.has(importRelPath)) {
-      skipped++; completed.add(relativePath); processed++; tickProgress();
-      return;
-    }
+    if (opts.heldPaths?.has(importRelPath)) { skipped++; completed.add(relativePath); processed++; tickProgress(); return; }
     // v0.31.2 (D5): per-file slow-path log. Fires only when a single
     // file takes >5s. The user's hang surfaces as one file taking
     // forever — without this, the agent can't see which file.
