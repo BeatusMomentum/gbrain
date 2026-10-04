@@ -38,10 +38,26 @@ export async function probeRows(engine: BrainEngine): Promise<Array<{ id: number
   return engine.executeRaw<{ id: number; v: string }>('SELECT id, v FROM grad_probe ORDER BY id');
 }
 
+export const TOKENS: InventoryEntry = {
+  relation: 'access_tokens', kind: 'table', class: 'carry', engines: { pglite: true, postgres: true },
+  lossKind: 'security', transforms: [], reason: 'harness security table',
+};
+
+async function tableRows(engine: BrainEngine, relation: string): Promise<string[]> {
+  const [present] = await engine.executeRaw<{ ok: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ok', [relation]);
+  if (!present?.ok) return [];
+  const rows = await engine.transaction(async tx => {
+    await tx.executeRaw(`SELECT set_config('TimeZone', 'UTC', true)`);
+    return tx.executeRaw<{ r: unknown }>(`SELECT to_jsonb(t) AS r FROM ${relation} t`);
+  });
+  const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v as object).sort().map(k => [k, canonical((v as Record<string, unknown>)[k])])) : v;
+  return rows.map(({ r }) => JSON.stringify(canonical(typeof r === 'string' ? JSON.parse(r) : r))).sort();
+}
+
 async function digest(engine: BrainEngine, entry: InventoryEntry): Promise<TableReceipt> {
-  const rows = await probeRows(engine);
-  const text = rows.map(r => `${r.id}:${r.v}`).join('\n');
-  return { relation: entry.relation, rows: rows.length, rootSha256: createHash('sha256').update(text).digest('hex'), batches: [] };
+  const rows = await tableRows(engine, entry.relation);
+  return { relation: entry.relation, rows: rows.length, rootSha256: createHash('sha256').update(rows.join('\n')).digest('hex'), batches: [] };
 }
 
 /** A non-disconnecting view of the shared target, so the orchestrator's cleanup leaves it open for assertions. */
@@ -109,17 +125,21 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
   const calls: Record<string, number> = {};
   const count = (name: string) => { calls[name] = (calls[name] ?? 0) + 1; };
   const deps: Partial<GraduationDeps> = {
-    inventory: { version: 900, entries: [PROBE] },
+    inventory: { version: 900, entries: [PROBE, TOKENS] },
     assertRelationSet: async () => {},
-    copyOrder: async () => [PROBE],
+    copyOrder: async () => [PROBE, TOKENS],
     fkClosure: async () => [],
     digestTable: async (engine, entry) => digest(engine, entry),
     verifyGraduation: async (e): Promise<VerifyResult> => {
       count('verify');
-      const [source, copied] = [await digest(e.source, PROBE), await digest(e.target, PROBE)];
-      const ok = source.rootSha256 === copied.rootSha256;
-      return { ok, tables: [copied], failures: ok ? [] : [{ relation: 'grad_probe', kind: 'digest', detail: 'probe differs' }],
-        replay: { status: 'not_available', reason: 'no_caller_input' }, doctorFailingChecks: [] };
+      const tables: TableReceipt[] = [];
+      const failures: VerifyResult['failures'][number][] = [];
+      for (const entry of [PROBE, TOKENS]) {
+        const [source, copied] = [await digest(e.source, entry), await digest(e.target, entry)];
+        tables.push(copied);
+        if (source.rootSha256 !== copied.rootSha256) failures.push({ relation: entry.relation, kind: 'digest', detail: 'differs' });
+      }
+      return { ok: failures.length === 0, tables, failures, replay: { status: 'not_available', reason: 'no_caller_input' }, doctorFailingChecks: [] };
     },
     resolveTargetRoutes: ({ url, urlEnv, env }) => {
       const mainUrl = url ?? (urlEnv ? env?.[urlEnv] : undefined) ?? TARGET_URL;
@@ -134,10 +154,11 @@ export async function makeHarness(opts: HarnessOptions = {}): Promise<Harness> {
     detectTriggerBypass: async () => 'session_replication_role',
     copyTable: async (e, entry, o) => {
       count('copy');
-      const rows = await probeRows(e.source);
+      if (entry.relation === PROBE.relation) count('copy_probe');
+      const rows = await tableRows(e.source, entry.relation);
       await withGraduationRun(e.target, o.runId, async tx => {
-        await tx.executeRaw('DELETE FROM grad_probe');
-        for (const row of rows) await tx.executeRaw('INSERT INTO grad_probe (id, v) VALUES ($1, $2)', [row.id, row.v]);
+        await tx.executeRaw(`DELETE FROM ${entry.relation}`);
+        for (const row of rows) await tx.executeRaw(`INSERT INTO ${entry.relation} SELECT * FROM jsonb_populate_record(NULL::${entry.relation}, $1::text::jsonb)`, [row]);
       });
       return { rows: rows.length };
     },

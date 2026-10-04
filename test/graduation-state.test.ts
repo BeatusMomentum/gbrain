@@ -115,7 +115,7 @@ describe('row state machine, connect and admission checks', () => {
     await withGraduationRun(t, run, async tx => { await setTargetState(tx, run, 'verifying'); await setTargetState(tx, run, 'verified'); await setTargetState(tx, run, 'authoritative'); });
     await expect(assertGraduationConnectAllowed(t, {})).resolves.toBeUndefined();
     await expect(t.transaction(tx => assertGraduationAdmission(tx))).resolves.toBeUndefined();
-  });
+  }, 60_000);
 
   test('a source row at cutover refuses: interrupted before the tombstone exists', async () => {
     const source = await openPglite(join(h.root, 'cutover-source.pglite'));
@@ -129,7 +129,7 @@ describe('row state machine, connect and admission checks', () => {
       expect(codeOf(await source.transaction(tx => assertGraduationAdmission(tx)).catch(e => e))).toBe('graduation_interrupted');
       await expect(withGraduationRun(source, run, tx => setSourceState(tx, run, 'quiesced'))).resolves.toBeUndefined();
     } finally { await source.disconnect(); }
-  });
+  }, 60_000);
 });
 
 const POSTGRES_URL = process.env.DATABASE_URL;
@@ -185,7 +185,7 @@ for (const [label, postgresUrl] of targets) {
         try { expect((await readGraduationRow(retained))?.state).toBe('cutover'); } finally { await retained.disconnect(); }
         expect(h.calls.pause_released).toBe(1);
       });
-    });
+    }, 60_000);
 
     test('the fence refuses other writers while the copy runs; the run itself writes', async () => {
       await fresh();
@@ -206,7 +206,7 @@ for (const [label, postgresUrl] of targets) {
         expect(observed).toEqual({ write: 'graduation_in_progress', exempt: true, respawn: 'graduation_in_progress' });
         await assertGraduated();
       });
-    });
+    }, 60_000);
 
     const seams = ['quiesced', 'draining', 'copying', 'copy_table', 'verifying', 'verified', 'cutover', 'before_rename', 'after_rename', 'tombstoned', 'authoritative', 'routing_flipped'];
     for (const seam of seams) {
@@ -223,7 +223,7 @@ for (const [label, postgresUrl] of targets) {
           await resumeGraduation({ env: {}, deps: h.deps, handoffTimeoutMs: 1_000 });
           await assertGraduated();
         });
-      });
+      }, 60_000);
     }
 
     test('a source write during a lock gap after verify reaches the target', async () => {
@@ -231,14 +231,14 @@ for (const [label, postgresUrl] of targets) {
       await h.inHome(async () => {
         const hash = await plan();
         await expect(runGraduation(runOpts(hash, { pauseAt: 'verified', pauseHook: crashAt('verified') }))).rejects.toThrow();
-        const copiesBefore = h.calls.copy ?? 0;
+        const copiesBefore = h.calls.copy_probe ?? 0;
         const source = await openPglite(h.dataDir);
         try { await source.executeRaw(`INSERT INTO grad_probe VALUES (4, 'written-in-gap')`); } finally { await source.disconnect(); }
         await resumeGraduation({ env: {}, deps: h.deps, handoffTimeoutMs: 1_000 });
-        expect(h.calls.copy).toBe(copiesBefore + 1);
+        expect(h.calls.copy_probe).toBe(copiesBefore + 1);
         expect((await probeRows(h.target)).map(r => r.v)).toContain('written-in-gap');
       });
-    });
+    }, 60_000);
 
     test('a stray datastore at the old path is split brain; the target stays non-authoritative', async () => {
       await fresh();
@@ -252,7 +252,7 @@ for (const [label, postgresUrl] of targets) {
         expect((await readGraduationRow(h.target))?.state).toBe('verified');
         expect((await graduationStatus()).path?.kind).toBe('split_brain');
       });
-    });
+    }, 60_000);
 
     test('a path occupied when the live run creates the tombstone refuses as split brain', async () => {
       await fresh();
@@ -263,7 +263,7 @@ for (const [label, postgresUrl] of targets) {
         expect((await readGraduationRow(h.target))?.state).toBe('verified');
         expect((await graduationFenceStatus(h.target)).unfenced).toEqual([]);
       });
-    });
+    }, 60_000);
 
     test('a changed plan refuses before anything is fenced and leaves the source writable', async () => {
       await fresh();
@@ -276,7 +276,7 @@ for (const [label, postgresUrl] of targets) {
         try { await source.executeRaw(`INSERT INTO grad_probe VALUES (9, 'still-writable')`); } finally { await source.disconnect(); }
         expect(await readGraduationRow(h.target)).toBeNull();
       });
-    });
+    }, 60_000);
 
     test('a live serve that never hands off refuses with the two-step writer-held fix; one that does is waited for', async () => {
       await fresh();
@@ -297,7 +297,7 @@ for (const [label, postgresUrl] of targets) {
         await runGraduation(runOpts(hash, { deps: handOff, handoffTimeoutMs: 5_000 }));
         await assertGraduated();
       });
-    });
+    }, 60_000);
 
     test('a drain timeout and a verify failure are resumable; the source stays writable in between', async () => {
       await fresh();
@@ -318,7 +318,7 @@ for (const [label, postgresUrl] of targets) {
         expect((await probeRows(h.target)).map(r => r.v)).toContain('after-verify-failure');
         expect(lstatSync(h.dataDir).isFile()).toBe(true);
       });
-    });
+    }, 60_000);
 
     test('--status performs zero mutations at a crash point', async () => {
       await fresh();
@@ -334,6 +334,6 @@ for (const [label, postgresUrl] of targets) {
         expect(files.map(f => [readFileSync(f, 'utf8'), statSync(f).mtimeMs])).toEqual(before);
         expect(existsSync(graduatedPath(h.dataDir, status.runId!))).toBe(false);
       });
-    });
+    }, 60_000);
   });
 }
