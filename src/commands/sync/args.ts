@@ -10,12 +10,22 @@ import { resolveNoEmbed } from '../../core/sync-git.ts';
 import type { SyncOpts } from '../sync.ts';
 import { parseMissingPathMode } from './missing-path.ts';
 import { intFlagValue } from '../../cli/flag-values.ts';
+import { usageError } from '../../cli/cli-error.ts';
 import type { MissingPathMode } from './missing-path.ts';
 
 export function printSyncHelp(): void {
   console.log(`Usage: gbrain sync [options]
 
 Sync the brain repo's text content into the engine, then embed.
+
+A file whose content refuses deterministically (frontmatter gbrain cannot
+read without guessing, a conflicting frontmatter slug, over-size, or a
+content_sanity reject) is held: the rest of the source imports, the
+checkpoint advances, and each hold prints its code, line, key and next
+command. Inspect holds with 'gbrain sources status <id>'; preview the fix
+with 'gbrain repair frontmatter --source <id>'. A source a file blocked
+before this release recovers on its next sync ('--no-pull' on a managed
+brain). 'gbrain config set sync.holds fail' restores fail-closed blocking.
 
 Options:
   --no-embed           Skip the embed step. Use this when the embed
@@ -61,10 +71,16 @@ Options:
                        Caution: imports untracked files as-is — unignored
                        scratch files and secrets included; review 'git status'
                        before enabling, especially as persisted config.
-  --dry-run            Show what would be synced without writing.
-  --skip-failed        Acknowledge previously-recorded sync failures so
-                       the bookmark can advance past unparseable files.
+  --dry-run            Show what would be synced without writing; lists
+                       every file the content screen would hold (would_hold)
+                       and screen errors separately (screen_skipped).
+  --skip-failed        Legacy sync only: acknowledge previously-recorded
+                       sync failures so the bookmark can advance. Held files
+                       never need it; managed sync refuses it.
   --retry-failed       Re-attempt previously-failed files; clear on success.
+                       Not needed for held files, which re-screen on the next
+                       sync when they change (or with 'gbrain sources
+                       retry-held <id>').
   --reset-checkpoint   Connector source only: re-walk its window once from an empty
                        checkpoint; unchanged pages are not admitted again.
   --watch              Re-sync continuously on an interval.
@@ -112,6 +128,9 @@ Options:
 See also:
   gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
   gbrain doctor           Diagnose dim mismatches and other sync issues.
+  gbrain sources status <id>              Held files with their next command.
+  gbrain repair frontmatter --source <id> Preview the fix for held files.
+  docs/guides/repair.md#held-files        Walkthrough.
 `);
 }
 
@@ -119,7 +138,23 @@ See also:
 /** setTimeout treats delays above 2^31-1 ms as ~1 ms; --interval stays within that bound. */
 const MAX_WATCH_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
 
+/**
+ * #5988: there is no `sync --retry-held`. Held files re-screen on the next
+ * sync by themselves; `sources retry-held` schedules a re-screen without
+ * running anything, so the refusal names it instead of acting as an alias.
+ */
+function retryHeldRefusal(args: string[]) {
+  const source = args.find((a, i) => args[i - 1] === '--source');
+  return usageError('gbrain sync has no --retry-held flag; held files are re-screened on the next sync, and sources retry-held schedules a re-screen for a source.',
+    `Run gbrain sources retry-held ${source ?? '<source-id>'}, then sync that source again without --retry-held.`, {
+      fix: { argv: ['gbrain', 'sources', 'retry-held', source ?? '<source-id>'], consent: [], actor: 'agent', requires_exclusive: false,
+        ...(source ? {} : { inputs: [{ name: 'source-id', how: 'gbrain sources status lists each source with its held files' }] }),
+        why: 'Most held files re-screen on the next sync by themselves (changed, deleted, or readable by a newer gbrain); retry-held schedules a re-screen of every held file of the source on its next sync and runs nothing now.',
+        verify: { argv: ['gbrain', 'sources', 'status', ...(source ? [source] : []), '--json'] } } });
+}
+
 export function parseSyncFlags(args: string[]) {
+  if (args.includes('--retry-held')) throw retryHeldRefusal(args);
   const repoPath = args.find((a, i) => args[i - 1] === '--repo') || undefined;
   const watch = args.includes('--watch');
   // #5931 (D4): timers coerce delays above 2^31-1 ms (and NaN/0) to ~1 ms, so a bad

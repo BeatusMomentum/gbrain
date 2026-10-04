@@ -1605,6 +1605,14 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4901: the dot-directory WAIVER's persisted twin (unioned with the per-call
   // include-hidden flag, which bulk sync refuses); registered so `config set` accepts it.
   'sync.include_hidden',
+  // #5988: Git sync holds (read by readSyncHoldPolicy). `sync.holds=fail`
+  // restores fail-closed blocking; the rest tune detail, escalation and the
+  // parser-regression stop. Registered so the documented `config set` works.
+  'sync.holds',
+  'sync.hold_cap',
+  'sync.hold_escalate_count',
+  'sync.hold_escalate_pct',
+  'sync.parser_regression',
   // #2179: clamp window for DCR-requested per-client token TTLs. Read by
   // `gbrain serve --http` at startup; unset min defaults to 300s, unset max
   // defaults fail-closed to max(--token-ttl, min).

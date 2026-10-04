@@ -96,6 +96,29 @@ export interface SyncResult {
   bankedFiles?: number;
   /** Fix wave 4: connector items held after repeated item-scoped failures (not blocking freshness). */
   connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string };
+  /**
+   * #5988 Git holds: files held this run instead of blocking (detail capped at
+   * `sync.hold_cap`), their count, the source's outstanding total and the
+   * exact inspect and repair commands. Remote callers get `held_count` and
+   * `holds_fix` (a host-operator relay) only.
+   */
+  held?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
+  held_count?: number;
+  holds_outstanding?: number;
+  holds_escalated?: boolean;
+  holds_truncated?: boolean;
+  /** A sliced run (`writer_yield`) has not screened every entry yet. */
+  holds_pending_screen?: boolean;
+  holds_fix?: import('../core/agent-output.ts').Action;
+  /** Requests of a blocked cursor this run converted in place (held, or re-frozen after the file was fixed). */
+  converted_from_failed?: string[];
+  /** Files imported by quoting unquoted frontmatter values, cumulative for the run. */
+  recovered_frontmatter?: import('../core/persistence/sync-holds.ts').RecoveredFrontmatter;
+  /** Dry run: files the run would hold, and entries the screen could not judge (never holds). */
+  dry_run?: true;
+  would_hold?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
+  would_hold_count?: number;
+  screen_skipped?: Array<{ path: string; code: string }>;
 }
 
 // The cost-gate / token-estimate cluster (estimateSourceTreeTokens,
