@@ -43,9 +43,9 @@ report; if one page fails, the pages before it commit, that page is reported,
 and the pages after it are cancelled and re-frozen once it is fixed. Group size
 adapts so a group takes about `sync.bulk_max_txn_ms` (default 15 s). While a
 group publishes, the drain freezes and admits the next one, so the writer
-starts it as soon as the current group commits; nothing is admitted ahead
-while a foreground write is queued, so a foreground write waits behind at most
-the groups already admitted. If a page fails, the group admitted ahead of it is
+starts it as soon as the current group commits. Nothing is admitted ahead
+while foreground writes are recent (one was queued in the last minute), so a
+foreground write waits behind at most the group that is publishing. If a page fails, the group admitted ahead of it is
 cancelled with the reason "An earlier page of the same sync did not commit"
 and re-frozen once the failure is fixed. Turn bulk off with
 `--no-bulk`, `GBRAIN_SYNC_BULK=0` or `gbrain config set sync.bulk false`. The

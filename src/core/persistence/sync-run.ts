@@ -434,7 +434,11 @@ function countCommitted(counts: Cursor['counts'], pending: Pending, outcome: Wri
   if ((outcome?.recovered_frontmatter || outcome?.comment_value) && pending.intent.path) counts.recovered = addRecovered(counts.recovered,
     { paths: outcome.recovered_frontmatter ? [pending.intent.path] : [], commentValues: outcome.comment_value ? 1 : 0 });
 }
-interface BulkPass { settings: BulkSettings; perMemberMs: number | null }
+interface BulkPass { settings: BulkSettings; perMemberMs: number | null;
+  /** #5984 admit-ahead: when this pass last saw a foreground write queued on the worktree. */
+  foregroundAt?: number }
+/** While foreground writes are recent, nothing is admitted ahead, so a new foreground write waits behind at most the publishing group. */
+const FOREGROUND_RECENT_MS = 60_000;
 type FreezeAt = (base: Cursor) => (index: number) => Promise<Pending | null>;
 
 /** #5984 bulk: freezes the followers of an eligible head and records them with it as the cursor's group. */
@@ -450,7 +454,8 @@ async function formGroup(engine: BrainEngine, head: Cursor, pending: Pending, ke
 /**
  * #5984 admit-ahead (one lane, window depth 2): while the cursor's group publishes, freeze and admit the
  * next group so it is queued behind it (per-worktree FIFO) and the consumer claims it as soon as the group
- * commits. Nothing is admitted ahead while a foreground write is queued on the worktree, or when the next
+ * commits. Nothing is admitted ahead while foreground writes are recent (one was queued on the worktree in
+ * the last minute), or when the next
  * entry is not groupable (renames, holds, waivers, the checkpoint and overtaken entries stay on the single path).
  */
 async function admitAhead(engine: BrainEngine, cursor: Cursor, key: string, bulk: BulkPass, config: GBrainConfig, freezeAt: FreezeAt,
@@ -462,7 +467,8 @@ async function admitAhead(engine: BrainEngine, cursor: Cursor, key: string, bulk
     if (start >= cursor.entries.length) return cursor;
     const [foreground] = await engine.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid
       AND state IN ('queued','running','recovering') AND NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1`, [cursor.binding.worktree_id]);
-    if (foreground) return cursor;
+    if (foreground) bulk.foregroundAt = performance.now();
+    if (bulk.foregroundAt !== undefined && performance.now() - bulk.foregroundAt < FOREGROUND_RECENT_MS) return cursor;
     const base: Cursor = { ...cursor, index: start - 1 };
     // A freeze refusal here is left for the single path to raise in order, after the publishing group.
     const frozen = await freezeFollowers(engine, base, config, nextGroupSize(bulk.settings, bulk.perMemberMs), freezeAt(base)).catch(() => []);
@@ -733,7 +739,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         const [foreground] = await engine.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid
           AND state IN ('queued','running','recovering') AND NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1`, [cursor.binding.worktree_id]);
         assertActive();
-        foregroundQueued = Boolean(foreground);
+        if ((foregroundQueued = Boolean(foreground))) bulk.foregroundAt = performance.now();
         if (foreground && creditedPages === 0) {
           startPersistenceConsumer(engine, config);
           if (!foregroundWaitStart) {
