@@ -176,6 +176,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/scaling-skills.md",
       },
       {
+        title: "docs/guides/life-chronicle.md",
+        description:
+          "Life Chronicle automatic event extraction (on by default): what qualifies, per-page cost and daily ceiling, privacy, the receipt -> `gbrain dream --phase chronicle` -> `gbrain day` check, skip/failure codes with fixes, opt-out `gbrain config set auto_chronicle false`, history backfill.",
+        path: "docs/guides/life-chronicle.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/push-context.md",
         description:
           "Push-based context: the brain volunteers confidence-gated pages from the rolling conversation window. Three channels (ambient reflex, volunteer_context op, gbrain watch), config knobs, and the volunteered-vs-used feedback loop.",

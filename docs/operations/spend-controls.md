@@ -36,7 +36,7 @@ number you typed on the command line.
 
 ## Consent and caps for paid commands (agent operator contract v1)
 
-Since v0.60.42.0 every command that spends money asks for authorization the
+Since v0.60.46.0 every command that spends money asks for authorization the
 same way ([protocol](../protocol/AGENT_OPERATOR_v1.md#consent-and-preapproval)).
 Without a terminal and without authorization, nothing runs: the command exits
 3 with a `confirmation_required` payload whose `user_message` the agent relays
@@ -106,6 +106,7 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker (one tracker per drain attempt, across all its batches) | — | **not** consulted (phase budget enforces regardless) |
 | Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
 | Connector email/meeting atoms | `cycle.extract_atoms.connector_pages` | on (unset) | Gmail/Calendar `email`/`meeting` pages are extracted like other pages, under the auto-drain cap | `false` | **not** consulted |
+| Life Chronicle event extraction | `chronicle.job_budget_usd` (per page) / `chronicle.auto_daily_limit` (calls per rolling 24 h) | `0.25` / `200` | caps one extraction call; past the daily limit pending pages wait for a free slot | `gbrain config set auto_chronicle false` | **not** consulted |
 | Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
 | Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
 | Dream `BudgetMeter` phases (auto_think, drift, propose/grade takes, calibration) | `dream.auto_think.budget`, `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
@@ -201,6 +202,32 @@ the page, up to `cycle.extract_atoms.max_input_chars`) is sent to the
 configured `extract_atoms` chat model (`models.dream.extract_atoms`, a
 utility-tier model by default), under the caps above. Atoms already extracted
 stay; opting out only stops new extraction.
+
+### Life Chronicle: automatic event extraction
+
+**Say to your agent:** *"How much does automatic event extraction cost?"* or
+*"Turn off automatic event extraction."*
+
+`auto_chronicle` is on by default. Each eligible new or changed meeting,
+conversation or calendar page gets one chat call that turns it into timeline
+events, capped at `chronicle.job_budget_usd` ($0.25) per page. At most
+`chronicle.auto_daily_limit` (200) automatic calls run per rolling 24 hours;
+retries count, and pages past the limit wait for a free slot. The worst case
+is the product, $50 a day at the defaults, for a priced model. With a model the
+tracker cannot price, the default cap is not enforced: extraction warns and
+runs, bounded only by the call count. When you set `chronicle.job_budget_usd`
+yourself, an unpriced model refuses with `no_pricing` until you register its
+price with `gbrain pricing set`. `gbrain chronicle-backfill` (history, on
+request) is exempt from the daily limit and bounded by its `--limit`.
+
+```bash
+gbrain config set auto_chronicle false              # opt out
+gbrain config set chronicle.auto_daily_limit 50     # fewer automatic calls per day
+gbrain config set chronicle.job_budget_usd 0.10     # lower per-page cap
+```
+
+`gbrain doctor` (`auto_chronicle`) reports 24 h use of the limit, the largest
+writer's share and 7-day spend. Details: [Life Chronicle](../guides/life-chronicle.md).
 
 ## Notes & limits
 

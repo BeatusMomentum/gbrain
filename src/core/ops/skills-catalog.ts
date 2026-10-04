@@ -29,13 +29,13 @@ const list_skills: Operation = {
   description: LIST_SKILLS_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
-    schema_version: { type: 'number', description: 'Request 2 for the canonical source-qualified sealed catalog; omitted preserves version 1.' },
-    limit: { type: 'number', description: 'Version 2 page size, 1-100.' },
-    cursor: { type: 'string', description: 'Version 2 opaque snapshot cursor.' },
-    source_id: { type: 'string', description: 'Narrow version 2 enumeration to one permitted source.' },
+    schema_version: { type: 'number', description: '2 for the source-qualified catalog.' },
+    limit: { type: 'number', description: 'Version 2 page size (1-100).' },
+    cursor: { type: 'string', description: 'Version 2 cursor.' },
+    source_id: { type: 'string', description: 'Version 2: one source.' },
     section: {
       type: 'string',
-      description: 'Optional: only skills whose routing section matches this exactly.',
+      description: 'Only this routing section.',
     },
   },
   handler: async (ctx, p) => {
@@ -63,21 +63,19 @@ const get_skill: Operation = {
   description: GET_SKILL_DESCRIPTION,
   publishGateKey: 'mcp.publish_skills',
   params: {
-    schema_version: { type: 'number', description: 'Request 2 for an immutable canonical revision.' },
-    qualified_id: { type: 'string', description: 'Exact version 2 qualified skill identity.' },
-    expected_brain_id: { type: 'string', description: 'Assert the connected persistent brain identity from version 2 discovery. This never routes to another brain.' },
-    source_incarnation: { type: 'string', description: 'Source incarnation from version 2 discovery.' },
-    pack_id: { type: 'string', description: 'Canonical pack identifier.' },
-    revision: { type: 'string', description: 'Exact immutable revision, or omit for the current head.' },
+    schema_version: { type: 'number', description: '2 for an exact canonical revision.' },
+    qualified_id: { type: 'string', description: 'Version 2 skill id.' },
+    expected_brain_id: { type: 'string', description: 'Version 2 brain id to assert.' },
+    source_incarnation: { type: 'string', description: 'From discovery.' },
+    pack_id: { type: 'string', description: 'Pack id.' },
+    revision: { type: 'string', description: 'Exact revision (default: head).' },
     name: {
       type: 'string',
-      description: 'Skill name exactly as returned by list_skills (or the brain-pack skill slug when source_id is set).',
+      description: 'Skill name from list_skills.',
     },
     source_id: {
       type: 'string',
-      description:
-        'Optional: fetch a brain-resident pack skill from this source instead of the host catalog. ' +
-        'Disambiguates a slug that exists on more than one source (see list_brain_skillpack).',
+      description: 'Fetch a brain-resident pack skill from this source.',
     },
   },
   handler: async (ctx, p) => {
@@ -107,7 +105,7 @@ const get_skill: Operation = {
 
 const sharedSkillKeyParams: Operation['params'] = {
   source_id: { type: 'string', description: 'Exactly one granted source.' },
-  source_incarnation: { type: 'string', description: 'Expected source incarnation from the qualified catalog.' },
+  source_incarnation: { type: 'string', description: 'From the qualified catalog.' },
   pack_id: { type: 'string', required: true, description: 'Canonical pack identifier.' },
   name: { type: 'string', required: true, description: 'Canonical skill name.' },
 };
@@ -123,19 +121,19 @@ const sharedSkillMutationParams: Operation['params'] = {
   expected_revision: { type: 'string', description: 'Current revision UUID; JSON null for creation.' },
 };
 const get_skill_asset: Operation = {
-  name: 'get_skill_asset', description: 'Read a bounded, owner-approved file from an exact sealed skill revision. Does not execute downloaded bytes.',
+  name: 'get_skill_asset', description: 'Read an approved file from an exact skill revision (data only; never executed).',
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
   scope: 'read', publishGateKey: 'mcp.publish_skills',
   cliHints: { name: 'skill-asset', positional: [] },
   params: { source_id: sharedSkillKeyParams.source_id, source_incarnation: sharedSkillKeyParams.source_incarnation,
-    name: { type: 'string', description: 'Skill name when not selecting by qualified_id.' },
-    pack_id: { type: 'string', description: 'Pack identifier when not selecting by qualified_id.' },
-    qualified_id: { type: 'string', description: 'Qualified skill key from version 2 discovery.' },
-    expected_brain_id: { type: 'string', description: 'Assert this connected persistent brain identity without routing to another brain.' },
-    revision: { type: 'string', required: true, description: 'Immutable revision from get_skill.' },
-    path: { type: 'string', required: true, description: 'Exact path in the approved revision file manifest.' } },
+    name: { type: 'string', description: 'Skill name.' },
+    pack_id: { type: 'string', description: 'Pack id.' },
+    qualified_id: { type: 'string', description: 'Version 2 skill id.' },
+    expected_brain_id: { type: 'string', description: 'Brain id to assert.' },
+    revision: { type: 'string', required: true, description: 'Revision from get_skill.' },
+    path: { type: 'string', required: true, description: 'Path in that revision manifest.' } },
   handler: async (ctx, p) => (await import('../shared-skills/catalog.ts')).getSharedSkillAsset(ctx, { ...sharedSkillReadSelector(p), path: String(p.path ?? '') }),
 };
 const put_skill: Operation = {
@@ -225,11 +223,7 @@ const list_brain_skillpack: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { exempt: 'skill catalog files are installed instructions read verbatim; redaction would corrupt approved revisions' },
-  description:
-    'List brain-resident skillpacks this brain ships (per-source). Returns each pack\'s skills, ' +
-    'one-line descriptions, the schema pack it targets + whether that matches this brain, and a ' +
-    'git scaffold spec. Read-only; gated by mcp.publish_skills. After orienting, call this and ' +
-    'ask the user whether to install any pack the brain offers (gbrain skillpack scaffold <spec>).',
+  description: 'Skillpacks this brain ships, with skills and a scaffold spec to offer the user.',
   publishGateKey: 'mcp.publish_skills',
   params: {},
   handler: async (ctx) => {

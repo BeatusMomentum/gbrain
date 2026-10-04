@@ -17,13 +17,12 @@ const resolve_slugs: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Fuzzy-match a partial name or slug to existing page slugs. Use when a slug is uncertain before get_page, links or tags. Needs read scope. On no matches: search for the name instead.',
+  description: 'Fuzzy-match a partial slug or title to page slugs. Use when a slug is uncertain. Needs read scope.',
   params: {
-    partial: { type: 'string', required: true, description: "Partial slug or title text to match, e.g. 'alice-ex' or 'meeting notes'. This is the search text param — there is no `text` param." },
+    partial: { type: 'string', required: true, description: "Partial slug or title, e.g. 'alice-ex'." },
     source_id: {
       type: 'string',
-      description:
-        "Scope resolution to a single source. Defaults to OperationContext.sourceId; when unset, an unqualified resolve spans every federated source (matching search/get_page). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+      description: "One source, or '__all__'.",
     },
   },
   handler: async (ctx, p) => {

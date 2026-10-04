@@ -1,3 +1,4 @@
+import type { BrainEngine } from '../core/engine.ts';
 import { execSync, execFileSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
@@ -527,6 +528,25 @@ function saveUpgradeState(oldVersion: string, newVersion: string) {
  * installs do.
  */
 /**
+ * v0.32.3 search-lite mode banner, moved out of runPostUpgrade unchanged.
+ */
+async function printSearchModeUpgradeBanner(engine: BrainEngine): Promise<void> {
+  // One-shot: fires at most once per install (state persisted via `search.mode_upgrade_notice_shown`).
+  // Reframes from "behavior is regressing" to "named modes available" per [CDX-1+2+3]: the production
+  // query op still defaults expand=true and limit=20.
+  try {
+    const shown = await engine.getConfig('search.mode_upgrade_notice_shown');
+    const existingMode = await engine.getConfig('search.mode');
+    if (shown !== 'true' && !existingMode) {
+      printSearchModeBanner();
+      await engine.setConfig('search.mode_upgrade_notice_shown', 'true');
+    }
+  } catch {
+    // Banner is cosmetic; never block the upgrade.
+  }
+}
+
+/**
  * v0.42 self-upgrade setup (file plane; idempotent). Default existing installs
  * to `notify` (a nudge, not autonomy — `auto` stays an explicit opt-in), show a
  * one-time informational banner, and rewrite an existing autopilot systemd unit
@@ -674,21 +694,11 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         console.log('  Schema up to date.');
         report.schema = 'up_to_date';
 
-        // v0.32.3 search-lite mode banner. One-shot: fires at most once per
-        // install (state persisted via `search.mode_upgrade_notice_shown`).
-        // Reframes from "behavior is regressing" to "named modes available"
-        // per [CDX-1+2+3]: the production query op still defaults expand=true
-        // and limit=20 — Garry's behavior is NOT regressing.
-        try {
-          const shown = await engine.getConfig('search.mode_upgrade_notice_shown');
-          const existingMode = await engine.getConfig('search.mode');
-          if (shown !== 'true' && !existingMode) {
-            printSearchModeBanner();
-            await engine.setConfig('search.mode_upgrade_notice_shown', 'true');
-          }
-        } catch {
-          // Banner is cosmetic; never block the upgrade.
-        }
+        // v0.32.3 search-lite mode banner (one-shot, `search.mode_upgrade_notice_shown`).
+        await printSearchModeUpgradeBanner(engine);
+
+        // #5876: auto_chronicle now defaults on; one-shot [AGENT] cost + opt-out notice, best-effort.
+        await (await import('../core/chronicle/upgrade-notice.ts')).printAutoChronicleUpgradeNotice(engine);
 
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on

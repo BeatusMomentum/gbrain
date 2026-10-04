@@ -815,12 +815,13 @@ export interface ToolResultShape {
 }
 
 /**
- * MCP success result: `content[0]` is exactly the pre-v1 body (bare arrays
- * included); each notice is one extra prefixed text block, mirrored rendered
- * under `_meta.gbrain_notices`.
+ * MCP success result: `content[0]` is the pre-v1 body (bare arrays included)
+ * as compact JSON (C2: every result is re-sent on each later turn; error
+ * envelopes stay indented); each notice is one extra prefixed text block,
+ * mirrored rendered under `_meta.gbrain_notices`.
  */
 export function toolResultWithNotices(result: unknown, notices: readonly Notice[], ctx: RenderContext): ToolResultShape {
-  const out: ToolResultShape = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  const out: ToolResultShape = { content: [{ type: 'text', text: JSON.stringify(result) }] };
   if (notices.length === 0) return out;
   const rendered = orderNotices(notices).map(n => redactForTransport(renderNotice(n, ctx), ctx.transport));
   for (const n of rendered) out.content.push({ type: 'text', text: noticeBlock(n) });

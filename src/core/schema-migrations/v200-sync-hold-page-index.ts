@@ -9,8 +9,8 @@ import type { Migration } from './types.ts';
 const INDEX_SQL = `CREATE INDEX IF NOT EXISTS op_checkpoints_sync_hold_page_idx
       ON op_checkpoints ((completed_keys->0->>'page_id')) WHERE op = 'sync-hold';`;
 
-export const v199: Migration = {
-  version: 199,
+export const v200: Migration = {
+  version: 200,
   name: 'sync_hold_page_index',
   idempotent: true,
   sql: INDEX_SQL,

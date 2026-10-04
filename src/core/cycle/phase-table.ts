@@ -36,6 +36,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   grade_takes: { class: 'no_coordinated_write', reason: 'The cycle runs it with auto-resolve off, so it only caches verdicts in take_grade_cache; opt-in auto-applied resolutions go through the coordinated takes_resolve mutation.' },
   calibration_profile: { class: 'no_coordinated_write', reason: 'Writes the calibration_profiles side table only.' },
   drift: { class: 'writes', reason: 'The drift report page publishes through the maintenance coordinator.' },
+  chronicle: { class: 'writes', reason: 'Life Chronicle event pages and their projections publish through the maintenance coordinator, re-validated against the judged depth revision.' },
   conversation_facts_backfill: { class: 'writes', reason: 'Backfilled conversation facts publish through coordinated writes.' },
   enrich_thin: { class: 'writes', reason: 'Enriched pages publish through the maintenance coordinator.' },
   skillopt: { class: 'no_coordinated_write', reason: 'Writes skill files and proposals outside the brain database.' },

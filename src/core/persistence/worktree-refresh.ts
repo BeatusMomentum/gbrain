@@ -197,7 +197,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const active = await readActiveRefresh(engine, binding.worktree_id);
   if (active) throw refusal('refresh_in_progress', `Refresh ${active.id} of this worktree is ${active.state}; only one refresh per worktree runs at a time.`,
     `gbrain sources refresh ${sourceId} --resume`, active.id);
-  if (binding.state !== 'active' || await worktreeRecoveryPending(engine, binding.worktree_id)) throw refusal('refresh_recovery_required',
+  if (binding.state !== 'active' || await worktreeRecoveryPending(engine, binding)) throw refusal('refresh_recovery_required',
     'Publication or topology recovery is pending on this worktree; the checkout must not move until it is recovered.',
     `gbrain sources writer status ${sourceId}, let the owner finish recovery, then gbrain sources refresh ${sourceId}`);
   const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',
@@ -237,16 +237,30 @@ function dirtyRefusal(sourceId: string, overlap: string[], refreshId?: string): 
     `Commit or discard those paths (check gbrain sources writer status ${sourceId} --json for pending git effects first), then retry gbrain sources refresh ${sourceId}.`, refreshId);
 }
 /**
- * Recovery no live execution will finish. A recovery record under an unexpired
- * running claim is an in-flight publication; the drain step waits for it.
+ * Recovery no live execution will finish. A publisher holds the worktree native
+ * lock from its claim until it clears its recovery record, and that clear runs
+ * after the receipt commits (coordinator `completeWrite`, then
+ * `clearResolvedRecovery`). So a request or effect record is in flight, and left
+ * to the drain step, while it is under an unexpired running claim or while the
+ * worktree lock is held; only a record still present while this probe holds
+ * that lock (no live process can finish it) refuses.
+ * Topology recovery always refuses.
  */
-async function worktreeRecoveryPending(engine: BrainEngine, worktreeId: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
+async function worktreeRecoveryPending(engine: BrainEngine, binding: WorktreeBinding): Promise<boolean> {
+  const probe = async () => (await engine.executeRaw<{ publication: boolean; topology: boolean }>(`SELECT
+    EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
       AND NOT (state='running' AND claim_expires_at > now()))
     OR EXISTS (SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
-      AND NOT (state='running' AND claim_expires_at > now()))
-    OR EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS pending`, [worktreeId]);
-  return row?.pending === true;
+      AND NOT (state='running' AND claim_expires_at > now())) AS publication,
+    EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS topology`, [binding.worktree_id]))[0];
+  const first = await probe();
+  if (first?.topology === true) return true;
+  if (first?.publication !== true || !binding.coordination_path) return first?.publication === true;
+  const lock = await tryAcquireNativeLock(binding.coordination_path);
+  if (!lock) return false;
+  // Holding the lock, no publisher is mid-flight: a record that is still here has no live owner.
+  try { const held = await probe(); return held?.publication === true || held?.topology === true; }
+  finally { await lock.release(); }
 }
 /** Never wait on a sync: an unexhausted cursor names its own resume command. */
 async function assertNoUnfinishedSync(engine: BrainEngine, members: string[]): Promise<void> {

@@ -26,6 +26,7 @@ import { toAgentError } from '../core/agent-output.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
+import { GBRAIN_CLIENT_HEADER, resolveResultRowsMode, resultRowsForRequest, type ResultRowsMode } from '../mcp/result-rows.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
   filterOpsForSurface,
@@ -51,6 +52,8 @@ interface McpRequestState {
   surface: McpSurface;
   surfaceCeiling: McpSurface;
   surfaceAllowedOps: ReadonlySet<string> | undefined;
+  /** C1: search/query row shape for this request (thin-client header, else host `mcp.result_rows`). */
+  resultRows: ResultRowsMode;
 }
 
 export function mountMcp(app: Express, ctx: ServeHttpContext): void {
@@ -142,16 +145,20 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     // can call it (surface + scope + bound-client fence — the same
     // predicates tools/list applies).
     const canWrite = hasScope(authInfo.scopes, 'write');
-    const [{ ceiling: surfaceCeiling, effective: surface }, writeback] = await Promise.all([
+    const [{ ceiling: surfaceCeiling, effective: surface }, writeback, hostResultRows] = await Promise.all([
       resolveEffectiveSurface(authInfo),
       canWrite ? resolveWritebackConfig(engine, config) : Promise.resolve(null),
+      resolveResultRowsMode(engine, config),
     ]);
+    // C1: gbrain's thin client keeps full rows. The header is unverified and
+    // selects a row shape only; it never gates anything security-relevant.
+    const resultRows = resultRowsForRequest(req.get(GBRAIN_CLIENT_HEADER), hostResultRows);
     const mcpOperations = filterOpsForSurface(mcpOperationsBase, surface)
       .filter(op => authInfo.allowedOperations == null || authInfo.allowedOperations.includes(op.name));
     authInfo.effectiveSurface = surface;
     const surfaceAllowedOps: ReadonlySet<string> | undefined =
       surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
-    const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps };
+    const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows };
     const server = createMcpRequestServer(ctx, state, writeback);
     await serveMcpRequest(server, req, res);
   });
@@ -275,7 +282,7 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
 
 async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, request: CallToolRequest): Promise<ToolResult> {
   const { engine, broadcastEvent, logFullParams } = ctx;
-  const { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps } = state;
+  const { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows } = state;
   const { name, arguments: params } = request.params;
   const op = mcpOperations.find(o => o.name === name);
   if (!op) {
@@ -376,6 +383,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       surface,
       // WP4 (D2): request_tools bounds its catalog + persist by this.
       surfaceCeiling,
+      resultRows,
       // v0.31 follow-up fix: thread auth so the whoami op (and any
       // future scope-aware handlers) can introspect the caller. The
       // original D12/eE1 refactor moved dispatch into dispatchToolCall

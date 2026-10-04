@@ -6,7 +6,8 @@ import { OperationError } from '../ops/contract.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { sha256 } from './digest.ts';
 import { PARK_AFTER_FAILURES, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
-import type { SqlEngine } from './model.ts';
+import type { SqlEngine, WriteRequest } from './model.ts';
+import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
 import { loadConfig } from '../config.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
@@ -14,7 +15,7 @@ import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './pr
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 
 /** `snapshot` is the publication's final read of the page, including deleted rows, in this transaction. */
-export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest, snapshot: PageSnapshot | null,
+export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'operation' | 'intent' | 'authority' | 'principal_kind' | 'principal_id'>>, snapshot: PageSnapshot | null,
   outcome: Record<string, unknown>, prepared?: PreparedMutation): Promise<void> {
   if (prepared?.noop || prepared?.target === 'skill_bundle') return;
   await declarePersistenceProtocol(tx);
@@ -39,6 +40,8 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else await queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
     }
+    // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
+    await recordChronicleDecision(tx, row, snapshot, outcome);
   }
 }
 
