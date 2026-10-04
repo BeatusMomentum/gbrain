@@ -198,6 +198,7 @@ import { v194 } from './v194-f0-worktree-refreshes.ts';
 import { v195 } from './v195-f3-access-token-grants.ts';
 import { v196 } from './v196-f4-planner-stats.ts';
 import { v197 } from './v197-managed-guard-null-source-fallback.ts';
+import { v198 } from './v198-publication-failure-detail.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -394,4 +395,5 @@ export const MIGRATIONS: Migration[] = [
   v195,
   v196,
   v197,
+  v198,
 ];
