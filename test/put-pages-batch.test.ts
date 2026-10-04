@@ -110,9 +110,8 @@ describe('put_pages', () => {
       VALUES($1,'Batch-only fixture','read write','default',$2)`, [clientId, ['put_pages']]);
     const caller = ctx({ auth: { token: 'synthetic', clientId, principal: { kind: 'oauth_client', id: clientId },
       sourceId: 'default', scopes: ['read', 'write'], allowedOperations: ['put_pages'] } as any });
-    const result = await putPages.handler(caller, { request_id: randomUUID(), pages: [page('notes/denied')] }) as any;
-    expect(result).toMatchObject({ state: 'failed', counts: { failed: 1 } });
-    expect(result.pages[0].error.code).toBe('permission_denied');
+    await expect(putPages.handler(caller, { request_id: randomUUID(), pages: [page('notes/denied'), page('notes/denied-2')] }))
+      .rejects.toMatchObject({ code: 'permission_denied' });
     expect(await engine.readPageSnapshot('notes/denied', { sourceId: 'default' })).toBeNull();
   });
 });

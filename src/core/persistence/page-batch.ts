@@ -215,6 +215,10 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
       `To check the original batch, call put_pages with only request_id ${batchId}. To write a different set of pages, use a new request_id.`);
   }
   const prepared = await prepareAll(ctx, batchId, sourceId, pages);
+  // A grant that may not write here refuses every page alike: answer the call with that one error.
+  const first = prepared[0];
+  if (first instanceof OperationError && first.code === 'permission_denied'
+    && prepared.every(entry => entry instanceof OperationError && entry.code === first.code && entry.message === first.message)) throw first;
   const conflicts = prepared.flatMap((entry, index) => entry instanceof OperationError && entry.code === 'idempotency_conflict' ? [pages[index]!.slug] : []);
   if (conflicts.length) {
     throw opError('idempotency_conflict', `Batch ${batchId} was already accepted with different content for ${conflicts.join(', ')}. Nothing new was admitted.`,

@@ -72,6 +72,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/projections.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   "src/core/persistence/consumer.ts": ["test/e2e/projection-drain-postgres.test.ts"],
   "src/core/persistence/effect-links.ts": ["test/e2e/persistence-links-effect-postgres.test.ts"],
+  "src/core/page-state/guards.ts": ["test/e2e/page-guards-postgres.test.ts"],
+  "src/core/persistence/protocol.ts": ["test/e2e/persistence-statement-budget.test.ts"],
   "src/core/persistence/journal.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/withdrawal-followup-writes-postgres.test.ts", "test/e2e/worktree-refresh-postgres.test.ts"],
   // F0 `gbrain sources refresh`: the refresh state machine, its admission/claim fence and restart recovery.
   "src/core/persistence/worktree-refresh.ts": ["test/e2e/worktree-refresh-postgres.test.ts"],
