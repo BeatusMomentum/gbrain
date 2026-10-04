@@ -147,7 +147,7 @@ test/eval-brainbench-e2e.slow.test.ts	run-all once-per-sweep semantics (decision
 test/eval-capture-db-plane.serial.test.ts	eval.capture set on the DB plane reaches the runtime gate (#1475)	9	source-surface-helper
 test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routing can’t regress silently)	2	readFileSync,source-surface-helper
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	source-surface-helper
-test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
+test/eval-takes-bootstrap.test.ts	corpus integrity	5	readFileSync
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync,source-surface-helper
 test/exit-codes.test.ts	exit code table	5	readFileSync
 test/export-publication.test.ts	(file-level)	6	readFileSync
