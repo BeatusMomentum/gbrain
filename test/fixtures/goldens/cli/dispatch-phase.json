@@ -1102,15 +1102,13 @@
         "phase": "post-connect",
         "preConnectRules": [
           {
-            "condition": "command === 'migrate'",
+            "condition": "command === 'migrate' && await (await import('./commands/migrate-graduation.ts')).tryRunMigrateGraduation(args)",
             "connectsEngine": false,
             "refusesThinClient": false,
             "routesThinClient": false,
-            "terminates": false,
+            "terminates": true,
             "thinClientCheck": false,
-            "unconditionalFor": [
-              "migrate"
-            ]
+            "unconditionalFor": []
           }
         ],
         "thinClient": "refuse",

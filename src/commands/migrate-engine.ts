@@ -832,7 +832,7 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
  * with migrate.graduation=false, or Windows. On Windows a brain with write
  * history gets graduation's platform refusal; a history-free brain copies here.
  */
-async function assertWindowsGraduationPlatform(sourceEngine: BrainEngine, opts: MigrateOpts, platform: NodeJS.Platform = process.platform): Promise<void> {
+export async function assertWindowsGraduationPlatform(sourceEngine: BrainEngine, opts: Pick<MigrateOpts, 'targetEngine'>, platform: NodeJS.Platform = process.platform): Promise<void> {
   if (platform !== 'win32' || sourceEngine.kind !== 'pglite' || opts.targetEngine !== 'postgres') return;
   const { graduationOptedOut } = await import('./migrate-graduation.ts');
   if (graduationOptedOut(loadConfig())) return;

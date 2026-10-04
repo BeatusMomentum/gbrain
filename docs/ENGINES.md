@@ -303,7 +303,7 @@ The legacy copier handles every other direction: `gbrain migrate --to pglite`, P
 
 | Refusing side | `fix.next` | Next step |
 |---|---|---|
-| A PGLite brain with history moving to Postgres with graduation turned off | `ask_user` | Relay `user_message`: graduation moves this brain (`gbrain config set migrate.graduation true`, then the [two-command flow](guides/move-to-postgres.md#move-the-brain)), or keep it on PGLite and share it through `gbrain mcp expose`. |
+| A PGLite brain with history moving to Postgres with graduation turned off | `ask_user` | Relay `user_message`: graduation moves this brain (`gbrain config unset migrate.graduation`, then the [two-command flow](guides/move-to-postgres.md#move-the-brain)), or keep it on PGLite and share it through `gbrain mcp expose`. |
 | A Postgres brain moving to PGLite | `report` | The brain stays on Postgres; moving down would drop its history. |
 | A target that already holds persistence history | `tell_user_to_run` | Rerun with an empty database the user provides (`--path` for a PGLite target). |
 

@@ -71,8 +71,7 @@ export interface GBrainConfig {
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
   persistence?: { write_wait_ms?: number | string };
-  /** Engine graduation opt-out (`migrate.graduation false` uses the legacy copier); file plane, read pre-connect. */
-  migrate?: { graduation?: boolean };
+  migrate?: { graduation?: boolean }; // `migrate.graduation false`: legacy copier instead of graduation (file plane, read pre-connect)
   /** A4 user preapprovals (file plane only; set by the trusted local CLI; read by core/consent.ts). */
   consent?: { preapprove?: { paid?: { max_usd_per_run?: number }; persistent_install?: boolean } };
   database_url?: string;

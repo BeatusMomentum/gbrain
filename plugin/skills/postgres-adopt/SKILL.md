@@ -64,7 +64,7 @@ Branch on the output:
   belong to that host. Stop.
 - `effective_engine: null` (no brain) → Step 2.
 - `effective_engine: "pglite"` with data → Step 3.
-- The output reports a graduation state other than `none` (in progress,
+- The output has a `graduation` block whose `state` is not `none` (in progress,
   interrupted, graduated or split) → Step 4.
 
 ## Step 2 — Fresh install, Postgres-first

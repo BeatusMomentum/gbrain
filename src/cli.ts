@@ -2062,14 +2062,8 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
     const { tryRunConfigEngineFree } = await import('./commands/config.ts');
     if (await tryRunConfigEngineFree(args)) return true;
   }
-  // Engine graduation (PGLite -> Postgres) owns its connections: --plan and
-  // --status migrate neither schema, and the run holds the source's kernel
-  // lock itself. Everything else (`migrate embeddings`, `--to pglite`, the
-  // migrate.graduation=false opt-out) falls through to the post-connect record.
-  if (command === 'migrate') {
-    const { tryRunMigrateGraduation } = await import('./commands/migrate-graduation.ts');
-    if (await tryRunMigrateGraduation(args)) return true;
-  }
+  // Engine graduation owns its connections (routing rules: commands/migrate-graduation.ts routesToGraduation).
+  if (command === 'migrate' && await (await import('./commands/migrate-graduation.ts')).tryRunMigrateGraduation(args)) return true;
   if (command === 'mcp') {
     const { runMcp, mcpNeedsEngine } = await import('./commands/mcp.ts');
     if (!mcpNeedsEngine(args)) { await runMcp(args); return true; }
@@ -2579,11 +2573,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
   // F4: a stdio serve with no brain / a missing or repair-failed brain / unreadable config
   // completes the MCP handshake in status-only mode instead of exiting (connectEngine exits).
   // Engine graduation (§6.4): a serve (re)launched while a run owns the host brain exits 75 with graduation_in_progress.
-  if (command === 'serve' && (dbMarkerBrainId() ?? 'host') === 'host') {
-    const guard = await import('./core/persistence/graduation-serve-guard.ts');
-    const running = guard.serveGraduationStartRefusal();
-    if (running) process.exit(guard.writeServeGraduationEnvelope(running));
-  }
+  if (command === 'serve' && (dbMarkerBrainId() ?? 'host') === 'host') (await import('./core/persistence/graduation-serve-guard.ts')).exitIfGraduationRunning();
   const serveStatus = command === 'serve' ? await import('./commands/serve-status.ts') : null;
   const serveStatusEligible = !!serveStatus?.statusModeEligible(args, (dbMarkerBrainId() ?? 'host') === 'host');
   const preConnectReason = serveStatusEligible ? serveStatus!.preConnectStatusReason() : null;
@@ -2643,8 +2633,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         console.error(`${formatDbMarker(d)}\n${d.message}\n${d.remediation} Run: gbrain db-repair`);
       } catch { /* marker is best-effort; degraded serve still starts */ }
       const { createDegradedEngine } = await import('./core/degraded-engine.ts');
-      const { engineIdentity, exitOnEngineIdentityChange } = await import('./core/persistence/graduation-serve-guard.ts');
-      const startIdentity = engineIdentity();
+      const graduationGate = (await import('./core/persistence/graduation-serve-guard.ts')).engineIdentityGate();
       const degraded = createDegradedEngine({
         initialError: serveConnectError,
         // Guarded reconnect: connectEngine's no-config path calls
@@ -2654,7 +2643,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
         // through connectMountEngine before loadConfig() and needs no host
         // config, so the guard must not brick a mount serve's recovery.
         reconnect: async () => {
-          if ((dbMarkerBrainId() ?? 'host') === 'host') exitOnEngineIdentityChange(startIdentity);
+          if ((dbMarkerBrainId() ?? 'host') === 'host') graduationGate();
           if ((dbMarkerBrainId() ?? 'host') === 'host' && !loadConfig()) {
             throw new Error('No brain configured (config.json missing or unreadable). Run: gbrain init');
           }

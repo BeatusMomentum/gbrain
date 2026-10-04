@@ -81,6 +81,8 @@ export interface ServeOptions {
   signals?: Pick<NodeJS.Process, 'on'>;
   exit?: (code?: number) => void;
   log?: (msg: string) => void;
+  /** Receives the stdio lifecycle's drain-then-shutdown (the graduation hand-off uses it). */
+  onShutdownReady?: (shutdown: (reason: string) => void) => void;
   // Test seam: replace startMcpServer to avoid booting the real MCP SDK
   // (which unconditionally attaches a 'data' listener to real
   // process.stdin and would pollute the test runner's stdin handle).
@@ -349,7 +351,7 @@ export async function runServe(
   // the MCP client log "Failed to parse JSONRPC message" for every line.
   redirectStdoutLoggingToStderr();
 
-  const activateStdioIdleActivityTracking = installStdioLifecycle(engine, args, opts);
+  const activateStdioIdleActivityTracking = installStdioLifecycle(engine, args, installGraduationHandoff(engine, opts));
 
   const start = opts.startMcpServer ?? startMcpServer;
 
@@ -472,6 +474,37 @@ function resolveBootTimeoutMs(): number {
   return n * 1000;
 }
 
+/**
+ * Engine graduation hand-off (§13): a PGLite stdio serve polls (a stat every
+ * 2 s) for another live run's intent marker. On one it writes the
+ * graduation_in_progress envelope and takes the lifecycle's drain-then-shutdown
+ * (in-flight requests finish, bounded; the engine closes and releases the
+ * brain); the process exits 75 so a supervisor relaunch (which exits the same
+ * way while the marker stands) is distinguishable from a clean stop.
+ */
+function installGraduationHandoff(engine: BrainEngine, opts: ServeOptions): ServeOptions {
+  if (engine.kind !== 'pglite') return opts;
+  const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
+  const log = opts.log ?? ((msg: string) => console.error(msg));
+  let handoffExit: number | null = null;
+  let shutdown: ((reason: string) => void) | null = null;
+  const timer = setInterval(() => {
+    if (handoffExit !== null || !shutdown || isEngineDegradedForServe(engine)) return;
+    const request = graduationHandoffRequested();
+    if (!request) return;
+    clearInterval(timer);
+    log('GBrain MCP server: an engine graduation run asked for this brain; handing it over.');
+    handoffExit = writeServeGraduationEnvelope(request, (s) => log(s.trimEnd()));
+    shutdown('graduation-handoff');
+  }, GRADUATION_HANDOFF_POLL_MS);
+  timer.unref?.();
+  return {
+    ...opts,
+    exit: (code?: number) => exit(handoffExit ?? code),
+    onShutdownReady: (fn) => { shutdown = fn; opts.onShutdownReady?.(fn); },
+  };
+}
+
 interface StdioLifecycleDeps {
   stdin: NodeJS.ReadableStream & { isTTY?: boolean };
   signals: Pick<NodeJS.Process, 'on'>;
@@ -502,8 +535,6 @@ function installStdioLifecycle(
   let shuttingDown = false;
   let parentWatchdog: unknown = null;
   let idleSweepTimer: unknown = null;
-  let graduationHandoffTimer: ReturnType<typeof setInterval> | null = null;
-  let shutdownExitCode = 0;
   let activateIdleActivityTracking = (): void => {};
   const beginShutdown = (reason: string): void => {
     if (shuttingDown) return;
@@ -522,10 +553,6 @@ function installStdioLifecycle(
     if (idleSweepTimer !== null) {
       deps.clearInterval(idleSweepTimer);
       idleSweepTimer = null;
-    }
-    if (graduationHandoffTimer !== null) {
-      clearInterval(graduationHandoffTimer);
-      graduationHandoffTimer = null;
     }
 
     deps.log(`GBrain MCP server: graceful exit (${reason})`);
@@ -576,25 +603,9 @@ function installStdioLifecycle(
       })
       .finally(() => {
         if (deadline) clearTimeout(deadline);
-        deps.exit(shutdownExitCode);
+        deps.exit(0);
       });
   };
-
-  // Engine graduation hand-off (§13): a live run's intent marker asks the PGLite
-  // serve that holds the brain to finish, release the lock and exit 75 so the
-  // run can take the brain; a relaunched serve then exits the same way. A real
-  // unref'd timer (a stat per tick), separate from the injectable lifecycle timers.
-  if (engine.kind === 'pglite') {
-    graduationHandoffTimer = setInterval(() => {
-      if (shuttingDown || isEngineDegradedForServe(engine)) return;
-      const request = graduationHandoffRequested();
-      if (!request) return;
-      deps.log(`GBrain MCP server: an engine graduation run asked for this brain; handing it over.`);
-      shutdownExitCode = writeServeGraduationEnvelope(request, (s) => deps.log(s.trimEnd()));
-      drainThenShutdown('graduation-handoff');
-    }, GRADUATION_HANDOFF_POLL_MS);
-    graduationHandoffTimer.unref?.();
-  }
 
   // Signal-based termination. SIGTERM: daemon ask. SIGINT: user Ctrl-C.
   // SIGHUP: terminal disconnect / daemon-style "reload" channels — Aragorn
@@ -660,6 +671,7 @@ function installStdioLifecycle(
       beginShutdown(reason);
     })();
   };
+  opts.onShutdownReady?.(drainThenShutdown);
   if (!deps.stdin.isTTY && !mcpStdioMode) {
     deps.stdin.once('end', () => drainThenShutdown('stdin-end'));
     deps.stdin.once('close', () => drainThenShutdown('stdin-close'));

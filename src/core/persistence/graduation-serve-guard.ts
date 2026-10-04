@@ -96,6 +96,18 @@ export function exitOnEngineIdentityChange(startIdentity: string | null, opts: {
   }
 }
 
+/** `gbrain serve` startup: exit 75 with the envelope on stderr when another live run owns the host brain. */
+export function exitIfGraduationRunning(exit: (code: number) => void = (code) => { process.exit(code); }): void {
+  const running = serveGraduationStartRefusal();
+  if (running) exit(writeServeGraduationEnvelope(running));
+}
+
+/** The degraded serve's reconnect gate: captures the identity now, checks it on each call. */
+export function engineIdentityGate(): () => void {
+  const start = engineIdentity();
+  return () => exitOnEngineIdentityChange(start);
+}
+
 /** A resident PGLite serve should hand the brain over: a live graduation run (not this process) wrote its marker. */
 export function graduationHandoffRequested(cfg: GBrainConfig | null = loadConfig()): OperationError | null {
   return serveGraduationStartRefusal(cfg);
