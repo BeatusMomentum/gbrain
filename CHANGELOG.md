@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.45.0] - 2026-10-04
+## [0.60.46.0] - 2026-10-04
 
 **When gbrain hits a problem, it now tells the AI agent running it exactly what to do next, who has to do it, and whether to stop and ask you first.**
 
@@ -28,7 +28,7 @@ This release gives every error, refusal and recommendation the same shape: a sta
 
 Scripts that parse exit codes or `--json` output should read the [behavior changes table](#behavior-changes-for-scripts-and-agents) below before upgrading. The changes are additive where they could be: existing `error` values never change, and the canonical value rides a new `code` field.
 
-## To take advantage of v0.60.45.0
+## To take advantage of v0.60.46.0
 
 `gbrain upgrade` should do this automatically. There is no schema migration in this release.
 

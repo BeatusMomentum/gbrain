@@ -3468,7 +3468,7 @@ gbrain returns (`isError: true`, the envelope shown parsed):
   "error": "invalid_params",
   "code": "invalid_params",
   "message": "Parameter \"limit\" must be a number",
-  "suggestion": "Pass `limit` as a number (Per-arm cap: max fact rows AND max search results. Default 50, cap 100). Example: recall {\"limit\": 10}. Next: recall {\"query\":\"quokka-journey-marker\",\"limit\":10}",
+  "suggestion": "Pass `limit` as a number (Per-arm max (default 50, cap 100)). Example: recall {\"limit\": 10}. Next: recall {\"query\":\"quokka-journey-marker\",\"limit\":10}",
   "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#invalid_params",
   "protocol_version": 1,
   "fix": {

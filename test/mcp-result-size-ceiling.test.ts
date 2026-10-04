@@ -30,7 +30,7 @@ const CEILINGS = { search: 2540, query: 2540 };
  * The keyless fixture also gets the operator contract's degraded_recall
  * notice (F3) on every HTTP call. It is bounded on its own so the ceilings
  * above keep pinning rows and evidence blocks at their cost-wave size; a
- * keyed brain (Cat 40) never sees it. 629 measured at v0.60.45.0, x 1.05.
+ * keyed brain (Cat 40) never sees it. 629 measured at v0.60.46.0, x 1.05.
  */
 const DEGRADED_NOTICE_MAX_CHARS = 661;
 const isDegradedNotice = (text: string) => text.startsWith('[gbrain notice degraded_recall ');

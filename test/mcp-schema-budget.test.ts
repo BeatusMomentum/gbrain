@@ -21,7 +21,7 @@
  * Raising a number here needs a reason in the commit message and a check
  * that the served list still fits 25,000 characters. Measured on the cost
  * wave: 24,763 characters, 5,568 cl100k tokens (was 59,969 / 13,077), whole
- * JSON. v0.60.45.0 (agent operator wave merged): 24,100 model-visible
+ * JSON. v0.60.46.0 (agent operator wave merged): 24,100 model-visible
  * characters / 5,414 tokens; 25,735 with annotations, which the wave's
  * contract derives for every op from its required mutating/idempotent tags.
  * Per-tool budgets below cover the whole definition, annotations included;
@@ -40,7 +40,7 @@ import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-esti
 
 const SERVED_STARTER_MAX_CHARS = 25_000;
 const SERVED_STARTER_MAX_TOKENS = 5_700;
-/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.45.0). */
+/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0). */
 const SERVED_STARTER_MAX_JSON_CHARS = 26_000;
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
 const INSTRUCTIONS_MAX_CHARS = 4_628;
