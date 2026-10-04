@@ -9,7 +9,7 @@ import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
 import { dispatchToolCall, buildOperationContext } from './dispatch.ts';
 import { findInvalidParam, schemaInvalidParams, parseStrictParamsMode } from './validate-params.ts';
-import { filterOpsForSurface, allowedOpNames, clampSurface, isReadOnlyOperation, type McpAccess, type McpSurface } from './surface.ts';
+import { filterOpsForSurface, allowedOpNames, clampSurface, isReadOnlyOperation, resolveAdvertisedSurface, stdioToolListing, type McpAccess, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
 import { parseResultRowsMode, resolveResultRowsMode } from './result-rows.ts';
 import type { Operation } from '../core/operations.ts';
@@ -259,16 +259,16 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
     },
   );
-  // F1: the contract for the effective callable set + readiness tail (or the
-  // status-only line), resolved when the client initializes.
+  const listing = stdioToolListing(() => resolveAdvertisedSurface(isEngineDegraded(engine) ? null : engine, config), surface, server);
+  // F1: callable-set contract + readiness tail (or status-only line), resolved at client initialize.
   installInstructionsResolver(server, async () => {
     if (statusMode && isEngineDegraded(engine)) {
       return resolveMcpInstructions(config, process.env, { tools: { callable: n => n === STATUS_TOOL_NAME, statusLine: statusInstructionLine(statusMode) } });
     }
-    const visible = new Set((await stdioVisibleTools(engine, surfacedOps)).map(op => op.name));
+    const visibleOps = await stdioVisibleTools(engine, surfacedOps), visible = new Set(visibleOps.map(op => op.name));
     return resolveMcpInstructions(config, process.env, {
       writeback: writebackOpts,
-      tools: { callable: n => visible.has(n), readiness: await instructionReadiness(engine, config, 'stdio') },
+      tools: { callable: n => visible.has(n), readiness: await instructionReadiness(engine, config, 'stdio'), hiddenCallable: visibleOps.length - (await listing.listed(visibleOps)).length },
     });
   });
 
@@ -315,7 +315,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   server.setRequestHandler(ListToolsRequestSchema, async () => trackStdioRpc(async () => ({
     tools: statusMode && isEngineDegraded(engine)
       ? [STATUS_TOOL_DEF]
-      : buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
+      : buildToolDefs(await listing.listed(await stdioVisibleTools(engine, surfacedOps)), { strictParams }),
   })));
 
   // #4583 (fixes #4564's misrouted-write symptom): once-per-process advisory
@@ -394,7 +394,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       surface,
       // WP4 (D2): stdio has no per-client rows; its surface is the ceiling
       // request_tools bounds its catalog by (persist no-ops without auth).
-      surfaceCeiling: surface,
+      surfaceCeiling: surface, revealTools: listing.reveal,
       resultRows,
     });
   }));

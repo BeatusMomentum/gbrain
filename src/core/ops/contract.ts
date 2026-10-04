@@ -446,6 +446,12 @@ export interface OperationContext {
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /**
+   * Set by transports that can widen a session's listed tools (stdio): when
+   * `request_tools` returns schemas, the named tools join this session's
+   * tools/list and the client is notified (tools/list_changed).
+   */
+  revealTools?: (names: string[]) => void;
+  /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).

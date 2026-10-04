@@ -287,6 +287,68 @@ export async function resolveDefaultClientSurface(
 }
 
 /**
+ * The surface fresh installs list to agents (`gbrain init` writes it to
+ * `mcp.advertised_surface`). The held-out agent benchmark chooses between
+ * 'verbs' and 'starter'; until it does, fresh installs list everything.
+ */
+export const NEW_INSTALL_ADVERTISED_SURFACE: McpSurface = 'full';
+
+/**
+ * `mcp.advertised_surface`: which tools `tools/list` shows. The callable set
+ * (the ceiling: --surface > mcp_surface > full, per-client rows on HTTP) is
+ * unchanged, so a tool outside the advertised list is still callable and
+ * `request_tools` returns its schema. The ceiling stays the security boundary;
+ * the advertised list is a context-cost choice. DB plane wins, file plane
+ * falls back; unset or unrecognized = advertise the whole callable set.
+ */
+export async function resolveAdvertisedSurface(engine: BrainEngine | null, config: GBrainConfig | null | undefined): Promise<McpSurface | null> {
+  if (engine) {
+    try {
+      const dbVal = await engine.getConfig('mcp.advertised_surface');
+      if (isMcpSurface(dbVal)) return dbVal;
+      if (dbVal != null) return null;
+    } catch { /* file plane decides */ }
+  }
+  const fileVal = (config?.mcp as Record<string, unknown> | undefined)?.advertised_surface;
+  return isMcpSurface(fileVal) ? fileVal : null;
+}
+
+/** The tools to list: the callable set narrowed to the advertised surface (never wider). */
+export function advertisedOps<T extends Operation>(callable: T[], callableSurface: McpSurface, advertised: McpSurface | null): T[] {
+  if (!advertised || !surfaceWiderThan(callableSurface, advertised)) return callable;
+  const listed = new Set(filterOpsForSurface(callable as Operation[], advertised).map(op => op.name));
+  return callable.filter(op => listed.has(op.name));
+}
+
+/**
+ * A stdio session's tool listing: the advertised surface, plus every tool
+ * `request_tools` described in this session (`reveal`), which notifies the
+ * client with tools/list_changed. `mcp.advertised_surface` narrows only this
+ * listing; dispatch keeps the callable set.
+ */
+export function stdioToolListing(advertised: () => Promise<McpSurface | null>, callableSurface: McpSurface,
+  server: { sendToolListChanged(): Promise<void> }) {
+  const revealed = new Set<string>();
+  const notify = () => { Promise.resolve(server.sendToolListChanged()).catch(() => { /* best-effort */ }); };
+  return {
+    async listed<T extends Operation>(visible: T[]): Promise<T[]> {
+      const listed = advertisedOps(visible, callableSurface, await advertised());
+      return listed.length === visible.length ? visible : visible.filter(op => revealed.has(op.name) || listed.includes(op));
+    },
+    reveal(names: string[]): void {
+      const before = revealed.size;
+      for (const name of names) revealed.add(name);
+      if (revealed.size > before) notify();
+    },
+  };
+}
+
+/** What a fresh `gbrain init` writes into `mcp`: the advertised surface, unless it is 'full'. */
+export function newInstallAdvertisedSurface(): { advertised_surface?: 'verbs' | 'starter' } {
+  return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? {} : { advertised_surface: NEW_INSTALL_ADVERTISED_SURFACE };
+}
+
+/**
  * D2 CEILING resolution — the per-request effective surface on the OAuth
  * HTTP transport:
  *
