@@ -286,6 +286,22 @@
             "params": [
               "string"
             ],
+            "sql": "SELECT key FROM config WHERE key LIKE $1 ESCAPE '\\' ORDER BY key",
+            "textSha256": "3b7f63477b863dc13bb07fe9cd6980979bd0f7e84196810c1f74ea994df43e79"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT value FROM config WHERE key = $1",
+            "textSha256": "32d050605cb95dccb4dcc33a20003cfd10f1fd8e194c317d54e08869acb32e9c"
+          },
+          {
+            "lane": "tx",
+            "params": [
+              "string"
+            ],
             "sql": "SELECT incarnation FROM sources WHERE id=$1 FOR SHARE",
             "textSha256": "414efa2a18b3a4ac2f6f6675b6f7273b71c262a6bab8a44f82963606fed221d7"
           },

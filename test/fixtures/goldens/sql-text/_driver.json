@@ -2001,6 +2001,14 @@
         "default": [
           {
             "paramCount": 1,
+            "via": "tagged"
+          },
+          {
+            "paramCount": 1,
+            "via": "tagged"
+          },
+          {
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
