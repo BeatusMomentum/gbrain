@@ -644,6 +644,7 @@ async function quiesceFresh(run: Run, input: PlanInputs, expect: string): Promis
   await claimPause(run);
   await openSourceUnderLock(run);
   await openTargets(run);
+  await run.deps.crossCheckRoutes(run.main!, run.ddl!, run.m.runId);
   const plan = await assemblePlan(run.deps, input, run.source, run.main, false);
   if (plan.planHash !== expect) throw previewChanged(run, hatchArgs(input), plan.planHash);
   const blocker = plan.blockers.find(refusesRun);

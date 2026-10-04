@@ -410,6 +410,11 @@ function writeGraduationError(e: unknown, aborted: boolean, json: boolean,
           why: 'Continues from the recorded checkpoint.', user_message: 'The move to Postgres was paused. Should I continue it?' } });
     return write(err, { json, ...(json ? { legacy: { resume_command: resumeArgv() } } : {}) });
   }
+  if (e instanceof OperationError && e.code === 'graduation_rollback_writes_lost' && e.reason === 'user_data') {
+    // A confirmable loss asks the user (fix.next ask_user, like confirmation_required): exit 3. A final refusal stays 1.
+    write(e, { json });
+    return 3;
+  }
   if (e instanceof OperationError && e.code === 'graduation_drain_timeout') {
     const code = write(e, { json, ...(json ? { legacy: { resume_command: e.fix?.argv ?? resumeArgv() } } : {}) });
     return e.reason === 'blocked' ? 1 : code;

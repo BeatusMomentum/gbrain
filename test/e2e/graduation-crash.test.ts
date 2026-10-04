@@ -90,7 +90,8 @@ describe.skipIf(!DATABASE_URL)('graduation: SIGKILL at every custody boundary', 
 
       const status = await gbrain(['migrate', '--status', '--json'], { home: c.fx.home });
       expect(status.code).toBe(0);
-      expect(stateOf(status.json)).not.toBe('graduated');
+      // `graduated` is announced after its own durable write, so a kill there already reads graduated.
+      if (pause !== 'graduated') expect(stateOf(status.json)).not.toBe('graduated');
 
       // No target URL in the environment: resume reads the 0600 manifest's recorded identities.
       const resumed = await gbrain(['migrate', '--resume', '--json'], { home: c.fx.home, env: { [TARGET_ENV]: undefined }, timeoutMs: 900_000 });
