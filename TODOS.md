@@ -89,18 +89,16 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
   **What:** proven on PGLite, Postgres and PgBouncer fixtures only. **Fix:** run the preview and apply on a managed brain with real history and record the filled and unrecorded counts. **Effort:** S. **Priority:** P2 (Foundations 2).
 - [ ] **P2 — `--json` refusals from CLI-only ops print to stderr only.**
   **What:** `gbrain attribution --json` (and other CLI ops through the shared framework) write refusals to stderr, not as a JSON object on stdout. **Effort:** S. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — PGLite `sources refresh` while `gbrain serve` owns the database.**
-  **What:** the refresh needs the writer lock; with a resident serve on PGLite it waits or refuses. **Fix:** delegate the refresh over the local persistence IPC socket. **Effort:** M. **Priority:** P2 (Foundations 2).
-- [ ] **P3 — The consumer's idle probe ignores the refresh effect fence.**
-  **What:** the resident consumer's idle tick does not consult an active refresh's fence before probing. Harmless today (the probe writes nothing). **Effort:** S. **Priority:** P3 (Foundations 2).
+- [x] **P2 — PGLite `sources refresh` while `gbrain serve` owns the database.** **Completed: Foundations 2** — the refresh runs inside the resident owner through the `writer_refresh` administration operation (`src/commands/sources-refresh-delegate.ts`).
+- [x] **P3 — The consumer's idle probe ignores the refresh effect fence.** **Completed: Foundations 2** — the idle probe applies `refreshFenceClear` to effects like the claims do.
 - [ ] **P2 — Drop the JSONB grant authority for legacy tokens.**
   **What:** migrated tokens still mirror `permissions` JSON for older binaries, and admin-dashboard-created tokens are still born on the JSONB shape. **Fix:** after one release window, read only the unified columns and have the dashboard mint through `insertUnifiedToken`. **Effort:** M. **Priority:** P2 (Foundations 2).
 - [ ] **P2 — `--sources none` for OAuth clients.**
   **What:** refused for clients in F3 (no behavior change); needs per-client takes holders. **Effort:** M. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — Seat follow-ups (#4618).**
-  **What:** Codex hooks' trust hash changes when a seat is added; the harness Codex note should say so; OpenClaw's heartbeat does not report a seat write failure; a pattern page's `seat` is never removed when its sessions age out. **Effort:** M. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — Large-brain ceilings in the 50k nightly.**
-  **What:** the progress-aware sync deadline, 20k-file `sources add`, the loud embed budget stop and the serve boot window are pinned by unit and CLI tests, not yet asserted by the 50k scale-tier run; delegated syncs (serve-owned) are not yet progress-aware. **Effort:** M. **Priority:** P2 (Foundations 2).
+- [x] **P2 — Seat follow-ups (#4618).** **Completed: Foundations 2** — the OpenClaw context-engine heartbeat reports seat reasons (write failure, conflict, invalid label) with their hints, and a pattern page drops a seat its reflections no longer share. The Codex trust-hash item closed with no code: the Codex SessionEnd command never carries a seat (`buildCodexSessionEndCommand` takes only the gbrain binary; `--seat` prints a note to set `GBRAIN_SEAT` instead), so adding a seat cannot change its trust hash.
+- [x] **P2 — Large-brain ceilings in the scale tier.** **Completed: Foundations 2** — every scale run asserts the F4d ceilings through the real CLI (`scripts/scale/f4d.ts`: progress-aware sync deadline, loud embed budget stop and serve boot window at every tier, the 20,000-file `sources add` at 20k and up), so the 50k tier carries them once `trend.ts` unlocks it; delegated syncs keep the progress-aware deadline.
+- [ ] **P3 — `findOrphans` recomputes the full orphan set per call.**
+  **What:** `find_orphans` pages its rows in TypeScript after computing every orphan, so each page of a large result costs a full scan (the scale verifier reads `total_orphans` and one maximal page instead of paging). **Fix:** page in SQL with `ORDER BY source_id, slug LIMIT/OFFSET` and a separate count. **Effort:** S. **Priority:** P3.
 - [ ] **P3 — Keyword search scoped to one source: 18.2 to 22.1 ms at 10k PGLite pages.**
   **What:** the five-run ranges overlap (17.4-19.4 vs 18.7-25.0 ms), so this may be noise; the scale tier's calibrated budget will show a trend. **Effort:** S. **Priority:** P3 (Foundations 2).
 - [ ] **P3 — Enforce the scale tier's ceilings and calibrated budgets.**
