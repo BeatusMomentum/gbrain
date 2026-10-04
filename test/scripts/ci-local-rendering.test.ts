@@ -258,7 +258,7 @@ describe('required PgBouncer execution through run-e2e', () => {
         mkdirSync(join(home, 'scripts/lib'), { recursive: true });
         const script = readFileSync(join(import.meta.dir, '../../scripts/run-e2e.sh'), 'utf8');
         writeFileSync(join(home, 'scripts/run-e2e.sh'), script);
-        writeFileSync(join(home, 'scripts/lib/test-env.sh'), 'ensure_pglite_snapshot() { :; }\n');
+        writeFileSync(join(home, 'scripts/lib/test-env.sh'), readFileSync(join(import.meta.dir, '../../scripts/lib/test-env.sh'), 'utf8') + '\nensure_pglite_snapshot() { :; }\n');
         writeFileSync(join(bin, 'psql'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
         writeFileSync(join(bin, 'bun'), `#!/bin/sh
 printf '%s\\n' "$GBRAIN_PGBOUNCER_URL" "$GBRAIN_PGBOUNCER_DIRECT_URL" "$GBRAIN_CI_REQUIRE_PGBOUNCER" "$GBRAIN_TEST_DB" "\${GBRAIN_SOURCE-unset}" "\${COVERAGE_DIR:-disabled}" > "$ENV_REPORT"
@@ -331,7 +331,7 @@ describe('local test configuration through run-e2e', () => {
         // Copy the real loader into a separate fixture: its import.meta.dir
         // must resolve ONLY our synthetic .env.testing, never the checkout's.
         writeFileSync(join(fixture, 'scripts/run-e2e.sh'), readFileSync(join(repo, 'scripts/run-e2e.sh')));
-        writeFileSync(join(fixture, 'scripts/lib/test-env.sh'), 'ensure_pglite_snapshot() { :; }\n');
+        writeFileSync(join(fixture, 'scripts/lib/test-env.sh'), readFileSync(join(import.meta.dir, '../../scripts/lib/test-env.sh'), 'utf8') + '\nensure_pglite_snapshot() { :; }\n');
         writeFileSync(join(fixture, 'test/e2e/helpers.ts'), readFileSync(join(repo, 'test/e2e/helpers.ts')));
         symlinkSync(join(repo, 'src'), join(fixture, 'src'), 'dir');
         symlinkSync(join(repo, 'test/helpers'), join(fixture, 'test/helpers'), 'dir');
