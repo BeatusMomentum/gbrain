@@ -54,8 +54,8 @@ export const CONTRACT_GOLDENS = [
 
 /** Goldens that need a Postgres database; never run here. */
 export const POSTGRES_GOLDENS = [
-  'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test test/e2e/schema-catalog-golden.test.ts',
-  'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test test/e2e/doctor-json-golden.test.ts',
+  'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/schema-catalog-golden.test.ts',
+  'GBRAIN_TEST_UPDATE_GOLDENS=1 DATABASE_URL=<test db> bun test --timeout=60000 test/e2e/doctor-json-golden.test.ts',
 ];
 
 const ROOT = resolve(import.meta.dir, '..');

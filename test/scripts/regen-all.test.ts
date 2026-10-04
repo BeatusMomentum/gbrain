@@ -36,7 +36,7 @@ describe('regen:all', () => {
     }
     expect(ARTIFACTS.at(-1)!.name).toContain('llms');
     for (const f of CONTRACT_GOLDENS) expect(existsSync(join(ROOT, f)), f).toBe(true);
-    for (const c of POSTGRES_GOLDENS) expect(existsSync(join(ROOT, /bun test (\S+)/.exec(c)![1]!)), c).toBe(true);
+    for (const c of POSTGRES_GOLDENS) expect(existsSync(join(ROOT, /bun test (?:--timeout=\d+ )?(\S+)/.exec(c)![1]!)), c).toBe(true);
   });
 
   test('generators run without provider keys or database URLs', () => {

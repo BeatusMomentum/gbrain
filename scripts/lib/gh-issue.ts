@@ -130,9 +130,16 @@ export async function commentIssue(client: GitHubClient, number: number, body: s
 
 /** Extract the fenced JSON block a watcher wrote between its markers; undefined when absent or not valid JSON. */
 export function readJsonBlock<T>(body: string | null | undefined, marker: string): T | undefined {
-  const m = new RegExp(`<!-- ${marker} -->\\s*\`\`\`json\\n([\\s\\S]*?)\\n\`\`\``).exec(body ?? '');
-  if (!m) return undefined;
-  try { return JSON.parse(m[1]!) as T; } catch { return undefined; }
+  const text = body ?? '';
+  const tag = `<!-- ${marker} -->`;
+  const at = text.indexOf(tag);
+  if (at === -1) return undefined;
+  const rest = text.slice(at + tag.length).trimStart();
+  const open = '```json\n';
+  if (!rest.startsWith(open)) return undefined;
+  const end = rest.indexOf('\n```', open.length - 1);
+  if (end === -1) return undefined;
+  try { return JSON.parse(rest.slice(open.length, end)) as T; } catch { return undefined; }
 }
 
 export function jsonBlock(marker: string, value: unknown): string {

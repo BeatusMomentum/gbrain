@@ -130,7 +130,7 @@ export function validateKnownRed(text: string, todosText: string): string[] {
   for (const row of rows) {
     if (!todosText.includes(row.todo)) problems.push(`row '${row.job}': todo '${row.todo}' is not in TODOS.md; every known-red row needs the TODO that owns its fix`);
   }
-  return problems.map(p => `${KNOWN_RED_FILE}: ${p}. Fix: edit the row, then run bun test test/scripts/nightly-issue.test.ts. Docs: ${DOCS}`);
+  return problems.map(p => `${KNOWN_RED_FILE}: ${p}. Fix: edit the row, then run bun test --timeout=60000 test/scripts/nightly-issue.test.ts. Docs: ${DOCS}`);
 }
 
 export function assessRun(run: RunInfo, jobs: JobInfo[], annotations: Record<number, Annotation[]>, rows: KnownRow[], today: string): Assessment {

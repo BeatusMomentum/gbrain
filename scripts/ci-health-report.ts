@@ -119,7 +119,7 @@ const ratio = (n: number | null) => (n === null ? 'n/a' : n.toFixed(2));
 
 export function renderHealth(data: HealthData): string {
   const steps: string[] = [];
-  for (const f of data.failing_files.slice(0, 3)) steps.push(`Fix the flake or regression in \`${f.file}\` (${f.count} failure annotations this week); reproduce with \`bun test ${f.file}\`.`);
+  for (const f of data.failing_files.slice(0, 3)) steps.push(`Fix the flake or regression in \`${f.file}\` (${f.count} failure annotations this week); reproduce with \`bun test --timeout=60000 ${f.file}\`.`);
   for (const w of data.workflows) {
     if (w.miner && (w.spread.mean_ratio ?? 0) > SPREAD_LIMIT) steps.push(`Shards in ${w.workflow} are unbalanced (mean slowest/mean ${ratio(w.spread.mean_ratio)} > ${SPREAD_LIMIT}): \`${w.miner}\`, then commit the weights.`);
   }
