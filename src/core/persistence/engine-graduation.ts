@@ -46,6 +46,7 @@ import {
   resumeArgv, rollbackWritesLostError, runArgv as runArgvOf, sourceWriterHeldError, statusArgv, targetAuthFailedError, targetNotEmptyError,
   targetUnsupportedError, unsupportedPlatformError, verifyFailedError,
 } from './graduation-errors.ts';
+import { rollbackLosses, type RollbackLoss } from './graduation-losses.ts';
 import {
   dropGraduationFence, graduationFenceStatus, installGraduationFence, readGraduationRow, setSourceState, setTargetState,
   withGraduationRun,
@@ -63,9 +64,6 @@ import { buildDeferredIndexes, copySequences, copyTable, deferIndexes, detectTri
 const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const HANDOFF_TIMEOUT_MS = 30_000;
 const STATUS_ARGV = statusArgv();
-/** Usage-tracking columns that change on every authorized call; not a security change. */
-const SECURITY_VOLATILE_COLUMNS = new Set(['last_used_at']);
-const SECURITY_TABLES = ['access_tokens', 'oauth_clients', 'oauth_tokens', 'oauth_grant_audit', 'persistence_local_writers', 'fact_withdrawals'] as const;
 
 const STATE_RANK: Readonly<Record<ManifestState, number>> = {
   planned: 0, quiesced: 1, draining: 2, copying: 3, verifying: 4, verify_failed: 4, verified: 5, cutover: 6, tombstoned: 7,
@@ -1191,14 +1189,6 @@ export async function reconcileGraduation(opts: RunOptions = {}): Promise<Reconc
 
 // ── rollback ───────────────────────────────────────────────────────────────
 
-export interface RollbackLoss {
-  relation: string;
-  lossKind: LossKind;
-  change: 'changed' | 'added' | 'missing' | 'requests_after_cutover';
-  rows: number;
-  /** Withdrawals and security changes are never confirmable (nothing is written back to the source). */
-  final: boolean;
-}
 
 /**
  * Roll back to the source. Before cutover: mark the target abandoned (it keeps
@@ -1364,81 +1354,12 @@ function rollbackLostError(_run: Run, losses: readonly RollbackLoss[], hash: str
 }
 
 async function detectRollbackLosses(run: Run): Promise<RollbackLoss[]> {
-  const losses: RollbackLoss[] = [];
   const row = await readGraduationRow(run.main!);
-  const receipts = new Map((row?.table_receipts ?? []).map(r => [r.relation, r]));
-  const securityNames = new Set<string>(SECURITY_TABLES);
-  for (const entry of run.deps.inventory.entries) {
-    if (!(entry.class === 'carry' || entry.class === 'rebind') || !entry.engines.postgres || securityNames.has(entry.relation)) continue;
-    const before = receipts.get(entry.relation);
-    if (!before) continue;
-    // persistence_brain.enabled legitimately differs after cutover: digest it through its transform, like the receipt.
-    const now = await run.deps.digestTable(run.main!, entry, { applyTransforms: entry.relation === 'persistence_brain' });
-    if (now.rootSha256 !== before.rootSha256) {
-      losses.push({ relation: entry.relation, lossKind: entry.lossKind, change: 'changed', rows: Math.abs(now.rows - before.rows) || now.rows, final: false });
-    }
-  }
-  const [after] = await run.main!.executeRaw<{ n: string }>('SELECT count(*)::text AS n FROM persistence_requests WHERE sequence > $1::bigint', [run.m.cutoverSequence ?? '0']);
-  if (Number(after?.n ?? 0) > 0) losses.push({ relation: 'persistence_requests', lossKind: 'user_data', change: 'requests_after_cutover', rows: Number(after!.n), final: false });
-  losses.push(...await compareSecurityState(run));
-  return losses;
-}
-
-async function primaryKey(engine: BrainEngine, relation: string): Promise<string[]> {
-  const rows = await engine.executeRaw<{ attname: string }>(
-    `SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-     WHERE i.indrelid = to_regclass($1) AND i.indisprimary ORDER BY array_position(i.indkey::int2[], a.attnum)`, [relation]);
-  return rows.map(r => r.attname);
-}
-
-async function securityRows(engine: BrainEngine, relation: string): Promise<Map<string, { content: string; row: Record<string, unknown> }> | null> {
-  const [present] = await engine.executeRaw<{ q: string | null }>(`SELECT CASE WHEN to_regclass($1) IS NULL THEN NULL ELSE quote_ident($1) END AS q`, [relation]);
-  if (!present?.q) return null;
-  const pk = await primaryKey(engine, relation);
-  const rows = await engine.transaction(async tx => {
-    await tx.executeRaw(`SELECT set_config('TimeZone', 'UTC', true)`);
-    return tx.executeRaw<{ r: unknown }>(`SELECT to_jsonb(t) AS r FROM ${present.q} t`);
-  });
-  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
-    : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value as object).sort().map(k => [k, canonical((value as Record<string, unknown>)[k])])) : value;
-  const out = new Map<string, { content: string; row: Record<string, unknown> }>();
-  for (const { r } of rows) {
-    const row = (typeof r === 'string' ? JSON.parse(r) : r) as Record<string, unknown>;
-    const key = JSON.stringify(pk.map(c => row[c]));
-    const content = JSON.stringify(canonical(Object.fromEntries(Object.entries(row).filter(([k]) => !SECURITY_VOLATILE_COLUMNS.has(k)))));
-    out.set(key, { content, row });
-  }
-  return out;
-}
-
-/** Security state by identity and content against the retained source (revocations delete rows; timestamps cannot show them). */
-async function compareSecurityState(run: Run): Promise<RollbackLoss[]> {
   const movedTo = graduatedPath(run.dataDir, run.m.runId);
-  if (!existsSync(movedTo)) return [];
-  const retained = await run.deps.openSource(movedTo, { migrate: false });
-  const losses: RollbackLoss[] = [];
-  try {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    for (const relation of SECURITY_TABLES) {
-      const [source, target] = [await securityRows(retained, relation), await securityRows(run.main!, relation)];
-      if (!source || !target) continue;
-      let missing = 0, changed = 0, added = 0;
-      for (const [key, value] of source) {
-        const other = target.get(key);
-        if (!other) {
-          const expires = Number(value.row.expires_at);
-          if (relation === 'oauth_tokens' && Number.isFinite(expires) && expires > 0 && expires < nowSeconds) continue;
-          missing += 1;
-        } else if (other.content !== value.content) changed += 1;
-      }
-      for (const key of target.keys()) if (!source.has(key)) added += 1;
-      const withdrawal = relation === 'fact_withdrawals';
-      if (missing) losses.push({ relation, lossKind: withdrawal ? 'user_data' : 'security', change: 'missing', rows: missing, final: true });
-      if (changed) losses.push({ relation, lossKind: withdrawal ? 'user_data' : 'security', change: 'changed', rows: changed, final: true });
-      if (added) losses.push({ relation, lossKind: withdrawal ? 'user_data' : 'security', change: 'added', rows: added, final: withdrawal });
-    }
-  } finally { await retained.disconnect(); }
-  return losses;
+  return rollbackLosses({
+    target: run.main!, inventory: run.deps.inventory, receipts: row?.table_receipts ?? [], cutoverSequence: run.m.cutoverSequence ?? '0',
+    digestTable: run.deps.digestTable, openRetained: existsSync(movedTo) ? () => run.deps.openSource(movedTo, { migrate: false }) : null,
+  });
 }
 
 // ── status ─────────────────────────────────────────────────────────────────
