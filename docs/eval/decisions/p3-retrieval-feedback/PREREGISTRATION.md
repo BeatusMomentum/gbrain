@@ -58,7 +58,7 @@ dev: 0 hit@1 losses. p50/p95 read latency deltas.
 relational-paraphrase-v1, NamedThingBench relational and a constrained-relational set over world-v1. Precondition:
 the relational arm fires on at least 80% of E4 questions. Metrics: NDCG@10 and hit@3.
 
-Default decisions:
+Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2026-10-04, before any sealed data was opened):
 
 - **Feedback ON by default** iff all hold: E2 judge mean +1.0 point or more with CI excluding 0 in the frozen and
   online arms, and the sparse arm still positive; E1 NDCG@10 improves with CI excluding 0 and beats arm (d); the
