@@ -18,12 +18,13 @@ export const RULES = {
   wait: 'Per admission: WRITE_PROGRESS_SQL and SELECT * FROM persistence_requests WHERE id=$1::uuid / id=ANY($1::uuid[]) reads from the admission commit to the next cursor save (or admission). Its wall overlaps claim, prepare and publication.',
   commit_gap: 'Between consecutive committed group publications of one sync process (all publications when it published no group): wall, and every record the process sent in between. Single publications include foreground writes the sync process\'s consumer published.',
   member_chain: 'Members are split at their attribution statements (with its describe, if any): segment i runs from member i\'s attribution to member i+1\'s, so it holds member i\'s apply/effects tail and member i+1\'s authorize/snapshot/validate lead. The rotation leaves the steady per-member total unchanged. Steady = segments 2..n-1 of transactions with >= 3 members; segment 1 carries first-use describes, the last one runs into the counter lock and is part of the fixed cost.',
-  counter_hold: 'From the first counter-lock statement (with its describe) to the commit, inclusive.',
+  counter_hold: 'From the counter row lock (SELECT * FROM persistence_counters ... FOR UPDATE, with its describe) to the commit, inclusive. INSERT INTO persistence_counters(key) ... ON CONFLICT DO NOTHING creates missing rows and locks no existing one, so it is outside the hold.',
 };
 
 const SIG = {
   lock1s: /^SELECT set_config\('synchronous_commit','on',true\),set_config\('lock_timeout','1s',true\)/,
   counterLock: /^INSERT INTO persistence_counters\(key\)/,
+  counterRowLock: /^SELECT \* FROM persistence_counters WHERE key=ANY\(.*FOR UPDATE$/,
   attribution: /^SELECT set_config\('gbrain\.write_request',/,
   admission: /^INSERT INTO persistence_requests\b/,
   claim: /^UPDATE persistence_requests (?:r )?SET state='running'/,
@@ -200,7 +201,7 @@ interface GroupTxn { process: string; members: number; statements: number; waves
 
 function analyzeGroup(t: Txn): GroupTxn {
   const rs = t.records;
-  const lockAt = rs.findIndex(is(SIG.counterLock));
+  const lockAt = rs.findIndex(is(SIG.counterRowLock));
   const hold = lockAt < 0 ? null : { ...cost(rs.slice(lockAt)), ms: round1(t.end - rs[lockAt]!.t) };
   const bounds: number[] = [];
   rs.forEach((r, i) => {
