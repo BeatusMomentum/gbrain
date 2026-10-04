@@ -58,7 +58,6 @@ fi
 cd "$(dirname "$0")/.."
 
 . scripts/lib/test-env.sh
-export_coverage_wait_multiplier
 
 # Collect non-E2E, non-serial unit test files. Slow files INCLUDED — see
 # header comment. Local run-unit-shard.sh excludes slow files (different

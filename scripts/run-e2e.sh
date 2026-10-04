@@ -236,7 +236,6 @@ fi
 # Files asserting the path TO post-initSchema state carry their own per-file
 # `delete process.env.GBRAIN_PGLITE_SNAPSHOT` opt-out.
 . scripts/lib/test-env.sh
-export_coverage_wait_multiplier
 ensure_pglite_snapshot "run-e2e"
 # Absolutize: e2e tests spawn CLI subprocesses with varying cwd; a relative
 # path would silently miss the tar there (cold-init fallback, benefit lost).

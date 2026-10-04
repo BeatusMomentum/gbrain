@@ -111,10 +111,9 @@ ensure_default_pglite_snapshot() {
 # set) exports GBRAIN_TEST_WAIT_MULTIPLIER=2 unless the caller chose a value.
 # test/helpers/wait-for.ts scales every waitFor deadline by it and keeps the
 # result below bun's 60s per-test timeout. The bun preload keeps GBRAIN_TEST_*
-# and run-e2e.sh's env scrub keep-lists the name.
+# and run-e2e.sh's env scrub keep-lists the name. Runs when this file is
+# sourced, so every runner that sources it gets the same default.
 # ──────────────────────────────────────────────────────────────────────────
-export_coverage_wait_multiplier() {
-  if [ -n "${COVERAGE_DIR:-}" ] && [ -z "${GBRAIN_TEST_WAIT_MULTIPLIER:-}" ]; then
-    export GBRAIN_TEST_WAIT_MULTIPLIER=2
-  fi
-}
+if [ -n "${COVERAGE_DIR:-}" ] && [ -z "${GBRAIN_TEST_WAIT_MULTIPLIER:-}" ]; then
+  export GBRAIN_TEST_WAIT_MULTIPLIER=2
+fi
