@@ -156,8 +156,8 @@ describe('rate_answer', () => {
 describe('authority', () => {
   const base = { remote: true, transport: 'http' as const, sourceId: 'default' };
   test('owner CLI and stdio may teach; grants must be unrestricted write on that source', () => {
-    expect(canTeachSource({ remote: false }, 'default')).toBe(true);
-    expect(canTeachSource({ remote: true, transport: 'stdio' }, 'default')).toBe(true);
+    expect(canTeachSource({ remote: false, sourceId: 'default' }, 'default')).toBe(true);
+    expect(canTeachSource({ remote: true, transport: 'stdio', sourceId: 'default' }, 'default')).toBe(true);
     expect(canTeachSource({ ...base, auth: { clientId: 'c', scopes: ['read'] } as never }, 'default')).toBe(false);
     expect(canTeachSource({ ...base, auth: { clientId: 'c', scopes: ['write'] } as never }, 'default')).toBe(true);
     expect(canTeachSource({ ...base, auth: { clientId: 'c', scopes: ['write'] } as never }, 'other')).toBe(false);

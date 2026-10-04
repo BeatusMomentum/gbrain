@@ -918,6 +918,8 @@ export interface SearchResult {
   relational_hop?: number;
   /** Shortest connecting slug path seed→…→result (for "how I know this"). */
   relational_path?: string[];
+  /** Stored-direction edges along `relational_path` (for retrieval feedback attribution). */
+  relational_path_edges?: string[];
   /**
    * Ranker wave — set when `pinRelationalRows` (relational-rerank-pin.ts)
    * re-pinned this relational-arm row above the reranked text rows. Autocut
@@ -946,6 +948,12 @@ export interface SearchResult {
   cosine?: number;
   /** Multiplier applied by applyBacklinkBoost (1.0 = unchanged). */
   backlink_boost?: number;
+  /** Use-attributed feedback multiplier on the ordering score (src/core/search/feedback-boost.ts); absent when neutral. */
+  feedback_boost?: number;
+  /** The page's content_hash when this result was retrieved (stamped while retrieval feedback is enabled). */
+  content_hash?: string | null;
+  /** Relational-arm triplet score and its parts (src/core/search/triplet-score.ts); lower is better. */
+  triplet?: { worst: number; parts: Array<{ edge: string; from: number; edge_distance: number; to: number; total: number }> };
   /** Multiplier applied by applySalienceBoost. */
   salience_boost?: number;
   /** Multiplier applied by applyRecencyBoost. */
@@ -1513,6 +1521,8 @@ export interface RelationalFanoutRow {
   edge_count: number;
   via_link_types: string[];
   path: string[];
+  /** Stored-direction edges ('from_slug|link_type|to_slug') along `path`, in order. */
+  path_edges: string[];
   canonical_chunk_id: number | null;
 }
 

@@ -1641,9 +1641,11 @@ export function formatResult(
       const incompleteNotice = incompleteStages.length > 0
         ? `Retrieval incomplete: ${incompleteStages.join(', ')}.\n`
         : '';
+      const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
+      if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
       if (params.json === true) {
         if (incompleteNotice) process.stderr.write(incompleteNotice);
-        return JSON.stringify(results, null, 2) + '\n';
+        return JSON.stringify(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, null, 2) + '\n';
       }
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —

@@ -298,6 +298,8 @@ const synthesize: Operation = {
     // gather → typed error. An answer is NEVER fabricated from nothing
     // (ENG-19). Defensive ?? 'ok' mirrors synthesisOk's back-compat posture.
     const status = result.synthesis_status ?? 'ok';
+    const { recordThinkAnswer, feedbackMetaFields } = await import('./feedback/record.ts');
+    const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'synthesize', result));
     if (status !== 'ok') {
       if (result.extractive) {
         return {
@@ -309,6 +311,7 @@ const synthesize: Operation = {
           pages_gathered: result.pagesGathered,
           takes_gathered: result.takesGathered,
           warnings: result.warnings,
+          ...feedbackMeta,
           protocol_version: MEMORY_VERBS_VERSION,
         };
       }
@@ -329,6 +332,7 @@ const synthesize: Operation = {
       pages_gathered: result.pagesGathered,
       takes_gathered: result.takesGathered,
       warnings: result.warnings,
+      ...feedbackMeta,
       protocol_version: MEMORY_VERBS_VERSION,
     };
   },

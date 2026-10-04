@@ -224,3 +224,46 @@ export function _resetFeedbackRecordingForTests(): void {
   dropped = 0;
   answersSinceHint = new Map();
 }
+
+/** Additive response-meta fields for an answer (none when feedback is off). */
+export function feedbackMetaFields(meta: AnswerFeedbackMeta | null): Record<string, unknown> {
+  if (!meta) return {};
+  return { ...(meta.answer_id ? { answer_id: meta.answer_id } : {}), feedback: meta.feedback };
+}
+
+/** Typed edges on the representative relational path of each returned relational-arm row. */
+export function relationalPathLinks(
+  rows: Array<{ slug: string; source_id?: string; relational_path_edges?: string[] }>,
+): EventLink[] {
+  const out: EventLink[] = [];
+  for (const r of rows) {
+    for (const edge of r.relational_path_edges ?? []) {
+      out.push({ source_id: r.source_id ?? 'default', edge_key: edge, to_slug: r.slug });
+    }
+  }
+  return out;
+}
+
+/**
+ * Record a think/synthesize answer: gathered pages are the used set; a page is
+ * cited only when synthesis succeeded and its bare cited slug is unambiguous
+ * among the gathered sources.
+ */
+export async function recordThinkAnswer(
+  ctx: OperationContext,
+  op: 'think' | 'synthesize',
+  result: {
+    synthesis_status?: string;
+    citations: Array<{ page_slug: string }>;
+    feedback_evidence?: Array<{ source_id: string; slug: string; content_hash: string | null }>;
+  },
+): Promise<AnswerFeedbackMeta | null> {
+  const evidence = result.feedback_evidence ?? [];
+  const citedSlugs = new Set(result.synthesis_status === 'ok' ? result.citations.map(c => c.page_slug) : []);
+  const sourcesBySlug = new Map<string, number>();
+  for (const e of evidence) sourcesBySlug.set(e.slug, (sourcesBySlug.get(e.slug) ?? 0) + 1);
+  return recordAnswer(ctx, {
+    op,
+    pages: evidence.map(e => ({ ...e, cited: citedSlugs.has(e.slug) && sourcesBySlug.get(e.slug) === 1 })),
+  });
+}
