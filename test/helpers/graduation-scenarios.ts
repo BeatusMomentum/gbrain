@@ -102,6 +102,8 @@ export async function expectAtMostOneWriter(c: Case, label: string): Promise<voi
 }
 
 export function failingChecks(doc: Record<string, any> | null): string[] {
+  // The run document's `doctor` is { source, target } lists of failing check names; doctor --json has `checks`.
+  if (Array.isArray(doc?.target)) return doc.target as string[];
   return ((doc?.checks ?? []) as { name: string; status: string }[]).filter(c => c.status === 'fail').map(c => c.name);
 }
 

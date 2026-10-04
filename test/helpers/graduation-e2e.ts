@@ -26,7 +26,9 @@ export * from '../../scripts/persistence/graduation-process.ts';
  * (visible in every report, never silently skipped). Infrastructure checks
  * that need only Postgres run either way.
  */
-export const GRADUATION_LANDED = existsSync(join(REPO, 'src', 'core', 'persistence', 'engine-graduation.ts'));
+const ORCHESTRATOR = join(REPO, 'src', 'core', 'persistence', 'engine-graduation.ts');
+/** The CLI lane ships a throwing stub at this path until the orchestrator merges; the stub does not count as landed. */
+export const GRADUATION_LANDED = existsSync(ORCHESTRATOR) && !readFileSync(ORCHESTRATOR, 'utf8').includes('STUB (G3 CLI lane)');
 export const graduationTest: typeof test = GRADUATION_LANDED ? test : (test.todo as unknown as typeof test);
 /** `graduationTest` with an extra visible skip condition (e.g. Docker unavailable). */
 export function graduationTestIf(skip: boolean): typeof test {

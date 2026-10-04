@@ -276,6 +276,7 @@ function successDoc(receipt: GraduationReceipt) {
   return {
     schema_version: 1 as const,
     status: 'graduated' as const,
+    state: 'graduated' as const,
     run_id: receipt.runId,
     target: receipt.targetDisplayUrl ?? null,
     retained_path: receipt.retainedPath ?? null,
