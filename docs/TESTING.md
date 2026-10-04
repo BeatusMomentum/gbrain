@@ -21,13 +21,13 @@ not grant access. No Ubicloud API token is passed to workflow jobs.
 
 | Workload | Runner | Capacity |
 | --- | --- | --- |
-| Unit shards, slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, persistence soak, reconciliation crashes and read latency, native Linux cells, OpenClaw startup, JSONB parity, selected E2E and Tier 2 | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
-| Serial pool (PR and nightly coverage), `verify`, PgBouncer/RLS deployment matrix | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
+| Slow and eval jobs, BrainBench, admin browser, shared-skills compatibility, persistence soak, reconciliation crashes and read latency, native Linux cells, OpenClaw startup, JSONB parity, PR serial pool, E2E backend matrix and Tier 2 | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
+| Nightly coverage serial pool, `verify`, PgBouncer/RLS deployment matrix | `ubicloud-standard-8-ubuntu-2404` | 8 vCPU, 32 GB RAM |
 | E2E Tier 1 (its CLI `init` spawns exceed their timeouts on 4 vCPUs), label-gated and nightly heavy-tests jobs | `ubicloud-standard-16-ubuntu-2404` | 16 vCPU, 64 GB RAM |
 | Label-gated heavy test suite | `ubicloud-standard-30-ubuntu-2404` | 30 vCPU, 120 GB RAM |
 | Native ARM64 glibc and musl tests | `ubicloud-standard-4-arm-ubuntu-2404` | 4 vCPU |
 | Coverage reports and Semgrep | `ubicloud-standard-4-ubuntu-2404` | 4 vCPU, 16 GB RAM |
-| Planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
+| Unit shards and selected E2E (one Bun process each), planning, status aggregation, dependency audit, gitleaks, security regressions and actionlint | `ubicloud-standard-2-ubuntu-2404` | 2 vCPU, 8 GB RAM |
 
 macOS and Windows matrices stay on GitHub-hosted runners. Release building and
 publishing also stay unchanged. The pinned upstream OSV reusable workflow does
@@ -513,8 +513,9 @@ runner then reaches that database through the pooler in
 on first use through `GBRAIN_PGBOUNCER_DIRECT_URL`
 (`scripts/lib/ensure-e2e-database.ts`). `ci:ubicloud` routes each slot's own
 pooler at the slot database, `ci:local` gives each shard a
-`gbrain_pooled_<N>_test` database behind its single pooler, and `e2e.yml`
-tier1 runs the list against a `pgbouncer` service. An entry may carry
+`gbrain_pooled_<N>_test` database behind its single pooler, and `e2e.yml`'s
+`tier1-backend-matrix` job runs the list against a `pgbouncer` service; it is
+the PR owner of the listed `test/e2e/` files, which Selected E2E excludes. An entry may carry
 `<TAB>pooled-timeout=<seconds>` when its pooled pass needs more than the
 per-file cap; `!path<TAB>reason` records a parity file deliberately left out.
 `test/scripts/e2e-backend-matrix.test.ts` pins the list's completeness, the CI
