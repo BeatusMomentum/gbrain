@@ -76,6 +76,9 @@ Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2
 - E1 is evaluated **per corpus** (LoCoMo and world-v1 separately); "E1 passes" requires both. If world-v1 passes and
   LoCoMo fails, feedback ships with `feedback.enabled=false` (opt-in, explicit ratings only, `feedback.implicit=false`).
 - If E1 passes but E2 does not: ship with `feedback.enabled=false` as above.
+- Sealed E2 runs only if sealed E1 passes on both corpora (approved 2026-10-04, before any sealed data was opened).
+  If E1 fails on LoCoMo or world-v1, feedback ships off by default whatever E2 shows, so E2 is recorded as "not run:
+  preregistered gate, see the dev result".
 - If E1 fails on both corpora: the feedback subsystem leaves the pull request.
 - **Triplet scoring ON** iff sealed constrained-relational NDCG@10 improves by +2.0 points or more with CI excluding
   0 (cluster bootstrap over held-out seeds and templates) and the guards show 0 hit@1 losses. Otherwise the setting
