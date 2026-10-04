@@ -142,6 +142,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'propose_takes',              // v0.36.1.0 — hindsight calibration wave
   'grade_takes',                // v0.36.1.0
   'calibration_profile',        // v0.36.1.0
+  'edge_contradictions',        // temporal typed edges (proposals by default)
   'drift',                       // #2653 — drift detection (default OFF, report-only)
   'chronicle',                   // #5876 — Life Chronicle events (default ON)
   'conversation_facts_backfill', // v0.41.11.0 — opt-in conversation backfill

@@ -551,6 +551,13 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "edge-proposals": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "edges-backfill": {
         "hasSwitchCase": true,
         "phase": "post-connect",

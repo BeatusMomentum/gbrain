@@ -16,6 +16,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { applyEdgeProposal, rejectEdgeProposal, undoEdgeProposal, DREAM_TIMELINE_SOURCE } from '../core/cycle/edge-contradictions.ts';
 import { isCalendarDate, dateKey } from '../core/link-validity.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 const STATUSES = ['proposed', 'applied', 'rejected', 'undone', 'stale', 'reverted_by_user', 'undated_unresolved', 'ambiguous_same_date', 'compatible', 'error'];
 
@@ -65,16 +66,16 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
   if (!sub || sub === '--help' || sub === 'help') { console.log(usage()); return; }
   if (sub === 'list') {
     const status = flag('--status');
-    if (status && status !== 'all' && !STATUSES.includes(status)) { console.error(`Unknown status ${status}. One of: ${STATUSES.join(', ')}, all`); process.exitCode = 2; return; }
+    if (status && status !== 'all' && !STATUSES.includes(status)) { console.error(`Unknown status ${status}. One of: ${STATUSES.join(', ')}, all`); setCliExitVerdict(2); return; }
     const list = status === 'all' ? await rows(engine, 'TRUE', [], Number(flag('--limit') ?? 50))
       : await rows(engine, 'p.status = ANY($1::text[])', [status ? [status] : ['proposed', 'undated_unresolved']], Number(flag('--limit') ?? 50));
     out(list, list.length ? list.map(describe).join('\n') + '\n\nNext: gbrain edge-proposals accept <id> | reject <id>' : 'No open relationship proposals.');
     return;
   }
-  if (!Number.isSafeInteger(id) || id <= 0) { console.error(`${usage()}\n\nA proposal id is required (gbrain edge-proposals list shows them).`); process.exitCode = 2; return; }
+  if (!Number.isSafeInteger(id) || id <= 0) { console.error(`${usage()}\n\nA proposal id is required (gbrain edge-proposals list shows them).`); setCliExitVerdict(2); return; }
   if (sub === 'show') {
     const [r] = await rows(engine, 'p.id = $1', [id]);
-    if (!r) { console.error(`No proposal #${id}.`); process.exitCode = 1; return; }
+    if (!r) { console.error(`No proposal #${id}.`); setCliExitVerdict(1); return; }
     out(r, `${describe(r)}\nmodel: ${r.model ?? '-'}  confidence: ${r.confidence ?? '-'}\n${r.generated_line ? `line: - **${dateKey(r.close_date)}** | ${DREAM_TIMELINE_SOURCE} — ${r.generated_line}` : ''}`);
     return;
   }
@@ -88,14 +89,14 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
     }
     const result = sub === 'accept' ? await applyEdgeProposal(engine, id) : sub === 'reject' ? await rejectEdgeProposal(engine, id) : await undoEdgeProposal(engine, id);
     out({ id, ...result }, `#${id}: ${result.status}${result.reason ? ` — ${result.reason}` : ''}`);
-    if (!['applied', 'rejected', 'undone'].includes(result.status)) process.exitCode = 1;
+    if (!['applied', 'rejected', 'undone'].includes(result.status)) setCliExitVerdict(1);
     return;
   }
   if (sub === 'date') {
     const date = rest.find(a => /^\d{4}-\d{2}-\d{2}$/.test(a));
-    if (!isCalendarDate(date)) { console.error('date needs a calendar date YYYY-MM-DD: when the newer relationship started.'); process.exitCode = 2; return; }
+    if (!isCalendarDate(date)) { console.error('date needs a calendar date YYYY-MM-DD: when the newer relationship started.'); setCliExitVerdict(2); return; }
     const [r] = await rows(engine, `p.id = $1 AND p.status = 'undated_unresolved'`, [id]);
-    if (!r) { console.error(`No undated proposal #${id}.`); process.exitCode = 1; return; }
+    if (!r) { console.error(`No undated proposal #${id}.`); setCliExitVerdict(1); return; }
     const target = rest.find(a => a.includes('/')) ?? r.b_target;
     const { operations } = await import('../core/operations.ts');
     const op = operations.find(o => o.name === 'add_timeline_entry')!;
@@ -109,5 +110,5 @@ export async function runEdgeProposals(engine: BrainEngine, args: string[]): Pro
     return;
   }
   console.error(usage());
-  process.exitCode = 2;
+  setCliExitVerdict(2);
 }
