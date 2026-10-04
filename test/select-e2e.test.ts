@@ -134,6 +134,7 @@ describe("selectTests", () => {
     })).toEqual([
       "test/e2e/attendance-repair-postgres.test.ts",
       "test/e2e/attendance-retrieval-postgres.test.ts",
+      "test/e2e/wanted-links-postgres.test.ts",
     ]);
   });
 
