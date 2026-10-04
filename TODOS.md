@@ -520,7 +520,7 @@ Evidence for each item is in `docs/test-audit/2026-09-29/`.
 ## Community fix wave follow-ups (filed 2026-09-09)
 
 - [ ] **P3 — new v0.49/v0.50 tests assume `os.tmpdir()` is already a realpath (macOS `/var` vs `/private/var`).**
-  **What:** `test/agent-install.test.ts`, `test/harness-install-ownership.test.ts`, `test/harness-onboarding.test.ts`, `test/init-mcp-only.test.ts`, `test/minions-submission-authority.test.ts`, `test/harness-access.serial.test.ts` and `test/harness-delivery-recovery.serial.test.ts` fail on macOS with "Refusing a symlink in managed path: /var" / "Source file escapes registered root" while the same files pass on Linux CI — the fixtures build paths under `os.tmpdir()` (a symlink on macOS) and the managed-path / registered-root guards compare against realpaths. **Why:** every local and Mac-mini run of the suite now carries 19 red tests that are not defects, which hides real regressions (the v0.50.1.0 ship had to classify them by re-running on a clean master checkout). **Fix:** `realpathSync(os.tmpdir())` in those fixtures (the `upgrade-bun-link-arc` e2e has the same gap). **Effort:** S. **Priority:** P3.
+  **What:** `test/agent-install.test.ts`, `test/harness-install-ownership.test.ts`, `test/harness-onboarding.test.ts`, `test/init-mcp-only.test.ts`, `test/minions-submission-authority.test.ts`, `test/harness-access.test.ts` and `test/harness-delivery-recovery.serial.test.ts` fail on macOS with "Refusing a symlink in managed path: /var" / "Source file escapes registered root" while the same files pass on Linux CI — the fixtures build paths under `os.tmpdir()` (a symlink on macOS) and the managed-path / registered-root guards compare against realpaths. **Why:** every local and Mac-mini run of the suite now carries 19 red tests that are not defects, which hides real regressions (the v0.50.1.0 ship had to classify them by re-running on a clean master checkout). **Fix:** `realpathSync(os.tmpdir())` in those fixtures (the `upgrade-bun-link-arc` e2e has the same gap). **Effort:** S. **Priority:** P3.
 - [ ] **P2 — `delta`: fetch facts oldest-first with an overflow flag instead of a newest-first `limit: 50` window.**
   **What:** `src/core/context/turn-context.ts` fetches delta facts with `listFactsSince(..., { limit: 50 })` ordered `created_at DESC` and never sets `has_more` for facts, so more than 50 new facts since the cursor silently drop the OLDEST ones as the page cursor advances past them. **Why:** the v0.50.1.0 pre-landing review found it while simplifying the delta cursor; the fix is an ascending keyset fetch plus `has_more` when the window is full (an engine-options change, so it was left out of the wave). **Effort:** M. **Priority:** P2.
 - [ ] **P2 — `session_context_state` cursor upsert: GREATEST, not COALESCE.**
@@ -3052,7 +3052,7 @@ explicitly scoped OUT with a one-line rationale — none is a bug, all are addit
 - [ ] **P3 — Extract a shared `seedBrain` test helper.** The keyless-PGLite +
   tmp-HOME + shimmed-PATH setup is duplicated between
   `test/autopilot-launchd-lifecycle.serial.test.ts` and
-  `test/agent-scheduler-contract.serial.test.ts` (review-army maintainability
+  `test/agent-scheduler-contract.test.ts` (review-army maintainability
   finding). A third harness-e2e file (the PR-B tier) should force the
   extraction into `test/helpers/`; don't extract before then — two instances
   is a coincidence, three is a pattern.
@@ -3078,12 +3078,12 @@ explicitly scoped OUT with a one-line rationale — none is a bug, all are addit
   (INSTALL_FOR_AGENTS.md Step 7) runs `gbrain dream` unconditionally, and the cycle's
   embed phase hits the same `EmbeddingDisabledError` class that broke the documented
   sync-and-embed chain on keyless brains (fixed in `runEmbed` for the `--stale`
-  spelling; `test/agent-scheduler-contract.serial.test.ts` pins it). Nobody has verified that a
+  spelling; `test/agent-scheduler-contract.test.ts` pins it). Nobody has verified that a
   full keyless dream exits 0 — if any phase surfaces the disabled-embeddings error as a
   phase failure, the documented nightly cron is broken identically for every
   `init --no-embedding` install. **Where to start:** `src/core/cycle.ts` embed phase +
   `src/commands/dream.ts` exit-code handling; test shape mirrors
-  `test/agent-scheduler-contract.serial.test.ts` (keyless PGLite brain, real CLI spawn, exit-code
+  `test/agent-scheduler-contract.test.ts` (keyless PGLite brain, real CLI spawn, exit-code
   assertion). Surfaced by the harness-e2e outside-voice review.
 
 ## BrainBench follow-ups (filed v0.44.0.0, Cathedral 2)
@@ -6015,7 +6015,7 @@ contributor traps.
 - [ ] **NEW-1 (P2) — Per-check leaf unit tests for the 20+ exported doctor check functions.** `src/commands/doctor.ts:169-1492` exports whoknowsHealthCheck, takesWeightGridCheck, childTableOrphansCheck, checkRerankerHealth, checkBrainstormHealth, checkSearchMode, checkEvalDrift, checkSyncFreshness, checkAbandonedThreads, checkCalibrationFreshness, checkGradeConfidenceDrift, checkVoiceGateHealth, checkEmbeddingWidthConsistency, checkSourceRoutingHealth, checkOauthConfidentialHealth, checkAutopilotLockScope, skillBrainFirstCheck. v0.40.8.0 covers them via the orchestrator only. Parameterize a single `test/doctor-leaves.test.ts` over the exported functions; each case seeds the minimum DB state and asserts the returned `Check.status`. Catches per-check render bugs the orchestrator snapshot can't see (codex CMT-2 deep fix). Estimated ~4h CC.
 - [ ] **NEW-2 (P2) — Cycle-phase wrappers beyond lint + backlinks.** 7 more phases need result-mapping coverage: sync, extract, embed, orphans, extract_facts, resolve_symbol_edges, recompute_emotional_weight. Each adds a describe block to `test/cycle-legacy-phases.test.ts` following the established pattern. ~30min/phase with CC. Mechanical follow-through.
 - [ ] **NEW-3 (P2) — HTTP-level trust-boundary test that proves serve-http.ts honors the filter at runtime.** v0.40.8.0 ships the source-grep guard at `scripts/check-operations-filter-bypass.sh` plus structural assertions in `test/operations-trust-boundary.test.ts`. The codex CMT-3 strongest defense — runtime proof that a register-OAuth-client → attempt-call-every-localOnly-op flow rejects every one — would extend `test/e2e/serve-http-oauth.test.ts`. Real Postgres dep, ~30s wallclock per case. Closes the bypass class with runtime proof in addition to the existing structural defense.
-- [ ] **NEW-4 (P3) — Render function extraction from runDoctor.** v0.40.8.0 uses a subprocess smoke at `test/doctor-cli-smoke.serial.test.ts` to cover the wrapper's render + exit paths. Pulling the human + JSON render code out into pure formatters would let that smoke move back into the parallel fast loop with no subprocess overhead. ~2h CC. Lower priority — the subprocess smoke does its job; this is a wallclock win, not a coverage win.
+- [ ] **NEW-4 (P3) — Render function extraction from runDoctor.** v0.40.8.0 uses a subprocess smoke at `test/doctor-cli-smoke.test.ts` to cover the wrapper's render + exit paths. Pulling the human + JSON render code out into pure formatters would let that smoke move back into the parallel fast loop with no subprocess overhead. ~2h CC. Lower priority — the subprocess smoke does its job; this is a wallclock win, not a coverage win.
 
 ## v0.41+ master flake follow-ups (filed during v0.40.8.0 ship)
 
@@ -6036,7 +6036,7 @@ contributor traps.
 
 ## Pre-existing flake on master (noticed during v0.40.4 ship)
 
-- [x] **`test/search/embedding-column.test.ts:466,489,522` — `isCacheSafe` returns false when run after gateway-state-mutating siblings in shard 2.** DONE: closed by option (c) — the file was renamed to `test/search/embedding-column.serial.test.ts` in `ca68633f` (v0.41.2.0), giving it its own bun process; entry left open pointed at a filename that no longer exists. If the file is ever un-quarantined, add `beforeEach(() => resetGateway())` (NOT `__unconfigureGatewayForTests` — that falls through to the retired provider/1280 defaults; `resetGateway` re-applies the preload's OpenAI/1536 baseline). Original filing: Confirmed pre-existing on master (`git stash` + `SHARD=2/8 bash scripts/run-unit-shard.sh` reproduces 3 fails on a clean working tree). Symptom: `isCacheSafe(default-named-column, empty-cfg)` expects `gwDims=1536` but reads `1280` (the post-v0.37.11.0 retired hosted provider default). Some test in the shard before embedding-column.test.ts initializes the gateway with the PGLite-default retired hosted provider/1280 config and leaves it that way. Either: (a) embedding-column.test.ts grows a `beforeEach` that calls `__setEmbedTransportForTests`-style reset, (b) the offending sibling adds an `afterAll(reset)`, or (c) embedding-column.test.ts becomes `*.serial.test.ts` to quarantine. Three test files in shard 2 touch gateway state via PGLite engine connects: `restart-sweep.test.ts`, `init-mode-picker.test.ts`, `doctor.test.ts`. Tests pass in isolation (50/50); only fail under shard-2 ordering. v0.40.4 ships through this flake — not introduced by the wave.
+- [x] **`test/search/embedding-column.test.ts:466,489,522` — `isCacheSafe` returns false when run after gateway-state-mutating siblings in shard 2.** DONE: closed by option (c) — the file was renamed to `test/search/embedding-column.test.ts` in `ca68633f` (v0.41.2.0), giving it its own bun process; entry left open pointed at a filename that no longer exists. If the file is ever un-quarantined, add `beforeEach(() => resetGateway())` (NOT `__unconfigureGatewayForTests` — that falls through to the retired provider/1280 defaults; `resetGateway` re-applies the preload's OpenAI/1536 baseline). Original filing: Confirmed pre-existing on master (`git stash` + `SHARD=2/8 bash scripts/run-unit-shard.sh` reproduces 3 fails on a clean working tree). Symptom: `isCacheSafe(default-named-column, empty-cfg)` expects `gwDims=1536` but reads `1280` (the post-v0.37.11.0 retired hosted provider default). Some test in the shard before embedding-column.test.ts initializes the gateway with the PGLite-default retired hosted provider/1280 config and leaves it that way. Either: (a) embedding-column.test.ts grows a `beforeEach` that calls `__setEmbedTransportForTests`-style reset, (b) the offending sibling adds an `afterAll(reset)`, or (c) embedding-column.test.ts becomes `*.serial.test.ts` to quarantine. Three test files in shard 2 touch gateway state via PGLite engine connects: `restart-sweep.test.ts`, `init-mode-picker.test.ts`, `doctor.test.ts`. Tests pass in isolation (50/50); only fail under shard-2 ordering. v0.40.4 ships through this flake — not introduced by the wave.
 
 ## v0.40.4 graph signals — deferred follow-ups (v0.41+)
 
@@ -6204,7 +6204,7 @@ contributor traps.
 
 ## dreamy-thompson wave follow-ups (v0.36.x)
 
-- [ ] **v0.36.x: runThink full rewrite — drop ThinkLLMClient indirection.** v0.36's fix(think) wave landed a gateway-backed adapter at `src/core/think/index.ts:225-251` so `gbrain config set anthropic_api_key` works over MCP stdio (closed #952). The adapter routes through `gateway.chat()` but `runThink` still carries the `ThinkLLMClient` interface as the test seam — it's the last LLM-using path that doesn't use the canonical `__setChatTransportForTests` seam v0.31.12 established for chat/embed. Cleanup: drop `ThinkLLMClient`, drop the `opts.client` injection point, migrate the 12+ existing tests (`test/think-pipeline.serial.test.ts:144,181,222`, `test/think-gateway-adapter.test.ts`, plus 9+ others that stub the interface) to `__setChatTransportForTests`. Pros: codebase consistency, one fewer test-stub pattern, easier to add provider switching for think once it routes through gateway natively. Cons: 12+ test files need migration. Blocked by: v0.36 wave landing on master (so the adapter exists to lean on while migrating tests). Plan reference: D5 + D7 in `~/.claude/plans/ok-i-spun-up-dreamy-thompson.md`.
+- [ ] **v0.36.x: runThink full rewrite — drop ThinkLLMClient indirection.** v0.36's fix(think) wave landed a gateway-backed adapter at `src/core/think/index.ts:225-251` so `gbrain config set anthropic_api_key` works over MCP stdio (closed #952). The adapter routes through `gateway.chat()` but `runThink` still carries the `ThinkLLMClient` interface as the test seam — it's the last LLM-using path that doesn't use the canonical `__setChatTransportForTests` seam v0.31.12 established for chat/embed. Cleanup: drop `ThinkLLMClient`, drop the `opts.client` injection point, migrate the 12+ existing tests (`test/think-pipeline.test.ts:144,181,222`, `test/think-gateway-adapter.test.ts`, plus 9+ others that stub the interface) to `__setChatTransportForTests`. Pros: codebase consistency, one fewer test-stub pattern, easier to add provider switching for think once it routes through gateway natively. Cons: 12+ test files need migration. Blocked by: v0.36 wave landing on master (so the adapter exists to lean on while migrating tests). Plan reference: D5 + D7 in `~/.claude/plans/ok-i-spun-up-dreamy-thompson.md`.
 
 - [ ] **v0.36.x: Supabase parity test fixture for `applyForwardReferenceBootstrap`.** v0.36 fixed the underlying bug (bootstrap now uses the DDL connection from `initSchema` so probes run inside the advisory-lock scope) per codex P1 from /ship adversarial review. What remains is the TEST FIXTURE that proves it: the new pre-v18/pre-v34/pre-v60 E2E tests run against local Docker Postgres but not against Supabase-shape pooler topology (transaction pooler + statement_timeout). Real Supabase upgrades have failed multiple times on this exact connection-topology divergence (#699, #820 lineage). Fix: a test fixture that exercises the probe path against deriveDirectUrl + transaction pooler + statement_timeout. Cons: requires Supabase fixture infra OR careful mocking of the connection-selection logic in `db.ts`'s `getDDLConnection` path.
 
@@ -6911,7 +6911,7 @@ The repo already has the right helper: `test/helpers/reset-pglite.ts` exports `r
 
 Two flakes already known and quarantined as `*.serial.test.ts` (run after parallel pass at `--max-concurrency=1`):
 - `test/brain-registry.serial.test.ts` (was `brain-registry.test.ts`)
-- `test/reconcile-links.serial.test.ts` (was `reconcile-links.test.ts`)
+- `test/reconcile-links.test.ts` (was `reconcile-links.test.ts`)
 
 After the sweep, both should be fixable and renameable back to plain `*.test.ts`.
 
@@ -7231,7 +7231,7 @@ purpose; needs baseline-governance care per the BrainBench gate rules.
 ### Non-tier-1 e2e files run in no required CI lane
 **Priority:** P2
 
-**What:** Unit shards exclude `test/e2e/*` (`scripts/test-shard.sh`), and `.github/workflows/e2e.yml` runs only explicitly named files (a handful across its jobs — e.g. `test/e2e/mechanical.test.ts`, `test/e2e/mcp.test.ts`, the jsonb-parity pair); there is no glob. Every other `test/e2e/*.test.ts` — including PGLite-only files that need no `DATABASE_URL`, like `init-fresh-pglite.test.ts` — executes only when someone runs `bun run test:e2e` by hand. Decide per file: wire into a required workflow, re-home PGLite-only files to the serial lane (the pattern `test/init-picker-pty.serial.test.ts` uses), or explicitly document them as manual-only.
+**What:** Unit shards exclude `test/e2e/*` (`scripts/test-shard.sh`), and `.github/workflows/e2e.yml` runs only explicitly named files (a handful across its jobs — e.g. `test/e2e/mechanical.test.ts`, `test/e2e/mcp.test.ts`, the jsonb-parity pair); there is no glob. Every other `test/e2e/*.test.ts` — including PGLite-only files that need no `DATABASE_URL`, like `init-fresh-pglite.test.ts` — executes only when someone runs `bun run test:e2e` by hand. Decide per file: wire into a required workflow, re-home PGLite-only files to the serial lane (the pattern `test/init-picker-pty.test.ts` uses), or explicitly document them as manual-only.
 
 **Status (2026-09-29 test audit):** partly stale. Every `test/e2e` file now runs in the nightly `coverage-full-e2e` glob, and PRs run the diff-selected set (`scripts/select-e2e.ts`, falling back to all files on unmapped changes). What remains is re-homing PGLite-only files so they run on every PR regardless of the diff; that is the test-reduction plan's lane-move pilot (see the PGLite-only lane entry above).
 
@@ -7244,7 +7244,7 @@ purpose; needs baseline-governance care per the BrainBench gate rules.
 ### Ctrl-D during `gbrain init` stalls 60s at the next prompt (readLineSafe does not latch EOF)
 **Priority:** P2
 
-**What:** Pressing Ctrl-D at the interactive provider picker is detected immediately (keyless fallback in ~200ms), but Bun's stdin never yields another line after EOF while `isTTY` stays true — so the SUBSEQUENT search-mode picker sits its full 60s `readLineSafe` fallback before init completes (probed under a real PTY: keyless notice at 0.2s, mode prompt rendered at 1.2s, exit at 61.1s). Fix: `readLineSafe` (src/commands/init.ts) should latch EOF — once stdin has ended, later calls return their default immediately instead of waiting out the timer. Regression test: extend the EOF case in `test/init-picker-pty.serial.test.ts` to run init to completion and assert exit well under the fallback window (the case currently closes early on purpose to keep the 60s stall out of required CI — see the comment there).
+**What:** Pressing Ctrl-D at the interactive provider picker is detected immediately (keyless fallback in ~200ms), but Bun's stdin never yields another line after EOF while `isTTY` stays true — so the SUBSEQUENT search-mode picker sits its full 60s `readLineSafe` fallback before init completes (probed under a real PTY: keyless notice at 0.2s, mode prompt rendered at 1.2s, exit at 61.1s). Fix: `readLineSafe` (src/commands/init.ts) should latch EOF — once stdin has ended, later calls return their default immediately instead of waiting out the timer. Regression test: extend the EOF case in `test/init-picker-pty.test.ts` to run init to completion and assert exit well under the fallback window (the case currently closes early on purpose to keep the 60s stall out of required CI — see the comment there).
 
 **Why:** A user who hits Ctrl-D at the first prompt stares at a frozen screen for a full minute before init finishes. Cross-model adversarial review finding (Codex), confirmed by a real-PTY probe.
 
@@ -8789,7 +8789,7 @@ respective shapes. Small, mechanical; pinned by `test/init-embed-check.test.ts`
   hoist pglite out of gbrain's node_modules on upgrade and the eager
   repo-relative imports crashed every command at module load; tier 2 derives
   the dist dir via module resolution (pinned by
-  `test/pglite-hoisted-install.serial.test.ts`). Guarded by `scripts/check-pglite-embedded.sh`
+  `test/pglite-hoisted-install.test.ts`). Guarded by `scripts/check-pglite-embedded.sh`
   (compiles a smoketest and asserts a real PGLite query round-trips), wired into
   `bun run verify` + `check:all` + `check:pglite-embedded`. The real-agent e2e
   harness (`test/helpers/agent-harness.ts`) now resolves to the fast compiled
