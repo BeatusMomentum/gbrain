@@ -1,29 +1,126 @@
 /**
- * auto_chronicle (#5876): the `auto_chronicle` config key has no reader in this
- * version (the put_page chronicle backstop was dropped and nothing else enqueues
- * `chronicle_extract`), so a brain with it set to true silently gets no events.
- * Warns when the key is on, naming the manual sweep and the unset command.
+ * auto_chronicle (#5876): automatic event extraction health. On by default; the chronicle cycle
+ * phase extracts pending meeting/conversation/calendar pages recorded in `chronicle_page_state`.
+ * Reports the setting, 24 h use of the daily limit with the largest writer's share, 7-day outcomes
+ * and spend (priced dollars, unpriced calls and missing cost records apart), and the command that
+ * runs pending pages now. `auto_chronicle_default_on` stays visible (info) until the operator
+ * answers the default-on change with `gbrain config set auto_chronicle true|false`.
+ * Config-plane only: no provider calls.
  */
-import { isAutoChronicleEnabled } from '../../../core/chronicle/config.ts';
+import {
+  AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, CHRONICLE_NUMERIC_KEYS, autoChronicleNeedsAcknowledgement,
+  readAutoChronicle, readChronicleSettings,
+} from '../../../core/chronicle/config.ts';
+import { describeChronicleActivity, readChronicleLedgerStats } from '../../../core/chronicle/ledger-stats.ts';
+import { CHRONICLE_REASONS, chronicleBackfillArgv, type ChronicleAction } from '../../../core/chronicle/reasons.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
-export const AUTO_CHRONICLE_DOCS = 'docs/guides/troubleshooting.md#auto_chronicle-has-no-effect';
+export const AUTO_CHRONICLE_DOCS = 'docs/guides/life-chronicle.md';
+const RUN_NOW_ARGV = ['gbrain', 'dream', '--phase', 'chronicle'];
+
+const command = (argv: readonly string[]) => argv.join(' ');
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+
+async function chatAvailable(): Promise<boolean> {
+  try {
+    const { isAvailable } = await import('../../../core/ai/gateway.ts');
+    return isAvailable('chat');
+  } catch {
+    return false;
+  }
+}
+
+function warn(code: string, message: string, fix: ChronicleAction, extra: Record<string, unknown> = {}): Omit<Check, 'name'> {
+  return { status: 'warn', message,
+    details: { code, ...extra, fix, ...(fix.argv ? { fix_hint: command(fix.argv) } : {}), docs: AUTO_CHRONICLE_DOCS } };
+}
 
 async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const setting = await readAutoChronicle(engine);
+  const settings = await readChronicleSettings(engine);
   const checks: Check[] = [];
-  const enabled = await isAutoChronicleEnabled(connectedEngine(ctx));
-  checks.push(enabled
-    ? {
-      name: 'auto_chronicle',
-      status: 'warn',
-      message: 'auto_chronicle=true currently has no effect: no write or cycle step enqueues chronicle extraction, so new meetings are not swept into events. ' +
-        'Fix: run `gbrain chronicle-backfill --dry-run`, then `gbrain chronicle-backfill`; `gbrain config unset auto_chronicle` clears the setting.',
-      details: { code: 'auto_chronicle_no_effect', enabled: true, cause: 'auto_chronicle has no reader in this version',
-        fix: 'gbrain chronicle-backfill --dry-run', docs: AUTO_CHRONICLE_DOCS },
+  const backfillPreview = command(chronicleBackfillArgv({ since: daysAgo(30), dryRun: true }));
+
+  if (setting.source === 'invalid') {
+    checks.push({ name: 'auto_chronicle', ...warn('auto_chronicle_invalid',
+      `auto_chronicle is '${setting.raw}', which is neither true nor false, so automatic event extraction is off. ` +
+      `Ask the user which they want, then run \`${command(AUTO_CHRONICLE_KEEP_ARGV)}\` or \`${command(AUTO_CHRONICLE_OPT_OUT_ARGV)}\`.`,
+      CHRONICLE_REASONS.auto_chronicle_invalid.fix(), { enabled: false, readiness: 'degraded' }) });
+  } else if (!setting.enabled) {
+    checks.push({ name: 'auto_chronicle', status: 'ok',
+      message: `auto_chronicle is off by choice. History stays available on request (paid; ask the user first): \`${backfillPreview}\`.`,
+      details: { enabled: false, severity: 'info', readiness: 'disabled_by_choice', docs: AUTO_CHRONICLE_DOCS } });
+  } else {
+    const stats = await readChronicleLedgerStats(engine);
+    const chat = await chatAvailable();
+    const activity = stats.available ? describeChronicleActivity(stats, settings.autoDailyLimit)
+      : 'The chronicle ledger is not created yet; run `gbrain apply-migrations --yes --no-autopilot-install`.';
+    const summary = { enabled: true, source: setting.source, daily_limit: settings.autoDailyLimit,
+      job_budget_usd: settings.jobBudgetUsd, ledger_available: stats.available, pending: stats.pending,
+      auto_calls_24h: stats.autoCalls24h, principals_24h: stats.principals24h, last_7d: stats.last7d, spend_7d: stats.spend7d,
+      chat_available: chat, run_now: RUN_NOW_ARGV };
+    const failures = Object.entries(stats.last7d.reasons)
+      .filter(([reason]) => reason in CHRONICLE_REASONS && CHRONICLE_REASONS[reason as keyof typeof CHRONICLE_REASONS].stage === 'execution');
+    if (!chat && stats.pending > 0) {
+      checks.push({ name: 'auto_chronicle', ...warn('judge_llm_unavailable',
+        `auto_chronicle is on, but no chat provider is configured, so ${stats.pending} pending page(s) cannot be extracted. ${activity} ` +
+        'Ask the user to configure a chat provider key on the brain host; pending pages run on the next cycle.',
+        CHRONICLE_REASONS.judge_llm_unavailable.fix(), { ...summary, readiness: 'missing' }) });
+    } else if (stats.last7d.failed > 0 && failures.length > 0) {
+      const [reason] = failures[0];
+      const entry = CHRONICLE_REASONS[reason as keyof typeof CHRONICLE_REASONS];
+      const ctxFix = { since: daysAgo(7), dailyLimit: settings.autoDailyLimit, recentDays: settings.autoRecentDays };
+      const fix: ChronicleAction = ('fix' in entry ? entry.fix(ctxFix) : undefined)
+        ?? { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Re-check after the next cycle.' };
+      checks.push({ name: 'auto_chronicle', ...warn(reason,
+        `auto_chronicle is on; ${stats.last7d.failed} automatic extraction(s) failed in 7 days, most often ${reason}: ${entry.meaning(ctxFix)} ${activity}`,
+        fix, { ...summary, readiness: 'degraded' }) });
+    } else {
+      const runNow = stats.pending > 0 ? ` Pending pages run in the next autopilot cycle; to run them now: \`${command(RUN_NOW_ARGV)}\` (paid).` : '';
+      const noChat = chat ? '' : ' No chat provider is configured, so nothing will be extracted until one is.';
+      checks.push({ name: 'auto_chronicle', status: 'ok',
+        message: `auto_chronicle is on${setting.source === 'default' ? ' (default)' : ''}. ${activity}${runNow}${noChat}`,
+        details: { ...summary, severity: 'info', readiness: chat ? 'ok' : 'missing', docs: AUTO_CHRONICLE_DOCS } });
     }
-    : { name: 'auto_chronicle', status: 'ok', message: 'auto_chronicle is off.', details: { enabled: false } });
+  }
+
+  if (settings.invalid.length > 0) {
+    const first = settings.invalid[0];
+    checks.push({ name: 'chronicle_config_invalid', ...warn('chronicle_config_invalid',
+      `${settings.invalid.map((i) => `${i.key}='${i.raw}'`).join(', ')} ${settings.invalid.length === 1 ? 'is' : 'are'} out of range, so the default ` +
+      `${settings.invalid.length === 1 ? 'applies' : 'apply'} (${settings.invalid.map((i) => `${i.key}=${i.fallback}`).join(', ')}). ` +
+      `Set a valid value, for example \`gbrain config set ${first.key} ${first.fallback}\`.`,
+      { argv: ['gbrain', 'config', 'set', first.key, String(first.fallback)], consent: [], actor: 'agent', requires_exclusive: false,
+        why: `${first.key}: ${CHRONICLE_NUMERIC_KEYS[first.key].meaning}.` },
+      { invalid: settings.invalid }) });
+  } else {
+    checks.push({ name: 'chronicle_config_invalid', status: 'ok', message: 'chronicle.* settings are valid.' });
+  }
+
+  if (await autoChronicleNeedsAcknowledgement(engine)) {
+    const ceiling = settings.autoDailyLimit * settings.jobBudgetUsd;
+    checks.push({ name: 'auto_chronicle_default_on', status: 'ok',
+      message: 'Automatic event extraction is on by default and the user has not confirmed it yet. ' +
+        `Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $${settings.jobBudgetUsd.toFixed(2)} per page; ` +
+        `at most ${settings.autoDailyLimit} calls per day, so at most $${ceiling.toFixed(2)} per day for a priced model; an unpriced model has no cap), ` +
+        'and page text goes to the configured chat provider. Relay this to the user, then run ' +
+        `\`${command(AUTO_CHRONICLE_KEEP_ARGV)}\` to keep it or \`${command(AUTO_CHRONICLE_OPT_OUT_ARGV)}\` to opt out.`,
+      details: { code: 'auto_chronicle_default_on', severity: 'info', ask_user: true, docs: AUTO_CHRONICLE_DOCS,
+        fix: { argv: [...AUTO_CHRONICLE_KEEP_ARGV], consent: ['paid', 'egress'], actor: 'agent', requires_exclusive: false,
+          why: 'Keeping the default records that the user accepted the per-page cost; the alternative is the opt-out.' } satisfies ChronicleAction,
+        decisions: [{ id: 'keep', label: 'Keep automatic extraction on', argv: [...AUTO_CHRONICLE_KEEP_ARGV] },
+          { id: 'opt_out', label: 'Turn automatic extraction off', argv: [...AUTO_CHRONICLE_OPT_OUT_ARGV] }],
+        default: 'keep' } });
+  } else {
+    checks.push({ name: 'auto_chronicle_default_on', status: 'ok', message: 'The auto_chronicle setting is confirmed.' });
+  }
   return checks;
 }
 
-export const autoChronicleEntry: DoctorEntry = { name: 'auto_chronicle', emits: ['auto_chronicle'], run: runAutoChronicle };
+export const autoChronicleEntry: DoctorEntry = {
+  name: 'auto_chronicle',
+  emits: ['auto_chronicle', 'chronicle_config_invalid', 'auto_chronicle_default_on'],
+  run: runAutoChronicle,
+};
