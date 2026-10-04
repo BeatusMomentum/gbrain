@@ -1,5 +1,9 @@
 # P1 temporal typed edges: development verdict and held-out preregistration
 
+**Held-out verdict (set B): fail** on the traps gate (101 of 115) and recall
+non-inferiority. Round 2, with the fixes and a new preregistration, is in
+[p1-dev-2026-10-04-r2](../p1-dev-2026-10-04-r2/README.md).
+
 This folder holds the development comparison for temporal typed edges and the
 plan for the held-out run. `decision.json` is the decision-kit spec and
 `verdict.json` is the kit's dev verdict. Dev verdicts never set a default; the
