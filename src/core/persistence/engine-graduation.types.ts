@@ -253,6 +253,86 @@ export interface GraduationReceipt {
   triggerBypass: TriggerBypass;
   replay: ReplayProbeResult;
   timings: Record<string, number>;
+  /** Redacted target URL (never the password); the success output names it. */
+  targetDisplayUrl?: string;
+  /** Where the source data dir was moved (`<path>.graduated-<run_id>`). */
+  retainedPath?: string;
+  /** True when a live serve handed the source over through the intent marker. */
+  serveHandoff?: boolean;
+  /** Failing doctor check names on each side; the cutover gate is `target` empty. */
+  doctor?: { source: readonly string[]; target: readonly string[] };
+}
+
+// ── CLI <-> orchestrator (src/commands/migrate-graduation.ts consumes; engine-graduation.ts implements) ──
+
+/** The `--to` spelling the user typed; every emitted command echoes it. */
+export type GraduationTargetSpelling = 'postgres' | 'supabase';
+
+/** graduation-custody.ts `inspectGraduationPath(dataDir)`: file reads only, never a lock attempt. */
+export interface GraduationPathState {
+  dataDir: string;
+  state: 'none' | 'in_progress' | 'interrupted' | 'graduated' | 'split_brain';
+  marker: IntentMarker | null;
+  tombstone: Tombstone | null;
+}
+
+export type GraduationPhase =
+  | 'plan' | 'quiesce' | 'drain' | 'schema' | 'copy' | 'indexes' | 'verify' | 'doctor' | 'cutover' | 'flip' | 'rollback';
+
+/** Progress callbacks the CLI wires to createProgress (stderr); the orchestrator calls them. */
+export interface GraduationProgressSink {
+  phase(phase: GraduationPhase, total?: number): void;
+  /** A carried table starts copying (or digesting) with this many source rows. */
+  table(relation: string, rows: number): void;
+  /** One batch of `rows` rows finished for the current table. */
+  batch(relation: string, rows: number): void;
+}
+
+/** Options every orchestrator entry point takes (plan, run, resume, rollback). */
+export interface GraduationCommandOptions {
+  to: GraduationTargetSpelling;
+  /** Full target URL from `--url` / `--url -`; never printed. */
+  url?: string;
+  /** `--url-env <VAR>`: the env var name printed in every emitted command. */
+  urlEnv?: string;
+  drainTimeoutMs: number;
+  triggerBypass?: TriggerBypass;
+  batchSize?: number;
+  force: boolean;
+  /** `--expect <plan_hash>`: the plan (or rollback loss list) the user approved. */
+  expectPlanHash?: string;
+  /** `--yes`: the user approved; without `expectPlanHash` the orchestrator refuses destructive steps. */
+  yes: boolean;
+  progress?: GraduationProgressSink;
+  /** SIGINT: stop at the next batch boundary, leave a resumable state, throw `interrupted`. */
+  signal?: AbortSignal;
+}
+
+/** `gbrain migrate --status --json` (zero mutations). */
+export interface GraduationStatusDoc {
+  schema_version: 1;
+  state: ManifestState | 'none';
+  runId: string | null;
+  to: GraduationTargetSpelling;
+  source: SourceIdentity | null;
+  sourcePath: GraduationPathState | null;
+  target: { identity: TargetIdentity; displayUrl: string; row: TargetRowState | null; reachable: boolean } | null;
+  receipt: GraduationReceipt | null;
+  /** A live process owns the run (its kernel lock is held). */
+  liveRun: { pid: number } | null;
+  tables: readonly TableCheckpoint[];
+  /** graduation_split_brain: both paths side by side so the agent can relay a concrete choice. */
+  splitBrain?: readonly { path: string; brainId: string | null; rows: number; newestWriteAt: string | null }[];
+  /** The next command for this state (resume, rollback, nothing), echoing the user's spelling. */
+  nextArgv: readonly string[] | null;
+}
+
+export interface GraduationRollbackResult {
+  state: 'abandoned' | 'rolled_back';
+  /** The PGLite data dir that is authoritative again (null before cutover: it never moved). */
+  restoredPath: string | null;
+  /** Operational differences dropped by the rollback (telemetry, logs, queue state). */
+  dropped: readonly { relation: string; rows: number; lossKind: LossKind }[];
 }
 
 export interface GraduationEngines {
