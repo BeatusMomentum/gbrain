@@ -19,7 +19,7 @@ jobs:
         bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -60,7 +60,7 @@ jobs:
         bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -173,7 +173,7 @@ jobs:
         bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -196,7 +196,7 @@ jobs:
       - name: Execute 1000 schedules, eight SIGKILL boundaries and the process-separated write soak
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
-          SOAK_OPERATIONS: ${{ github.event_name == 'pull_request' && '2500' || '10000' }}
+          SOAK_OPERATIONS: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '2500' || '10000' }}
         run: >-
           bun --no-env-file scripts/persistence/validate.ts --engine=${{ matrix.engine }}
           --operations="$SOAK_OPERATIONS"
@@ -222,7 +222,7 @@ jobs:
         bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16

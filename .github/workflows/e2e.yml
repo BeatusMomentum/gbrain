@@ -5,6 +5,10 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # Merge queue (inert until the queue is enabled on master): the PR profile.
+  # select-e2e diffs the queued merge commit against origin/master, which is
+  # exactly the queued change. docs/RELEASING.md#merge-queue.
+  merge_group:
   schedule:
     - cron: '0 6 * * *'  # Nightly at 6am UTC
   workflow_dispatch:
@@ -519,6 +523,12 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           overwrite: true
+      - name: Provider-key coverage notice
+        if: ${{ !cancelled() }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: bash scripts/e2e-provider-key-notice.sh
 
   # ──────────────────────────────────────────────────────────────────────
   # Full coverage pipeline (scheduled or explicitly dispatched). The honest
@@ -713,6 +723,12 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
           overwrite: true
+      - name: Provider-key coverage notice
+        if: ${{ !cancelled() }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: bash scripts/e2e-provider-key-notice.sh
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4

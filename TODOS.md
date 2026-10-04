@@ -1,5 +1,14 @@
 # TODOS
 
+## Test, eval and CI fix wave follow-ups (filed 2026-10-04, GBRA-47)
+
+Context: `.github/nightly-known-red.tsv` rows point here; nightly-watch keeps their incidents open until the row is deleted. Scale-tier evidence: per-batch `vectors` lines and the phase watchdog in `scripts/scale/`.
+
+- [ ] **P2 — PGLite bulk-embedding cost at 20k+ chunks.**
+  **What:** the 36-minute PGLite `vectors` stall at 20k pages (nightly run 37196223708) no longer reproduces with the WAL checkpoint guard on autocommit writes: branch dispatch 37221090928 finished PGLite 20k `vectors` in 173 s (40 batches of 500 pages, dimension 1024, RSS ~2.5 GiB), against 56 s on Postgres. Per-batch time still grows from 2.1 s to 6.3 s across the phase. **Why:** a default PGLite brain that embeds 50k+ chunks at once may hit the superlinear part. **Fix:** read the per-batch `vectors` lines on the 50k promotion runs; if the batch time keeps climbing, measure through the shipped `gbrain embed` path and decide the engine fix (HNSW maintenance around bulk updates, PGLite memory settings). **Effort:** M. **Priority:** P2.
+- [ ] **P1 — Set the ANTHROPIC_API_KEY and OPENAI_API_KEY repo secrets.**
+  **What:** the Hermes door's paid leg and the real-agent Claude/Codex doors skip visibly every night because both secrets are empty (approved, decision D-1). **Why:** only the repo owner can set secrets. **Fix:** `gh secret set ANTHROPIC_API_KEY` and `gh secret set OPENAI_API_KEY`, then delete the Heavy Tests row from `.github/nightly-known-red.tsv`. **Effort:** S. **Priority:** P1.
+
 ## Held files follow-ups (filed 2026-10-04, follow-up from v0.60.47.0)
 
 Context: `docs/guides/repair.md#held-files`, `docs/guides/write-refusals.md#held-files-and-content-refusals`.
