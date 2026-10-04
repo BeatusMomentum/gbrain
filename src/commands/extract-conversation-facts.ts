@@ -413,6 +413,29 @@ export interface SplitSegmentsOpts {
   sinceIso?: string;
 }
 
+/** Upper bound for a page's `conversation_segment_gap_minutes` (one week). */
+export const MAX_PAGE_SEGMENT_GAP_MINUTES = 10_080;
+
+/**
+ * A page's own segmentation gap: frontmatter `conversation_segment_gap_minutes`,
+ * set by a collector that knows its message cadence. Absent means the global
+ * default. Any value other than an integer from 1 to
+ * MAX_PAGE_SEGMENT_GAP_MINUTES is ignored with a warning naming the accepted
+ * range, so the page still splits on the default instead of failing.
+ */
+export function pageSegmentGapMinutes(page: Pick<Page, 'slug' | 'frontmatter'>): number | undefined {
+  const raw = page.frontmatter?.conversation_segment_gap_minutes;
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 1 && raw <= MAX_PAGE_SEGMENT_GAP_MINUTES) return raw;
+  process.stderr.write(
+    `[extract-conversation-facts] ${page.slug}: ignoring frontmatter conversation_segment_gap_minutes=${JSON.stringify(raw)?.slice(0, 80)}; ` +
+    `it must be a whole number of minutes from 1 to ${MAX_PAGE_SEGMENT_GAP_MINUTES} (unquoted). ` +
+    `Splitting on the default ${DEFAULT_SEGMENT_GAP_MINUTES}-minute gap instead. ` +
+    `To fix: set the key to an integer in that range, or remove it, then rerun gbrain extract-conversation-facts --slug ${page.slug}\n`,
+  );
+  return undefined;
+}
+
 export function splitIntoSegments(
   messages: ConversationMessage[],
   opts: SplitSegmentsOpts = {},
@@ -999,8 +1022,9 @@ async function processPage(
       );
     }
   }
-  const allSegments = splitIntoSegments(messages);
-  const segments = splitIntoSegments(messages, { sinceIso });
+  const gapMinutes = pageSegmentGapMinutes(page);
+  const allSegments = splitIntoSegments(messages, { gapMinutes });
+  const segments = splitIntoSegments(messages, { gapMinutes, sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;
     if (!declinedUnrecognizedSpeaker) {
