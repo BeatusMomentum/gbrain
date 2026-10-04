@@ -78,8 +78,11 @@ export interface GraduationFixture {
 }
 
 const REPO = resolve(import.meta.dir, '..', '..');
-const KEY_FILES = ['scripts/persistence/graduation-fixture.ts', 'scripts/persistence/history-fixture.ts', 'scripts/persistence/ops.ts',
-  'test/fixtures/graduation/legacy-brain.ts', 'test/fixtures/graduation/expected.json'];
+/** Files whose bytes decide what a build produces, per kind (the cache key covers exactly these). */
+const KEY_FILES: Record<GraduationFixtureKind, readonly string[]> = {
+  history: ['scripts/persistence/graduation-fixture.ts', 'scripts/persistence/history-fixture.ts', 'scripts/persistence/ops.ts'],
+  legacy: ['scripts/persistence/graduation-fixture.ts', 'scripts/persistence/ops.ts', 'test/fixtures/graduation/legacy-brain.ts', 'test/fixtures/graduation/expected.json'],
+};
 const PROVIDER_KEYS = /^(OPENAI|ANTHROPIC|VOYAGE|GEMINI|GOOGLE|TYPESAFE|JEV_TYPESAFE|OPENROUTER|GROQ|MISTRAL|COHERE|DEEPSEEK|XAI)_/;
 
 function normalized(opts: GraduationFixtureOptions) {
@@ -91,7 +94,7 @@ function normalized(opts: GraduationFixtureOptions) {
 export async function graduationFixtureKey(opts: GraduationFixtureOptions): Promise<string> {
   const { LATEST_VERSION } = await import('../../src/core/migrate.ts');
   const hash = createHash('sha256');
-  for (const file of KEY_FILES) hash.update(file).update(readFileSync(join(REPO, file)));
+  for (const file of KEY_FILES[opts.kind]) hash.update(file).update(readFileSync(join(REPO, file)));
   hash.update(JSON.stringify({ schema: LATEST_VERSION, ...normalized(opts) }));
   return hash.digest('hex').slice(0, 32);
 }
@@ -160,7 +163,6 @@ export async function rehomeFixture(dir: string): Promise<void> {
   const metaPath = join(dir, 'fixture.json');
   const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
   const from: string = meta.builtAt;
-  if (from === dir) return;
   const swap = (text: string) => text.split(from).join(dir);
   const files: string[] = [];
   walk(dir, path => { if (path.endsWith('.json') && statSync(path).size <= 65_536) files.push(path); });
@@ -197,9 +199,29 @@ export async function rehomeFixture(dir: string): Promise<void> {
       await tx.executeRaw(`UPDATE persistence_host_bindings SET local_path=replace(local_path,$1,$2),coordination_path=replace(coordination_path,$1,$2)
         WHERE local_path LIKE $3 OR coordination_path LIKE $3`, [from, dir, `${from}%`]);
     });
+    await markSourcesSynced(engine);
   } finally { await engine.disconnect(); }
   meta.builtAt = dir;
   writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+}
+
+/**
+ * Record every checkout-backed source as synced now at its current Git HEAD and
+ * chunker version, as a user's routinely synced brain is. Doctor's
+ * sync_freshness is wall-clock based, so a cached fixture is refreshed on each
+ * restore; otherwise the source doctor (a graduation plan blocker) fails.
+ */
+async function markSourcesSynced(engine: import('../../src/core/engine.ts').BrainEngine): Promise<void> {
+  const { CHUNKER_VERSION } = await import('../../src/core/chunkers/code.ts');
+  const sources = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL');
+  await engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.write_sources',$1,true)", [JSON.stringify(sources.map(source => source.id))]);
+    for (const source of sources) {
+      const head = Bun.spawnSync(['git', '-C', source.local_path, 'rev-parse', 'HEAD'], { stdout: 'pipe', stderr: 'pipe' });
+      await tx.executeRaw('UPDATE sources SET last_sync_at=now(),last_commit=$2,chunker_version=$3 WHERE id=$1',
+        [source.id, head.exitCode === 0 ? head.stdout.toString().trim() : null, String(CHUNKER_VERSION)]);
+    }
+  });
 }
 
 function dirBytes(path: string): number {
@@ -266,6 +288,7 @@ async function buildChild(spec: { kind: GraduationFixtureKind; key: string; dir:
   } finally {
     await disposePersistenceConsumer(engine);
   }
+  await markSourcesSynced(engine);
   const buildMs = Math.round(performance.now() - started);
   const report = await reportFor(engine, spec.kind, dataDir, buildMs);
   await engine.disconnect();
