@@ -902,6 +902,56 @@ export function createGBrainContextEngine(ctx: {
     ]);
   }
 
+  // Always-loaded core (core-memory.ts): one read-only fetch per TTL window,
+  // shared across sessions of this process (core is per brain + source, not
+  // per session). Staleness of at most CORE_MEMO_TTL_MS is accepted.
+  const CORE_MEMO_TTL_MS = 60_000;
+  let coreMemo: { at: number; text: string } | null = null;
+  async function fetchCore(sessionId: string | null): Promise<string | null> {
+    const work = (async (): Promise<string | null> => {
+      try {
+        const { loadConfig } = await import('./config.ts');
+        const cfg = loadConfig();
+        if (cfg?.engine === 'pglite' && cfg.database_path) {
+          const ipc = await import('./context/resolve-ipc.ts');
+          const secret = ipc.readIpcSecret(cfg.database_path);
+          if (!secret) return null;
+          // bankOnly rides along for version skew: an older serve without the
+          // coreOnly arm takes the no-op banking arm instead of assembling.
+          const res = await ipc.requestContextPack(ipc.resolveSocketPath(cfg.database_path), {
+            secret, coreOnly: true, bankOnly: true,
+            ...(sessionId ? { sessionId } : {}),
+            ...(process.env.GBRAIN_SOURCE ? { sourceId: process.env.GBRAIN_SOURCE } : {}),
+          });
+          if (res === ipc.IPC_UNAVAILABLE || !('ok' in res) || !res.ok || !res.block?.core) return null;
+          return res.block.core.text;
+        }
+        const { getDirectPostgresEngine } = await import('./context/reflex.ts');
+        const pg = await getDirectPostgresEngine(cfg);
+        if (!pg) return null;
+        const { resolveSourceId } = await import('./source-resolver.ts');
+        const sourceId = await resolveSourceId(pg, null, workspaceDir);
+        const { loadCoreBlock } = await import('./core-memory.ts');
+        return (await loadCoreBlock(pg, { sessionSourceId: sourceId, excludePrivate: true })).text;
+      } catch {
+        return null;
+      }
+    })();
+    return Promise.race([work, new Promise<null>((resolve) => {
+      const t = setTimeout(() => resolve(null), CHECKPOINT_POLL_TIMEOUT_MS);
+      if (typeof (t as { unref?: () => void }).unref === 'function') (t as unknown as { unref: () => void }).unref();
+    })]);
+  }
+  async function getCoreBlock(sessionId: string | null): Promise<string | null> {
+    if (process.env.GBRAIN_CORE === '0') return null;
+    if (coreMemo && Date.now() - coreMemo.at < CORE_MEMO_TTL_MS) return coreMemo.text || null;
+    const text = await fetchCore(sessionId);
+    // A failed fetch keeps the previous block for one more window rather than flapping.
+    if (text !== null || !coreMemo) coreMemo = { at: Date.now(), text: text ?? '' };
+    else coreMemo.at = Date.now();
+    return coreMemo.text || null;
+  }
+
   /** assemble()-side: memo-first, hash-keyed polls, settle-and-render. */
   async function getCheckpointBlock(sessionId: string): Promise<string | null> {
     let memo = checkpointMemo.get(sessionId);
@@ -1234,6 +1284,10 @@ export function createGBrainContextEngine(ctx: {
       // manifest ⇒ parts untouched ⇒ byte-identical to the pre-cathedral-5
       // output (pinned).
       const parts = [contextBlock];
+      // Always-loaded core sits right after the live context block.
+      let coreBlock: string | null = null;
+      try { coreBlock = await getCoreBlock(sanitizeEngineSessionId(sessionId ?? sessionKey ?? null)); } catch { coreBlock = null; }
+      if (coreBlock) parts.push(coreBlock);
       if (checkpointBlock) parts.push(checkpointBlock);
       if (memoryAddition) parts.push(memoryAddition);
       if (reflexAddition) parts.push(reflexAddition);

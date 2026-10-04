@@ -39,6 +39,9 @@ export interface HookHeartbeatEntry {
    * slugs/fact text [S3#7].
    */
   segment?: string;
+  /** Always-loaded core: chars and revision delivered by session-start (counts/digests only). */
+  core_chars?: number;
+  core_revision?: string;
   /** Cathedral 5 — checkpoint-harvest fact counters (counts only) [S3#7].
    * The ambient-writeback lane (`event: 'writeback'`) reports the same
    * counters plus `superseded` — these are PERSISTED results from the

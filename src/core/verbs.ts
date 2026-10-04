@@ -62,10 +62,23 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.',
+  description: 'MEMORY VERB (v1): save one fact (or up to 20 with items); provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.',
   params: {
     ...PAGE_MUTATION_PARAMS,
-    fact: { type: 'string', description: 'One claim.', required: true },
+    fact: { type: 'string', description: 'One claim (or use items).' },
+    items: {
+      type: 'array',
+      description: 'Save up to 20 facts in one call (e.g. before context compaction); each item takes fact plus optional entity, kind, ttl, visibility, provenance (defaults to the top-level provenance). Use instead of fact.',
+      items: { type: 'object', properties: {
+        fact: { type: 'string', required: true, description: 'One claim.' },
+        entity: { type: 'string', description: 'Who or what it is about.' },
+        kind: { type: 'string', enum: ['event', 'preference', 'commitment', 'belief', 'fact'], description: 'Default fact.' },
+        ttl: { type: 'string', description: '"30d", "12h" or ISO time.' },
+        visibility: { type: 'string', enum: ['world', 'private'], description: 'Default world.' },
+        provenance: { type: 'string', description: 'Overrides the top-level provenance.' },
+        infer_entity: { type: 'boolean', description: 'Default true.' },
+      } },
+    },
     provenance: {
       type: 'string',
       required: true,
@@ -99,6 +112,10 @@ const remember: Operation = {
   annotations: { title: 'remember (memory write)', idempotentHint: true },
   handler: async (ctx, p) => {
     const { verbError, parseTtlParam } = await import('./operations.ts');
+    if (p.items !== undefined) {
+      const { runRememberBatch } = await import('./remember-batch.ts');
+      return runRememberBatch(ctx, p, remember.handler, (code, message, suggestion) => verbError(code as never, message, suggestion));
+    }
     const fact = typeof p.fact === 'string' ? p.fact.trim() : '';
     if (!fact) {
       throw verbError(

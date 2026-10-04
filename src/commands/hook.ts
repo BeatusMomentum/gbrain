@@ -478,6 +478,8 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   let outcome: HookHeartbeatEntry['outcome'] = 'ok';
   let reason: string | undefined;
   const out: string[] = [];
+  // Boxed: assigned inside the deadline-raced closure (TS cannot see that write).
+  const coreBox: { core: { text: string; revision: string; chars_used: number } | null; reason?: string } = { core: null };
   // Deferred nag records: fire ONLY after the digest actually reached stdout
   // (record-after-write — a deadline-suppressed note must re-fire next time).
   const deferredRecords: Array<() => void> = [];
@@ -556,6 +558,9 @@ async function hookSessionStart(io: HookIo): Promise<number> {
               if (res !== IPC_UNAVAILABLE && !('degraded' in res)) {
                 const pack = res as ContextPackResponse;
                 if (pack.ok && pack.block?.text) out.push(pack.block.text);
+                // Always-loaded core rides the same response; an older serve omits it.
+                if (pack.ok && pack.block?.core && process.env.GBRAIN_CORE !== '0') coreBox.core = pack.block.core;
+                else if (pack.ok && !pack.block?.core) coreBox.reason = 'stale_serve_no_core';
               }
             }
           }
@@ -570,7 +575,9 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     }
     // Print whatever accumulated before the deadline — a partial digest
     // beats an empty one (the deadline bounds latency, not usefulness).
-    const text = out.filter(Boolean).join('\n\n');
+    // Always-loaded core prints first; the digest/pack are trimmed (never
+    // core) so the whole stdout stays under the harness cap.
+    const text = composeSessionStartOutput(coreBox.core?.text ?? '', out.filter(Boolean));
     if (text) {
       write(io, text + '\n');
       for (const record of deferredRecords) {
@@ -589,10 +596,38 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     ts: new Date().toISOString(),
     event: 'session-start',
     outcome,
-    ...(reason ? { reason } : {}),
+    ...(reason ? { reason } : coreBox.reason ? { reason: coreBox.reason } : {}),
     duration_ms: Date.now() - t0,
+    ...(coreBox.core ? { core_chars: coreBox.core.chars_used, core_revision: coreBox.core.revision } : {}),
   });
   return 0;
+}
+
+/** Marker printed when lower-priority parts were trimmed to keep core whole under the cap. */
+export const SESSION_START_TRIM_MARKER = '[gbrain: digest/pack trimmed to fit core memory]';
+
+/**
+ * Session-start stdout: core first, then the other parts, all under
+ * CLAUDE_HOOK_OUTPUT_CAP_CHARS (overflow would be diverted, never injected).
+ * Trailing parts are dropped whole, then the last kept part is cut, before
+ * core is ever touched; core itself is bounded by memory.core.max_chars.
+ */
+export function composeSessionStartOutput(coreText: string, parts: string[]): string {
+  const cap = CLAUDE_HOOK_OUTPUT_CAP_CHARS - 64;
+  const head = coreText ? [coreText] : [];
+  const kept: string[] = [];
+  let trimmed = false;
+  const size = (xs: string[]) => xs.join('\n\n').length;
+  for (const part of parts) {
+    if (size([...head, ...kept, part, SESSION_START_TRIM_MARKER]) <= cap) { kept.push(part); continue; }
+    const room = cap - size([...head, ...kept, SESSION_START_TRIM_MARKER]) - 4;
+    if (room > 200) kept.push(part.slice(0, room));
+    trimmed = true;
+    break;
+  }
+  const all = [...head, ...kept, ...(trimmed ? [SESSION_START_TRIM_MARKER] : [])];
+  const text = all.join('\n\n');
+  return text.length <= CLAUDE_HOOK_OUTPUT_CAP_CHARS ? text : text.slice(0, CLAUDE_HOOK_OUTPUT_CAP_CHARS);
 }
 
 /**
