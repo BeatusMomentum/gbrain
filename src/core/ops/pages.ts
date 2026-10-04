@@ -84,7 +84,7 @@ const get_page: Operation = {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy slug match.' },
     include_content: { type: 'boolean', description: 'Full markdown + revision, for editing.' },
-    content_only: { type: 'boolean', description: 'With include_content: only the round-trip fields (slug, type, title, revision, tags, content).' },
+    content_only: { type: 'boolean', description: 'Round-trip fields only.' },
     include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
     include_timeline_entries: { type: 'boolean', description: 'Also return timeline rows.' },
     source_id: { type: 'string', description: "One source, or '__all__'." },
