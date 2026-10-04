@@ -9438,18 +9438,27 @@ candidate one class:
 | `replay` | No later write supersedes it. | Replayed on apply. |
 | `already_written` | A later request with the same intent committed, or an earlier apply replayed it. | Kept. |
 | `duplicate` | A later request with the same intent exists; that one is the candidate. | Kept. |
-| `superseded` | A later write of the page committed (`put_page`, whose full content would overwrite it) or the page was deleted (any operation). | Kept. Read the page and re-issue the change by hand if it is still wanted. |
+| `superseded` | A later write or delete of the page committed or is still pending; for `put_page`, also a later failed `put_page` of the page (the newer content) or a page that changed after the revision the caller read. | Kept. Read the page and re-issue the change by hand if it is still wanted. |
+| `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
 | `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content, such as `gbrain sync --source <id> --no-pull --retry-failed --json`. |
 
-The apply replays exactly the previewed set. Each write is classified again and
-its original caller's authority is checked again first: a write that changed
-class since the preview reports `changed_since_preview`, and one whose caller
-lost its grant or whose source was re-created reports `authority_revoked`;
-both are kept. A replay is submitted by the local owner under a new request id
-derived from the failed one, so its attribution names the owner, a rerun after
-a crash waits on the same request, and a second apply never writes it twice. A
-replay that the brain refuses reports `refused` (or `conflict` for a stale
-`expected_revision`) with the code. The failed receipts stay as history.
+The apply replays exactly the previewed set. Each write is classified again
+and its original caller's authority is checked again first: a write that
+changed class since the preview reports `changed_since_preview`, and one whose
+caller lost its grant or whose source was re-created reports
+`authority_revoked`; both are kept. A replay goes through the operation's
+normal path on the original caller's trust lane: a write an agent sent over MCP
+is prepared as a remote write again, with its take-holder and delegated
+namespace limits, so it can do no more than the original could. A `put_page`
+replay is bound to the page revision the preview saw (an original `force: true`
+is dropped), so a page changed since the preview reports `changed_since_preview`
+or `conflict` instead of being overwritten. A `remember` replay targets the
+subject the original resolved. Each replay uses a new request id derived from
+the failed one, so a rerun after a crash resumes the same request and a second
+apply never writes it twice (`pending_elsewhere` when another writer holds that
+request). Attribution names the local owner's writer for that lane. A replay the
+brain refuses reports `refused` with the code. The failed receipts stay as
+history.
 
 ## Resume
 
