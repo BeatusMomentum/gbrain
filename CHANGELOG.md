@@ -154,6 +154,7 @@ Scripts that parse exit codes or `--json` output should read the [behavior chang
 - `get_timeline` without a source scope looks the page up by source and slug instead of scanning the whole slug index, so the planner statistics added in v0.60.37.0 no longer slow it down. On gbrain-evals' 1,000-page Cat 7 brain the median call fell from about 0.087 ms to 0.057 ms; on an 11,000-page brain from about 1.06 ms to 0.08 ms on PGLite, with Postgres execution falling from 0.93 ms to 0.06 ms.
 - The empty-source-grant refusal (`fence=no_source_grant`) names the token by `--id` in its fix on every path, including writes refused at submission and `POST /ingest`, which now returns the fix too. When the token can't be named, the fix is `gbrain auth list` instead of a `<name>` placeholder.
 - `edit_page`'s receipt diff lists removed lines before added ones, as `git diff` does. `gbrain skillpack reference` diffs use the same order.
+- `gbrain sources refresh` no longer fails with `refresh_recovery_required` when it starts right after a write. The writer's cleanup is still in progress at that moment and still holds the checkout's lock, so the refresh now waits for it; only recovery that no running process holds is refused.
 
 #### Agent journey tests
 
