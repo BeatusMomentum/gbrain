@@ -92,6 +92,7 @@ const remember: Operation = {
       enum: ['world', 'private'],
       description: 'world (default) or private (local CLI only).',
     },
+    replaces: { type: 'string', description: 'fact_id this fact replaces (same entity).' },
   },
   mutating: true,
   scope: 'write',
@@ -138,6 +139,14 @@ const remember: Operation = {
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
     }
+    const replaces = typeof p.replaces === 'string' ? p.replaces.trim() : typeof p.replaces === 'number' ? String(p.replaces) : undefined;
+    if (replaces !== undefined && (!/^\d+$/.test(replaces) || Number(replaces) <= 0)) {
+      throw verbError(
+        'not_found',
+        `No fact with id "${String(p.replaces)}" to replace.`,
+        'Pass the opaque fact_id from remember or recall (facts[].fact_id), or omit replaces.',
+      );
+    }
     if (ctx.dryRun) {
       parseTtlParam(p.ttl); // Dry runs still validate without admitting intent.
       return {
@@ -150,7 +159,7 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility, ...(replaces !== undefined ? { replaces } : {}) }));
     // F8: the explanation the CLI formatter prints, as a model-visible notice.
     if ((result as { degraded_dedup?: boolean } | null)?.degraded_dedup) {
       const { degradedDedupNotice } = await import('./interop-notices.ts');
@@ -485,6 +494,8 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       warnings: { type: 'array', items: { type: 'string', enum: ['NO_ENTITY', 'ENTITY_LINK_FAILED'] },
         description: 'NO_ENTITY: saved unattributed. ENTITY_LINK_FAILED: an inferred entity could not be linked; saved unattributed.' },
       hint: { type: 'string', description: 'Present with warnings: how to attribute the fact (pass `entity`).' },
+      superseded_fact_id: { type: 'string', description: 'Present on status=superseded: the fact this one replaced.' },
+      replaced_by_caller: { type: 'boolean', description: 'Present (true) when the caller named the replaced fact with `replaces`.' },
       write_request: WRITE_RECEIPT_SCHEMA,
     },
   },

@@ -268,6 +268,25 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
   supersedes the old ("X at acme-example" → "X left acme-example").
 - Omitted optional inputs echo as `null`, never absent.
 
+#### remember replaces (additive)
+
+`replaces` (string): the `fact_id` of the fact this new fact replaces. It is a
+caller-directed replacement: it says the old fact is no longer the current one,
+not that the two texts mean the same. Zero model calls; the cosine rule does
+not apply. The target must be an active fact in the same source, with the same
+visibility (world only for remote callers, else `not_found`) and the same
+entity, on the same entity page. Refusals come back as `invalid_params` with a
+code prefix and a `suggestion`: `target_withdrawn` (forgotten facts are not
+replaceable; remember without `replaces`), `target_superseded` (names the fact
+that replaced it), `target_expired`, `replaces_entity_mismatch`,
+`replaces_cross_page` (forget the old fact, then remember), and
+`replaces_duplicate` (another active fact already states the new claim). New
+text equal to the target is `status: duplicate` and changes nothing. On success
+`status` is `superseded`, `superseded_fact_id` names the replaced fact and
+`replaced_by_caller` is `true`; the replaced fact is expired with
+`superseded_by` and its `## Facts` row is struck with `superseded by #N` in
+the same publication. Every `superseded` response carries `superseded_fact_id`.
+
 #### remember entity attribution fields (additive)
 
 Optional response fields; clients must ignore any they do not know.

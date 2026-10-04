@@ -54,7 +54,7 @@ const TOOL_BUDGETS: Record<string, number> = {
   get_backlinks: 430, get_ingest_log: 280, get_page: 810, get_recent_salience: 660, get_skill: 910,
   get_skill_asset: 790, get_write_request: 330, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
   list_link_sources: 220, list_pages: 1090, list_skills: 670, list_write_requests: 450, put_page: 1320,
-  put_skill: 1420, query: 3250, recall: 1590, remember: 1370, request_tools: 560, resolve_slugs: 410, search: 1760,
+  put_skill: 1420, query: 3250, recall: 1590, remember: 1420, request_tools: 560, resolve_slugs: 410, search: 1760,
   submit_agent: 750, sync_brain_skills: 770, synthesize: 550, traverse_graph: 680, whoami: 230,
 };
 

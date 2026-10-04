@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 197008,
-    "stdoutSha256": "3f271e14e9933beb2044f28a4b8ea42dab752934fef26668d4e146a90e265a0b",
+    "stdoutBytes": 197167,
+    "stdoutSha256": "2e1d875b8209c6db39a492e119f2862c60d4b7eb50422f130b23c3af084c3b98",
     "toolNames": [
       "remember",
       "entity",
@@ -177,6 +177,7 @@
           "infer_entity": "boolean?",
           "kind": "string?",
           "provenance": "string",
+          "replaces": "string?",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -218,6 +219,10 @@
             },
             "provenance": {
               "description": "Where the fact came from (max 500 chars).",
+              "type": "string"
+            },
+            "replaces": {
+              "description": "fact_id this fact replaces (same entity).",
               "type": "string"
             },
             "request_id": {
