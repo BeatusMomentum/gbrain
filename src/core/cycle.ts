@@ -1446,20 +1446,18 @@ async function runPhaseExtractFacts(
       signal,
     });
 
-    // Empty-fence guard: pre-v51 legacy rows pending the v0_32_2 backfill.
-    // Surface as 'warn' so doctor + the cycle report can see it; don't fail
-    // the cycle because the workaround is well-defined (run apply-migrations).
+    // Empty-fence guard: unfenced rows the phase's own fence step could not
+    // fence this run. Surface as 'warn' so doctor + the cycle report can see
+    // it; the warnings name each page and why.
     if (result.guardTriggered) {
       return {
         phase: 'extract_facts',
         status: 'warn',
         duration_ms: 0,
-        summary: `extract_facts skipped: ${result.legacyRowsPending} legacy v0.31 facts pending fence backfill`,
+        summary: `extract_facts skipped: ${result.legacyRowsPending} unfenced fact row(s) could not be fenced`,
         details: {
           legacyRowsPending: result.legacyRowsPending,
-          // A bare `apply-migrations --yes` no-ops once the v0.32.2 ledger
-          // entry is complete; the retry marker is what re-runs Phase B.
-          hint: 'gbrain apply-migrations --force-retry 0.32.2 && gbrain apply-migrations --yes',
+          unfencedRowsFenced: result.unfencedRowsFenced,
           warnings: result.warnings,
         },
       };
@@ -1501,6 +1499,7 @@ async function runPhaseExtractFacts(
         pagesWithFacts: result.pagesWithFacts,
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
+        unfencedRowsFenced: result.unfencedRowsFenced,
         pagesFailed: result.pagesFailed,
         warnings: result.warnings.slice(0, 5),
         // v0.35.5: phantom counters surfaced so extractTotals() can lift
@@ -2301,9 +2300,9 @@ export async function runCycle(
     // Reconcile DB facts index from the `## Facts` fence on every
     // affected entity page. Runs AFTER extract (link/timeline
     // materialization) and BEFORE patterns/recompute_emotional_weight
-    // so downstream phases see fresh DB facts. Empty-fence guard
-    // refuses to run while v0.31 legacy facts are pending the
-    // v0_32_2 backfill (Codex R2-#7).
+    // so downstream phases see fresh DB facts. The phase first fences
+    // unfenced (`row_num IS NULL`) rows itself; rows it could not fence
+    // still skip reconciliation (Codex R2-#7, #5299).
     if (phases.includes('extract_facts')) {
       checkAborted(cycleSignal);
       if (!engine) {
