@@ -254,6 +254,14 @@
         "name": "worktree_refresh_stuck"
       },
       {
+        "category": "ops",
+        "name": "managed_guard_schema_drift"
+      },
+      {
+        "category": "ops",
+        "name": "publication_refusals"
+      },
+      {
         "category": "meta",
         "name": "links_link_source_check"
       },
