@@ -55,10 +55,12 @@ describe('CI runner routing', () => {
     expect(load('heavy-tests.yml').jobs.heavy['runs-on']).toBe(heavy);
   });
 
-  test('PR-critical single-process shards run on 2 vCPUs and the serial pool on 4 (C1, C4, C8)', () => {
-    // A unit shard took 212s on 2 cores vs 204s on 4; a 25-file E2E sample 442s
-    // vs 455s. The serial shards finish far off the critical path on 4.
-    expect(load('test.yml').jobs.test['runs-on']).toBe(small);
+  test('Selected E2E shards run on 2 vCPUs; unit shards and the serial pool on 4 (C1, C8; C4 reverted)', () => {
+    // A 25-file E2E sample took 442s on 2 cores vs 455s on 4. Unit shards stay on
+    // 4: on PR #6013 the 2-vCPU cell raised the unit shard mean from 542s to 608s
+    // and made Test the critical path (V-2 revert). The serial shards finish far
+    // off the critical path on 4.
+    expect(load('test.yml').jobs.test['runs-on']).toBe(single);
     expect(load('e2e.yml').jobs['selected-e2e']['runs-on']).toBe(small);
     expect(load('test.yml').jobs['serial-tests']['runs-on']).toBe(single);
   });

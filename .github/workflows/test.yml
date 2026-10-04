@@ -614,10 +614,10 @@ jobs:
     # (replaces FNV-1a path hash). Weights live in scripts/test-weights.json,
     # mined from real CI logs via scripts/mine-shard-weights.ts. Missing
     # weights fall back to corpus median — new test files work immediately.
-    # 2 vCPUs (C4): a shard is one bun process (measured 1.1-1.5 busy cores on
-    # average); shards 2 and 9 took the same time on 4, 8 and 16 vCPUs, and a
-    # 77-file slice with coverage took 212s on 2 cores vs 204s on 4.
-    runs-on: ubicloud-standard-2-ubuntu-2404
+    # 4 vCPUs: a shard is one bun process (1.1-1.5 busy cores on average), but
+    # on 2 vCPUs the unit shard mean rose from 542s to 608s on PR #6013 and
+    # made Test the PR critical path, so shards stay on 4.
+    runs-on: ubicloud-standard-4-ubuntu-2404
     # 22, not 15: under parallel PR load the PGLite WASM cold-starts stretch a
     # shard past 15 min while every test is still passing — the timeout then
     # cancels the job and the test-status gate reads it as a failure. 13 runs
