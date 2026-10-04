@@ -54,6 +54,8 @@ mean±SD, paired bootstrap 95% CI. Bar: B − A >= +3 points with CI lower bound
 `line_grammar.enabled` needs H1, H2, H3 and H6. H6 runs only if H1–H3 pass.
 
 Guardrail: LongMemEval-S retrieval (`lme-s-dev` in `decision.json`), noninferior.
+Guardrail: N4 resolver outcomes (`n4-entity-resolution` in `decision.json`): correct resolutions noninferior
+(tolerance 0.01) and no item that resolved correctly on the baseline merges wrongly on the candidate.
 
 ## Budget
 

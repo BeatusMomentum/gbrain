@@ -6,34 +6,18 @@
   "verdict_type": "quality",
   "stage": "dev",
   "candidate": {
-    "gbrain": "/workspace/gbrain@b32fdb9d19898044a95ed400e832377fc3d038ed",
-    "config": {}
+    "gbrain": "/workspace/gbrain@21befeb5b7274b23e872261aa924ee46f63a0d20",
+    "config": {
+      "line_grammar.enabled": "true",
+      "wanted_pages.enabled": "true",
+      "put_page.similar_pages": "true"
+    }
   },
   "baseline": {
     "gbrain": "/workspace/gbrain@6622a119e40ea09a7719233046aca24741863ed2",
     "config": {}
   },
   "sources": [
-    {
-      "id": "type-accuracy",
-      "kind": "category",
-      "category": "type-accuracy",
-      "script": "eval/runner/type-accuracy.ts",
-      "args": [],
-      "paid": false,
-      "comparisons": [
-        {
-          "id": "type-match",
-          "metric": "anyTypeMatch",
-          "gate": "noninferiority",
-          "direction": "higher",
-          "tolerance": 0.01,
-          "cluster_by": "probe_id"
-        }
-      ],
-      "rows_path": "data.rows",
-      "id_field": "probe_id"
-    },
     {
       "id": "n4-entity-resolution",
       "kind": "category",
@@ -46,16 +30,39 @@
       "paid": false,
       "comparisons": [
         {
-          "id": "n4-recall",
-          "metric": "recall",
+          "id": "n4-correct",
+          "metric": "resolver_correct",
           "gate": "noninferiority",
           "direction": "higher",
           "tolerance": 0.01,
           "cluster_by": "family"
+        },
+        {
+          "id": "n4-no-new-wrong-merge",
+          "metric": "resolver_wrong",
+          "gate": "exact",
+          "assertion": {
+            "kind": "no_item_regression",
+            "direction": "lower"
+          },
+          "cluster_by": "family"
         }
       ],
       "rows_path": "data.rows",
-      "id_field": "id"
+      "id_field": "id",
+      "min_clusters": 5,
+      "derive": [
+        {
+          "field": "resolver_correct",
+          "from": "resolver.outcome",
+          "equals": "correct"
+        },
+        {
+          "field": "resolver_wrong",
+          "from": "resolver.outcome",
+          "equals": "wrong"
+        }
+      ]
     },
     {
       "id": "lme-s-dev",
@@ -107,6 +114,6 @@
   "seed": 42,
   "draws": 10000,
   "budget_usd": 24,
-  "created_at": "2026-10-04T19:18:26.123Z",
-  "notes": "Human-typable fact/link line grammar, wanted pages, duplicate nudge: typed-edge accuracy and entity resolution; LME-S as a guardrail."
+  "created_at": "2026-10-04T20:34:16.055Z",
+  "notes": "Human-typable fact/link line grammar, wanted pages, duplicate nudge: entity resolution and LME-S as guardrails. Typed-edge accuracy (type-accuracy.ts) cannot measure an overlay build yet; add a grammar category for the primary."
 }
