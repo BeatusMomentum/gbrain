@@ -24,6 +24,9 @@ const MIGRATION_WAVE_TESTS = [
 ];
 
 export const E2E_TEST_MAP: Record<string, string[]> = {
+  // Entity mention index: pass, aliases, referrer query and coverage on Postgres.
+  "src/core/mentions/**": ["test/e2e/mentions-parity.test.ts"],
+  "src/core/ops/backlinks-paged.ts": ["test/e2e/mentions-parity.test.ts"],
   // #5984: the env-gated wire-level SQL trace for the managed-sync catch-up bench.
   "src/core/sql-trace.ts": ["test/e2e/sql-trace-postgres.test.ts"],
   // Fix wave 8, Lane G: reindex auto-concurrency sizing (#5181).

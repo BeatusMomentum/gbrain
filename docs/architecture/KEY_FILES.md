@@ -58,6 +58,7 @@ boundary and add its link here rather than raising the cap.
 | [Files And Sync (1/2)](key-files/files-and-sync-1.md) | `src/core/audit-week-file.ts` through `src/core/sync-git.ts:resolveSlugByPathOrSourcePath` |
 | [Files And Sync (2/2)](key-files/files-and-sync-2.md) | `src/core/sync-policy.ts` through `src/core/write-through.ts` |
 | [Graph And Facts](key-files/graph-and-facts.md) | `src/core/check-resolvable.ts` through `src/core/trajectory-format.ts` |
+| [Entity recall](key-files/entity-recall.md) | `src/core/mentions/*`, `src/core/ops/backlinks-paged.ts`, `extract mentions --explain`, migration v201 |
 | [Mcp](key-files/mcp.md) | `src/mcp/dispatch.ts` through `src/mcp/validate-params.ts` |
 | [Providers](key-files/providers.md) | `src/core/anthropic-pricing.ts` through `src/core/transcription.ts` |
 | [Runtime](key-files/runtime.md) | `src/core/abort-check.ts` through `src/core/zombie-reap.ts` |

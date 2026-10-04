@@ -50,7 +50,8 @@ import {
   modeRequiresWrapper,
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
-import { normalizeAliasList } from './search/alias-normalize.ts';
+import { writePageAliases } from './mentions/pass.ts';
+import { readMentionPolicy } from './mentions/policy.ts';
 import { warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { resolveImportContextualMode } from './import-contextual-mode.ts';
@@ -821,7 +822,7 @@ export async function importFromContent(
   // for single-source callers.
   const txOpts = { sourceId: sourceId ?? 'default' };
   let persistedProjection: ProjectionSnapshot | null = null;
-  const timeZone = await loadBrainTimeZone(engine);
+  const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
   const applyPrepared = async (tx: BrainEngine) => {
     await assertImportBase(tx, slug, txOpts.sourceId, existing);
     await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
@@ -965,7 +966,7 @@ export async function importFromContent(
     }
     // Alias projection and readback share the page commit. A later writer can
     // no longer turn a successful import into a postcommit verification error.
-    await tx.setPageAliases(slug, sourceId ?? 'default', normalizeAliasList(parsed.frontmatter.aliases));
+    await writePageAliases(tx, slug, sourceId ?? 'default', parsed, opts.activePack, mentionPolicy);
     await verifyPageReadable(tx, slug, hash, sourceId, 'importFromContent');
     await opts.beforeCommit?.(tx, slug);
     if (opts.onPostCommitEmbedding && !opts.noEmbed && chunks.length > 0) {

@@ -410,7 +410,7 @@ flowchart LR
 
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 
-**Why the graph matters.** Vector search finds semantic similarity; graph retrieval follows stored relationships. Extracted edges are evidence to inspect, not proof that a relationship is true. Graph freshness depends on the write path and maintenance described in [memory boundaries](docs/guides/memory-boundaries.md#page-writes-and-the-graph-are-separate-outcomes). Deep dive: [retrieval architecture](docs/architecture/RETRIEVAL.md).
+**Why the graph matters.** Vector search finds similar text; graph retrieval follows stored relationships. Extracted edges are evidence to inspect, not proof that a relationship is true. Graph freshness depends on the write path and maintenance described in [memory boundaries](docs/guides/memory-boundaries.md#page-writes-and-the-graph-are-separate-outcomes). Deep dive: [retrieval architecture](docs/architecture/RETRIEVAL.md); [entity recall](docs/guides/entity-recall.md).
 
 ## Troubleshooting
 

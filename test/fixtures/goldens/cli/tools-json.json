@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 196835,
-    "stdoutSha256": "7c6a8f58d1ecf9152a0bef45fe6b85d84ea6bc81c4610fc65b2a65eeec68370a",
+    "stdoutBytes": 197371,
+    "stdoutSha256": "aa63485c6fdaab8f7ec2fd5f61167df74d3a74468e1e5f54b59e04c146224962",
     "toolNames": [
       "remember",
       "entity",
@@ -250,7 +250,7 @@
         "scope": "write"
       },
       {
-        "description": "MEMORY VERB (v1): one known person/company/project card, zero LLM. A miss returns found:false with near matches and create_safety, so you do not duplicate a page. Facts: recall.",
+        "description": "MEMORY VERB (v1): person/company/account card, zero LLM. referenced_by: every page linking here, by type, newest first (backlink_count excludes mentions); a group's `next` pages the rest. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -897,7 +897,7 @@
         "scope": "write"
       },
       {
-        "description": "Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. Results are NOT proof of coverage: concepts or landscape, use `query`; exhaustive lists, list_pages. return_unit returns whole sections or conversations. Personal questions: get_recent_salience; saved facts: recall. fields: \"full\" adds diagnostics.",
+        "description": "Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. Results are NOT proof of coverage: concepts or landscape, use `query`; exhaustive lists, list_pages. return_unit returns whole sections or conversations. Personal: get_recent_salience; saved facts: recall. fields: \"full\" adds diagnostics.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -954,7 +954,7 @@
               "type": "string"
             },
             "return_unit": {
-              "description": "chunk, window, section, page or auto (default; whole page for conversations).",
+              "description": "auto (default) returns whole conversations.",
               "enum": [
                 "chunk",
                 "window",
@@ -1005,7 +1005,7 @@
         "scope": "read"
       },
       {
-        "description": "Ranked hybrid search with multi-query expansion, for concept / synonym / landscape questions: expansion recovers synonym-phrased matches. Still top-K; return_unit returns whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no expansion LLM call). Personal questions: get_recent_salience, find_anomalies; raw transcripts: `gbrain transcripts recent` on the brain host. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key, else keyword-only; expansion needs a chat-model key. fields: \"full\" adds diagnostics.",
+        "description": "Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonym-phrased matches). Still top-K; return_unit returns whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no expansion LLM call). Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent` on the host. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. fields: \"full\" adds diagnostics.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1044,11 +1044,11 @@
         "schema": {
           "properties": {
             "adaptive_return": {
-              "description": "true when one specific answer is wanted (fewer rows; never returns empty); omit for breadth.",
+              "description": "true when one answer is wanted (fewer rows; never returns empty); omit for breadth.",
               "type": "boolean"
             },
             "autocut": {
-              "description": "Default on (never returns empty); false gives full top-K for breadth. Cuts at the score cliff, unlike adaptive_return.",
+              "description": "Default on (never returns empty); false gives full top-K for breadth, unlike adaptive_return.",
               "type": "boolean"
             },
             "cross_modal": {
@@ -1062,7 +1062,7 @@
               "type": "string"
             },
             "detail": {
-              "description": "low (compiled truth only), medium (default) or high (all chunks).",
+              "description": "low (compiled truth), medium (default) or high (all chunks).",
               "type": "string"
             },
             "embedding_column": {
@@ -1082,7 +1082,7 @@
               "type": "string"
             },
             "image": {
-              "description": "Base64 image for image search.",
+              "description": "Base64 image.",
               "type": "string"
             },
             "image_mime": {
@@ -1127,7 +1127,7 @@
               "type": "boolean"
             },
             "return_unit": {
-              "description": "chunk, window, section, page or auto (default; whole page for conversations).",
+              "description": "auto (default) returns whole conversations.",
               "enum": [
                 "chunk",
                 "window",
@@ -1167,7 +1167,7 @@
               "type": "string"
             },
             "token_budget": {
-              "description": "Token cap on the returned evidence.",
+              "description": "Evidence token cap.",
               "type": "number"
             },
             "types": {
@@ -1588,15 +1588,19 @@
         "scope": "read"
       },
       {
-        "description": "List links pointing to a page. Use when finding what mentions an entity.",
+        "description": "Links to a page; group:\"page\" pages newest first with total and cursor.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_backlinks",
         "parameters": {
           "all_sources": "boolean?",
+          "cursor": "string?",
+          "group": "string?",
+          "limit": "number?",
           "slug": "string",
-          "source_id": "string?"
+          "source_id": "string?",
+          "type": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -1605,12 +1609,31 @@
               "description": "Same as source_id __all__.",
               "type": "boolean"
             },
+            "cursor": {
+              "description": "From last page.",
+              "type": "string"
+            },
+            "group": {
+              "description": "Row per referrer.",
+              "enum": [
+                "page"
+              ],
+              "type": "string"
+            },
+            "limit": {
+              "description": "Max 500; default 50.",
+              "type": "number"
+            },
             "slug": {
               "description": "Page slug.",
               "type": "string"
             },
             "source_id": {
               "description": "One source, or '__all__'.",
+              "type": "string"
+            },
+            "type": {
+              "description": "Referring page type.",
               "type": "string"
             }
           },

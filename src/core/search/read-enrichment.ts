@@ -184,16 +184,30 @@ export async function readAliases(query: ReadQuery, aliases: string[], scope?: P
   // read filter out of that lookup): without planner statistics (PGLite has no
   // autovacuum) the page_aliases -> sources foreign key otherwise makes the planner
   // walk every readable page and probe aliases per page.
-  const rows = await query<PageRef & { alias_norm: string }>(`
+  // Precedence: within a source, only the claims at the best origin answer
+  // (frontmatter > declared > subject), and a derived (declared or subject)
+  // alias never answers for a name that is another live page's exact title,
+  // so "Acme Example" stays the company page beside "CRM record: Acme Example".
+  const rows = await query<PageRef & { alias_norm: string; rank: number }>(`
     WITH a AS MATERIALIZED (
-      SELECT m.alias_norm, m.slug, m.source_id FROM page_aliases m
+      SELECT m.alias_norm, m.slug, m.source_id,
+             CASE m.origin WHEN 'subject' THEN 2 WHEN 'declared' THEN 1 ELSE 0 END AS rank
+      FROM page_aliases m
       WHERE m.alias_norm = ANY($1::text[]) AND ${aliasScope}
     )
-    SELECT a.alias_norm, a.slug, a.source_id FROM a
+    SELECT a.alias_norm, a.slug, a.source_id, a.rank FROM a
     CROSS JOIN LATERAL (SELECT * FROM pages WHERE source_id = a.source_id AND slug = a.slug OFFSET 0) p
     WHERE ${filter}
-    ORDER BY a.alias_norm, a.source_id, a.slug`, params);
+      AND (a.rank = 0 OR NOT EXISTS (SELECT 1 FROM pages t WHERE t.source_id = a.source_id AND t.deleted_at IS NULL
+                                     AND lower(t.title) = a.alias_norm AND t.slug <> a.slug))
+    ORDER BY a.alias_norm, a.source_id, a.rank, a.slug`, params);
+  const best = new Map<string, number>();
   for (const row of rows) {
+    const k = `${row.alias_norm}\0${row.source_id}`;
+    best.set(k, Math.min(best.get(k) ?? Infinity, Number(row.rank)));
+  }
+  for (const row of rows) {
+    if (Number(row.rank) > best.get(`${row.alias_norm}\0${row.source_id}`)!) continue;
     const refs = out.get(row.alias_norm) ?? [];
     if (!refs.some(ref => ref.slug === row.slug && ref.source_id === row.source_id)) refs.push({ slug: row.slug, source_id: row.source_id });
     out.set(row.alias_norm, refs);

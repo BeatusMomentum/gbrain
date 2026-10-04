@@ -35,6 +35,11 @@
  * itself is already ratio-guarded above — an O(N) regression in the shared
  * arms trips the card gate first.
  *
+ * Entity recall: the `entity` verb's path (includeReferences: referenced_by
+ * groups + coverage) has its own p99 gate on the same corpus, with a hub
+ * page carrying 10,000 inbound mention links; the ambient gates below stay
+ * on the reference-free path.
+ *
  * .slow.test.ts suffix keeps it out of the fast loop (`bun run test:slow`).
  */
 
@@ -72,6 +77,8 @@ const DELTA_CHANGED_FACTS = 100;
 // is divided by a sub-ms getPage median. 100× stays far below the ≥200× O(N)
 // regression signal.)
 const RATIO_CEILING = 100;
+const HUB_SLUG = 'companies/hub-company';
+const HUB_LINKS = 10_000;
 
 function percentile(sorted: number[], p: number): number {
   const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
@@ -154,6 +161,22 @@ beforeAll(async () => {
             'world', 'medium', NOW(), 'perf-seed', 1.0, NOW()
      FROM generate_series(0, ${TARGET_ENTITIES - 1}) t, generate_series(1, 20) g`,
   );
+  // Entity recall: a hub with 10,000 inbound mention links (the card's worst
+  // case for referenced_by), its referrers spread over five types, and a
+  // complete mention status row (the coverage read).
+  await engine.putPage(HUB_SLUG, { type: 'company', title: 'Hub Company', compiled_truth: '# Hub Company\n\nSynthetic hub.', frontmatter: {} }, { sourceId: 'default' });
+  await db.query(
+    `UPDATE pages SET type = (ARRAY['ticket','email','meeting','note','contract'])[(id % 5) + 1]
+      WHERE id IN (SELECT id FROM pages WHERE slug LIKE 'filler/%' ORDER BY id LIMIT ${HUB_LINKS})`,
+  );
+  await db.query(
+    `INSERT INTO links (from_page_id, to_page_id, link_type, link_source)
+     SELECT f.id, h.id, 'mentions', 'mentions'
+       FROM (SELECT id FROM pages WHERE slug LIKE 'filler/%' ORDER BY id LIMIT ${HUB_LINKS}) f,
+            (SELECT id FROM pages WHERE slug = '${HUB_SLUG}') h
+     ON CONFLICT DO NOTHING`,
+  );
+  await db.query(`INSERT INTO mention_index_status (source_id, state, pending, counted_at, last_pass_at) VALUES ('default', 'complete', 0, now(), now())`);
   await engine.executeRaw('ANALYZE pages, links, page_aliases, facts');
 }, 300_000);
 
@@ -207,6 +230,33 @@ describe('entity card p99 latency gate', () => {
 
     expect(p99).toBeLessThan(P99_BUDGET_MS);
     expect(p99 / pageP50).toBeLessThanOrEqual(RATIO_CEILING);
+  }, 300_000);
+});
+
+describe('entity verb with referenced_by (entity recall)', () => {
+  it(`p99 < ${P99_BUDGET_MS}ms with referenced_by and coverage, including a ${HUB_LINKS}-link hub`, async () => {
+    const names: string[] = [];
+    for (let i = 0; i < TARGET_ENTITIES; i++) names.push(`Target Person ${i}`, `tp${i}`, 'Hub Company', `zzz-absent-${i}`);
+    const opts = { remote: true, includeReferences: true };
+    for (let i = 0; i < WARMUP; i++) await buildEntityCard(engine, 'default', names[i % names.length], opts);
+    const samples: number[] = [];
+    let hubCard: Awaited<ReturnType<typeof buildEntityCard>>['card'];
+    for (let i = 0; i < MEASURED; i++) {
+      const name = names[(i * 13) % names.length];
+      const t0 = performance.now();
+      const res = await buildEntityCard(engine, 'default', name, opts);
+      samples.push(performance.now() - t0);
+      if (name === 'Hub Company') hubCard = res.card;
+    }
+    samples.sort((a, b) => a - b);
+    const p50 = percentile(samples, 50);
+    const p99 = percentile(samples, 99);
+    // eslint-disable-next-line no-console
+    console.log(`[entity-recall-perf] hub=${HUB_LINKS} links entity+references p50=${p50.toFixed(2)}ms p99=${p99.toFixed(2)}ms | budget=${P99_BUDGET_MS}ms`);
+    // Real work: the hub card carries every referrer in its count and at most 50 rows.
+    expect(hubCard?.referenced_by_count).toBe(HUB_LINKS);
+    expect(hubCard!.referenced_by!.reduce((n, g) => n + g.rows.length, 0)).toBeLessThanOrEqual(50);
+    expect(p99).toBeLessThan(P99_BUDGET_MS);
   }, 300_000);
 });
 

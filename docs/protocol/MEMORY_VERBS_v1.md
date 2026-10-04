@@ -287,8 +287,11 @@ Optional response fields; clients must ignore any they do not know.
 One known person/company/project card. NEVER errors on a miss.
 
 Resolution (frozen precedence): alias > exact slug > exact title > slug-suffix.
-When multiple pages share an exact title, canonical entity types (`person`,
-`company`, `organization`, `entity`) outrank note/conversation containers;
+A derived alias (a title subject such as `X` in `CRM record: X`, or a code the
+page declares) never answers for another live page's exact title. When
+multiple pages share an exact title, linkable entity types (the source pack's
+entity types, at least `person`, `company`, `organization`, `entity`) outrank
+note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
@@ -301,6 +304,29 @@ backlink_count, active_fact_count }`.
 
 - `summary` passes the same privacy fences as `get_page` (takes + private
   facts stripped); remote callers never see private facts in the card.
+
+#### entity references and coverage (additive)
+
+The `entity` verb adds three optional card fields (ambient callers,
+`context_pack` and `delta`, do not compute them):
+
+- `referenced_by_count` — distinct pages with any inbound link to the entity,
+  every link source included (`backlink_count` keeps excluding mentions).
+- `referenced_by[]` — those pages grouped by pack-canonical type:
+  `{ canonical_type, total, rows[], next? }`, groups ordered by their newest
+  row. Each row: `{ slug, title, type, canonical_type, date, date_source,
+  preview }`; `date` is `COALESCE(effective_date, updated_at)`, rows newest
+  first, at most 10 per group and 50 per card. `preview` is the first 160
+  characters of body text with private fences stripped; it is not evidence.
+  A truncated group's `next` is `{ tool: "get_backlinks", arguments: { slug,
+  source_id, type, group: "page", limit, cursor } }` and returns exactly the
+  rest of the group; on a verbs-only connection it carries
+  `requires_surface: "starter"`.
+- `coverage` — `{ state, pending_pages, last_pass_at, degraded? }` with
+  `state` one of `complete`, `pending`, `disabled`, `type_not_linkable`,
+  `failed`. A miss carries `coverage` at the top level. Any state but
+  `complete` sets `degraded: true` and adds a `[gbrain notice mention_index]`
+  block. Coverage means recognized names within the caller's source.
 - `open_threads` (best-effort in v1): active commitment-kind facts + timeline
   entries from the last 90 days, capped at 3.
 

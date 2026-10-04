@@ -699,6 +699,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
 
         // #5876: auto_chronicle now defaults on; one-shot [AGENT] cost + opt-out notice, best-effort.
         await (await import('../core/chronicle/upgrade-notice.ts')).printAutoChronicleUpgradeNotice(engine);
+        // Entity mention index: [AGENT] catch-up line while pages are due (best-effort).
+        await (await import('../core/mentions/upgrade-notice.ts')).printMentionIndexUpgradeNotice(engine);
 
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on
