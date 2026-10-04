@@ -66,12 +66,18 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
   **What:** `facts_backstop` effects enqueue jobs that nothing ran on PGLite unless someone typed `gbrain jobs work`.
 - [ ] **P2 — Drop future-dated events extracted from past pages.**
   **What:** the measured run wrote 2 not-yet-happened events per 24 judged pages (a planned offsite date and a leave start date mentioned in past meetings) and 2 events for a launch plan stated in a chat. **Fix:** refuse proposals dated after the extraction time (or after the page's own date plus a margin) before publication, and tell the judge prompt to emit only what already happened; re-measure on the labeled fixture described in `docs/fix-wave-notes/capy-fix-wave-chronicle.md`. **Effort:** S. **Priority:** P2.
-- [ ] **P2 — Event slug identity collapses distinct same-day proposals.**
-  **What:** an event slug hashes who, what and the depth page, so two different proposals with the same summary on one day collapse into one event (`publish.ts` `buildChronicleEvent`). **Effort:** S. **Priority:** P2.
+- [x] **P2 — Event slug identity collapses distinct same-day proposals.** **Completed: 2026-10-04 (Foundations 2)** — `src/core/chronicle/event-identity.ts` resolves same-day collisions at publication: one event keeps the base slug, the others get `-<hash6>` over instant, place and kind (identical copies `-2`), assigned from the pages already at the candidate slugs so reordering, corrections and re-extraction keep existing slugs. The extractor version is 2. Pinned by `test/chronicle-event-identity.test.ts` (fixture: 6 proposals, 3 collisions before, 0 after).
 - [ ] **P2 — Restore retired events on revert without a model call.**
   **What:** A to B to A re-extracts A once (at most `chronicle.job_budget_usd`). A durable proposal manifest that survives the 72 h tombstone purge would restore A's events for free. **Effort:** M. **Priority:** P2.
-- [ ] **P2 — Deterministic projection for calendar invites.**
-  **What:** an ended invite costs a chat call although its event (title, time, attendees) is fully structured. Project it without the model; an ended invite is still not proof of attendance. **Effort:** M. **Priority:** P2.
+- [x] **P2 — Deterministic projection for calendar invites.** **Completed: 2026-10-04 (Foundations 2)** — `src/core/chronicle/invite-projection.ts` projects an ended invite into one `Scheduled: <title>` meeting event (`captured_via: life-chronicle:invite`) with no chat call, no daily reservation and zero cost, through the judged path's publication and ledger. Pinned by `test/chronicle-invite-projection.test.ts`.
+- [ ] **P2 — Chronicle occurrence status (occurred / planned / committed).**
+  **What:** an event page does not say whether it happened, is planned or is a commitment; projected invites say `Scheduled:` in the summary only. **Fix:** an occurrence-status field on event pages written by the judge and the invite projection, read by `chronicle_day`/`since`. Sequence after the chronicle date-quality fast-track (future-dated events, vague-date precision), which owns the judge prompt and `extract-events.ts`. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Project ended invites on brains without a chat provider.**
+  **What:** the `chronicle` phase returns `no_chat_provider` before executing any row, so a keyless brain never projects ended invites although they need no model. **Fix:** run invite rows when no judge exists and leave other rows untouched. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Invite-aware eligibility and cost accounting.**
+  **What:** an invite whose body is under 80 characters is skipped `too_short` before projection; backfill estimates every invite as a paid call; once the daily limit is used up, the phase defers invite rows too. **Fix:** make eligibility, the backfill estimate and the daily-limit deferral recognize structured invites. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Carry write decisions across an extractor-version bump on managed brains.**
+  **What:** after a bump, discovery records `no_write_decision` for every managed page, so re-extraction waits for a consented backfill. **Fix:** reuse the previous version's decision (writer, request, trigger) for unchanged content. **Effort:** S. **Priority:** P2.
 - [ ] **P3 — One LLM pass for atoms and events on meeting pages.**
   **What:** a meeting page pays for atom extraction and event extraction separately. **Effort:** M. **Priority:** P3.
 - [ ] **P3 — Judge input beyond 12,000 characters.**
