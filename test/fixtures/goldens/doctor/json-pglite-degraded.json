@@ -1286,6 +1286,7 @@
           },
           "message": "auto_chronicle is on (default). Last 24 h: 0 of 200 automatic extraction calls. Last 7 days: 0 extracted, 0 failed, 0 skipped; $0.00 known spend. 0 page(s) pending. No chat provider is configured, so nothing will be extracted until one is.",
           "name": "auto_chronicle",
+          "readiness_state": "missing",
           "status": "ok"
         },
         {
@@ -1308,6 +1309,32 @@
                   "auto_chronicle",
                   "true"
                 ],
+                "fix": {
+                  "actor": "agent",
+                  "argv": [
+                    "gbrain",
+                    "config",
+                    "set",
+                    "auto_chronicle",
+                    "true"
+                  ],
+                  "consent": [
+                    "paid",
+                    "egress"
+                  ],
+                  "requires_exclusive": false,
+                  "user_message": "Automatic event extraction is on: each new or changed meeting, conversation or calendar page gets one paid chat call. Keep it on, or turn it off?",
+                  "verify": {
+                    "argv": [
+                      "gbrain",
+                      "doctor",
+                      "--only",
+                      "auto_chronicle_default_on",
+                      "--json"
+                    ]
+                  },
+                  "why": "Keeping automatic extraction records that the user accepted one paid chat call per eligible page; page text goes to the chat provider."
+                },
                 "id": "keep",
                 "label": "Keep automatic extraction on"
               },
@@ -1319,6 +1346,28 @@
                   "auto_chronicle",
                   "false"
                 ],
+                "fix": {
+                  "actor": "agent",
+                  "argv": [
+                    "gbrain",
+                    "config",
+                    "set",
+                    "auto_chronicle",
+                    "false"
+                  ],
+                  "consent": [],
+                  "requires_exclusive": false,
+                  "verify": {
+                    "argv": [
+                      "gbrain",
+                      "doctor",
+                      "--only",
+                      "auto_chronicle_default_on",
+                      "--json"
+                    ]
+                  },
+                  "why": "Turns automatic extraction off; history stays available on request with chronicle-backfill."
+                },
                 "id": "opt_out",
                 "label": "Turn automatic extraction off"
               }
@@ -1339,12 +1388,56 @@
                 "egress"
               ],
               "requires_exclusive": false,
-              "why": "Keeping the default records that the user accepted the per-page cost; the alternative is the opt-out."
+              "user_message": "Automatic event extraction is on: each new or changed meeting, conversation or calendar page gets one paid chat call. Keep it on, or turn it off?",
+              "verify": {
+                "argv": [
+                  "gbrain",
+                  "doctor",
+                  "--only",
+                  "auto_chronicle_default_on",
+                  "--json"
+                ]
+              },
+              "why": "Keeping automatic extraction records that the user accepted one paid chat call per eligible page; page text goes to the chat provider."
             },
             "severity": "info"
           },
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "config",
+              "set",
+              "auto_chronicle",
+              "true",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain config set auto_chronicle true --brain host",
+            "consent": [
+              "paid",
+              "egress"
+            ],
+            "next": "ask_user",
+            "requires_exclusive": false,
+            "user_message": "Automatic event extraction is on: each new or changed meeting, conversation or calendar page gets one paid chat call. Keep it on, or turn it off?",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "auto_chronicle_default_on",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Keeping automatic extraction records that the user accepted one paid chat call per eligible page; page text goes to the chat provider."
+          },
           "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
           "name": "auto_chronicle_default_on",
+          "readiness_state": "ok",
+          "severity": "info",
           "status": "ok"
         },
         {
