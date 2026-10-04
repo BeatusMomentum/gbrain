@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 196835,
-    "stdoutSha256": "7c6a8f58d1ecf9152a0bef45fe6b85d84ea6bc81c4610fc65b2a65eeec68370a",
+    "stdoutBytes": 197008,
+    "stdoutSha256": "3f271e14e9933beb2044f28a4b8ea42dab752934fef26668d4e146a90e265a0b",
     "toolNames": [
       "remember",
       "entity",
@@ -316,7 +316,8 @@
         "parameters": {
           "id": "string",
           "reason": "string?",
-          "request_id": "string?"
+          "request_id": "string?",
+          "semantic_review": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -332,6 +333,10 @@
             "request_id": {
               "description": "UUID; retry with it on timeout.",
               "type": "string"
+            },
+            "semantic_review": {
+              "description": "false: skip overnight rewording review.",
+              "type": "boolean"
             }
           },
           "required": [

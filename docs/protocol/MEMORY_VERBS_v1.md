@@ -386,6 +386,23 @@ already-expired fact returns `expired: false` (success); unknown id ⇒
 
 Response: `{ id, expired, reason, protocol_version }`.
 
+#### forget similar_active and semantic_review (additive)
+
+`semantic_review` (boolean, default `true`): `false` keeps this claim out of
+the overnight rewording review, so its text is never sent to a decision
+provider for comparison.
+
+The response carries `similar_active`: `{ state, candidates, semantic_review,
+next }`. `state` is `checked`, `not_checked_no_embedding` or
+`not_checked_pending`. `candidates` lists up to five other active facts about
+the same entity, with the same visibility (world only for remote callers),
+whose embedding is at cosine 0.80 or higher to the withdrawn claim, as
+`{ fact_id, similarity }` (no stored text; zero model calls). `semantic_review`
+is `scheduled`, `off`, `unavailable` or `opted_out`; `next` tells the agent
+what to do. Similarity is not sameness: show the candidates to the user and
+forget one only when the user confirms it restates the withdrawn claim. An
+empty list means no close match was found, not that every rewording is gone.
+
 #### Durable write receipts (additive)
 
 Write receipts distinguish accepted work from committed memory. Their public

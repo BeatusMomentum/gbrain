@@ -172,8 +172,9 @@ interface WithdrawalTarget { id: number; entity_slug: string | null; source_mark
 /** Withdrawal commits independently of filesystem ownership and request FIFO. */
 export async function submitForgetMutation(ctx: OperationContext, operation: 'forget' | 'forget_fact', params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sub = await submission(ctx, operation, params);
-  if (sub.prior) return writeResponse(sub.prior);
+  if (sub.prior) return withSimilarActive(ctx, operation, sub.sourceId, sub.p, writeResponse(sub.prior));
   const { p, sourceId, principal, callerIntent, requestId } = sub;
+  const semanticReview = p.semantic_review !== false;
   const id = Number(p.id);
   const rawId = String(p.id).trim();
   const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim() : null;
@@ -212,7 +213,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
     return withCoordinatedWrite(tx, [sourceId], async () => {
       // Even an expired legacy fact acquires a ledger so a stale import cannot
       // reactivate it. Internal affected-page identities never enter the receipt.
-      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id })).pages;
+      withdrawn = (await recordFactWithdrawal(tx, id, sourceId, ctx.remote !== false, { requestId: row.id, semanticReview })).pages;
       if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
         WHERE id=$1 AND source_id=$2`, [id, sourceId, `forgotten: ${reason}`]);
       if (operation === 'forget_fact' && fact.expired_at !== null) {
@@ -231,5 +232,19 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   for (let start = 0; start < slugs.length; start += 100) {
     await rebuildPendingPageProjections(ctx.engine, 100, { pages: { sourceId, slugs: slugs.slice(start, start + 100) } }).catch(() => undefined);
   }
-  return writeResponse(done);
+  return withSimilarActive(ctx, operation, sourceId, p, writeResponse(done));
+}
+
+/** `forget` responses carry `similar_active` (ids and scores only, zero model calls); best-effort, never fails the forget. */
+async function withSimilarActive(ctx: OperationContext, operation: 'forget' | 'forget_fact', sourceId: string,
+  p: Record<string, unknown>, response: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (operation !== 'forget') return response;
+  const factId = Number(p.id);
+  if (!Number.isSafeInteger(factId)) return response;
+  try {
+    const { similarActiveAfterForget } = await import('../facts/similar-active.ts');
+    const committed = (response.write_request as { state?: string } | undefined)?.state === 'committed' || response.state === 'committed';
+    return { ...response, similar_active: await similarActiveAfterForget(ctx.engine, {
+      sourceId, factId, remote: ctx.remote !== false, committed, semanticReview: p.semantic_review !== false }) };
+  } catch { return response; }
 }

@@ -346,6 +346,7 @@ const forget: Operation = {
     request_id: WRITE_REQUEST_PARAM,
     id: { type: 'string', required: true, description: 'fact_id from remember or recall.' },
     reason: { type: 'string', description: 'Audit note (default "forgotten").' },
+    semantic_review: { type: 'boolean', description: 'false: skip overnight rewording review.' },
   },
   mutating: true,
   scope: 'write',
@@ -605,6 +606,16 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       expired: { type: 'boolean', description: 'true = this call expired the fact; false = it was ALREADY expired (idempotent re-forget).' },
       reason: { type: ['string', 'null'] },
       write_request: WRITE_RECEIPT_SCHEMA,
+      similar_active: {
+        type: 'object',
+        description: 'Active facts about the same entity close in meaning to the withdrawn claim (ids and scores only; zero model calls). Similarity is not sameness: ask the user before forgetting any of them.',
+        properties: {
+          state: { type: 'string', enum: ['checked', 'not_checked_no_embedding', 'not_checked_pending'] },
+          candidates: { type: 'array', items: { type: 'object', properties: { fact_id: { type: 'string' }, similarity: { type: 'number' } } } },
+          semantic_review: { type: 'string', enum: ['scheduled', 'off', 'unavailable', 'opted_out'] },
+          next: { type: 'string' },
+        },
+      },
     },
   },
   // v0.45.7 (issue #1) — ambient recall. World-only by default; include_private
