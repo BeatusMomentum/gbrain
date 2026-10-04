@@ -13,7 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { operations } from '../src/core/operations.ts';
-import { advertisedOps, filterOpsForSurface, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
+import { advertisedOps, filterOpsForSurface, newInstallAdvertisedSurface, newInstallServeSurface, NEW_INSTALL_ADVERTISED_SURFACE, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
 import { buildMcpInstructions } from '../src/mcp/instructions.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 
@@ -72,6 +72,15 @@ describe('advertised surface (pure)', () => {
     expect(buildMcpInstructions({ tools: { callable: () => true, hiddenCallable: 130 } })).toContain('130 more are callable. Call request_tools');
     expect(buildMcpInstructions({ tools: { callable: () => true } })).not.toContain('more are callable');
     expect(buildMcpInstructions({ tools: { callable: n => n !== 'request_tools', hiddenCallable: 5 } })).not.toContain('more are callable');
+  });
+  test('new installs: init and registration move together', () => {
+    if (NEW_INSTALL_ADVERTISED_SURFACE === 'full') {
+      expect(newInstallAdvertisedSurface()).toEqual({});
+      expect(newInstallServeSurface()).toBe('verbs');
+    } else {
+      expect(newInstallAdvertisedSurface()).toEqual({ advertised_surface: NEW_INSTALL_ADVERTISED_SURFACE });
+      expect(newInstallServeSurface()).toBe('full');
+    }
   });
 });
 

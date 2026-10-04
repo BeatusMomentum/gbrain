@@ -41,6 +41,7 @@ import { validateMountId } from './brain-registry.ts';
 import { agentProcessMarker } from './interaction.ts';
 import { resolveGbrainBin } from './gbrain-bin.ts';
 import { resolveWritebackConfigFromFile } from './facts/writeback-config.ts';
+import { newInstallServeSurface } from '../mcp/surface.ts';
 
 export type ReadinessState = 'ok' | 'disabled_by_choice' | 'not_applicable' | 'missing' | 'degraded' | 'unknown';
 export type CapabilityId =
@@ -394,13 +395,14 @@ const HARNESS_DESTINATION: Record<ReadinessHarness, string> = {
 const MEMORY_VERBS_INSTALL = 'docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart';
 
 function stdioRegistration(h: ReadinessHarness, bin: string): Action {
-  const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', bin, 'serve', '--surface', 'verbs']
-    : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', bin, 'serve', '--surface', 'verbs']
+  const surface = newInstallServeSurface();
+  const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', bin, 'serve', '--surface', surface]
+    : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', bin, 'serve', '--surface', surface]
       : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks'];
   const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
-    why: `Registers gbrain as a stdio MCP server (${bin} serve --surface verbs, the seven memory verbs) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
+    why: `Registers gbrain as a stdio MCP server (${bin} serve --surface ${surface}, ${surface === 'verbs' ? 'the seven memory verbs' : 'every tool callable, the advertised set listed'}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
     user_message: `I'd like to add gbrain's memory tools to ${HARNESS_LABEL[h]} by writing one MCP server entry to ${HARNESS_DESTINATION[h]}. OK?`,
     verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
   };
@@ -426,7 +428,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: 'Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).',
+        why: `Register \`<absolute path to gbrain> serve --surface ${newInstallServeSurface()}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
         user_message: 'Which agent app should get gbrain memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {

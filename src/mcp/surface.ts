@@ -343,6 +343,16 @@ export function stdioToolListing(advertised: () => Promise<McpSurface | null>, c
   };
 }
 
+/**
+ * The `serve --surface` a readiness/quickstart registration writes. Once the
+ * benchmark picks an advertised surface, registrations call everything
+ * (`full`) and init's advertised surface narrows the list; until then they
+ * keep the seven verbs.
+ */
+export function newInstallServeSurface(): McpSurface {
+  return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? 'verbs' : 'full';
+}
+
 /** What a fresh `gbrain init` writes into `mcp`: the advertised surface, unless it is 'full'. */
 export function newInstallAdvertisedSurface(): { advertised_surface?: 'verbs' | 'starter' } {
   return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? {} : { advertised_surface: NEW_INSTALL_ADVERTISED_SURFACE };
