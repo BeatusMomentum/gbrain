@@ -84,7 +84,7 @@ gbrain config set feedback.learn false     # keep learned weights, stop learning
 | `feedback.alpha` | 0.1 | Learning rate; the citation signal uses half. |
 | `feedback.max_ratings_per_hour` | 120 | Rating calls per client per hour. |
 | `feedback.event_retention_days` | 30 | How long answers stay rateable. |
-| `feedback.hint` | true | Show the one-line rating hint on answers. |
+| `feedback.rating_prompt` | true | Show the one-line `how_to_rate` line on answers. |
 
 ## Refusals
 

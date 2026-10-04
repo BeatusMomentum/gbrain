@@ -17,8 +17,8 @@ export interface FeedbackSettings {
   alpha: number;
   maxRatingsPerHour: number;
   eventRetentionDays: number;
-  /** Emit the one-line rating hint on answers. */
-  hint: boolean;
+  /** Show the one-line "how to rate" line on answers. */
+  ratingPrompt: boolean;
 }
 
 export const FEEDBACK_DEFAULTS: FeedbackSettings = Object.freeze({
@@ -29,7 +29,7 @@ export const FEEDBACK_DEFAULTS: FeedbackSettings = Object.freeze({
   alpha: 0.1,
   maxRatingsPerHour: 120,
   eventRetentionDays: 30,
-  hint: true,
+  ratingPrompt: true,
 });
 
 export const FEEDBACK_CONFIG_KEYS = [
@@ -40,7 +40,7 @@ export const FEEDBACK_CONFIG_KEYS = [
   'feedback.alpha',
   'feedback.max_ratings_per_hour',
   'feedback.event_retention_days',
-  'feedback.hint',
+  'feedback.rating_prompt',
 ] as const;
 
 const CACHE_TTL_MS = 30_000;
@@ -71,7 +71,7 @@ export async function loadFeedbackSettings(engine: BrainEngine): Promise<Feedbac
       return null;
     }
   };
-  const [enabled, learn, influence, implicit, alpha, maxRatings, retention, hint] = await Promise.all(
+  const [enabled, learn, influence, implicit, alpha, maxRatings, retention, ratingPrompt] = await Promise.all(
     FEEDBACK_CONFIG_KEYS.map(read),
   );
   const d = FEEDBACK_DEFAULTS;
@@ -83,7 +83,7 @@ export async function loadFeedbackSettings(engine: BrainEngine): Promise<Feedbac
     alpha: parseNumber(alpha, d.alpha, 0.001, 1),
     maxRatingsPerHour: Math.round(parseNumber(maxRatings, d.maxRatingsPerHour, 1, 100_000)),
     eventRetentionDays: Math.round(parseNumber(retention, d.eventRetentionDays, 1, 3650)),
-    hint: parseBool(hint, d.hint),
+    ratingPrompt: parseBool(ratingPrompt, d.ratingPrompt),
   };
   cache = { ts: now, engine, value };
   return value;

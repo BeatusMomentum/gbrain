@@ -1,4 +1,4 @@
-import { feedbackMetaFields, recordAnswer, relationalPathLinks } from '../feedback/record.ts';
+import { searchAnswerFeedback } from '../feedback/record.ts';
 import { readHolders } from './context.ts';
 /**
  * Search operation cluster (search + query) — pure move from operations.ts
@@ -455,11 +455,7 @@ async function buildRetrievalResponseMeta(
     ...(aliases.length ? { other_names: aliases } : {}),
     ...(heldFiles.length ? { held_files: heldFiles } : {}),
     ...(hint || readiness.hint ? { hint: [hint, readiness.hint].filter(Boolean).join(' ') } : {}),
-    ...(opts.feedbackOp ? feedbackMetaFields(await recordAnswer(ctx, {
-      op: opts.feedbackOp,
-      pages: (results as SearchResult[]).map(r => ({ source_id: r.source_id, slug: r.slug, content_hash: r.content_hash })),
-      links: relationalPathLinks(results as SearchResult[]),
-    })) : {}),
+    ...(opts.feedbackOp ? await searchAnswerFeedback(ctx, opts.feedbackOp, results as SearchResult[]) : {}),
   };
 }
 

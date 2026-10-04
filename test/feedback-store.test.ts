@@ -178,7 +178,7 @@ describe('recordAnswer', () => {
     });
     expect(meta?.feedback.rateable).toBe(true);
     expect(meta?.answer_id).toMatch(/^ans_/);
-    expect(meta?.feedback.hint).toContain('rate_answer');
+    expect(meta?.feedback.how_to_rate).toContain('rate_answer');
     await drainFeedbackQueue(5000);
     const weights = await readWeights(engine, 'page', [
       { source_id: 'default', key: 'notes/meeting-example' }, { source_id: 'default', key: 'people/alice-example' },

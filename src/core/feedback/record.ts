@@ -74,7 +74,7 @@ export function canTeachSource(
 
 export interface AnswerFeedbackMeta {
   answer_id?: string;
-  feedback: { rateable: boolean; reason?: 'not_authorized' | 'disabled' | 'empty'; hint?: string };
+  feedback: { rateable: boolean; reason?: 'not_authorized' | 'disabled' | 'empty'; how_to_rate?: string };
 }
 
 type Job =
@@ -205,10 +205,10 @@ export async function recordAnswer(ctx: OperationContext, input: RecordAnswerInp
       enqueue(ctx.engine, { kind: 'cited', eventId: id, clientId, alpha: settings.alpha, pages: cited });
     }
     const meta: AnswerFeedbackMeta = { answer_id: id, feedback: { rateable: true } };
-    if (settings.hint) {
+    if (settings.ratingPrompt) {
       const n = answersSinceHint.get(clientId) ?? 0;
       if (n % HINT_EVERY === 0) {
-        meta.feedback.hint = `Rate this answer after you use it: rate_answer { answer_id: "${id}", rating: 1-5 } (or pages: [{ ref, rating }] for single pages). Ratings tune this brain's ranking.`;
+        meta.feedback.how_to_rate = `Rate this answer after you use it: rate_answer { answer_id: "${id}", rating: 1-5 } (or pages: [{ ref, rating }] for single pages). Ratings tune this brain's ranking.`;
       }
       answersSinceHint.set(clientId, n + 1);
     }
@@ -266,4 +266,17 @@ export async function recordThinkAnswer(
     op,
     pages: evidence.map(e => ({ ...e, cited: citedSlugs.has(e.slug) && sourcesBySlug.get(e.slug) === 1 })),
   });
+}
+
+/** Record a search-shaped answer (rows as returned) and return its additive meta fields. */
+export async function searchAnswerFeedback(
+  ctx: OperationContext,
+  op: 'query' | 'search' | 'recall',
+  rows: Array<{ slug: string; source_id?: string; content_hash?: string | null; relational_path_edges?: string[] }>,
+): Promise<Record<string, unknown>> {
+  return feedbackMetaFields(await recordAnswer(ctx, {
+    op,
+    pages: rows.map(r => ({ source_id: r.source_id, slug: r.slug, content_hash: r.content_hash })),
+    links: relationalPathLinks(rows),
+  }));
 }

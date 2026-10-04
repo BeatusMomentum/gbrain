@@ -1,4 +1,4 @@
-import { feedbackMetaFields, recordAnswer, relationalPathLinks } from '../feedback/record.ts';
+import { searchAnswerFeedback } from '../feedback/record.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { randomUUID } from 'node:crypto';
@@ -564,11 +564,7 @@ const recall: Operation = {
               ...(r.delivered ? { delivered: r.delivered } : {}),
             })),
             ...(searchDegraded ? { search_degraded: searchDegraded } : {}),
-            ...(searchDegraded ? {} : feedbackMetaFields(await recordAnswer(ctx, {
-              op: 'recall',
-              pages: packedResults.map(r => ({ source_id: r.source_id, slug: r.slug, content_hash: r.content_hash })),
-              links: relationalPathLinks(packedResults),
-            }))),
+            ...(searchDegraded ? {} : await searchAnswerFeedback(ctx, 'recall', packedResults)),
           }
         : {}),
       ...(budgetTokens !== null
