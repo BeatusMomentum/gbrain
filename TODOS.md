@@ -1,5 +1,24 @@
 # TODOS
 
+## Foundations 2 crash robot follow-ups (filed 2026-10-04, GBRA-40 Lane A)
+
+Context: `scripts/persistence/README.md` ("Crash robot"), `scripts/persistence/{generator,model,crash-robot}.ts`.
+
+- [ ] **P2 — A restarted Postgres owner waits out its dead predecessor's claims.**
+  **What:** after a Postgres owner process dies, its running effects resume only when their 2-minute lease expires (requests: 30 s), and a withdrawal mirror it held blocks writes to that page until then. PGLite releases them at once (one process per datastore). **Why:** a crashed `gbrain serve` on Postgres stalls Git, embedding and withdrawal work for 2 minutes. **Fix:** record the claiming host and process (pid plus start time) on each claim; a consumer on the same host releases claims whose process has exited. Other hosts keep the lease. The crash robot then drops its 140 s Postgres drain bound to 20 s and pull requests stop skipping lease-bound seams. **Effort:** M. **Priority:** P2.
+- [ ] **P1 — A held sync lock reaches agents as internal_error.**
+  **What:** after an owner dies mid connector run, the source's sync lock row stays until its TTL lapses (a same-host dead holder is stolen after the grace window). Meanwhile a connector run (`LockUnavailableError`) and a sync (`SyncLockBusyError`) reach MCP callers as `internal_error` ("server-side failure, report it"). Crash robot: `sync_and_connector_race_direct_write`, seed 5105, SIGKILL at `publication:after_commit` #31 (Postgres), recorded under the manifest's `deferred`. **Why:** the agent reports a bug instead of waiting and retrying. **Fix:** map both errors to the registered `sync_in_progress` (retryable) with the holder, its age and the retry-after in `why`/`fix` (agent-output rows, GBRA-42's contract), then drop the robot's `KNOWN_DEFERRALS` entry and un-skip the test in `test/persistence-crash-robot.test.ts`. **Effort:** S. **Priority:** P1.
+- [ ] **P1 — Process faults: ENOSPC on the file target and a lost child exit.**
+  **What:** the robot covers SIGKILL at every seam, a stale `index.lock`, a hung git commit and Postgres session drops. **Fix:** an ENOSPC fault on the canonical file write (a tmpfs-sized checkout) and a git child whose exit event is lost; each must end in a terminal state or a typed error. **Effort:** M. **Priority:** P1.
+- [ ] **P1 — Seeded mutation pass over the coordinator and effects.**
+  **What:** report the robot's kill rate against seeded mutants (a dropped receipt update, a double-applied effect, a skipped withdrawal fence). **Effort:** M. **Priority:** P1.
+- [ ] **P1 — Source add/remove/refresh and writer activate/deactivate ops.**
+  **What:** the generator drives page, memory, takes, timeline, sync, connector and revocation ops; topology and writer-lifecycle ops are not in the protocol yet, so the existing `topology-clone.ts`, `topology-recovery.ts`, `worktree-refresh.ts` and `bundle-files.ts` boundary hooks are not crashed. **Effort:** M. **Priority:** P1.
+- [ ] **P2 — CI check that every mutating operation is registered in the generator.**
+  **What:** `MODEL` is a `Record<OpKind, Fold>` and `EFFECT_SEAMS` a `Record<EffectKind, …>`, so a new op kind or effect kind without a fold or seam fails typecheck; a new mutating operation in `operations.ts` is not forced into `OP_KINDS`. **Fix:** a test listing every `mutating: true` operation as either a robot op or an explicit exclusion with its reason. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Pre-activation claim lock order.**
+  **What:** the unmanaged `claimWorktree` locks brain > sources > worktrees; managed paths lock worktrees before sources. No publication runs before activation, so nothing deadlocks today. **Fix:** reorder the unmanaged claim to brain > worktrees > sources so `lock-order.ts` can trace setup too. **Effort:** S. **Priority:** P2.
+
 ## Held files follow-ups (filed 2026-10-04, follow-up from v0.60.47.0)
 
 Context: `docs/guides/repair.md#held-files`, `docs/guides/write-refusals.md#held-files-and-content-refusals`.
