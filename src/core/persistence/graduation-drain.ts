@@ -142,7 +142,7 @@ export function drainTimeoutError(blockers: readonly GraduationBlocker[], timeou
   return graduationError('graduation_drain_timeout', `The drain did not finish within ${seconds}s; ${blockers.length} item(s) remain.`,
     needsPerson ? `Clear ${needsPerson.kind} ${needsPerson.id} first (${needsPerson.argv?.join(' ') ?? 'see detail'}), then resume.` : `Resume with a longer drain: ${resume.join(' ')}.`,
     { why: `Graduation copies only a drained brain; the source is unchanged and still writable. Remaining: ${listed}`,
-      detail: listed,
+      detail: listed, reason: needsPerson ? 'blocked' : 'progressing',
       fix: needsPerson?.argv
         ? { argv: [...needsPerson.argv], consent: [], actor: needsPerson.needsUser ? 'user' : 'agent', requires_exclusive: false,
           why: `Clears ${needsPerson.kind} ${needsPerson.id}, which the request-only drain cannot finish.`,

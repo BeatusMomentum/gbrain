@@ -18,6 +18,7 @@ import type {
   GraduationCommandOptions, GraduationPlan, GraduationReceipt, GraduationStatusDoc,
 } from '../src/core/persistence/engine-graduation.types.ts';
 import { drainTimeoutError, inProgressError } from '../src/core/persistence/graduation-errors.ts';
+import { drainTimeoutError as drainRefusal } from '../src/core/persistence/graduation-drain.ts';
 import {
   parseGraduationArgs, routesToGraduation, runMigrateGraduation, type GraduationApi,
 } from '../src/commands/migrate-graduation.ts';
@@ -222,6 +223,10 @@ describe('runMigrateGraduation', () => {
     expect(JSON.parse(drain.stdout).resume_command).toEqual(['gbrain', 'migrate', '--resume', '--drain-timeout', '120']);
     const blocked = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainTimeoutError({ timeoutSec: 60, blockers: [{ kind: 'writer_admin_lock', id: 'l', detail: 'locked', argv: ['gbrain', 'sources', 'writer', 'unlock'], needsUser: true }] }); } }));
     expect(blocked.code).toBe(1);
+    const orchestratorBlocked = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainRefusal([{ kind: 'dangling_reference', id: 'oauth_clients.c1', detail: 'bound to a missing source', argv: ['gbrain', 'auth', 'revoke-client', 'c1'], needsUser: true }], 60_000); } }));
+    expect(orchestratorBlocked.code).toBe(1);
+    const orchestratorProgressing = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw drainRefusal([{ kind: 'request', id: 'r', detail: 'running', needsUser: false }], 60_000); } }));
+    expect(orchestratorProgressing.code).toBe(11);
     const busy = await run(['--resume', '--json'], fakeApi({ resumeGraduation: async () => { throw inProgressError({ pid: 9 }); } }));
     expect(busy.code).toBe(75);
     const ctrl = new AbortController();

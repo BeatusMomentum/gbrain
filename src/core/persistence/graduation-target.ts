@@ -21,7 +21,6 @@ import { PostgresEngine } from '../postgres-engine.ts';
 import { normalizeDirectUrl, isNetworkUnreachableError } from '../connection-manager.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { opError, type OpErrorOpts, type OperationError } from '../ops/contract.ts';
-import type { RegistryCode } from '../error-registry.ts';
 import type { EmbeddingColumn, GraduationBlocker, GraduationErrorCode, TargetIdentity, TargetProbe, TargetRoutes, TriggerBypass } from './engine-graduation.types.ts';
 
 export type ResolvedTargetRoutes = TargetRoutes & { mainUrl: string; ddlUrl: string };
@@ -33,9 +32,9 @@ export const MIN_TARGET_SERVER_VERSION_NUM = 140000;
 /** pgvector release that added halfvec (facts.embedding, query_cache.embedding). */
 export const MIN_VECTOR_HALFVEC_VERSION = '0.7.0';
 
-/** Graduation codes are registered by the agent-contract batch; until then they are typed by the shared list. */
+/** A graduation refusal (every GraduationErrorCode has a registry row in src/core/error-registry.ts). */
 export function graduationError(code: GraduationErrorCode, message: string, suggestion: string, opts: OpErrorOpts = {}): OperationError {
-  return opError(code as RegistryCode, message, suggestion, opts);
+  return opError(code, message, suggestion, opts);
 }
 
 export function targetPlanArgv(routes: Pick<TargetRoutes, 'urlEnv'>, to: 'postgres' | 'supabase' = 'postgres'): string[] {
