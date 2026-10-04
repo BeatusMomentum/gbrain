@@ -178,8 +178,8 @@ loop" below), silent fallback to recursive chunking in the compiled binary
 manifest; coverage ratchets up from the `todo` rows) can actually fail by
 running it against known-bad fixtures — a new `scripts/check-*` guard must be
 registered in the manifest or the build fails. There is no `check:all` script; the
-trailing-newline, exports-count, and no-legacy-getconnection checks run in
-`verify` with everything else.
+trailing-newline and no-legacy-getconnection checks run in `verify` with
+everything else, and `test/public-exports.test.ts` owns the package export map.
 
 ### Writing tests that survive the parallel loop
 

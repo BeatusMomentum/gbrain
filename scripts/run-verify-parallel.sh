@@ -130,7 +130,6 @@ CHECKS=(
   "check:skill-refs"
   # Previously reachable ONLY from the deleted check:all (i.e. never run):
   "check:newlines"
-  "check:exports-count"
   "check:no-legacy-getconnection"
   # Revived registered-but-never-executed guards (this pass):
   "check:pg-url-redaction"

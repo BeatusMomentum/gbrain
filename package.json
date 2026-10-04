@@ -113,7 +113,6 @@
     "check:test-names": "bash scripts/check-test-real-names.sh",
     "check:progress": "bash scripts/check-progress-to-stdout.sh",
     "check:no-tracked-symlinks": "bash scripts/check-no-tracked-symlinks.sh",
-    "check:exports-count": "bash scripts/check-exports-count.sh",
     "check:admin-build": "bash scripts/check-admin-build.sh",
     "check:admin-embedded": "bash scripts/check-admin-embedded.sh",
     "check:test-isolation": "bash scripts/check-test-isolation.sh",
