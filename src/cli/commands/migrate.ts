@@ -10,14 +10,14 @@ import type { BrainEngine } from '../../core/engine.ts';
 export async function run(engine: BrainEngine, args: string[]): Promise<void> {
   // #3390: `gbrain migrate embeddings --to <provider:model>` — the
   // provider-agnostic embedding migration. Everything else stays the
-  // engine-transfer path (`migrate --to <supabase|pglite>`).
+  // engine-transfer path (`migrate --to <postgres|supabase|pglite>`).
   if (args[0] === 'embeddings') {
     const { runMigrateEmbeddings } = await import('../../commands/migrate-embeddings.ts');
     await runMigrateEmbeddings(engine, args.slice(1));
     return;
   }
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: gbrain migrate --to <supabase|pglite> [--url <url>] [--path <path>] [--force]');
+    console.log('Usage: gbrain migrate --to <postgres|supabase|pglite> [--url <url>] [--path <path>] [--force]');
     console.log('       gbrain migrate embeddings --to <provider:model> [--dim N] [--dry-run] [--yes]');
     console.log('');
     console.log('The first form transfers the brain between engines; the second re-embeds');

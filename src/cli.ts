@@ -2444,6 +2444,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
     }
   }
 
+  if (command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('./commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))) return null;
   if (command === 'reindex-code') {
     if (await (await import('./commands/reindex-code-delegate.ts')).maybeDelegateReindexCode(loadConfig(), args)) return null;
   }
@@ -2960,7 +2961,7 @@ SETUP
   engine status [--json] [--probe]   Which engine + URL source, engine-free
   db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
                                      (--yes --apply-rewrites for config rewrites)
-  migrate --to <supabase|pglite>     Transfer brain between engines
+  migrate --to <postgres|pglite>     Transfer brain between engines (supabase = postgres)
   migrate embeddings --to <p:model>  Re-embed onto another embedding provider
   embeddings enable --embedding-model <p:model>  Turn on embeddings in place (keeps pages/facts)
   upgrade                            Self-update
