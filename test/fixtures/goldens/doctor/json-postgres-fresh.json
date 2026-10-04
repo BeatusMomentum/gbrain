@@ -1575,6 +1575,25 @@
         {
           "category": "brain",
           "details": {
+            "backlog": {
+              "active": 0,
+              "delayed": 0,
+              "waiting": 0
+            },
+            "daily_spent_usd": 0,
+            "docs": "docs/guides/facts-drain.md",
+            "health": "not_applicable",
+            "last_run": null
+          },
+          "message": "Postgres brains run facts-absorb jobs on the job worker (gbrain jobs supervisor), not the automatic drain.",
+          "name": "facts_drain",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "applicable": false
           },
           "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
@@ -1601,6 +1620,17 @@
           },
           "message": "Planner statistics are fresh on 6 hot tables.",
           "name": "planner_stats_stale",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "column": "not_null",
+            "failed": [],
+            "pending": 0
+          },
+          "message": "Every page has its revision; the page revision backfill is complete.",
+          "name": "revision_backfill",
           "status": "ok"
         },
         {
@@ -1735,7 +1765,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 10,
+              "global": 11,
               "mixed": 2,
               "source": 12
             },
@@ -1751,6 +1781,7 @@
               "extract": "source",
               "extract_atoms": "source",
               "extract_facts": "source",
+              "facts_drain": "global",
               "grade_takes": "global",
               "lint": "source",
               "orphans": "global",
@@ -1766,7 +1797,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 10 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, chronicle, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 11 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

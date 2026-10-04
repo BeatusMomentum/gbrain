@@ -7,6 +7,7 @@ import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } fr
 import { VERB_NAMES } from '../core/verbs.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
+import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
 import { onForwardProgress } from '../core/forward-progress.ts';
 import {
   installLoopStallWatchdog,
@@ -146,6 +147,9 @@ export interface ServeOptions {
   // (pre-#4409 behavior). Defaults to GBRAIN_SERVE_EOF_DRAIN_MS (30s when
   // unset; lenient parse).
   eofDrainMs?: number;
+  // Test seam for the automatic facts drain (src/core/facts/drain-scheduler.ts):
+  // false disables it; an object overrides its timer and run body.
+  factsDrain?: false | Pick<FactsDrainSchedulerOpts, 'run' | 'tickMs' | 'maxGapMs' | 'now'>;
 }
 
 /**
@@ -480,6 +484,34 @@ interface StdioLifecycleDeps {
   probeWatchdog: () => boolean;
 }
 
+/**
+ * Automatic facts drain (Foundations 2, Lane D): PGLite has no job worker, so
+ * the resident serve runs queued facts-absorb jobs on its own unref'd timer,
+ * bounded per run and per day. Activity is read from stdin 'data' chunks
+ * through a listener attached on the first tick (same reason as the idle
+ * sweep: never before the SDK transport attaches). Opt out with
+ * `gbrain config set facts.extraction_enabled false`.
+ */
+function installFactsDrain(engine: BrainEngine, opts: ServeOptions, deps: StdioLifecycleDeps, shuttingDown: () => boolean): FactsDrainScheduler | null {
+  if (opts.factsDrain === false || engine.kind !== 'pglite') return null;
+  let lastStdinDataAt = 0;
+  let listenerAttached = false;
+  return startFactsDrainScheduler(engine, {
+    owner: 'serve',
+    ...(opts.factsDrain ?? {}),
+    setInterval: deps.setInterval,
+    clearInterval: deps.clearInterval,
+    log: (line) => deps.log(line),
+    lastActivityAt: () => {
+      if (listenerAttached) return lastStdinDataAt;
+      listenerAttached = true;
+      deps.stdin.on('data', () => { lastStdinDataAt = Date.now(); });
+      return Number.MAX_SAFE_INTEGER;
+    },
+    canRun: async () => !shuttingDown() && !isEngineDegradedForServe(engine) && !(await loadSyncRunner()).isDelegatedSyncRunning(),
+  });
+}
+
 function installStdioLifecycle(
   engine: BrainEngine,
   args: string[],
@@ -500,6 +532,7 @@ function installStdioLifecycle(
   let parentWatchdog: unknown = null;
   let idleSweepTimer: unknown = null;
   let activateIdleActivityTracking = (): void => {};
+  let factsDrain: FactsDrainScheduler | null = null;
   const beginShutdown = (reason: string): void => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -548,6 +581,9 @@ function installStdioLifecycle(
     armDeadline(CLEANUP_DEADLINE_MS);
 
     Promise.resolve()
+      // The facts drain aborts its in-flight job (left queued, no attempt
+      // counted) before the engine goes away.
+      .then(() => factsDrain?.stop())
       // Idempotent shared promise — mcp/server.ts's shutdown races here on
       // the same signals; whichever runs first does the abort+settle, the
       // other awaits it. Must precede disconnect (settle writes need the
@@ -755,6 +791,9 @@ function installStdioLifecycle(
     }, IDLE_SWEEP_INTERVAL_MS);
     (idleSweepTimer as { unref?: () => void } | null)?.unref?.();
   }
+
+  // Automatic facts drain (Lane D): see installFactsDrain.
+  factsDrain = installFactsDrain(engine, opts, deps, () => shuttingDown);
 
   // Optional idle-timeout safety net. Default OFF; opt-in via
   // `--stdio-idle-timeout <seconds>`. The flag is for the rare case where

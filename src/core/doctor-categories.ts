@@ -75,6 +75,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'auto_chronicle',
   'auto_chronicle_default_on',
   'chronicle_config_invalid',
+  'facts_drain',
   'fact_take_vectors',
   'code_chunk_metadata',
   'content_hash_duplicates',
@@ -295,6 +296,8 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   // coherence healed by `gbrain apply-migrations` (sibling of
   // timeline_dedup_index / schema_version).
   'pages_upsert_arbiter',
+  // #5216: the resumable pages.knowledge_revision backfill (resumed by apply-migrations --force-schema).
+  'revision_backfill',
   'schema_columns',
   'schema_pack_active',
   'schema_pack_consistency',

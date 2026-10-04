@@ -30,7 +30,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/reindex.ts": ["test/e2e/reindex-auto-workers-5181.test.ts"],
   // Fix wave 8, Lane G: deferred ANN build after the embedding re-embed (#5088).
   // Fix wave 8, Lane G: page revision rollout (#5216).
-  "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts"],
+  "src/core/page-state/revision-backfill-schema.ts": ["test/e2e/page-revision-rollout-5216-postgres.test.ts", "test/e2e/doctor-revision-backfill-postgres.test.ts"],
+  "src/commands/doctor/checks/revision-backfill.ts": ["test/e2e/doctor-revision-backfill-postgres.test.ts", "test/e2e/doctor-json-golden.test.ts"],
   "src/core/embedding-ann-build.ts": ["test/e2e/migrate-embeddings-ann-build-5088-postgres.test.ts", "test/e2e/migrate-embeddings-postgres.test.ts"],
   // FOUNDATIONS 1 F4a: get_health SQL aggregate, shared orphan policy, op memo.
   "src/core/engine-sql/health.ts": ["test/e2e/engine-sql-health-parity.test.ts", "test/e2e/health-parity-postgres.test.ts", "test/e2e/get-health-embedding-column-postgres.test.ts"],
@@ -269,6 +270,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
+    "test/e2e/job-deferral-postgres.test.ts",
     "test/e2e/minions-legacy-coalesce-postgres.test.ts",
     "test/e2e/minions-legacy-journey-postgres.test.ts",
     "test/e2e/worker-readiness-cli.test.ts",
@@ -390,7 +392,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/ops/links.ts": ["test/e2e/managed-writers-w3.test.ts", "test/e2e/federated-link-reads-postgres.test.ts"],
   "src/core/cycle/extract-atoms-page-state.ts": ["test/e2e/extract-atoms-page-state.test.ts", "test/e2e/reconcile-crash.test.ts", "test/e2e/reconcile-crash-unactivated.test.ts", "test/e2e/reconcile-pgbouncer.test.ts"],
   "src/commands/migrations/v0_13_1.ts": ["test/e2e/grandfather-projection-postgres.test.ts", "test/e2e/persistence-git-coalescing-5530-postgres.test.ts"],
-  "src/commands/migrations/v0_32_2.ts": ["test/e2e/migrations-v0_32_2-managed.test.ts"],
+  "src/commands/migrations/v0_32_2.ts": ["test/e2e/migrations-v0_32_2-managed.test.ts", "test/e2e/extract-facts-unfenced-rows-postgres.test.ts"],
+  // #5299: the shared unfenced-facts fence pass (migration Phase B + extract_facts).
+  "src/core/facts/unfenced-facts.ts": ["test/e2e/extract-facts-unfenced-rows-postgres.test.ts", "test/e2e/migrations-v0_32_2-managed.test.ts"],
   "src/core/facts/withdrawal.ts": ["test/e2e/facts-withdrawal-fingerprint-once.test.ts"],
   "src/core/extract-takes-from-pages.ts": ["test/e2e/persistence-managed-takes-extract.test.ts", "test/e2e/extract-takes-from-pages-resolutions.test.ts"],
   "src/core/persistence/prepared-maintenance.ts": ["test/e2e/migrations-v0_32_2-managed.test.ts", "test/e2e/fix-wave-4-integration.test.ts", "test/e2e/managed-connector-job-contract.test.ts", "test/e2e/maintenance-write-wait.test.ts"],
@@ -508,6 +512,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/chronicle-auto-decision-postgres.test.ts",
     "test/e2e/chronicle-auto-phase-postgres.test.ts",
     "test/e2e/chronicle-event-privacy-postgres.test.ts",
+    "test/e2e/chronicle-event-identity-postgres.test.ts",
+    "test/e2e/chronicle-invite-projection-postgres.test.ts",
     "test/e2e/chronicle-surfaces-postgres.test.ts",
   ],
   // #5876: doctor auto_chronicle + the chronicle advisor read the ledger rollups.
@@ -669,7 +675,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/serve-http-ingest-webhook.test.ts",
   ],
   "src/core/embed-facts*.ts": ["test/e2e/fact-embedding-backfill-parity.test.ts"],
-  "src/core/cycle/extract-facts.ts": ["test/e2e/fact-vector-repair-parity.test.ts", "test/e2e/facts-fence-reconcile-postgres.test.ts", "test/e2e/write-attribution-postgres.test.ts"],
+  "src/core/cycle/extract-facts.ts": ["test/e2e/fact-vector-repair-parity.test.ts", "test/e2e/facts-fence-reconcile-postgres.test.ts", "test/e2e/write-attribution-postgres.test.ts", "test/e2e/extract-facts-unfenced-rows-postgres.test.ts"],
   "src/core/cycle/phases/consolidate.ts": ["test/e2e/managed-maintenance.test.ts", "test/e2e/cycle.test.ts"],
   "src/core/ops/facts.ts": ["test/e2e/managed-facts-backstop.test.ts"],
   "src/core/facts/backstop.ts": ["test/e2e/capture-dedup-postgres.test.ts", "test/e2e/managed-facts-backstop.test.ts", "test/e2e/facts-worker-config.test.ts", "test/e2e/managed-facts-embedding.test.ts", "test/e2e/managed-facts-compaction.test.ts", "test/e2e/legacy-fact-extraction-dedup-postgres.test.ts"],
@@ -686,6 +692,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/connectors/connector-text.ts": ["test/e2e/connector-holds.test.ts"],
   "src/commands/sources-retry-held.ts": ["test/e2e/connector-holds.test.ts"],
   "src/core/repair/connector-fences.ts": ["test/e2e/connector-holds.test.ts"],
+  // #5886 follow-up: gbrain repair take-supersession.
+  "src/core/repair/take-supersession.ts": ["test/e2e/repair-take-supersession-postgres.test.ts"],
   // Fix wave 5 (#5770): stale-atoms repair and its #5777 cross-lane journey.
   "src/core/repair/stale-atoms.ts": ["test/e2e/repair-stale-atoms-postgres.test.ts", "test/e2e/journey-atoms-sync-race-postgres.test.ts", "test/e2e/managed-extract-atoms.test.ts", "test/e2e/fix-wave-5-integration.test.ts", "test/e2e/write-attribution-postgres.test.ts"],
   // Fix wave 3 lane A: connector identity, account pin, no-op kernel, pending set and migration 176.

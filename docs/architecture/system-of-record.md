@@ -238,6 +238,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/forget.ts` (4): the legacy fence expiry, withdrawal and strike-through each run in `maintenanceTransaction` (nested inside a caller's coordinated write, they keep its actor).
 - `src/core/facts/proposal-supersede.ts` (4): unmanaged `decide` proposal accept and undo run in one `maintenanceTransaction` each; managed brains publish a `decide_proposal` request.
 - `src/core/facts/relink-publish.ts` (2): `relink_facts` request preparer.
+- `src/core/facts/unfenced-facts.ts` (2): the cycle and v0.32.2 fence of `row_num`-NULL facts: a maintenance request on managed brains; the unmanaged body mirror and row-number stamp run in `maintenanceTransaction`.
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
 - `src/core/facts/write-single.ts` (2): the legacy single-fact insert and its supersession link each run in `maintenanceTransaction`; managed brains publish through the fact request.
 - `src/core/import-file.ts` (11): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
@@ -267,6 +268,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/repair/captured-facts.ts` (1): a request on managed brains; the unmanaged captured-facts expiry runs in `maintenanceTransaction`.
 - `src/core/repair/extractor-facts.ts` (1): a request on managed brains; the unmanaged extractor-facts restore runs in `maintenanceTransaction`.
 - `src/core/repair/frontmatter.ts` (1): a `managed_file_repair` request on managed sources; the unmanaged rename runs in `maintenanceTransaction`.
+- `src/core/repair/take-supersession.ts` (1): `gbrain repair take-supersession` reprojection: `withCoordinatedWrite` under the page key on managed brains, `maintenanceTransaction` on unmanaged ones; fence edits go through a revision-bound `put_page`.
 - `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-alias.ts` (1): the page-to-alias conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.

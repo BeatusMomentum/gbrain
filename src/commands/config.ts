@@ -291,6 +291,11 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
+  if (key.startsWith('facts.drain_')) {
+    const { validateFactsDrainConfigValue } = await import('../core/facts/drain-config.ts');
+    const err = validateFactsDrainConfigValue(key, value);
+    if (err) { console.error(`[config] ${err}`); process.exit(1); }
+  }
   await engine.setConfig(key, value);
   if (key === 'auto_chronicle') await acknowledgeAutoChronicle(engine, value);
   if (!key.startsWith('decide.slots.')) return;

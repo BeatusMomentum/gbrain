@@ -81,16 +81,22 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
 
 ## auto_chronicle wave follow-ups (filed 2026-10-04, follow-up from v0.60.45.0, #5876)
 
-- [ ] **P1 — facts-backstop jobs have no executor on PGLite.**
-  **What:** `facts_backstop` effects enqueue jobs that `gbrain jobs work` refuses to run on PGLite (`commands/jobs/work.ts`), the same root cause the chronicle cycle phase fixed for events. **Fix:** run them from a cycle phase or the inline drain, bounded per run. **Effort:** M. **Priority:** P1.
+- [x] **P1 — facts-backstop jobs have no executor on PGLite.** **Completed:** the automatic facts drain (`src/core/facts/drain.ts`) runs them inside `gbrain serve`, `serve --http` and the `facts_drain` cycle phase, bounded per run and per day; doctor `facts_drain` reports it.
+  **What:** `facts_backstop` effects enqueue jobs that nothing ran on PGLite unless someone typed `gbrain jobs work`.
 - [ ] **P2 — Drop future-dated events extracted from past pages.**
   **What:** the measured run wrote 2 not-yet-happened events per 24 judged pages (a planned offsite date and a leave start date mentioned in past meetings) and 2 events for a launch plan stated in a chat. **Fix:** refuse proposals dated after the extraction time (or after the page's own date plus a margin) before publication, and tell the judge prompt to emit only what already happened; re-measure on the labeled fixture described in `docs/fix-wave-notes/capy-fix-wave-chronicle.md`. **Effort:** S. **Priority:** P2.
-- [ ] **P2 — Event slug identity collapses distinct same-day proposals.**
-  **What:** an event slug hashes who, what and the depth page, so two different proposals with the same summary on one day collapse into one event (`publish.ts` `buildChronicleEvent`). **Effort:** S. **Priority:** P2.
+- [x] **P2 — Event slug identity collapses distinct same-day proposals.** **Completed: 2026-10-04 (Foundations 2)** — `src/core/chronicle/event-identity.ts` resolves same-day collisions at publication: one event keeps the base slug, the others get `-<hash6>` over instant, place and kind (identical copies `-2`), assigned from the pages already at the candidate slugs so reordering, corrections and re-extraction keep existing slugs. The extractor version is 2. Pinned by `test/chronicle-event-identity.test.ts` (fixture: 6 proposals, 3 collisions before, 0 after).
 - [ ] **P2 — Restore retired events on revert without a model call.**
   **What:** A to B to A re-extracts A once (at most `chronicle.job_budget_usd`). A durable proposal manifest that survives the 72 h tombstone purge would restore A's events for free. **Effort:** M. **Priority:** P2.
-- [ ] **P2 — Deterministic projection for calendar invites.**
-  **What:** an ended invite costs a chat call although its event (title, time, attendees) is fully structured. Project it without the model; an ended invite is still not proof of attendance. **Effort:** M. **Priority:** P2.
+- [x] **P2 — Deterministic projection for calendar invites.** **Completed: 2026-10-04 (Foundations 2)** — `src/core/chronicle/invite-projection.ts` projects an ended invite into one `Scheduled: <title>` meeting event (`captured_via: life-chronicle:invite`) with no chat call, no daily reservation and zero cost, through the judged path's publication and ledger. Pinned by `test/chronicle-invite-projection.test.ts`.
+- [ ] **P2 — Chronicle occurrence status (occurred / planned / committed).**
+  **What:** an event page does not say whether it happened, is planned or is a commitment; projected invites say `Scheduled:` in the summary only. **Fix:** an occurrence-status field on event pages written by the judge and the invite projection, read by `chronicle_day`/`since`. Sequence after the chronicle date-quality fast-track (future-dated events, vague-date precision), which owns the judge prompt and `extract-events.ts`. **Effort:** M. **Priority:** P2.
+- [ ] **P2 — Project ended invites on brains without a chat provider.**
+  **What:** the `chronicle` phase returns `no_chat_provider` before executing any row, so a keyless brain never projects ended invites although they need no model. **Fix:** run invite rows when no judge exists and leave other rows untouched. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Invite-aware eligibility and cost accounting.**
+  **What:** an invite whose body is under 80 characters is skipped `too_short` before projection; backfill estimates every invite as a paid call; once the daily limit is used up, the phase defers invite rows too. **Fix:** make eligibility, the backfill estimate and the daily-limit deferral recognize structured invites. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — Carry write decisions across an extractor-version bump on managed brains.**
+  **What:** after a bump, discovery records `no_write_decision` for every managed page, so re-extraction waits for a consented backfill. **Fix:** reuse the previous version's decision (writer, request, trigger) for unchanged content. **Effort:** S. **Priority:** P2.
 - [ ] **P3 — One LLM pass for atoms and events on meeting pages.**
   **What:** a meeting page pays for atom extraction and event extraction separately. **Effort:** M. **Priority:** P3.
 - [ ] **P3 — Judge input beyond 12,000 characters.**
@@ -137,11 +143,11 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
   **What:** wave 8's conformance gate (`test/fixtures/write-contract-conformance-cases.ts`) covers only the contracts this wave changed. **Fix:** every op × PGLite/Postgres/PgBouncer × stdio/HTTP, asserting the error-code taxonomy. **Effort:** L. **Priority:** P2 (Foundations 2).
 - [ ] **P2 — Restore the `auto_chronicle` trigger (#5876).**
   **What:** `auto_chronicle=true` still has no effect; doctor and the advisor say so. #5329's backfill idempotency landed in v0.60.32.0, so re-enabling the trigger no longer means duplicate event pages from repeat runs. **Fix:** call `runChronicleBackstop` from the import path behind the flag, with a cost note. **Effort:** M. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — Cycle-side fence for `row_num IS NULL` facts (#5299).**
+- [x] **P2 — Cycle-side fence for `row_num IS NULL` facts (#5299).** **Completed** — the `extract_facts` phase fences them itself every cycle through the shared core pass (`src/core/facts/unfenced-facts.ts`) and reconciles those pages in the same run.
   **What:** facts without a fence row number are invisible to the fence reconciler. **Fix:** the cycle fences them after GBRA-35's facts writeback (now on master). **Effort:** M. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — One-shot repair for supersession chains broken on managed brains (#5886).**
+- [x] **P2 — One-shot repair for supersession chains broken on managed brains (#5886).** **Completed** — `gbrain repair take-supersession` (preview, then `--apply`) relinks each struck take from journal, stored-pointer or forced fence-structure evidence and reports ambiguous pages with the manual edit.
   **What:** v0.60.36.0 writes the supersession pointer on the old take row; chains written before it keep `superseded_by` NULL on managed brains. **Fix:** a `gbrain repair` kind that rebuilds the pointers from the fence. **Effort:** S. **Priority:** P2.
-- [ ] **P2 — Doctor check for pages still waiting on their revision backfill (#5216).**
+- [x] **P2 — Doctor check for pages still waiting on their revision backfill (#5216).** **Completed** — doctor `revision_backfill` warns with the pending count, the failed rows by page and `gbrain apply-migrations --force-schema`, which resumes the backfill (managed brains included).
   **What:** the backfill is resumable and reports progress on upgrade, but a brain whose backfill keeps stopping on a failing row has no standing doctor signal. **Effort:** S. **Priority:** P2.
 - [x] **P2 — Scale harness gaps (`bun run test:scale`).** Shipped in v0.60.37.0 (F4c scale tier).
   **What:** the report-only harness lacks injected query vectors, populated facts and takes, a source-scoped grant query, a cold-process first query, concurrent receipt-bearing writers, the Postgres engine and the 10k/20k/50k CI tiers. At 10k pages the per-page import cost of the last 10% is about 8x the first 10% (gate 1.5). **Effort:** L. **Priority:** P2 (Foundations 1, F4).

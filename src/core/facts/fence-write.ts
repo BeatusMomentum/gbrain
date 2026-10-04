@@ -162,9 +162,9 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
   }
 }
 
-type FactFenceGitPathState = 'clean' | 'self_dirty' | 'foreign_dirty' | 'unknown';
+export type FactFenceGitPathState = 'clean' | 'self_dirty' | 'foreign_dirty' | 'unknown';
 
-function gitPathState(repoPath: string, filePath: string): FactFenceGitPathState {
+export function gitPathState(repoPath: string, filePath: string): FactFenceGitPathState {
   try {
     const rel = relative(repoPath, filePath);
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) return 'unknown';
@@ -192,7 +192,7 @@ function gitPathState(repoPath: string, filePath: string): FactFenceGitPathState
   }
 }
 
-async function commitFactFenceFile(
+export async function commitFactFenceFile(
   repoPath: string,
   filePath: string,
   slug: string,
