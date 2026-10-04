@@ -33,9 +33,9 @@ async function until(check:()=>boolean|Promise<boolean>,ms=60000) {
   while(performance.now()<deadline){if(await check())return;if(owner?.exitCode!==null&&owner?.exitCode!==undefined)throw new Error(`Owner exited: ${stderr}`);await new Promise(r=>setTimeout(r,50));}
   throw new Error(`Owner did not become ready: ${stderr}`);
 }
-async function cli(args:string[],childHome=home) {
-  const child=Bun.spawn([process.execPath,join(import.meta.dir,'../src/cli.ts'),...args],{cwd:childHome,env:{...env,GBRAIN_HOME:childHome},stdin:'ignore',stdout:'pipe',stderr:'pipe'});
-  const timer=setTimeout(()=>child.kill('SIGKILL'),45000);
+async function cli(args:string[],childHome=home,extraEnv:Record<string,string>={},killMs=45000) {
+  const child=Bun.spawn([process.execPath,join(import.meta.dir,'../src/cli.ts'),...args],{cwd:childHome,env:{...env,GBRAIN_HOME:childHome,...extraEnv},stdin:'ignore',stdout:'pipe',stderr:'pipe'});
+  const timer=setTimeout(()=>child.kill('SIGKILL'),killMs);
   try {const [out,err,code]=await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);return{out,err,code};}
   finally{clearTimeout(timer);}
 }
@@ -171,6 +171,21 @@ test('resident-owner pending timeout is resumable (exit 0, #5984) and resumes th
   expect(JSON.parse(receipt.out)).toMatchObject({request_id:id!,state:'committed'});
   expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
 },90000);
+
+// F4d for delegated syncs: the env and default deadlines extend while the owner keeps committing pages,
+// as a local sync's do; before, the client stopped the drain at the wall-clock deadline with pages left.
+test('a delegated sync past its progress-aware deadline keeps going while the owner commits pages',async()=>{
+  for(let i=0;i<300;i++)writeFileSync(join(root,`bulk-${String(i).padStart(3,'0')}.md`),`Bulk delegated observation ${i} about the resident owner.\n`);
+  execFileSync('git',['-C',root,'add','.']);
+  execFileSync('git',['-C',root,'-c','user.name=Example','-c','user.email=example@example.invalid','commit','-qm','bulk content']);
+  const synced=await cli(['sync','--source','workspace','--no-pull','--no-embed','--exclude','excluded.md','--json'],home,
+    {GBRAIN_SYNC_MAX_RUNTIME_SECONDS:'1',GBRAIN_SYNC_STALL_ABORT_SECONDS:'60'},170000);
+  expect({code:synced.code,err:synced.err.slice(-2000)}).toMatchObject({code:0});
+  expect(synced.err).toContain('past the delegated deadline and still progressing');
+  expect(JSON.parse(synced.out)).toMatchObject({outcome:'synced'});
+  const page=await cli(['call','get_page',JSON.stringify({slug:'bulk-299',source_id:'workspace'})]);
+  expect(JSON.parse(page.out).compiled_truth).toContain('Bulk delegated observation 299');
+},180000);
 
 test('strict sync parsing retains filtering options and rejects runtime authority fields',async()=>{
   await withEnv(env,async()=>{
