@@ -6,7 +6,7 @@ import type { Page } from '../types.ts';
 import { OperationError, opError, type OpErrorOpts } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
-import { importFromContent, importCodeFile } from '../import-file.ts';
+import { importFromContent, importCodeFile, verifyPageReadable } from '../import-file.ts';
 import { screenImportContent, type ContentRefusal, type ImportScreenResult, type ImportSanityConfig } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, type ParseOpts } from '../markdown.ts';
@@ -15,6 +15,7 @@ import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
+import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
@@ -35,7 +36,7 @@ import { isUnboundSourcePage, UNBOUND_COLLISION_MESSAGE } from './unbound-source
 import { checkpointRetryCommand, findIncompleteSyncReceipt } from './checkpoint-validation.ts';
 import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
-import { clearGitHold, recordSyncImportProvenance } from './sync-holds.ts';
+import { clearGitHold, countGitHolds, recordSyncImportProvenance } from './sync-holds.ts';
 import { VERSION } from '../../version.ts';
 import { windowPredecessor, windowPredecessorCommitted } from './sync-window.ts';
 
@@ -170,7 +171,10 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     'Its intent records an unowned path on something other than a deletion.');
   const originPageId = p.unownedDeletion ? null : row.page_id;
   const releaseHold = async (tx: BrainEngine, path: string | null = p.path) => {
-    if (p.holdObservedAt && path !== null) await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path, observedAt: p.holdObservedAt });
+    if (!p.holdObservedAt || path === null) return;
+    // #5984: a source without holds (one summary read per transaction) has none to clear.
+    if (await transactionMemo(tx, `git-holds:${row.source_id}:${row.source_incarnation}`, () => countGitHolds(tx, row.source_id, row.source_incarnation)) === 0) return;
+    await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path, observedAt: p.holdObservedAt });
   };
   await assertManagedSyncActive(engine);
   if (p.kind !== 'managed_sync_delete' && (!p.processingOptions ||
@@ -311,8 +315,8 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       `A canonical file now occupies the path of page ${row.slug}, written while ${row.source_id} was unbound; neither copy was overwritten. Rename or remove the file and commit, or copy what you need into the page first.`);
   }
   if (p.kind === 'managed_sync_delete') return { observedRevision: snapshot?.revision ?? null, noop: !snapshot || snapshot.page.deleted_at != null,
-    validate, apply: async tx => {
-      if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
+    validate, apply: async (tx, preimage) => {
+      if (snapshot && snapshot.page.deleted_at == null) { await tx.createVersion(row.slug, preimage ? { ...source, preimage } : source); await tx.softDeletePage(row.slug, source); }
       await releaseHold(tx);
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop: !snapshot || snapshot.page.deleted_at != null };
     } };
@@ -378,7 +382,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     }
   }
   let prepared: PreparedContentImport | undefined;
-  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, activePack,
+  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, activePack, coordinated: true,
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true };
   const result = await importFromContent(engine, renamed?.slug ?? row.slug, importContent, { ...importOptions,
     prepare: async value => { prepared = value; return value.result; } }).catch(error => {
@@ -415,7 +419,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     `The canonical correction for ${row.slug} would overwrite newer working-tree bytes; preserve the local edit and commit it.`);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, p.companyApproval ? 'immutable' : 'file');
-  return { observedRevision: snapshot?.revision ?? null,
+  const preparedImport: PreparedMutation = { observedRevision: snapshot?.revision ?? null,
     // Tells the #5470 screen the content is unchanged; publication still queues its effects.
     contentUnchanged: ready.noop && !moved && !writeback,
     ...(renamed ? { additionalPageKeys: [{ sourceId: row.source_id, slug: renamed.slug }] } : {}),
@@ -423,7 +427,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
     deferEmbedding: p.processingOptions?.noEmbed,
     ...(writeback ? { file: { root, path: join(root, p.path), content: serializePageToMarkdown(renderedPage, tags), expectedBeforeHash: p.rawHash } } : {}),
     ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
-    apply: async tx => {
+    apply: async (tx, preimage) => {
       let applied = ready;
       if (renamed) {
         // The page moves first, keeping its id, inbound links and history and leaving
@@ -438,17 +442,27 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
         await movedImport.validate(tx);
         applied = movedImport;
       }
-      await applied.apply(tx);
+      // A moved page is versioned from its own (rename source) read.
+      await applied.apply(tx, renamed ? undefined : preimage);
       // Hash no-ops still repair a missing physical origin under the same guard.
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
-      if (!applied.noop || p.companyApproval) await project(tx);
-      if (!applied.noop) await sealPageTextProjection(tx, row.slug, row.source_id);
-      await releaseHold(tx);
-      const [page] = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug]);
-      if (page) await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(page.id), origin: p.sourcePath!,
-        raw_sha256: sha256(p.content!), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), gbrain_version: VERSION, ...(recovery?.length ? { recovery } : {}) });
+      // #5984: the one read of the page after its last page write (the projections
+      // below and the seal leave its revision unchanged): read-back check, projection
+      // target, seal input, receipt revision and effects.
+      const final = await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
+      const live = final && final.page.deleted_at == null ? final : null;
+      if (!applied.noop) await verifyPageReadable(tx, row.slug, applied.contentHash!, row.source_id, 'managed sync', live?.page ?? null);
+      if (!applied.noop || p.companyApproval) await project(tx, final?.page.id);
+      await pipelined(tx, [
+        async () => { if (!applied.noop && live) await sealPageTextProjection(tx, row.slug, row.source_id, live); },
+        () => releaseHold(tx),
+        async () => { if (final) await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,
+          raw_sha256: sha256(p.content!), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), gbrain_version: VERSION, ...(recovery?.length ? { recovery } : {}) }); },
+      ]);
+      preparedImport.postimage = final;
       return { status: moved ? 'renamed' : applied.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
         chunks: applied.result.chunks, noop: applied.noop && !moved, imported_file: true, ...(moved ? { renamed_from: moved.slug } : {}),
         ...(recovery?.length ? { recovered_frontmatter: true } : {}), ...(commentValue ? { comment_value: true } : {}) };
     } };
+  return preparedImport;
 }

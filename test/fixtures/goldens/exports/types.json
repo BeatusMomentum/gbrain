@@ -68,7 +68,7 @@
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
-          "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
+          "createVersion: (slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot; }) => Promise<PageVersion>",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
           "deleteCodeEdgesForChunks: (chunkIds: number[]) => Promise<void>",
           "deleteEvalCandidatesBefore: (date: Date) => Promise<number>",
@@ -214,7 +214,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rows: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; }) => Promise<T>",
@@ -971,7 +971,7 @@
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
-          "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
+          "createVersion: (slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot; }) => Promise<PageVersion>",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
           "deleteCodeEdgesForChunks: (chunkIds: number[]) => Promise<void>",
           "deleteEvalCandidatesBefore: (date: Date) => Promise<number>",
@@ -1154,7 +1154,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rowsIn: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; }) => Promise<T>",
@@ -3053,7 +3053,7 @@
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
-          "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
+          "createVersion: (slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot; }) => Promise<PageVersion>",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
           "deleteCodeEdgesForChunks: (chunkIds: number[]) => Promise<void>",
           "deleteEvalCandidatesBefore: (date: Date) => Promise<number>",
@@ -3199,7 +3199,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rows: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "withReservedConnection: <T>(fn: (conn: ReservedConnection) => Promise<T>, opts?: { route?: \"ordinary\"; }) => Promise<T>",
@@ -4279,7 +4279,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; remote?: boolean; allowEmptyOverwrite?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; }) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; coordinated?: boolean; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; remote?: boolean; allowEmptyOverwrite?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; }) => Promise<ImportResult>"
         ]
       },
       {
@@ -4315,6 +4315,13 @@
         "name": "slugConflictHoldMessage",
         "signature": [
           "(relativePath: string, expectedSlug: string) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "verifyPageReadable",
+        "signature": [
+          "(engine: BrainEngine, slug: string, expectedHash: string, sourceId: string | undefined, caller: string, read?: Pick<Page, \"content_hash\"> | null) => Promise<void>"
         ]
       },
       {
@@ -5840,7 +5847,7 @@
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
-          "createVersion: (slug: string, opts?: { sourceId?: string; }) => Promise<PageVersion>",
+          "createVersion: (slug: string, opts?: { sourceId?: string; preimage?: PageSnapshot; }) => Promise<PageVersion>",
           "db: PGlite",
           "deleteChunks: (slug: string, opts?: { sourceId?: string; }) => Promise<void>",
           "deleteCodeEdgesForChunks: (chunkIds: number[]) => Promise<void>",
@@ -6017,7 +6024,7 @@
           "updateSourceConfig: (sourceId: string, patch: Record<string, unknown>) => Promise<boolean>",
           "updateTake: (pageId: number, rowNum: number, fields: { weight?: number; since_date?: string; source?: string; }) => Promise<void>",
           "updateTakeEmbeddings: (rowsIn: TakeEmbeddingInput[], opts?: BatchOpts) => Promise<number>",
-          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; } & BatchOpts) => Promise<void>",
+          "upsertChunks: (slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn; expectedRevision?: string; sealChunkerVersion?: number; } & BatchOpts) => Promise<void>",
           "upsertEventProjection: (opts: { depthSlug: string; eventSlug: string; date: string; summary: string; detail?: string; sourceId?: string; }) => Promise<{ projected: boolean; }>",
           "upsertFile: (spec: FileSpec) => Promise<{ id: number; created: boolean; }>",
           "walRepairReceipt: WalRepairReceipt | null",
