@@ -696,7 +696,13 @@ The persistence invariant jobs run the complete `scripts/persistence/validate.ts
 gate (10,000-write soak) on pushes to master and manual dispatches. Pull requests
 run the same schedules and crash boundaries with a 2,500-write soak; the full
 PGLite soak alone takes 15-28 minutes and would otherwise set every PR's wall
-time. `test/scripts/data-safety-native-workflow.test.ts` pins the split.
+time. `test/scripts/data-safety-native-workflow.test.ts` pins the split. The
+crash robot (generated sequences of real operations, SIGKILL at every crash
+seam they reach, process faults, the reference model) runs as its own job
+beside the soak: 150 s on pull requests, 600 s elsewhere, Postgres through a
+transaction-mode PgBouncer. That job also replays the shrunk crash-robot
+regressions (`test/persistence-crash-robot.slow.test.ts`) and the history
+fixture test on both engines; see `scripts/persistence/README.md`.
 
 For platform-only feedback, dispatch
 `gh workflow run test.yml --ref <branch> -f native_only=true`. This explicit manual option uses a separate concurrency
