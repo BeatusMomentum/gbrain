@@ -69,6 +69,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 5 #5401: projection drain CLI and the budgeted resident drain.
   "src/commands/projections.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   "src/core/persistence/consumer.ts": ["test/e2e/projection-drain-postgres.test.ts"],
+  "src/core/persistence/effect-links.ts": ["test/e2e/persistence-links-effect-postgres.test.ts"],
   "src/core/persistence/journal.ts": ["test/e2e/projection-drain-postgres.test.ts", "test/e2e/withdrawal-followup-writes-postgres.test.ts", "test/e2e/worktree-refresh-postgres.test.ts"],
   // F0 `gbrain sources refresh`: the refresh state machine, its admission/claim fence and restart recovery.
   "src/core/persistence/worktree-refresh.ts": ["test/e2e/worktree-refresh-postgres.test.ts"],

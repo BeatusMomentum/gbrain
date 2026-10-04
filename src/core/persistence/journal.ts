@@ -123,84 +123,125 @@ export function assertReplayIntent(row: WriteRequest, expectedDigest: string): W
   return row;
 }
 export async function admitWrite(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
-  const { requestId, apply } = await prepareAdmission(engine, input, overrides);
-  return retryWriteAdmission(requestId, remaining => engine.transaction(async tx => {
+  const { requestIds, apply } = await prepareAdmissions(engine, [input], overrides);
+  return admissionTransaction(engine, requestIds[0]!, async tx => (await apply(tx))[0]!);
+}
+/**
+ * #6007: admit several writes for one principal, source and worktree in ONE
+ * transaction: every new row is accepted or none is, with capacity reserved
+ * for the whole set. Rows that already exist replay (identical intent) or
+ * refuse with idempotency_conflict.
+ */
+export async function admitWrites(engine: BrainEngine, inputs: readonly WriteAdmission[], overrides?: Partial<JournalLimits>,
+  opts: { budgetMs?: number; retryLabel?: string } = {}): Promise<WriteRequest[]> {
+  const { requestIds, apply } = await prepareAdmissions(engine, inputs, overrides);
+  return admissionTransaction(engine, opts.retryLabel ?? requestIds.join(', '), apply, opts.budgetMs);
+}
+function admissionTransaction<T>(engine: BrainEngine, label: string, apply: (tx: BrainEngine) => Promise<T>, budgetMs?: number): Promise<T> {
+  return retryWriteAdmission(label, remaining => engine.transaction(async tx => {
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true)",
       [`${Math.min(100, remaining)}ms`, `${remaining}ms`]);
     return apply(tx);
-  }));
+  }), budgetMs);
 }
 /** Caller owns the transaction and retries its entire unit of work after rollback. */
 export async function admitWriteInTransaction(tx: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>): Promise<WriteRequest> {
-  return (await prepareAdmission(tx, input, overrides)).apply(tx);
+  return (await (await prepareAdmissions(tx, [input], overrides)).apply(tx))[0]!;
 }
-async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, overrides?: Partial<JournalLimits>) {
+async function prepareAdmissions(engine: BrainEngine, inputs: readonly WriteAdmission[], overrides?: Partial<JournalLimits>) {
+  const first = inputs[0];
+  if (!first) throw new TypeError('Admission requires at least one write.');
+  for (const input of inputs) {
+    if (input.sourceId !== first.sourceId || input.sourceIncarnation !== first.sourceIncarnation || (input.worktreeId ?? null) !== (first.worktreeId ?? null)
+      || String(input.topologyGeneration ?? '') !== String(first.topologyGeneration ?? '')
+      || principalKey(input.principal) !== principalKey(first.principal)) throw new TypeError('A batched admission shares one principal, source and worktree binding.');
+  }
   const limits = await readJournalLimits(engine,overrides);
-  const requestId = requireUuid(input.requestId ?? randomUUID());
-  const fingerprint = intentDigest(input);
-  const bytes = jsonBytes(input.intent) + jsonBytes(input.authority);
-  const terminalBytes = input.terminalReservation ?? Math.max(16_384,jsonBytes(input.authority)+8192);
-  if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
+  const rows = inputs.map(input => {
+    const requestId = requireUuid(input.requestId ?? randomUUID());
+    const terminalBytes = input.terminalReservation ?? Math.max(16_384,jsonBytes(input.authority)+8192);
+    if (!Number.isSafeInteger(terminalBytes) || terminalBytes < 1024) throw new TypeError('Invalid terminal receipt reservation.');
+    return { input, requestId, fingerprint: intentDigest(input), bytes: jsonBytes(input.intent) + jsonBytes(input.authority), terminalBytes };
+  });
+  if (new Set(rows.map(row => row.requestId)).size !== rows.length) throw new TypeError('A batched admission repeats a request_id.');
   const stamp = writerStamp();
-  return { requestId, apply: async (tx: BrainEngine): Promise<WriteRequest> => {
+  return { requestIds: rows.map(row => row.requestId), apply: async (tx: BrainEngine): Promise<WriteRequest[]> => {
     await declarePersistenceProtocol(tx);
-    assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
-    if (input.worktreeId) {
-      await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [input.worktreeId]);
-      await assertWorktreeNotRefreshing(tx, input);
+    for (const { input } of rows) assertMutationProtocol({ target_kind: input.targetKind, protocol_version: input.protocolVersion });
+    if (first.worktreeId) {
+      await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [first.worktreeId]);
+      for (const { input } of rows) await assertWorktreeNotRefreshing(tx, input);
       const binding = await tx.executeRaw(`SELECT source_id FROM persistence_source_bindings WHERE source_id=$1
         AND source_incarnation=$2::uuid AND worktree_id=$3::uuid AND topology_generation=$4`,
-      [input.sourceId, input.sourceIncarnation, input.worktreeId, input.topologyGeneration]);
+      [first.sourceId, first.sourceIncarnation, first.worktreeId, first.topologyGeneration]);
       if (!binding.length) throw opError('source_changed', 'The source binding changed during admission.',
-        `Source ${input.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
-        { fix: ownerStatusFix(input.sourceId) });
+        `Source ${first.sourceId}'s worktree binding changed (a claim, transfer or lifecycle change) while this write was being admitted, so nothing was accepted. Check the owner with the command in fix, then submit the write again; reusing the same request_id is safe because nothing was recorded.`,
+        { fix: ownerStatusFix(first.sourceId) });
     }
     // Source membership is locked before principal/counter/request guards. A
     // deleted/recreated source never receives work accepted for its old identity.
     const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
-      'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [input.sourceId]);
-    if (!source || source.archived || source.incarnation !== input.sourceIncarnation) {
+      'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [first.sourceId]);
+    if (!source || source.archived || source.incarnation !== first.sourceIncarnation) {
       throw new OperationError('source_changed', 'The write source is missing, archived, or was replaced.', 'Resolve the source again and submit a new request.');
     }
-    await authorizeWrite(tx, input.authority, input.operation, input.slug, true);
-    const counters = await lockCounters(tx, ['brain', principalKey(input.principal)]);
-    if(input.principal.kind==='local_cli') {
-      const topology=await tx.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid',[input.principal.id,requestId]);
-      if(topology.length) throw lifecycleIdConflict(requestId);
+    for (const { input } of rows) await authorizeWrite(tx, input.authority, input.operation, input.slug, true);
+    const counters = await lockCounters(tx, ['brain', principalKey(first.principal)]);
+    if(first.principal.kind==='local_cli') {
+      const topology=await tx.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=ANY($2::uuid[])',
+        [first.principal.id, rows.map(row => row.requestId)]);
+      if(topology.length) throw lifecycleIdConflict(String(topology[0]!.request_id));
     }
-    const prior = await getWriteRequest(tx, input.principal, requestId);
-    if (prior) {
-      if ((prior.target_kind ?? 'page') !== (input.targetKind ?? 'page') || (prior.protocol_version ?? 1) !== (input.protocolVersion ?? 1)) {
+    const priors = rows.length === 1
+      ? [await getWriteRequest(tx, first.principal, rows[0]!.requestId)].filter((row): row is WriteRequest => row !== null)
+      : await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
+        [first.principal.kind, first.principal.id, rows.map(row => row.requestId)]);
+    const priorById = new Map(priors.map(row => [String(row.request_id), row]));
+    const result: (WriteRequest | null)[] = [];
+    const fresh: typeof rows = [];
+    for (const row of rows) {
+      const prior = priorById.get(row.requestId);
+      if (!prior) { result.push(null); fresh.push(row); continue; }
+      if ((prior.target_kind ?? 'page') !== (row.input.targetKind ?? 'page') || (prior.protocol_version ?? 1) !== (row.input.protocolVersion ?? 1)) {
         throw opError('idempotency_conflict', 'This request_id belongs to a different mutation target or protocol.',
-          `Request ID ${requestId} was already accepted for a ${prior.target_kind ?? 'page'} write (protocol ${prior.protocol_version ?? 1}), so this ${input.targetKind ?? 'page'} write was not admitted. Read the original request${prior.principal_kind === 'local_cli' ? ' with the command in fix' : ' with get_write_request'} if you meant to replay it; otherwise submit this write with a new request_id.`,
+          `Request ID ${row.requestId} was already accepted for a ${prior.target_kind ?? 'page'} write (protocol ${prior.protocol_version ?? 1}), so this ${row.input.targetKind ?? 'page'} write was not admitted. Read the original request${prior.principal_kind === 'local_cli' ? ' with the command in fix' : ' with get_write_request'} if you meant to replay it; otherwise submit this write with a new request_id.`,
           prior.principal_kind === 'local_cli' ? { fix: requestInspectFix(prior) } : {});
       }
-      return assertReplayIntent(prior, fingerprint);
+      result.push(assertReplayIntent(prior, row.fingerprint));
     }
-    if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
+    if (!fresh.length) return result as WriteRequest[];
+    for (const { input } of fresh) if (input.targetKind === 'skill_bundle') await assertSharedSkillPersistence(tx, input.sourceId);
+    const count = fresh.length;
+    const bytes = fresh.reduce((sum, row) => sum + row.bytes, 0);
+    const terminalBytes = fresh.reduce((sum, row) => sum + row.terminalBytes, 0);
     for (const row of counters) {
       const brain = row.key === 'brain';
-      if (Number(row.outstanding_count) + 1 > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
+      if (Number(row.outstanding_count) + count > (brain ? limits.brainOutstanding : limits.principalOutstanding)) throw capacityError(`${brain ? 'brain' : 'principal'} outstanding requests`);
       if (Number(row.intent_bytes) + bytes > (brain ? limits.brainIntentBytes : limits.principalIntentBytes)) throw capacityError(`${brain ? 'brain' : 'principal'} intent bytes`);
       const scope = brain ? 'brain' : 'principal';
-      if (Number(row.lifetime_ids) + 1 > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
+      if (Number(row.lifetime_ids) + count > limits[`${scope}LifetimeIds`]) throw await cumulativeCapacityError(tx, `${scope} permanent request IDs`,
         row.key, `${scope}LifetimeIds`, Number(row.lifetime_ids), limits[`${scope}LifetimeIds`]);
       if (Number(row.terminal_bytes) + terminalBytes > limits[`${scope}TerminalBytes`]) throw await cumulativeCapacityError(tx, `${scope} reserved receipt bytes`,
         row.key, `${scope}TerminalBytes`, Number(row.terminal_bytes), limits[`${scope}TerminalBytes`]);
     }
-    const [row] = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
-      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
-       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-       admitter_version,admitter_host_id)
-      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid)
-      RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
-      input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
-      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1,
-      stamp.version, stamp.hostId]);
-    await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
-      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
-    [counters.map(c => c.key), bytes, terminalBytes]);
-    return row;
+    let next = 0;
+    for (const { input, requestId, fingerprint, bytes: rowBytes, terminalBytes: rowTerminal } of fresh) {
+      const [inserted] = await tx.executeRaw<WriteRequest>(`INSERT INTO persistence_requests
+        (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
+         worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
+         admitter_version,admitter_host_id)
+        VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid)
+        RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
+        input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
+        fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), rowBytes, rowTerminal, input.targetKind ?? 'page', input.protocolVersion ?? 1,
+        stamp.version, stamp.hostId]);
+      while (result[next] !== null) next++;
+      result[next++] = inserted!;
+    }
+    await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count+$4,
+      intent_bytes=intent_bytes+$2,lifetime_ids=lifetime_ids+$4,terminal_bytes=terminal_bytes+$3 WHERE key=ANY($1::text[])`,
+    [counters.map(c => c.key), bytes, terminalBytes, count]);
+    return result as WriteRequest[];
   } };
 }
 

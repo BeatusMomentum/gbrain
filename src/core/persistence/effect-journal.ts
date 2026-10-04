@@ -5,7 +5,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { sha256 } from './digest.ts';
-import { PARK_AFTER_FAILURES, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_OPERATIONS, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
@@ -14,7 +14,11 @@ import { resolveDefaultVisibility } from '../facts/visibility.ts';
 import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 
-/** `snapshot` is the publication's final read of the page, including deleted rows, in this transaction. */
+/**
+ * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
+ * A remote put_page/capture/edit_page also queues a `links` effect, in one statement that inserts
+ * nothing while `auto_link` or `mcp.remote_auto_links` is off (unset is on).
+ */
 export async function queuePublicationEffects(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'operation' | 'intent' | 'authority' | 'principal_kind' | 'principal_id'>>, snapshot: PageSnapshot | null,
   outcome: Record<string, unknown>, prepared?: PreparedMutation): Promise<void> {
   if (prepared?.noop || prepared?.target === 'skill_bundle') return;
@@ -40,9 +44,36 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
       if (!(await isFactsExtractionEnabled(tx))) outcome.facts_backstop = { skipped: 'extraction_disabled' };
       else await queue('facts-backstop', { visibility: await resolveDefaultVisibility(tx) });
     }
+    if (row.authority && row.operation && REMOTE_MENTION_OPERATIONS.includes(row.operation)
+      && !(row.authority.autoLinkTrusted ?? !row.authority.remote)) {
+      const queued = await tx.executeRaw(`INSERT INTO persistence_effects (request_id,kind,revision,data,source_id,source_incarnation,worktree_id)
+        SELECT $1::uuid,'links',$2::uuid,$3::text::jsonb,$4,$5::uuid,$6::uuid WHERE NOT EXISTS (SELECT 1 FROM config
+          WHERE key IN ('auto_link',$7) AND lower(btrim(value,E' \\t\\r\\n')) IN ('false','0','no','off'))
+        ON CONFLICT(request_id,kind) DO NOTHING RETURNING id`,
+      [row.id, revision ?? null, JSON.stringify(data), row.source_id, row.source_incarnation, row.worktree_id, REMOTE_AUTO_LINKS_KEY]);
+      if (queued.length) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
+    }
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
   }
+}
+
+/**
+ * Re-arm the `links` effects of requests published together (a batch), so each
+ * page's mention links resolve against every page the batch created. Call it
+ * in the transaction that commits the batch's last page, or after it. An effect
+ * whose page changed since finishes as superseded; a claimed effect loses its
+ * claim and runs again. `slugs` narrows the re-armed effects to those pages.
+ * Each effect is re-armed at most once (`data.batch_reconciled`), so repeated
+ * status reads of a finished batch do not redo the work. Returns how many were re-armed.
+ */
+export async function queueLinksReconcile(tx: SqlEngine, opts: { sourceId: string; requestIds: readonly string[]; slugs?: readonly string[] }): Promise<number> {
+  if (!opts.requestIds.length) return 0;
+  const rows = await tx.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+    next_attempt_at=now(),error_code=NULL,outcome=NULL,updated_at=now(),data=data||'{"batch_reconciled":true}'::jsonb
+    WHERE kind='links' AND source_id=$1 AND request_id=ANY($2::uuid[]) AND ($3::text[] IS NULL OR data->>'slug'=ANY($3::text[]))
+    AND NOT (data ? 'batch_reconciled') AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [opts.sourceId, [...opts.requestIds], opts.slugs ? [...opts.slugs] : null]);
+  return rows.length;
 }
 
 /**
@@ -169,16 +200,17 @@ export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, r
 }
 
 /** Only public kind/state/reason, aggregated so withdrawal page counts cannot leak. */
-export async function publicEffectsForRequest(engine: SqlEngine, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string }>> {
+export async function publicEffectsForRequest(engine: SqlEngine, requestId: string): Promise<Array<{ kind: EffectKind; state: string; reason?: string; push?: string; added?: number; removed?: number }>> {
   const rows = await engine.executeRaw<{ kind: EffectKind; state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
     'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind', [requestId]);
-  return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop'].includes(row.kind)).map(row => {
+  return rows.filter(row => ['git', 'embedding', 'withdrawal-mirror', 'facts-backstop', 'links'].includes(row.kind)).map(row => {
     const reason = row.error_code ?? row.outcome?.reason;
     const push = row.outcome?.push;
-    return { kind: row.kind, state: row.recovering ? 'recovering' : row.outcome?.git === 'skipped' || row.outcome?.facts === 'skipped' || row.outcome?.embedding === 'skipped' ? 'skipped'
+    return { kind: row.kind, state: row.recovering ? 'recovering' : row.outcome?.git === 'skipped' || row.outcome?.facts === 'skipped' || row.outcome?.embedding === 'skipped' || row.outcome?.links === 'skipped' ? 'skipped'
       : row.outcome?.facts === 'queued' ? 'dispatched' : row.state,
       ...(typeof reason === 'string' && /^[a-z_]{1,80}$/.test(reason) ? { reason } : {}),
       ...(row.kind === 'git' && (push === 'committed' || push === 'skipped') ? { push } : {}),
+      ...(row.kind === 'links' && row.outcome?.links === 'committed' ? { added: Number(row.outcome.added), removed: Number(row.outcome.removed) } : {}),
     };
   });
 }

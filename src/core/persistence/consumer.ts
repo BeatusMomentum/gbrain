@@ -85,7 +85,7 @@ export class PersistenceConsumer {
   private preparing = new Map<string, { request_id: string; started_at: string; deadline_exceeded: boolean; attempt: number }>();
   readonly hostId: string;
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
-    private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void } = {}) {
+    private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void; onSettled?: (requestId: string, elapsedMs: number) => void } = {}) {
     this.hostId = opts.hostId ?? localHostId();
   }
   private get checkoutObservable(): ((listener: () => void) => () => void) | undefined {
@@ -339,7 +339,9 @@ export class PersistenceConsumer {
       if (this.activeRoots.has(key)) { await releaseUnpublishedClaim(this.engine, row, 'writer_busy'); break; }
       this.activeRoots.add(key);
       let progressed = false;
+      const started = performance.now();
       const task = this.execute(row).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
+        this.opts.onSettled?.(row.id, performance.now() - started);
         if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
         else { this.progressWake = true; this.publishedSinceMaintenance++; }
         this.active.delete(task); this.activeRoots.delete(key); this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);

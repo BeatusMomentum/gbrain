@@ -648,6 +648,24 @@ export class ManagedConnectorSync {
       pending = outstanding();
     }
   }
+  /**
+   * A queued withdrawal mirror rewrites this page's canonical file after its
+   * write commits; the file is read for the next write only after it lands, or
+   * that write would publish against a stale file hash and refuse.
+   */
+  private async awaitPendingMirror(slug: string): Promise<void> {
+    if (!this.binding?.worktree_id) return;
+    const pending = async () => (await this.engine.executeRaw(`SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid
+      AND kind='withdrawal-mirror' AND state IN ('queued','running')
+      AND (NOT (data ? 'targets') OR data->'targets' @> jsonb_build_array(jsonb_build_object('slug',$2::text))) LIMIT 1`,
+    [this.binding!.worktree_id, slug])).length > 0;
+    const started = performance.now();
+    while (this.remainingWait() > performance.now() - started && await pending()) {
+      startPersistenceConsumer(this.engine, loadConfig() ?? { engine: this.engine.kind }).wake();
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    this.waitCharged += performance.now() - started;
+  }
   /** Keeps outstanding writes below the principal's outstanding and intent-byte limits; stops the sweep when it cannot. */
   private async makeRoom(): Promise<void> {
     const full = () => this.pendingRows.size >= this.outstandingCap ||
@@ -764,6 +782,7 @@ export class ManagedConnectorSync {
     Promise<{ row: WriteRequest | null; pending: boolean; created: boolean }> {
     await this.awaitPagePending(slug);
     await this.recover(slug);
+    await this.awaitPendingMirror(slug);
     const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId, includeDeleted: true });
     if (kind === 'connector_v2_google_receipts') {
       if (!snapshot || snapshot.page.id !== extra.googlePageId) throw opError('page_identity_changed', 'The historical Gmail page was deleted or recreated.',
