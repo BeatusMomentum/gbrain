@@ -370,11 +370,11 @@ describe('REAL CLI triggers for the other families', () => {
 
   test('GBRAIN_DB_ACCESS: a closed database port classifies with the db-repair fix (human and --json)', async () => {
     const want: Expect = { error: 'database_error', code: 'database_error', fixArgv: ['gbrain', 'db-repair'] };
-    const env = { GBRAIN_DATABASE_URL: 'postgresql://h3:h3-secret@127.0.0.1:1/h3' };
+    const env = { GBRAIN_DATABASE_URL: 'postgresql://h3:GSTACK_EXAMPLE_NONCE@127.0.0.1:1/h3' };
     const json = await gbrain(homeA, ['get', MISSING, '--json'], env);
     expectSurvives(json.json, want, 'cli --json', BRAIN_PIN);
     expect(json.json.suggestion).toContain('GBRAIN_DB_ACCESS');
-    expect(json.stdout).not.toContain('h3-secret');
+    expect(json.stdout).not.toContain('GSTACK_EXAMPLE_NONCE');
     // Human output is the golden-pinned GBRAIN_DB_ACCESS seam (`… Run: gbrain db-repair`), not the rendered fix line.
     const humanErr = (await gbrain(homeA, ['get', MISSING], env)).stderr;
     expect(humanErr).toContain('Error [database_error]: ');

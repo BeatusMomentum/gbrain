@@ -17,7 +17,7 @@ import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 const EVAL_FIXTURES = join(import.meta.dir, 'fixtures', 'eval-baselines');
 const QRELS = join(EVAL_FIXTURES, 'qrels-search.json');
 const CAPTURED = join(EVAL_FIXTURES, 'captured-sample.ndjson');
-const UNREACHABLE_PG = 'postgresql://fixture:fixture@127.0.0.1:1/gbrain_test';
+const UNREACHABLE_PG = 'postgresql://fixture@127.0.0.1:1/gbrain_test';
 
 function onlyDocument(r: CliResult): Record<string, unknown> {
   const doc = JSON.parse(r.stdout);
