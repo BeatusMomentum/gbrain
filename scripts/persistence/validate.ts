@@ -124,6 +124,7 @@ export async function runValidation(options: ValidationOptions) {
     function start(path: string, role: string, ...args: string[]) { const child = spawnWorker(path, home, role, args); children.push(child); return child; }
     const robotOptions = (extra: Partial<Parameters<typeof runRobotPhase>[0]> = {}) => ({ engine: options.engine, seed: options.seed ?? 5105,
       seconds: options.robotSeconds ?? 300, scratch, home, admin, databaseUrl: options.databaseUrl, databases,
+      pooledUrl: options.engine === 'postgres' ? process.env.GBRAIN_PGBOUNCER_URL || undefined : undefined,
       spawn: spawnWorker, track: (child: ReturnType<typeof spawnWorker>) => { children.push(child); }, ...extra });
     if (options.replay || options.shrink) {
       const entries = replayEntries((options.replay ?? options.shrink)!, options.engine);

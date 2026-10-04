@@ -12,6 +12,8 @@
  * Nothing here calls a preparer or `tx.*` directly.
  */
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import type { AuthInfo, OperationContext } from '../../src/core/ops/contract.ts';
@@ -21,7 +23,7 @@ import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 
 export const OP_KINDS = ['put_page', 'edit_page', 'remember', 'forget', 'takes_add', 'takes_supersede',
-  'add_timeline_entry', 'delete_page', 'restore_page', 'revoke_access'] as const;
+  'add_timeline_entry', 'delete_page', 'restore_page', 'revoke_access', 'sync', 'connector_publish'] as const;
 export type OpKind = typeof OP_KINDS[number];
 /** Read surfaces the oracle checks; they never mutate. */
 export const READ_KINDS = ['get_page', 'recall', 'takes_list'] as const;
@@ -90,6 +92,58 @@ export interface World {
   submitted?: Map<string, Record<string, unknown>>;
   /** Called with the exact parameters right before submission (a crash worker persists them). */
   onSubmit?: (d: OpDescriptor, params: Record<string, unknown>) => void;
+  /** Checkout roots by source id: `sync` edits and commits files there as a user would. */
+  roots?: Record<string, string>;
+  /** The connector source, when the topology has one. */
+  connector?: { sourceId: string; root: string };
+}
+
+/** The GitHub item the connector fixture serves; its page is `CONNECTOR_SLUG` in the connector source. */
+export const CONNECTOR_SLUG = 'gh/acme-example/app/1';
+const CONNECTOR_CONFIG = { kind: 'github', gh_scope: 'repos', gh_repos: 'acme-example/app', gh_token_env: 'CRASH_ROBOT_CONNECTOR_TOKEN' };
+export function connectorSourceConfig(): Record<string, string> { return { ...CONNECTOR_CONFIG }; }
+
+/** A user edits a page file in the checkout and commits it, then the owner syncs through the real `sync_brain` handler. */
+async function runSync(world: World, d: OpDescriptor): Promise<Record<string, unknown>> {
+  const root = world.roots?.[d.source];
+  if (!root) throw new Error(`op descriptor ${d.id}: source ${d.source} has no checkout`);
+  const slug = String(d.args.slug);
+  const path = join(root, `${slug}.md`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, String(d.args.content));
+  // `extra` sibling files make a backlog, so a managed Postgres sync publishes in bulk groups.
+  const files = [`${slug}.md`];
+  for (let i = 0; i < Number(d.args.extra ?? 0); i++) {
+    const sibling = `${slug}-batch-${i}.md`; files.push(sibling);
+    writeFileSync(join(root, sibling), `---\ntype: note\ntitle: batch ${i}\n---\n\nBatch page ${i} of ${slug}.\n`);
+  }
+  const git = (...args: string[]) => Bun.spawnSync(['git', '-C', root, ...args], { stdout: 'pipe', stderr: 'pipe' });
+  git('add', '--', ...files);
+  git('-c', 'user.name=Crash Robot', '-c', 'user.email=robot@example.invalid', 'commit', '-q', '-m', `edit ${slug}`, '--', ...files);
+  return await operationsByName.sync_brain.handler(contextFor(world, 'local', d.source),
+    { source_id: d.source, no_pull: true, no_embed: true }) as Record<string, unknown>;
+}
+
+/** The connector fetches one issue whose body carries the descriptor's marker and publishes it through the coordinator. */
+async function runConnector(world: World, d: OpDescriptor): Promise<Record<string, unknown>> {
+  if (!world.connector) throw new Error(`op descriptor ${d.id}: the topology has no connector source`);
+  const { runGitHubSync } = await import('../../src/core/github-source.ts');
+  const { parseGitHubSourceConfig } = await import('../../src/core/github-source-config.ts');
+  const issue = { number: 1, title: 'Robot issue', state: 'open', body: String(d.args.body), created_at: '2026-09-01T00:00:00Z',
+    updated_at: String(d.args.updated_at ?? '2026-09-02T00:00:00Z'), labels: [], assignees: [], user: { login: 'example-user' },
+    html_url: 'https://github.com/acme-example/app/issues/1' };
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  const fetchImpl = async (url: string) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/issues/1')) return json(issue);
+    if (path.endsWith('/issues')) return json([issue]);
+    if (path.endsWith('/pulls') || path.endsWith('/comments')) return json([]);
+    if (path === '/repos/acme-example/app') return json({ full_name: 'acme-example/app', private: true, default_branch: 'main' });
+    throw new Error(`crash-robot connector fixture: unexpected route ${path}`);
+  };
+  process.env.CRASH_ROBOT_CONNECTOR_TOKEN ??= 'synthetic-local-fixture';
+  return await runGitHubSync(world.engine, world.connector.sourceId, parseGitHubSourceConfig(CONNECTOR_CONFIG, world.connector.root),
+    { noEmbed: true, noExtract: true, noSchemaPack: true, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } } as never, fetchImpl as never) as unknown as Record<string, unknown>;
 }
 
 export function descriptor(id: string, kind: OpKind, actor: string, source: string, args: Record<string, OpArg>,
@@ -189,6 +243,8 @@ export async function paramsFor(world: World, d: OpDescriptor): Promise<{ op: st
     case 'delete_page': return { op: 'delete_page', params: { ...base, ...revision, slug: a.slug } };
     case 'restore_page': return { op: 'restore_page', params: { ...base, ...revision, slug: a.slug } };
     case 'revoke_access': return { op: 'revoke_access', params: { actor: a.actor } };
+    case 'sync': return { op: 'sync', params: { slug: a.slug, content: a.content, ...(a.extra ? { extra: a.extra } : {}) } };
+    case 'connector_publish': return { op: 'connector_publish', params: { body: a.body, updated_at: a.updated_at } };
   }
 }
 
@@ -215,6 +271,24 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
     world.observations.set(d.id, observation);
     return observation;
   }
+  if (d.kind === 'sync' || d.kind === 'connector_publish') {
+    const { params } = await paramsFor(world, d);
+    (world.submitted ??= new Map()).set(d.id, params);
+    world.onSubmit?.(d, params);
+    let observation: OpObservation;
+    try {
+      const run = { ...d, args: params as OpDescriptor['args'] };
+      const result = d.kind === 'sync' ? await runSync(world, run) : await runConnector(world, run);
+      const status = String(result.status);
+      observation = { ...base, status: ['synced', 'first_sync', 'up_to_date'].includes(status) ? 'committed' : status === 'partial' ? 'pending' : 'refused',
+        ...(['synced', 'first_sync', 'up_to_date', 'partial'].includes(status) ? {} : { code: status }), values: {}, raw: jsonSafe({ status, reason: result.reason }) };
+    } catch (error) {
+      const e = error as { code?: string; message?: string };
+      observation = { ...base, status: 'refused', code: e.code ?? 'uncoded_error', values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
+    }
+    world.observations.set(d.id, observation);
+    return observation;
+  }
   const { op, params } = await paramsFor(world, d);
   (world.submitted ??= new Map()).set(d.id, params);
   world.onSubmit?.(d, params);
@@ -238,7 +312,9 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
     // The HTTP transport answers a token the verifier rejects with 401 invalid_token.
     if (!e.code && e.name === 'InvalidTokenError') e.code = 'invalid_token';
     const receipt = receiptOf(e.writeRequest);
-    observation = { ...base, status: e.code === 'write_pending' ? 'pending' : 'refused', code: e.code ?? 'uncoded_error',
+    // A memory verb reports an accepted, unfinished write as `unavailable` carrying its pending receipt.
+    const pending = e.code === 'write_pending' || (receipt !== undefined && !['committed', 'failed', 'conflict', 'cancelled'].includes(receipt.state));
+    observation = { ...base, status: pending ? 'pending' : 'refused', code: e.code ?? 'uncoded_error',
       receipt, values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
   }
   const slug = typeof params.slug === 'string' ? params.slug : typeof params.entity === 'string' ? params.entity : null;

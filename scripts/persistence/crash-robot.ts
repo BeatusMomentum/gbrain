@@ -17,6 +17,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { installFaultHook, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
 import { assertSafeE2eDatabaseUrl } from '../../test/helpers/db-guard.ts';
+import postgres from '#postgres';
 import { prepareTopology } from './history-fixture.ts';
 import { executeOp, type OpDescriptor, type OpObservation, type World } from './ops.ts';
 import { ReferenceModel, SAFETY_CLASSES, type Violation } from './model.ts';
@@ -28,11 +29,13 @@ import { randomUUID } from 'node:crypto';
 export interface ScheduleResult { label: string; seed: number; steps: number; violations: Violation[]; safety: Violation[]; observations: OpObservation[] }
 
 /**
- * How long a drain may take before the robot calls it a wedge. Every claim a
- * dead owner left behind must be resumable well inside this bound; a lease
- * that only expires later (requests 30 s, effects 2 min) is reported.
+ * How long a drain may take before the robot calls it a wedge. On PGLite a
+ * restarted owner proves its predecessor exited (one process per datastore),
+ * so every claim must resume within 20 s. Postgres owners run concurrently and
+ * wait out a dead owner's claim lease (requests 30 s, effects 2 minutes), so
+ * the bound there is the effect lease plus margin.
  */
-export const DRAIN_BOUND_MS = 20_000;
+export const DRAIN_BOUND_MS = { pglite: 20_000, postgres: 140_000 } as const;
 
 /** Wait until no request is pending and no effect is runnable; false when the bound passes (a wedge). */
 export async function drain(engine: BrainEngine, world: World, timeoutMs = 60_000): Promise<boolean> {
@@ -76,16 +79,18 @@ export async function runSteps(world: World, model: ReferenceModel, schedule: Sc
 export async function settlePending(world: World, model: ReferenceModel): Promise<void> {
   const pending = [...model.pending.values()];
   if (!pending.length) return;
-  model.beginStep(false);
+  model.beginStep(true);
+  const observed: OpObservation[] = [];
   for (const d of pending) {
-    const seen = await executeOp(world, d);
+    const seen = await executeOp(world, d); observed.push(seen);
     await model.observe({ ...d, replayOf: undefined }, seen);
     if (seen.status === 'pending') model.violate({ class: 'wedge', op: d.id, detail: `request ${d.requestId} still pending after the drain` });
   }
+  await model.settleLate(pending, observed);
 }
 
 /** Finish a schedule: drain, check drained invariants, prove a fresh write still admits. */
-export async function finish(world: World, model: ReferenceModel, label: string, drainMs = DRAIN_BOUND_MS): Promise<void> {
+export async function finish(world: World, model: ReferenceModel, label: string, drainMs: number = DRAIN_BOUND_MS[world.engine.kind]): Promise<void> {
   const drained = await drain(world.engine, world, drainMs);
   if (!drained) model.violate({ class: 'wedge', detail: `${label}: requests or effects did not drain within ${drainMs / 1000} s` });
   await settlePending(world, model);
@@ -111,24 +116,28 @@ export async function runSchedule(world: World, schedule: Schedule): Promise<Sch
 /* Process-separated crash mode: the worker side.                            */
 /* ------------------------------------------------------------------------ */
 
-export type ProcessFault = 'stale_index_lock' | 'hung_git';
+export type ProcessFault = 'stale_index_lock' | 'hung_git' | 'pooler_disconnect';
 export interface RobotConfig {
   kind: 'pglite' | 'postgres'; root: string; dataDir: string; databaseUrl?: string;
+  /** Direct (unpooled) URL of the run database, for administrative fault injection. */
+  directUrl?: string;
   schedule: Schedule; worktrees: number; statePath: string;
   /** SIGKILL at the nth time this seam is reached (1-based). */
   fault?: { point: FaultPoint; nth: number };
   process?: ProcessFault;
 }
 interface RobotState {
-  remotes: World['remotes']; checkouts: string[]; next: number; inFlight: string[];
+  remotes: World['remotes']; checkouts: string[]; roots?: World['roots']; connector?: World['connector']; next: number; inFlight: string[];
   model: Record<string, unknown>; observations: [string, OpObservation][]; submitted: [string, Record<string, unknown>][];
 }
 export interface RobotOutcome extends Omit<ScheduleResult, 'observations'> {
   crashed: boolean; fault?: RobotConfig['fault']; process?: ProcessFault; counts?: Record<string, number>; inFlight?: string[];
+  /** What each caller observed, kept only for a run with violations. */
+  trace?: string[];
 }
 
 function writeState(config: RobotConfig, world: World, model: ReferenceModel, checkouts: string[], next: number, inFlight: string[]): void {
-  const state: RobotState = { remotes: world.remotes, checkouts, next, inFlight, model: model.toJSON(),
+  const state: RobotState = { remotes: world.remotes, checkouts, roots: world.roots, connector: world.connector, next, inFlight, model: model.toJSON(),
     observations: [...world.observations], submitted: [...(world.submitted ?? [])] };
   const staged = `${config.statePath}.tmp`;
   writeFileSync(staged, JSON.stringify(state), { mode: 0o600 }); renameSync(staged, config.statePath);
@@ -153,15 +162,32 @@ function freeze(event: Record<string, unknown>): never {
 }
 
 function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<RobotOutcome>): RobotOutcome {
+  const trace = model.violations.length ? [...model.world.observations.values()].map(o =>
+    `${o.id} ${o.kind} ${o.actor}@${o.source} ${o.status}${o.code ? `/${o.code}` : ''}${o.values.revision ? ` rev=${o.values.revision}` : ''}`
+    + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
   return { label: config.schedule.label, seed: config.schedule.seed, steps: config.schedule.ops.length, crashed: false,
-    violations: model.violations, safety: model.violations.filter(v => SAFETY_CLASSES.has(v.class)), ...extra };
+    violations: model.violations, safety: model.violations.filter(v => SAFETY_CLASSES.has(v.class)), ...extra, ...(trace ? { trace } : {}) };
 }
 
-/** A git shim that hangs `git commit` while the marker file exists (a stuck child, never answering). */
+/**
+ * A git shim whose `git commit` hangs while the marker file exists, holding the
+ * checkout's index.lock the way a real stuck git does: SIGTERM lets it remove
+ * its lock and exit, SIGKILL leaves the lock behind.
+ */
 function installHungGit(root: string): { marker: string; release(): void } {
   const dir = join(root, 'hung-git-bin'); mkdirSync(dir, { recursive: true });
   const real = Bun.which('git')!; const marker = join(root, 'hung-git.marker');
-  writeFileSync(join(dir, 'git'), `#!/bin/sh\nfor a in "$@"; do if [ "$a" = commit ] && [ -e '${marker}' ]; then echo $$ >> '${marker}.pids'; exec sleep 600; fi; done\nexec '${real}' "$@"\n`);
+  writeFileSync(join(dir, 'git'), `#!/bin/sh
+repo=.; prev=; commit=
+for a in "$@"; do [ "$prev" = -C ] && repo="$a"; [ "$a" = commit ] && commit=1; prev="$a"; done
+if [ -n "$commit" ] && [ -e '${marker}' ]; then
+  lock="$repo/.git/index.lock"; : > "$lock"; echo $$ >> '${marker}.pids'
+  trap 'kill $! 2>/dev/null; rm -f "$lock"; exit 143' TERM
+  sleep 600 >/dev/null 2>&1 & wait
+  exit 1
+fi
+exec '${real}' "$@"
+`);
   chmodSync(join(dir, 'git'), 0o755); writeFileSync(marker, '');
   process.env.PATH = `${dir}:${process.env.PATH}`;
   return { marker, release: () => rmSync(marker, { force: true }) };
@@ -201,6 +227,21 @@ async function processFault(config: RobotConfig, world: World, model: ReferenceM
     }
     shim.release();
     await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git' AND state='queued'");
+  } else if (config.process === 'pooler_disconnect') {
+    // Every 400 ms the server drops every other session of this database, as a pooler or failover does.
+    const admin = postgres(config.directUrl!, { max: 1, onnotice() {} });
+    let stop = false; let dropped = 0;
+    const dropping = (async () => {
+      while (!stop) {
+        await Bun.sleep(400);
+        const rows = await admin.unsafe(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+          WHERE datname=current_database() AND pid<>pg_backend_pid()`).catch(() => []);
+        dropped += rows.length;
+      }
+    })();
+    try { await runSteps(world, model, config.schedule); }
+    finally { stop = true; await dropping; await admin.end({ timeout: 1 }); }
+    if (!dropped) model.violate({ class: 'wedge', detail: 'pooler_disconnect: no session was dropped; the fault did not run' });
   }
   await finish(world, model, `${config.schedule.label}+${config.process}`);
 }
@@ -217,12 +258,12 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
   try {
     let world: World; let model: ReferenceModel; let checkouts: string[]; let state: RobotState | undefined;
     if (fresh) {
-      const topology = await prepareTopology(engine, { sources: 2, worktrees: config.worktrees, root: join(config.root, 'checkouts'), prefix: 'robot' });
+      const topology = await prepareTopology(engine, { sources: 2, worktrees: config.worktrees, root: join(config.root, 'checkouts'), prefix: 'robot', connector: true });
       world = topology.world; checkouts = topology.checkouts; model = new ReferenceModel(world);
     } else {
       state = JSON.parse(readFileSync(config.statePath, 'utf8')) as RobotState;
       world = { engine, config: { engine: engine.kind, embedding_disabled: true } as GBrainConfig, remotes: state.remotes, auth: new Map(),
-        observations: new Map(state.observations), submitted: new Map(state.submitted) };
+        observations: new Map(state.observations), submitted: new Map(state.submitted), roots: state.roots, connector: state.connector };
       checkouts = state.checkouts; model = ReferenceModel.fromJSON(world, state.model);
     }
     world.descriptors = new Map(config.schedule.ops.map(d => [d.id, d]));
@@ -254,8 +295,9 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
     model.beginStep(inFlight.length > 1);
     model.allowInFlight(inFlight); model.relaxInFlight(inFlight);
     await model.checkGlobal('after SIGKILL, before recovery');
-    const drained = await drain(engine, world, DRAIN_BOUND_MS);
-    if (!drained) model.violate({ class: 'wedge', detail: `recovery: requests or effects did not drain within ${DRAIN_BOUND_MS / 1000} s after restart` });
+    const bound = DRAIN_BOUND_MS[engine.kind];
+    const drained = await drain(engine, world, bound);
+    if (!drained) model.violate({ class: 'wedge', detail: `recovery: requests or effects did not drain within ${bound / 1000} s after restart` });
     await model.checkDrained('recovered');
     await settlePending(world, model);
     model.allowInFlight(inFlight);
@@ -263,9 +305,9 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
     // The interrupted callers resubmit with their original request ids.
     if (inFlight.length) {
       const observed = await Promise.all(inFlight.map(d => executeOp(world, d)));
-      model.beginStep(inFlight.length > 1);
+      model.beginStep(true);
       for (let k = 0; k < inFlight.length; k++) await model.observe(inFlight[k], observed[k], inFlight[k].replayOf ? world.observations.get(inFlight[k].replayOf!) : undefined);
-      if (inFlight.length > 1) await model.settleGroup(inFlight, observed);
+      await model.settleLate(inFlight, observed);
       await model.checkGlobal('after resubmission');
     }
     await runSteps(world, model, config.schedule, state!.next + inFlight.length);

@@ -33,7 +33,7 @@ async function robotBrain<T>(run: (brain: Awaited<ReturnType<typeof prepareTopol
   try {
     return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
       const { engine, close } = await isolatedSharedSkillsEngine();
-      try { return await run(await prepareTopology(engine, { sources: 2, worktrees: 2, root: join(home, 'checkouts'), prefix: 'robot' })); }
+      try { return await run(await prepareTopology(engine, { sources: 2, worktrees: 2, root: join(home, 'checkouts'), prefix: 'robot', connector: true })); }
       finally { await disposePersistenceConsumer(engine); await close(); }
     });
   } finally { rmSync(home, { recursive: true, force: true }); }
@@ -51,9 +51,10 @@ describe('op-descriptor protocol', () => {
 });
 
 describe('generator', () => {
-  test('the five cross-boundary sequences are always generated', () => {
+  test('the cross-boundary sequences are always generated', () => {
     expect(crossBoundarySequences(ROBOT_TOPOLOGY).map(s => s.label)).toEqual(['withdrawal_then_stale_publication',
-      'overlapping_slugs_two_sources', 'competing_writers_one_page', 'caller_bound_replay', 'authority_change_pending_effects']);
+      'overlapping_slugs_two_sources', 'competing_writers_one_page', 'caller_bound_replay', 'authority_change_pending_effects',
+      'sync_and_connector_race_direct_write']);
   });
   test('a random schedule is a function of its seed and covers every write op', () => {
     expect(JSON.stringify(randomSchedule(ROBOT_TOPOLOGY, 9))).toBe(JSON.stringify(randomSchedule(ROBOT_TOPOLOGY, 9)));

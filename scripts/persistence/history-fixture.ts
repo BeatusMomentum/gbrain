@@ -49,7 +49,7 @@ import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { random } from './harness.ts';
-import { authenticateRemotes, contextFor, descriptor, executeOp, type OpDescriptor,
+import { authenticateRemotes, connectorSourceConfig, contextFor, descriptor, executeOp, type OpDescriptor,
   type OpObservation, type RemoteActor, type World } from './ops.ts';
 
 export interface HistoryFixtureOptions {
@@ -171,8 +171,8 @@ export interface ManagedTopology { world: World; checkouts: string[]; sources: H
  * remote agents through the production token verifier: an OAuth client on the
  * first source and a legacy access token (unified grant columns) on the second.
  */
-export async function prepareTopology(engine: BrainEngine, { sources, worktrees, root, prefix = 'history' }:
-  { sources: number; worktrees: number; root: string; prefix?: string }): Promise<ManagedTopology> {
+export async function prepareTopology(engine: BrainEngine, { sources, worktrees, root, prefix = 'history', connector = false }:
+  { sources: number; worktrees: number; root: string; prefix?: string; connector?: boolean }): Promise<ManagedTopology> {
   const checkouts = Array.from({ length: worktrees }, (_, k) => { const dir = join(root, `worktree-${k}`); mkdirSync(dir, { recursive: true }); durableGitRepo(dir); return dir; });
   const fixtureSources: HistoryFixtureSource[] = Array.from({ length: sources }, (_, i) => {
     const worktree = i % worktrees; const dir = join(checkouts[worktree], `source-${i}`); mkdirSync(dir, { recursive: true });
@@ -181,6 +181,14 @@ export async function prepareTopology(engine: BrainEngine, { sources, worktrees,
   for (const source of fixtureSources) {
     await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [source.id, source.root]);
     await claimWorktree(engine, source.id, source.root);
+  }
+  // A GitHub connector source in its own checkout; its items publish through the coordinator.
+  const connectorSource = connector ? { sourceId: `${prefix}-gh`, root: join(root, 'connector') } : undefined;
+  if (connectorSource) {
+    mkdirSync(connectorSource.root, { recursive: true }); durableGitRepo(connectorSource.root);
+    await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)',
+      [connectorSource.sourceId, connectorSource.root, JSON.stringify(connectorSourceConfig())]);
+    await claimWorktree(engine, connectorSource.sourceId, connectorSource.root);
   }
   assert.equal((await activatePersistence(engine, { confirmQuiesced: true })).enabled, true);
   const sql = sqlQueryForEngine(engine);
@@ -191,7 +199,8 @@ export async function prepareTopology(engine: BrainEngine, { sources, worktrees,
   const minted = await mintLegacyToken(engine, { name: `${prefix}-fixture-token`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [tokenSource] });
   const remotes: RemoteActor[] = [{ name: 'agent-oauth', kind: 'oauth_client', sourceId: fixtureSources[0].id, token: oauth.access_token },
     { name: 'agent-token', kind: 'legacy_token', sourceId: tokenSource, token: minted.token }];
-  const world: World = { engine, config: { engine: engine.kind, embedding_disabled: true } as GBrainConfig, remotes, auth: new Map(), observations: new Map() };
+  const world: World = { engine, config: { engine: engine.kind, embedding_disabled: true } as GBrainConfig, remotes, auth: new Map(), observations: new Map(),
+    roots: Object.fromEntries(fixtureSources.map(s => [s.id, s.root])), ...(connectorSource ? { connector: connectorSource } : {}) };
   await authenticateRemotes(world);
   return { world, checkouts, sources: fixtureSources, accessTokenId: minted.id, oauthClientId: client.clientId };
 }

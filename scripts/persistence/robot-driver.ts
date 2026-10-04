@@ -20,17 +20,19 @@ import type { OpDescriptor } from './ops.ts';
 import type { spawnWorker as SpawnWorker } from './validate.ts';
 
 export const ROBOT_TOPOLOGY: GeneratorTopology = { sources: ['robot-0', 'robot-1'],
-  remotes: [{ name: 'agent-oauth', sourceId: 'robot-0' }, { name: 'agent-token', sourceId: 'robot-1' }] };
-export const PROCESS_FAULTS: ProcessFault[] = ['stale_index_lock', 'hung_git'];
+  remotes: [{ name: 'agent-oauth', sourceId: 'robot-0' }, { name: 'agent-token', sourceId: 'robot-1' }], connector: 'robot-gh' };
+export const PROCESS_FAULTS: ProcessFault[] = ['stale_index_lock', 'hung_git', 'pooler_disconnect'];
 
 /** One executed run, enough to replay it exactly: `--replay` re-injects this entry. */
 export interface RobotRun {
   schedule: string; seed: number; length: number; fault?: { point: FaultPoint; nth: number }; process?: ProcessFault;
-  ops?: string[]; crashed: boolean; violations: RobotOutcome['violations']; duration_ms: number;
+  ops?: string[]; crashed: boolean; violations: RobotOutcome['violations']; duration_ms: number; trace?: string[];
 }
 export interface RobotOptions {
   engine: 'pglite' | 'postgres'; seed: number; seconds: number; scratch: string; home: string;
   admin?: ReturnType<typeof postgres>; databaseUrl?: string; databases: string[];
+  /** A transaction-mode PgBouncer URL: Postgres workers then connect through it (prepared statements off). */
+  pooledUrl?: string;
   spawn: typeof SpawnWorker; track: (child: ReturnType<typeof SpawnWorker>) => void;
   /** Re-run exactly these entries instead of generating. */
   replay?: RobotRun[];
@@ -63,16 +65,16 @@ export async function runRobotPhase(o: RobotOptions) {
   const started = performance.now();
   const runs: RobotRun[] = [];
   const log = o.log ?? (line => process.stderr.write(`[crash-robot] ${o.engine}: ${line}\n`));
-  async function fresh(name: string): Promise<{ root: string; dataDir: string; databaseUrl?: string }> {
+  async function fresh(name: string): Promise<{ root: string; dataDir: string; databaseUrl?: string; directUrl?: string }> {
     const root = join(o.scratch, `robot-${name}-${randomUUID().slice(0, 8)}`); mkdirSync(root, { recursive: true });
-    let databaseUrl: string | undefined;
-    if (o.admin) {
-      const database = `gbrain_persistence_test_${randomUUID().replaceAll('-', '')}`;
-      await o.admin.unsafe(`CREATE DATABASE ${database}`); o.databases.push(database);
-      const url = new URL(o.databaseUrl!); url.pathname = `/${database}`; databaseUrl = url.toString();
-    }
-    return { root, dataDir: join(root, 'data'), databaseUrl };
+    if (!o.admin) return { root, dataDir: join(root, 'data') };
+    const database = `gbrain_persistence_test_${randomUUID().replaceAll('-', '')}`;
+    await o.admin.unsafe(`CREATE DATABASE ${database}`); o.databases.push(database);
+    const direct = new URL(o.databaseUrl!); direct.pathname = `/${database}`;
+    const pooled = o.pooledUrl ? new URL(o.pooledUrl) : null; if (pooled) pooled.pathname = `/${database}`;
+    return { root, dataDir: join(root, 'data'), databaseUrl: (pooled ?? direct).toString(), directUrl: direct.toString() };
   }
+  const environment: Record<string, string> = o.pooledUrl ? { GBRAIN_PREPARE: 'false' } : {};
   async function execute(schedule: Schedule, role: 'count' | 'run', extra: Partial<RobotConfig> = {}): Promise<RobotRun & { counts?: Record<string, number> }> {
     const at = performance.now();
     const place = await fresh(`${schedule.label}-${role}`);
@@ -80,20 +82,20 @@ export async function runRobotPhase(o: RobotOptions) {
     const path = join(place.root, 'robot.json'); writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
     const base = { schedule: schedule.label, seed: schedule.seed, length: schedule.ops.length, ...(extra.fault ? { fault: extra.fault } : {}),
       ...(extra.process ? { process: extra.process } : {}), ...(o.keep?.has(schedule.label) ? { ops: schedule.ops.map(d => d.id) } : {}) };
-    const child = o.spawn(path, o.home, 'robot', [role]); o.track(child);
+    const child = o.spawn(path, o.home, 'robot', [role], environment); o.track(child);
     if (role === 'run' && extra.fault) {
       const reached = await Promise.race([child.event('fault', 600_000).then(e => ({ fault: e })), child.event('done', 600_000).then(e => ({ done: e }))]);
       if ('done' in reached) {
         const result = reached.done.result as RobotOutcome;
-        return { ...base, crashed: false, violations: result.violations, duration_ms: performance.now() - at };
+        return { ...base, crashed: false, violations: result.violations, trace: result.trace, duration_ms: performance.now() - at };
       }
       await child.kill();
-      const recovered = o.spawn(path, o.home, 'robot', ['recover']); o.track(recovered);
+      const recovered = o.spawn(path, o.home, 'robot', ['recover'], environment); o.track(recovered);
       const result = (await recovered.done()).result as RobotOutcome;
-      return { ...base, crashed: true, violations: result.violations, duration_ms: performance.now() - at };
+      return { ...base, crashed: true, violations: result.violations, trace: result.trace, duration_ms: performance.now() - at };
     }
     const result = (await child.done()).result as RobotOutcome;
-    return { ...base, crashed: false, violations: result.violations, counts: result.counts, duration_ms: performance.now() - at };
+    return { ...base, crashed: false, violations: result.violations, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
   }
   const record = (run: RobotRun) => {
     runs.push(run);
@@ -111,22 +113,38 @@ export async function runRobotPhase(o: RobotOptions) {
 
   const rand = random(o.seed);
   const budgetMs = o.seconds * 1000;
-  const schedules = function* (): Generator<Schedule> {
-    yield* crossBoundarySequences(ROBOT_TOPOLOGY, o.seed);
-    for (let i = 0; ; i++) yield randomSchedule(ROBOT_TOPOLOGY, (o.seed + 1 + i) >>> 0, 24);
-  };
-  const crossBoundary = new Set(crossBoundarySequences(ROBOT_TOPOLOGY, o.seed).map(s => s.label));
-  for (const schedule of schedules()) {
-    // The cross-boundary sequences always run; random sequences fill the remaining budget.
-    if (!crossBoundary.has(schedule.label) && performance.now() - started > budgetMs) break;
+  const over = () => performance.now() - started > budgetMs;
+  // Every cross-boundary sequence runs uncrashed, then each seam it reaches is crashed once,
+  // seams first covered across sequences (a seam no run has crashed yet goes first).
+  const fixed = crossBoundarySequences(ROBOT_TOPOLOGY, o.seed);
+  const plan: { schedule: Schedule; point: FaultPoint; count: number }[] = [];
+  for (const schedule of fixed) {
     const counted = await execute(schedule, 'count'); record(counted);
-    const points = Object.entries(counted.counts ?? {}).sort(([a], [b]) => a.localeCompare(b)) as [FaultPoint, number][];
-    for (const [point, count] of points) {
-      if (!crossBoundary.has(schedule.label) && performance.now() - started > budgetMs) break;
-      record(await execute(schedule, 'run', { fault: { point, nth: 1 + Math.floor(rand() * count) } }));
-    }
+    for (const [point, count] of Object.entries(counted.counts ?? {}) as [FaultPoint, number][]) plan.push({ schedule, point, count });
   }
-  for (const fault of PROCESS_FAULTS) record(await execute(crossBoundarySequences(ROBOT_TOPOLOGY, o.seed)[1], 'run', { process: fault }));
+  // The seed rotates which sequence covers each seam first.
+  const turn = (x: (typeof plan)[number]) => (fixed.indexOf(x.schedule) + o.seed) % fixed.length;
+  plan.sort((x, y) => x.point.localeCompare(y.point) || turn(x) - turn(y));
+  const firsts = plan.filter((x, i) => plan.findIndex(y => y.point === x.point) === i);
+  const ordered = [...firsts, ...plan.filter(x => !firsts.includes(x))];
+  for (const [i, item] of ordered.entries()) {
+    const mandatory = i < firsts.length;
+    if (!mandatory && over()) break;
+    record(await execute(item.schedule, 'run', { fault: { point: item.point, nth: 1 + Math.floor(rand() * item.count) } }));
+  }
+  for (const fault of PROCESS_FAULTS) {
+    if (fault === 'pooler_disconnect' && !o.admin) continue;
+    record(await execute(fixed[1], 'run', { process: fault }));
+  }
+  // Random sequences fill the rest of the budget.
+  for (let i = 0; !over(); i++) {
+    const schedule = randomSchedule(ROBOT_TOPOLOGY, (o.seed + 1 + i) >>> 0, 24);
+    const counted = await execute(schedule, 'count'); record(counted);
+    const points = Object.entries(counted.counts ?? {}) as [FaultPoint, number][];
+    if (!points.length || over()) continue;
+    const [point, count] = points[Math.floor(rand() * points.length)];
+    record(await execute(schedule, 'run', { fault: { point, nth: 1 + Math.floor(rand() * count) } }));
+  }
   return summarize(runs, started, o);
 }
 

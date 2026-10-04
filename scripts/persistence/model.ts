@@ -16,7 +16,7 @@ import { EFFECT_FAULT_POINTS, type FaultPoint } from '../../src/core/persistence
 import { operationsByName } from '../../src/core/operations.ts';
 import { parseFactsFence } from '../../src/core/facts-fence.ts';
 import { parseTakesFence } from '../../src/core/takes-fence.ts';
-import { contextFor, type OpDescriptor, type OpKind, type OpObservation, type World } from './ops.ts';
+import { CONNECTOR_SLUG, contextFor, type OpDescriptor, type OpKind, type OpObservation, type World } from './ops.ts';
 
 /**
  * How the generator reaches each effect kind's mid-effect seam: the op that
@@ -32,7 +32,8 @@ export const EFFECT_SEAMS = {
 } as const satisfies Record<EffectKind, { op: OpKind; point: FaultPoint }>;
 
 export type ViolationClass = 'lost_write' | 'duplicate_apply' | 'untrue_receipt' | 'wedge' | 'withdrawal_permanence'
-  | 'source_isolation' | 'authorization' | 'caller_bound_replay' | 'projection_drift' | 'missing_attribution' | 'orphan_rows' | 'effects_not_terminal';
+  | 'source_isolation' | 'authorization' | 'caller_bound_replay' | 'projection_drift' | 'missing_attribution' | 'orphan_rows' | 'effects_not_terminal'
+  | 'untyped_error';
 /** Violations that always block a ship (see the plan's bug-fix bound). */
 export const SAFETY_CLASSES: ReadonlySet<ViolationClass> = new Set(['lost_write', 'duplicate_apply', 'untrue_receipt', 'wedge',
   'withdrawal_permanence', 'source_isolation', 'authorization', 'caller_bound_replay']);
@@ -43,6 +44,7 @@ interface FactModel { id: string; source: string; text: string; entity: string; 
 
 const MARKER = /mk-[a-z]+\d+/g;
 const key = (source: string, slug: string) => `${source}\u0000${slug}`;
+function memberMarkersOf(members: { d: OpDescriptor }[]): string[] { return members.flatMap(x => markersIn(JSON.stringify(x.d.args))); }
 function markersIn(text: string | undefined | null): string[] { return text ? [...text.matchAll(MARKER)].map(m => m[0]) : []; }
 /** The newest page-body marker: edits insert theirs right after "Marker: ". */
 function bodyMarker(text: string | undefined | null): string | null { return /Marker: (mk-[a-z]+\d+)/.exec(text ?? '')?.[1] ?? null; }
@@ -83,14 +85,14 @@ export class ReferenceModel {
   /** Pages an in-flight op names: a crash may or may not have committed it, so their revision may move. */
   allowInFlight(ops: OpDescriptor[]): void {
     for (const d of ops) {
-      const slug = d.args.slug ?? d.args.entity;
+      const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG : d.args.slug ?? d.args.entity;
       if (typeof slug === 'string') this.touched.add(key(d.source, slug));
       if (d.kind === 'forget') for (const f of this.facts.values()) if (f.source === d.source) this.touched.add(key(f.source, f.entity));
     }
   }
   /** Forget pending page-liveness expectations an in-flight delete/restore may have settled either way. */
   relaxInFlight(ops: OpDescriptor[]): void {
-    for (const d of ops) if ((d.kind === 'delete_page' || d.kind === 'restore_page' || d.kind === 'put_page') && typeof d.args.slug === 'string') {
+    for (const d of ops) if (['delete_page', 'restore_page', 'put_page', 'sync'].includes(d.kind) && typeof d.args.slug === 'string') {
       this.pages.delete(key(d.source, d.args.slug));
     }
   }
@@ -119,7 +121,9 @@ export class ReferenceModel {
     this.pending.delete(d.id);
     if (o.status !== 'committed') {
       if (marker && !this.committedMarkers.has(marker)) this.refusedMarkers.add(marker);
-      if (o.status === 'refused' && !o.code) this.violate({ class: 'untrue_receipt', op: d.id, detail: 'refusal without a typed code' });
+      if (o.status === 'refused' && (!o.code || o.code === 'uncoded_error')) {
+        this.violate({ class: 'untyped_error', op: d.id, detail: `${d.kind} failed without a typed code: ${JSON.stringify(o.raw).slice(0, 300)}` });
+      }
       return;
     }
     if (marker) { this.committedMarkers.set(marker, d.source); this.refusedMarkers.delete(marker); }
@@ -142,7 +146,7 @@ export class ReferenceModel {
     const committed = batch.map((d, i) => ({ d, o: observed[i] })).filter(x => x.o.status === 'committed');
     const bySlug = new Map<string, typeof committed>();
     for (const x of committed) {
-      const slug = String(x.d.args.slug ?? x.d.args.entity ?? '');
+      const slug = x.d.kind === 'connector_publish' ? CONNECTOR_SLUG : String(x.d.args.slug ?? x.d.args.entity ?? '');
       if (slug) bySlug.set(key(x.d.source, slug), [...(bySlug.get(key(x.d.source, slug)) ?? []), x]);
     }
     for (const [k, members] of bySlug) {
@@ -152,9 +156,15 @@ export class ReferenceModel {
       if (revisions.length && !revisions.includes(String(read?.revision))) {
         this.violate({ class: 'lost_write', op: members.map(x => x.d.id).join('+'), detail: `concurrent group left ${source}/${slug} at ${String(read?.revision)}, none of the committed revisions ${revisions.join(',')}` });
       }
-      for (const x of members) {
-        const marker = x.d.kind === 'edit_page' || x.d.kind === 'put_page' ? markersIn(JSON.stringify(x.d.args)).at(-1) : null;
-        if (marker && !markersIn(String(read?.content)).includes(marker)) this.violate({ class: 'lost_write', op: x.d.id, detail: `committed concurrent ${x.d.kind} marker ${marker} is not visible` });
+      // Whole-page writers (put, sync, connector) may legally replace each other; edits and fact writes compose.
+      const replacing = members.some(x => ['put_page', 'sync', 'connector_publish'].includes(x.d.kind));
+      const memberMarkers = members.map(x => ['edit_page', 'put_page', 'sync', 'connector_publish'].includes(x.d.kind) ? markersIn(JSON.stringify(x.d.args)).at(-1) : null);
+      if (replacing && memberMarkers.some(Boolean) && !memberMarkers.some(mk => mk && markersIn(String(read?.content)).includes(mk))) {
+        this.violate({ class: 'lost_write', op: members.map(x => x.d.id).join('+'), detail: `no committed whole-page write of the group is visible in ${source}/${slug}` });
+      }
+      for (const [i, x] of members.entries()) {
+        const marker = memberMarkers[i];
+        if (!replacing && marker && !markersIn(String(read?.content)).includes(marker)) this.violate({ class: 'lost_write', op: x.d.id, detail: `committed concurrent ${x.d.kind} marker ${marker} is not visible` });
         if (x.o.values.revision && x.o.values.revision !== read?.revision) {
           const [kept] = await this.world.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
             WHERE p.source_id=$1 AND p.slug=$2 AND v.knowledge_revision::text=$3`, [source, slug, x.o.values.revision]);
@@ -163,7 +173,36 @@ export class ReferenceModel {
       }
       const page = this.page(source, slug);
       page.revision = read?.revision ? String(read.revision) : null;
-      if (members.some(x => x.d.kind === 'edit_page' || x.d.kind === 'put_page')) page.lastMarker = bodyMarker(String(read?.content)) ?? page.lastMarker;
+      if (members.some(x => ['edit_page', 'put_page', 'sync', 'connector_publish'].includes(x.d.kind))) page.lastMarker = bodyMarker(String(read?.content)) ?? markersIn(String(read?.content)).find(mk => memberMarkersOf(members).includes(mk)) ?? page.lastMarker;
+    }
+    this.deferred = false;
+  }
+
+  /**
+   * Requests whose receipts the caller sees late (a pending write settled after
+   * the drain, or an interrupted request resubmitted after a crash) were
+   * committed in queue order with writes observed since. Their receipt must
+   * name a revision the page really had (current or archived in page_versions);
+   * the page's current state is then adopted as the model's.
+   */
+  async settleLate(batch: OpDescriptor[], observed: OpObservation[]): Promise<void> {
+    for (const [i, d] of batch.entries()) {
+      const o = observed[i];
+      if (o.status !== 'committed' || !o.values.revision) continue;
+      const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG : String(d.args.slug ?? d.args.entity ?? '');
+      const [seen] = await this.world.engine.executeRaw<{ n: number }>(`SELECT
+        (SELECT count(*)::int FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.knowledge_revision::text=$3)
+        + (SELECT count(*)::int FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1 AND p.slug=$2 AND v.knowledge_revision::text=$3) AS n`,
+      [d.source, slug, o.values.revision]);
+      if (!seen.n) this.violate({ class: 'untrue_receipt', op: d.id, detail: `late receipt names revision ${o.values.revision} that ${d.source}/${slug} never had` });
+    }
+    for (const d of batch) {
+      const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG : d.args.slug ?? d.args.entity;
+      if (typeof slug !== 'string') continue;
+      const page = this.page(d.source, slug); const read = await this.readPage('local', d.source, slug);
+      this.touched.add(key(d.source, slug));
+      page.live = read !== null; page.revision = read?.revision ? String(read.revision) : null;
+      page.lastMarker = read ? bodyMarker(String(read.content)) : null;
     }
     this.deferred = false;
   }
@@ -188,11 +227,18 @@ export class ReferenceModel {
   }
 
   /** Read surfaces an agent uses, under a given actor. */
+  /** The last read error, quoted in a violation so a failed read is never mistaken for a missing page. */
+  lastReadError: string | null = null;
   async readPage(actor: string, source: string, slug: string): Promise<Record<string, unknown> | null> {
+    this.lastReadError = null;
     try {
       return await operationsByName.get_page.handler(contextFor(this.world, actor, source),
         { slug, include_content: true, ...(actor === 'local' ? { source_id: source } : {}) }) as Record<string, unknown>;
-    } catch { return null; }
+    } catch (error) {
+      const e = error as { code?: string; message?: string };
+      this.lastReadError = `${e.code ?? 'error'}: ${String(e.message).slice(0, 160)}`;
+      return null;
+    }
   }
   async recall(actor: string, source: string, entity: string): Promise<string[]> {
     try {
@@ -302,7 +348,11 @@ const pageWrite = (kind: 'put' | 'edit'): Fold => async (m, d, o) => {
   page.lastMarker = marker;
   if (m.deferringVisibility) return;
   const read = await m.readPage(d.actor === 'local' || m.revoked.has(d.actor) ? 'local' : d.actor, d.source, slug);
-  if (!read || read.revision !== o.values.revision) m.violate({ class: 'untrue_receipt', op: d.id, detail: `committed ${d.kind} revision ${o.values.revision} not visible (read ${String(read?.revision)})` });
+  if (!read || read.revision !== o.values.revision) {
+    const [row] = await m.world.engine.executeRaw<Record<string, unknown>>(`SELECT knowledge_revision::text AS revision,deleted_at IS NOT NULL AS deleted,
+      source_path FROM pages WHERE source_id=$1 AND slug=$2`, [d.source, slug]);
+    m.violate({ class: 'untrue_receipt', op: d.id, detail: `committed ${d.kind} revision ${o.values.revision} not visible (read ${String(read?.revision)}${m.lastReadError ? `; ${m.lastReadError}` : ''}; row ${JSON.stringify(row ?? null)})` });
+  }
   else if (page.lastMarker && !markersIn(String(read.content)).includes(page.lastMarker)) m.violate({ class: 'untrue_receipt', op: d.id, detail: `committed ${d.kind} marker ${page.lastMarker} not visible` });
 };
 const touch = (slugOf: (d: OpDescriptor) => string): Fold => async (m, d, o) => {
@@ -311,6 +361,20 @@ const touch = (slugOf: (d: OpDescriptor) => string): Fold => async (m, d, o) => 
   if (o.values.revision) page.revision = o.values.revision;
   else page.revision = null;
 };
+
+/** A file edit picked up by sync, or a connector item: the page now carries its marker. */
+function externalWrite(target: (d: OpDescriptor) => [string, string, string]): Fold {
+  return async (m, d) => {
+    const [source, slug, text] = target(d);
+    const marker = markersIn(text).at(-1) ?? null;
+    const page = m.page(source, slug); m.touched.add(key(source, slug));
+    page.live = true; page.revision = null; page.lastMarker = marker;
+    if (marker) { page.markers.add(marker); m.committedMarkers.set(marker, source); }
+    if (m.deferringVisibility) return;
+    const read = await m.readPage('local', source, slug);
+    if (marker && !markersIn(String(read?.content)).includes(marker)) m.violate({ class: 'untrue_receipt', op: d.id, detail: `${d.kind} reported success but ${source}/${slug} lacks ${marker}` });
+  };
+}
 
 /** One fold per op kind: how a committed observation moves the model, plus its observation-point check. */
 export const MODEL: Record<OpKind, Fold> = {
@@ -341,4 +405,6 @@ export const MODEL: Record<OpKind, Fold> = {
   delete_page: async (m, d, o) => { await touch(d => String(d.args.slug))(m, d, o); m.page(d.source, String(d.args.slug)).live = false; },
   restore_page: async (m, d, o) => { await touch(d => String(d.args.slug))(m, d, o); m.page(d.source, String(d.args.slug)).live = true; },
   revoke_access: async (m, d) => { m.revoked.add(String(d.args.actor)); },
+  sync: externalWrite(d => [d.source, String(d.args.slug), String(d.args.content)]),
+  connector_publish: externalWrite(d => [d.source, CONNECTOR_SLUG, String(d.args.body)]),
 };

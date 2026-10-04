@@ -8,9 +8,9 @@
  */
 import { createHash } from 'node:crypto';
 import { random } from './harness.ts';
-import { descriptor, type OpArg, type OpDescriptor, type OpKind } from './ops.ts';
+import { CONNECTOR_SLUG, descriptor, type OpArg, type OpDescriptor, type OpKind } from './ops.ts';
 
-export interface GeneratorTopology { sources: string[]; remotes: { name: string; sourceId: string }[] }
+export interface GeneratorTopology { sources: string[]; remotes: { name: string; sourceId: string }[]; connector?: string }
 /** A schedule: descriptors plus the concurrent groups among them (ids that run together). */
 export interface Schedule { seed: number; ops: OpDescriptor[]; groups: string[][]; label: string }
 
@@ -48,9 +48,8 @@ class Builder {
  * The irreducible cross-boundary sequences (never cut): withdrawal followed
  * by a stale publication; two sources with overlapping slugs; competing
  * writers on one page; an authority change while effects are pending
- * (writer revoked mid-sequence); a direct write racing a replayed request.
- * Sync and connector publish racing a direct write are added by the sync
- * family in `families.ts` once their seams exist.
+ * (writer revoked mid-sequence); sync and connector publish racing a direct
+ * write. Caller-bound replay runs beside them as its own sequence.
  */
 export function crossBoundarySequences(topology: GeneratorTopology, seed = 1): Schedule[] {
   const [a, b] = topology.sources;
@@ -113,6 +112,22 @@ export function crossBoundarySequences(topology: GeneratorTopology, seed = 1): S
     s.edit(remoteA, a, 'meetings/standup', '$current', [p.id]);
     s.edit('local', a, 'meetings/standup', '$current', [p.id]);
     out.push({ seed, ops: s.ops, groups: s.groups, label: 'authority_change_pending_effects' });
+  }
+  if (topology.connector) {
+    const s = new Builder(seed, 'sy'); const gh = topology.connector;
+    const p = s.put('local', a, 'notes/alpha');
+    // A user commits an edit of the page file and syncs while an agent writes the same page.
+    const synced = s.next('sync', 'local', a, { slug: 'notes/alpha', content: pageBody('notes/alpha', s.marker()), extra: 24 }, [p.id]);
+    const direct = s.edit(remoteA, a, 'notes/alpha', '$current', [p.id]);
+    s.groups.push([synced.id, direct.id]);
+    s.next('sync', 'local', a, { slug: 'notes/beta', content: pageBody('notes/beta', s.marker()) });
+    s.edit('local', a, 'notes/beta', '$current');
+    // The connector imports an item, then republishes it while a direct write targets the same page.
+    const first = s.next('connector_publish', 'local', gh, { body: `Issue body ${s.marker()}`, updated_at: '2026-09-02T00:00:00Z' });
+    const again = s.next('connector_publish', 'local', gh, { body: `Issue body ${s.marker()}`, updated_at: '2026-09-03T00:00:00Z' }, [first.id]);
+    const racing = s.next('put_page', 'local', gh, { slug: CONNECTOR_SLUG, content: pageBody(CONNECTOR_SLUG, s.marker()), expected_revision: '$current' }, [first.id]);
+    s.groups.push([again.id, racing.id]);
+    out.push({ seed, ops: s.ops, groups: s.groups, label: 'sync_and_connector_race_direct_write' });
   }
   return out;
 }
