@@ -103,7 +103,7 @@ describe('schema-pack conversions on an unmanaged brain', () => {
       + 'page_types:\n  - name: person\n    primitive: entity\n    path_prefixes:\n      - people/\n    aliases: []\n    extractable: false\n    expert_routing: false\n'
       + 'link_types: []\nfrontmatter_links: []\ntakes_kinds:\n  - fact\n  - take\n  - bet\n  - hunch\nenrichable_types: []\nfiling_rules: []\n');
     // The brains register their local writer before GBRAIN_HOME moves: the maintenance principal is that registration.
-    const brains = [];
+    const brains: UnmanagedBrain[] = [];
     for (const engine of engines) brains.push(await unmanagedBrain(engine));
     await withEnv({ GBRAIN_SCHEMA_PACK: 'tiny' }, async () => {
       for (const brain of brains) {

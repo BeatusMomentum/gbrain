@@ -145,9 +145,9 @@ appear file-backed.
 
 ## Write attribution
 
-Foundations 1 records creation attribution: who wrote each page revision,
-page version, fact, take and timeline row. It does not yet attribute every
-write. BEFORE ROW triggers copy three transaction-local settings into the row
+GBrain records write attribution: who wrote each page revision, page version,
+fact, take and timeline row, and who last changed each fact, take and timeline
+row. BEFORE ROW triggers copy three transaction-local settings into the row
 (`persistence/attribution-schema.ts`). `withCoordinatedWrite` sets them for
 journaled requests and coordinated maintenance, and `withWriteAttribution`
 (through `maintenanceTransaction`) sets them for unmanaged legacy transactions. A row written outside both
@@ -167,8 +167,9 @@ are stored. Names, operations and times are joined at read time by
 [write attribution](../mcp/ADMIN.md#write-attribution). `get_versions` returns
 attribution only to trusted local and `admin` callers. A NULL request with a
 principal is a maintenance write; all NULL is `unrecorded`: written before
-attribution existed or by a writer listed under "unattributed" below, so this
-is creation attribution, not an audit of every write.
+attribution existed or by one of the three writers listed under "unattributed"
+below. Attribution names the creator and the last writer; it is not an audit
+log of every write in between.
 
 Nothing is inferred for older rows. `gbrain repair attribution-backfill` fills
 only rows the write journal proves exactly (the page write whose recorded
@@ -182,20 +183,24 @@ history is not copied).
   refuses a canonical write outside `withCoordinatedWrite`, so a direct writer
   below either enters a coordinated path or fails before it writes.
 - **Unmanaged brains:** journaled page, memory, take and timeline operations
-  carry their request. These legacy transactions carry the local maintenance
-  principal with `write_request_id` NULL: direct markdown, code and image
-  imports (every `importFromContent` caller without `prepare`), the
-  `extract_facts` page reconcile, `extract-takes` and the
-  `gbrain repair stale-atoms --apply` retirement. The maintenance principal is
-  the local CLI registration (`local_cli`), else this host's identity
-  (`application`, `host:<id>`), else `host:unregistered`: attribution never
-  creates an identity file. The direct writers listed under "unattributed"
-  below still write without an actor.
+  carry their request. Every other direct writer in the "attributed" list runs
+  in `maintenanceTransaction` and carries the local maintenance principal with
+  `write_request_id` NULL: imports, legacy sync renames and soft deletes,
+  timeline extraction, the legacy facts and takes helpers, cycle phases,
+  schema-pack conversions, repairs and the remaining maintenance writers.
+  Batch writers commit one bounded transaction per batch (for example 100 rows
+  per `gbrain extract timeline --source db` batch), never one transaction for a
+  whole run. A row such a writer changes keeps its creator and moves its last
+  writer. The maintenance principal is the local CLI registration
+  (`local_cli`), else this host's identity (`application`, `host:<id>`), else
+  `host:unregistered`: attribution never creates an identity file. Only the
+  three writers listed under "unattributed" below write without an actor.
 
-Agents: treat `NULL` attribution on an unmanaged brain as "written by a legacy
-maintenance path", not as evidence of tampering. To get attribution for a
-writer on this list now, run the work on a managed brain or through a
-journaled operation. When you add a direct writer, run it in
+Agents: treat `NULL` attribution on an unmanaged brain as "written before
+attribution existed or by `gbrain extract`, meeting timeline extraction or
+enrichment", not as evidence of tampering. To get attribution for those
+writers now, run the work on a managed brain or through a journaled
+operation. When you add a direct writer, run it in
 `maintenanceTransaction(engine, fn)` (`persistence/attribution.ts`) or route it
 through the coordinator, then update these lists with the count
 `test/write-attribution-legacy.test.ts` reports. The test compares both lists
@@ -274,8 +279,9 @@ or a physical projection that leaves attribution untouched):
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 <!-- write-attribution-covered:end -->
 
-Unattributed until Foundations 2 mutation attribution (on unmanaged brains
-these write with `NULL` attribution):
+Unattributed (on unmanaged brains these write with `NULL` attribution). These
+three writers share the link-extraction and mention-linking code, and they are
+routed together with that code's rework:
 
 <!-- write-attribution-unattributed:start -->
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.

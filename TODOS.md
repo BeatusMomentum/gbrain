@@ -81,14 +81,17 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
 
 ## Foundations 1 follow-ups (filed 2026-10-03, follow-up from v0.60.37.0)
 
-- [ ] **P1 — Mutation attribution for the writers still unattributed.**
-  **What:** creation attribution covers journaled and coordinated writes and four unmanaged legacy transactions; the writers listed under "unattributed" in `docs/architecture/system-of-record.md` (extract timeline, sync renames, enrichment, schema-pack conversions, legacy facts and takes helpers, and others) still write `NULL`. **Fix:** route them through `maintenanceTransaction` or the coordinator, shrinking the pinned list. **Effort:** L. **Priority:** P1 (Foundations 2).
-- [ ] **P2 — Classify new content columns for attribution.**
-  **What:** a column added to `facts`, `takes` or `timeline_entries` must be classified in `persistence/attribution-schema.ts` (content vs projection), or an edit to it either misses `last_write_*` or stamps a projection-only update. **Fix:** a guard test that fails on an unclassified column. **Effort:** S. **Priority:** P2 (Foundations 2).
+- [x] **P1 — Mutation attribution for the writers still unattributed.** **Completed: Foundations 2 (Lane C)** — every unmanaged direct writer except three runs in `maintenanceTransaction` (batch writers one bounded transaction per batch); the pinned unattributed inventory went from 90 writer references in 40 files to 7 in 3. Pinned by `test/write-attribution-legacy.test.ts` and the `test/write-attribution-<family>.test.ts` files.
+- [ ] **P2 — Attribute the three link-extraction writers.**
+  **What:** `src/commands/extract.ts`, `src/core/extract-timeline-from-meetings.ts` and `src/core/enrichment-service.ts` still write `NULL` attribution on unmanaged brains (the "unattributed" list in `docs/architecture/system-of-record.md`). They share the link-extraction and mention-linking code that the entity-linking work is reshaping. **Fix:** after that work lands, run their writes in `maintenanceTransaction` (bounded per batch) and move them to the attributed list. **Effort:** S. **Priority:** P2.
+- [ ] **P2 — One write path for unmanaged brains.**
+  **What:** unmanaged brains attribute legacy writes through `maintenanceTransaction`, but those writes skip the coordinator's journal, receipts and effects, so the persistence crash harness (which drives the coordinator) does not exercise them. **Fix:** route unmanaged brains through the coordinator too, retiring the legacy direct writers. Deferred: it changes every unmanaged write path and its failure modes, which needs its own wave. **Effort:** XL. **Priority:** P2.
+- [ ] **P3 — Backfill attribution for pages a `forget` last changed.**
+  **What:** `gbrain repair attribution-backfill` proves page revisions only from page mutations and fenced `remember`; a page whose live revision came from a `forget` withdrawal stays `unrecorded` (3 of 40 pages in the history fixture). **Fix:** accept the committed `forget` request whose withdrawal outcome names that revision as proof. **Effort:** S. **Priority:** P3.
+- [x] **P2 — Classify new content columns for attribution.** **Completed:** the column classification test in `test/write-attribution.test.ts` (`write attribution column classification`) fails on an unclassified column.
 - [ ] **P2 — Verify `gbrain repair attribution-backfill` on a real managed brain.**
   **What:** proven on PGLite, Postgres and PgBouncer fixtures only. **Fix:** run the preview and apply on a managed brain with real history and record the filled and unrecorded counts. **Effort:** S. **Priority:** P2 (Foundations 2).
-- [ ] **P2 — `--json` refusals from CLI-only ops print to stderr only.**
-  **What:** `gbrain attribution --json` (and other CLI ops through the shared framework) write refusals to stderr, not as a JSON object on stdout. **Effort:** S. **Priority:** P2 (Foundations 2).
+- [x] **P2 — `--json` refusals from CLI-only ops print to stderr only.** **Completed (#5991):** `src/cli/cli-error.ts` prints one JSON refusal envelope on stdout under `--json`.
 - [ ] **P2 — PGLite `sources refresh` while `gbrain serve` owns the database.**
   **What:** the refresh needs the writer lock; with a resident serve on PGLite it waits or refuses. **Fix:** delegate the refresh over the local persistence IPC socket. **Effort:** M. **Priority:** P2 (Foundations 2).
 - [ ] **P3 — The consumer's idle probe ignores the refresh effect fence.**
