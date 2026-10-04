@@ -1544,6 +1544,8 @@ export interface RelationalFanoutOpts extends PageReadPolicy {
   sourceIds?: string[];
   /** Hard cap on returned candidate nodes. Default 50. */
   limit?: number;
+  /** Allow up to 400 candidates (triplet scoring re-ranks the wider set). */
+  wide?: boolean;
 }
 
 // Timeline

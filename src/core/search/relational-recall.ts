@@ -41,6 +41,8 @@ export interface RelationalArmOpts extends PageReadPolicy {
   sourceIds?: string[];
   depth?: number;
   limit?: number;
+  /** Fetch up to 400 candidates for triplet scoring. */
+  wide?: boolean;
   vocab?: RelationVocab;
   /**
    * #4352 remediation — hide `visibility: private` pages from the arm's
@@ -329,6 +331,7 @@ export async function buildRelationalArm(
       direction: parsed.direction,
       depth: opts.depth,
       limit: opts.limit,
+      wide: opts.wide,
     };
 
     if (parsed.kind === 'connects' && parsed.seeds.length === 2) {

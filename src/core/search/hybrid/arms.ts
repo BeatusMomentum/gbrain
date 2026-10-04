@@ -3,6 +3,7 @@
  * Each stage reads the resolved request (HybridRequest, request.ts) and
  * writes its per-request accumulators only as `req.<field>`.
  */
+import { applyTripletScoring, loadTripletSettings } from '../triplet-score.ts';
 import type { ModalityMode } from '../query-intent.ts';
 import type { ExactLookupOpts } from '../exact-lookup.ts';
 import type { HybridRequest } from './request.ts';
@@ -170,11 +171,14 @@ export async function buildRelationalList(req: HybridRequest): Promise<SearchRes
   // path; the parser only matches text-shaped relational queries anyway.)
   let relationalList: SearchResult[] = [];
   if (resolvedMode.relationalRetrieval) {
+    const keep = opts?.limit ?? resolvedMode.searchLimit;
+    const triplet = await loadTripletSettings(engine);
     relationalList = await buildRelationalArm(engine, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       depth: resolvedMode.relational_retrieval_depth,
-      limit: opts?.limit ?? resolvedMode.searchLimit,
+      limit: triplet.enabled ? Math.min(Math.max(keep * 4, 100), 400) : keep,
+      wide: triplet.enabled,
       // #4352 remediation: the arm hydrates titles + compiled_truth snippets
       // straight from pages — thread the caller's private-page gate or a
       // remote relational query bypasses the keyword/vector visibility clause.
@@ -183,8 +187,25 @@ export async function buildRelationalList(req: HybridRequest): Promise<SearchRes
       takesHoldersAllowList: opts?.takesHoldersAllowList,
       onMeta: opts?.onRelationalMeta,
     });
+    if (triplet.enabled) tripletKeep.set(relationalList, { keep, penalty: triplet.penalty });
   }
   return relationalList;
+}
+
+const tripletKeep = new WeakMap<SearchResult[], { keep: number; penalty: number }>();
+
+/**
+ * Triplet-score the relational arm in place (no-op unless
+ * `search.triplet_scoring` widened it in buildRelationalList), then trim it
+ * back to the caller's limit. Keyless paths pass a null query vector.
+ */
+export async function scoreRelationalArm(req: HybridRequest, list: SearchResult[], queryEmbedding: Float32Array | null): Promise<void> {
+  const pending = tripletKeep.get(list);
+  if (!pending) return;
+  tripletKeep.delete(list);
+  await applyTripletScoring(req.engine, req.query, list, {
+    queryEmbedding, column: req.resolvedCol.name, keep: pending.keep, penalty: pending.penalty,
+  });
 }
 
 /** Modality routing (with the opt-in LLM tie-break) and query expansion. */
