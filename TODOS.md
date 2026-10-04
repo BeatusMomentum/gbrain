@@ -3442,12 +3442,12 @@ Deferred from the Life Chronicle wave (CEO Scope-Expansion + eng review CLEARED,
 3 codex rounds absorbed, PR #2533). Every item was an explicit review decision,
 not an oversight; each names its decision provenance.
 
-- [ ] **P1 — Eval-gated auto-emit default-flip (D5.5 fast-follow).** Auto-emission
-  ships OFF (`auto_chronicle=false`) per spend/consent posture. The headline
-  fast-follow: run `gbrain eval chronicle` + a live-LLM OFF-vs-ON agent arm on a
-  real brain, and if the lift holds, flip the default ON in the next minor with
-  an upgrade notice. Where: `src/core/chronicle/config.ts`, upgrade banner in
-  `src/commands/upgrade.ts`.
+- [ ] **P1 — Measure the auto-emit default (D5.5 fast-follow).** The #5876 wave
+  flipped `auto_chronicle` ON by default under the default-on rule for new
+  features, with an upgrade notice, a durable doctor/advisor notice and the
+  opt-out `gbrain config set auto_chronicle false`. It shipped without a measured
+  quality lift. Remaining: the live-LLM OFF-vs-ON agent arm below; if it shows no
+  lift, revisit the default. Where: `src/eval/chronicle/harness.ts`.
 - [ ] **P2 — Live-LLM OFF-vs-ON eval arm + LongMemEval temporal slice.** The
   shipped `gbrain eval chronicle` is the deterministic CI bar (6 gold tasks).
   The full North-Star proof adds (a) a live agent reconstructing a day with the
