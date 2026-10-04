@@ -240,20 +240,49 @@ vars — incident-time escape hatches, not everyday knobs.
    server is down when a push happens, that sync is missed. Pair webhooks
    with a cron fallback that catches anything the webhook missed.
 
-4. **A single un-parseable file can't wedge legacy indexing.** When a file fails
-   to import (malformed YAML frontmatter, an unquoted colon, etc.), sync holds
-   the bookmark and tells you exactly which file broke — a *fresh* failure
-   fails closed so nothing is silently dropped. But a file that fails the same
-   way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0` to
-   disable) is auto-skipped so the rest of the brain keeps indexing past it.
-   Skipped files don't disappear: `gbrain doctor` keeps warning until you fix
-   or delete them, and fixing the file clears it on the next sync. A repository
+4. **One broken file never blocks a sync: it is held.** When a file's content
+   refuses deterministically (frontmatter gbrain cannot read without guessing,
+   a frontmatter `slug:` naming another page, a file over the size limit, or
+   content the operator's `content_sanity.junk_disposition=reject` refuses),
+   sync holds that file and keeps going: every other file imports, the
+   checkpoint advances, and the run reports the hold (`Held <path>: <code> …
+   Next: <command>`; JSON `held`, `held_count`, `holds_outstanding`). Files
+   gbrain can read exactly after quoting an unquoted value (`author: a (b)
+   (original: https://…)`) import and are counted under
+   `recovered_frontmatter`, so the generator that writes them can be fixed.
+   Holds are durable and visible everywhere an agent looks: `gbrain sources
+   status <source>`, doctor `git_held_files`, `get_page` (`file_held`) and
+   search (`stale` hits, the `held_files` notice). A held file's page keeps its
+   last good revision and is read-only for `put_page` until the file is
+   repaired. A hold clears when the file changes, is deleted, or a newer
+   gbrain can read it; `gbrain sync --dry-run` lists would-be holds
+   (`would_hold`) without writing anything. The backlog fix is one previewed,
+   hash-bound command:
+
+   ```bash
+   gbrain sources status <source-id>                 # what is held and why
+   gbrain repair frontmatter --source <source-id>    # preview; writes nothing
+   ```
+
+   Walkthrough with real output: [held files](repair.md#held-files); codes:
+   [content refusals](write-refusals.md#held-files-and-content-refusals).
+   Managed and legacy sync behave the same, and holds never count toward the
+   legacy auto-skip streak below. A source blocked by such a file before this
+   release recovers on its next sync, or now with
+   `gbrain sync --source <source-id> --no-pull`. Teams that want fail-closed
+   blocking set `gbrain config set sync.holds fail`. Company-brain profile
+   sources never hold: their approved manifest keeps blocking.
+
+   Other failures still fail closed. In legacy sync a file that fails the
+   same way `GBRAIN_SYNC_AUTOSKIP_AFTER` consecutive syncs (default 3, set `0`
+   to disable) is auto-skipped so the rest of the brain keeps indexing past
+   it; `gbrain doctor` keeps warning until you fix or delete it. A repository
    history rewrite still hard-blocks even with `--skip-failed`. For legacy
    sync only, `gbrain sync --skip-failed` acknowledges a known-bad set.
    **Managed sync never acknowledges or auto-skips failed cursors.** Its
-   durable failed receipt remains immutable on ordinary replay. Correct and
-   commit the source, inspect local `gbrain doctor`, then explicitly retry an
-   idle ordinary-source cursor with the same full/working-tree/filter options:
+   durable failed receipt remains immutable on ordinary replay. Correct the
+   cause, inspect local `gbrain doctor`, then explicitly retry an idle
+   ordinary-source cursor with the same full/working-tree/filter options:
 
    ```bash
    gbrain sync --source <source-id> --no-pull --retry-failed
@@ -265,6 +294,9 @@ vars — incident-time escape hatches, not everyday knobs.
    include source/path/code/request/run/target. Counts are cumulative for the
    run, not evidence of repeated deletions. Remote doctor exposes only
    source-scoped aggregate diagnostics, not paths or receipt identifiers.
+
+   **Say to your agent:** *"Some files in my notes source are held. Show me
+   why and preview the fix."*
 
 5. **Staleness can't read "fresh" forever.** A source whose content stopped
    moving (or whose local clone vanished) would otherwise report fresh

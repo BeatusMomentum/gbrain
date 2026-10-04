@@ -12,6 +12,8 @@ import { assertMutationProtocol } from './protocol.ts';
 import { pendingWriteHint } from './health.ts';
 import { receiptDeliveredHint } from './connector-errors.ts';
 import type { PgAccessReason } from '../pg-access-classify.ts';
+import { contentRefusalFromReceipt } from '../import-screen.ts';
+import { heldFileDiagnostic } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 
 interface Service { consumer: PersistenceConsumer; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
@@ -44,6 +46,7 @@ export async function preparePersistedMutation(e: BrainEngine, row: WriteRequest
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_sync_')) return (await import('./sync-prepare.ts')).prepareManagedSyncMutation(e, row, cfg);
   if (row.operation === 'submit_job' && String(row.intent?.kind).startsWith('managed_maintenance_')) return (await import('./prepared-maintenance.ts')).prepareMaintenanceMutation(e, row, cfg);
   if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_import') return (await import('./import-prepare.ts')).prepareManagedImportMutation(e, row, cfg);
+  if (row.operation === 'put_page' && row.intent?.kind === 'managed_file_repair') return (await import('./file-repair.ts')).prepareManagedFileRepairMutation(e, row, cfg);
   if (row.operation === 'remember') return (await import('./memory-mutations.ts')).prepareMemoryMutation(e, row, cfg, signal);
   if (row.operation === 'loops_close' && row.intent?.kind === 'retire_loop_fact') return (await import('./loop-fact-retirement.ts')).prepareLoopFactRetirement(e, row, cfg);
   if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
@@ -226,11 +229,20 @@ export function writeResponse(row: WriteRequest): Record<string, unknown> {
   if (row.state === 'committed') return { ...receipt, write_request: receipt };
   const reason = !isTerminal(row) ? 'write_pending' : row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error');
   const delivered = isTerminal(row) ? receiptDeliveredHint(row) : null;
+  // #5988: a content refusal reports its typed code, reason, key and line, and the content fix.
+  const content = isTerminal(row) ? contentRefusalFromReceipt(row.error_code, row.error_message) : null;
+  // The page's file is held by sync: name the repair, so the caller does not retry into the same refusal.
+  const held = isTerminal(row) && reason === 'source_changed' ? heldFileDiagnostic(row.error_message, row.source_id) : null;
   const error = new OperationError(reason, !isTerminal(row) ? 'The write is accepted and is still pending.'
     : row.error_message ?? 'The write did not commit.', !isTerminal(row)
       ? pendingWriteHint(receipt)
-      : delivered?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
-  if (delivered?.detail) error.detail = delivered.detail;
+      : delivered?.suggestion ?? content?.suggestion ?? held?.suggestion ?? terminalReceiptHint(row, reason), delivered?.docs);
+  if (delivered?.detail ?? held?.reason) error.detail = delivered?.detail ?? held?.reason;
+  if (content) {
+    if (content.code !== reason) error.canonical = content.code;
+    if (content.reason) error.reason = content.reason;
+    if (content.key || content.line !== undefined) error.detail = [content.key ? `key ${content.key}` : '', content.line !== undefined ? `line ${content.line}` : ''].filter(Boolean).join(', ');
+  }
   if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';
   error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };
   error.writeRequest = receipt as WriteReceipt;

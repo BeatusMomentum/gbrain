@@ -63,16 +63,16 @@ export function nextGroupSize(settings: BulkSettings, perMemberMs: number | null
 /**
  * Followers for a group: frozen in manifest order after the head, four at a
  * time, stopping at the first entry that is not groupable, was overtaken by
- * another cursor, or would be waived (the waiver handles it as a head).
+ * another cursor, would be waived (the waiver handles it as a head) or is held (#5988).
  */
 export async function freezeFollowers<P extends WaiverEntry & { rebound?: true }>(engine: BrainEngine, cursor: WaiverCursor & { entries: unknown[] }, config: GBrainConfig,
-  count: number, freezeAt: (index: number) => Promise<P>): Promise<P[]> {
+  count: number, freezeAt: (index: number) => Promise<P | null>): Promise<P[]> {
   const followers: P[] = [];
   for (let next = cursor.index + 1; followers.length < count && next < cursor.entries.length;) {
     const batch = Array.from({ length: Math.min(4, count - followers.length, cursor.entries.length - next) }, (_, i) => next + i);
     const frozen = await Promise.all(batch.map(async index => {
       const entry = await freezeAt(index);
-      return entry.rebound || !groupableIntent(entry.intent) || await wouldWaiveEntry(engine, { ...cursor, index }, entry, config) ? null : entry;
+      return !entry || entry.rebound || !groupableIntent(entry.intent) || await wouldWaiveEntry(engine, { ...cursor, index }, entry, config) ? null : entry;
     }));
     for (const entry of frozen) {
       if (!entry) return followers;

@@ -31,6 +31,10 @@ import type { WriteRequest } from './model.ts';
 import { assertManagedSyncAllowed } from './worktree-refresh.ts';
 import type { GBrainConfig } from '../config.ts';
 import { admitGroup, freezeFollowers, groupableIntent, nextGroupSize, type BulkSettings } from './sync-group.ts';
+import { isContentRefusal } from '../import-screen.ts';
+import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
+import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, pinnedBlob, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, readSyncHoldPolicy, recordSyncConversion, recoveredReport, writeGitHold } from './sync-holds.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -47,14 +51,22 @@ export interface ManagedSyncWriteDiagnostic {
   docs?: string;
 }
 
-interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; rebound?: true; }
+interface Pending { requestId: string; slug: string; pageId: number | null; intent: SyncIntent; rebound?: true;
+  /** #5988: re-frozen in place from a failed content refusal; a second refusal of the same bytes stays blocked. */
+  converted?: true; }
+/** #5988: the frozen entry is held instead of admitted. */
+interface Held { hold: HeldEntry }
 interface Cursor extends SyncDiscovery { runId: string; index: number; authority: SyncAuthority; pending?: Pending; done?: boolean; companyReceiptId?: string;
   processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions; overtaken?: true;
   counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number;
     /** #5751: unchanged working-tree files skipped only because a no-op publication could never resolve their admit reason. */
     skippedContextualMode?: number; skippedCanonicalBytes?: number;
     /** DX-A7: entries advanced without an admission because their publication would change nothing. */
-    waived?: { imports: number; deletes: number } };
+    waived?: { imports: number; deletes: number };
+    /** #5988: imports held, and files imported only after quoting frontmatter. */
+    held?: number; recovered?: { count: number; sample_paths: string[]; comment_values?: number } };
+  /** #5988: failed content-refusal requests this run converted in place. */
+  convertedFromFailed?: string[];
   /** #5984: the active drain window (reset when a new drain starts), so a backlog ETA never counts downtime. */
   progress?: CursorProgress;
   /** #5984 bulk: the frozen head (also `pending`) and the members admitted with it, in manifest order. */
@@ -91,7 +103,8 @@ async function readCursor(engine: BrainEngine, key: string, cached?: Cursor): Pr
   const companyPlan = value.companyReceiptId ? cached?.companyPlan ?? await readCompanyBrainPlan(engine, value.companyReceiptId) : undefined;
   return { ...value, entries, ...(companyPlan ? { companyPlan } : {}) };
 }
-async function saveCursor(engine: BrainEngine, key: string, before: Cursor | null, next: Cursor, requireIdle = false, assertActive?: () => void): Promise<Cursor> {
+async function saveCursor(engine: BrainEngine, key: string, before: Cursor | null, next: Cursor, requireIdle = false, assertActive?: () => void,
+  inTx?: (tx: BrainEngine) => Promise<unknown>): Promise<Cursor> {
   return engine.transaction(async tx => {
     assertActive?.();
     await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
@@ -104,20 +117,22 @@ async function saveCursor(engine: BrainEngine, key: string, before: Cursor | nul
         return current;
       }
     }
-    const current = await writeCursor(tx, key, before, next);
+    const current = await writeCursor(tx, key, before, next, inTx);
     assertActive?.();
     return current;
   });
 }
 /** Compare-and-swap inside the caller's transaction; a lost swap returns the cursor that won. */
-async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, next: Cursor): Promise<Cursor> {
+async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, next: Cursor, inTx?: (tx: BrainEngine) => Promise<unknown>): Promise<Cursor> {
   if (before === null) {
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [`${OP}-manifest`, next.runId, JSON.stringify(next.entries)]);
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb) ON CONFLICT DO NOTHING`, [OP, key, JSON.stringify([header(next)])]);
   } else {
-    await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]);
+    const saved = await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$4::text::jsonb,updated_at=now()
+      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb RETURNING fingerprint`, [OP, key, JSON.stringify([header(before)]), JSON.stringify([header(next)])]);
     await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
+    // #5988: a hold write or clear commits with the cursor step that passes its entry, never without it.
+    if (saved.length) await inTx?.(tx);
   }
   return currentCursor(tx, key, next);
 }
@@ -207,20 +222,30 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   return diagnostic;
 }
 async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, assertActive: () => void,
-  run: { syncOptions: SyncCursorOptions; repoPath?: string }): Promise<Pending> {
+  run: { syncOptions: SyncCursorOptions; repoPath?: string; screen?: SyncScreenRun | null; observedAt?: string }): Promise<Pending | Held> {
   assertActive();
   const entry = cursor.entries[cursor.index];
   const retry = { sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? run.syncOptions, repoPath: run.repoPath };
   let slug = '__managed_sync_checkpoint__', pageId: number | null = null, revision: string | null = null;
   let content: string | null = null, rawHash: string | null = null;
   let lineEndingOnly = false, occupantRebound = false;
+  // #5988: company-profile sources never hold; their approved manifest keeps refusing.
+  const screening = entry?.action === 'import' && !cursor.companyPlan ? run.screen ?? null : null;
+  let blob: TreeBlob | null = null, oversize: { size: number | null } | undefined;
   if (entry) {
     assertSyncEntryOrigin(cursor, entry);
     const originScope = syncOriginScope(cursor);
     // #5522: another cursor of this source may have imported this new file since enumeration.
     const occupant = await alreadyImportedAtOrigin(engine, cursor, entry, originScope);
     assertActive();
-    const bytes = readSyncFile(cursor.root, entry.path);
+    let bytes: Buffer | null = null;
+    try { bytes = readSyncFile(cursor.root, entry.path); }
+    catch (error) { if (!screening || !isSyncReadBound(error)) throw error; oversize = { size: null }; }
+    if (screening && !entry.working) {
+      // #5988: an over-bound pinned blob is held by its size before its content is loaded.
+      blob = pinnedBlob(cursor, entry.path);
+      if (blob && blob.size > SYNC_READ_BOUND) oversize = { size: blob.size };
+    }
     rawHash = bytes === null ? null : sha256(bytes);
     if (entry.action === 'import' && cursor.companyPlan) {
       const company = currentCompanyBrainSync(cursor.sourceId);
@@ -230,13 +255,13 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
         `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (gbrain sources inspect --help).`);
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
-    } else content = entry.action === 'import' ? readSyncContent(cursor, entry) : null;
+    } else content = entry.action === 'import' && !oversize ? readSyncContent(cursor, entry) : null;
     lineEndingOnly = bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
       bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
     slug = entry.slug!; pageId = occupant?.page.id ?? entry.pageId ?? null; revision = occupant ? occupant.revision : entry.revision ?? null;
     const snapshot = await engine.readPageSnapshot(slug, { sourceId: cursor.sourceId, includeDeleted: true });
     assertActive();
-    if (occupant && !await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content!, rawHash, lineEndingOnly)) {
+    if (occupant && (content === null || !await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly))) {
       throw syncRunRefusal('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.', retry,
         `Page ${slug} was imported from ${entry.path} by another run of source ${cursor.sourceId} with different content after this run enumerated it, so the run stopped before admitting it.`);
     }
@@ -257,6 +282,12 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
           `Page ${moved.slug}, which ${entry.path} was renamed from, changed or was deleted after this sync enumerated it, so the run stopped before admitting the rename.`);
       }
     }
+    if (screening) {
+      const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize,
+        retryCommand: checkpointRetryCommand(retry) }, screening);
+      assertActive();
+      if (hold) return { hold };
+    }
   }
   await validateSyncAuthority(engine, cursor.authority, slug);
   assertActive();
@@ -264,6 +295,9 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     expected_revision: revision, sourcePath: entry?.sourcePath ?? null, path: entry?.path ?? null, rawHash, content, lineEndingOnly,
     ...(entry?.unownedDeletion ? { unownedDeletion: true } : {}),
     ...(entry?.renameFrom ? { renameFrom: entry.renameFrom } : {}),
+    ...(run.observedAt ? { holdObservedAt: run.observedAt } : {}), ...(blob ? { blobOid: blob.oid } : {}),
+    ...(!entry && cursor.releasedHolds?.length ? { releasedHolds: cursor.releasedHolds } : {}),
+    ...(!entry && cursor.convertedFromFailed?.length ? { supersededRequests: cursor.convertedFromFailed } : {}),
     processingOptions: cursor.processingOptions,
     // A cursor created before its options were recorded has the same key, so this run's options are its options.
     ...(!entry ? { syncOptions: cursor.syncOptions ?? run.syncOptions, ...(run.repoPath ? { repoPath: run.repoPath } : {}) } : {}),
@@ -272,6 +306,75 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     slugMode: cursor.slugMode, index: cursor.index, total: cursor.entries.length, from: cursor.from, target: cursor.target, working: entry?.working ?? false,
     ...(cursor.companyPlan ? { companyApproval: { schema: cursor.companyPlan.schema!, planDigest: cursor.companyPlan.plan_digest, extractorVersion: cursor.companyPlan.extractor_version,
       policyFingerprint: currentCompanyBrainSync(cursor.sourceId)!.policyFingerprint } } : {}) } };
+}
+
+/** A resume adopts the cursor's stored processing options unless the caller set a conflicting one explicitly. */
+function assertCursorProcessingOptions(cursor: Cursor, processingOptions: SyncProcessingOptions, explicitProcessing: SyncOpts['explicitProcessing']): void {
+  const stored = cursor.processingOptions;
+  if (stored ? digest(stored) !== digest(processingOptions) : !cursor.pending) {
+    // An unattended or flagless resume adopts the cursor's options; freezeEntry reads them from the cursor.
+    const explicit = explicitProcessing ?? SYNC_PROCESSING_KEYS;
+    if (!stored || explicit.some(key => stored[key] !== processingOptions[key])) {
+      const flags = { noEmbed: '--no-embed', noExtract: '--no-extract', noSchemaPack: '--no-schema-pack' } as const;
+      const resume = stored ? ` Resume it with: gbrain sync --source ${cursor.sourceId} --no-pull${SYNC_PROCESSING_KEYS.filter(key => stored[key]).map(key => ` ${flags[key]}`).join('')}`
+        + ' (or omit the conflicting flag to adopt the stored options).' : '';
+      const error = new OperationError('invalid_params', 'The unfinished sync has different or unknown processing options.',
+        `The unfinished sync cursor for source ${cursor.sourceId} stores ${stored ? SYNC_PROCESSING_KEYS.map(key => `${key}=${stored[key]}`).join(', ') : 'no processing options'}.${resume}`
+        + ' After resolving pending requests, use --retry-failed for explicit rediscovery; existing requests are not rewritten.');
+      error.detail = 'cursor_processing_options_conflict';
+      throw error;
+    }
+  }
+}
+
+/** #5988: a managed dry run lists the holds the pending (or newly discovered) imports would earn, read-only. */
+async function managedDryRun(engine: BrainEngine, value: Cursor, base: Cursor, run: { company: boolean; processingOptions: SyncProcessingOptions;
+  syncOptions: SyncCursorOptions; repoPath?: string; remote: boolean }): Promise<SyncResult> {
+  const screen = run.company ? null : await loadSyncScreenRun(engine, value.sourceId, value.processingOptions ?? run.processingOptions, run.remote);
+  return { ...result(base, 'dry_run'), ...await dryRunScreen(engine, value, screen,
+    checkpointRetryCommand({ sourceId: value.sourceId, processingOptions: value.processingOptions, syncOptions: value.syncOptions ?? run.syncOptions, repoPath: run.repoPath })) };
+}
+
+/** #5988: the hold clear that commits with the cursor step passing a waived entry. */
+const holdClear = (cursor: Cursor, path: string | null | undefined, observedAt: string) => path
+  ? (tx: BrainEngine) => clearGitHold(tx, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, path, observedAt }) : undefined;
+/** #5988: the hold write that commits with the cursor step passing a held entry. */
+const heldWrite = (held: Cursor, hold: HeldEntry, observedAt: string) => (tx: BrainEngine) => writeGitHold(tx, { source_id: held.sourceId, incarnation: held.incarnation, ...hold,
+  observed_at: observedAt, run_id: held.runId, mode: 'managed' });
+
+/** #5988: the cursor one entry on, past a held entry (no request admitted for it). */
+function advanceHeld(held: Cursor, converted?: string[]): Cursor {
+  const next: Cursor = { ...held, index: held.index + 1, counts: { ...held.counts, held: (held.counts.held ?? 0) + 1 },
+    ...(converted ? { convertedFromFailed: converted } : {}) };
+  delete next.pending;
+  return next;
+}
+
+/**
+ * #5988 (E6): a cursor blocked by a failed content refusal converts in place with its stored
+ * options: held when the screen holds the frozen entry, re-frozen under a new request when it
+ * passes, but only once for the same bytes, so a refusal the screen misses stays blocked
+ * without minting a receipt per run.
+ */
+async function convertBlockedCursor(engine: BrainEngine, blocked: Cursor, key: string, assertActive: () => void,
+  run: Parameters<typeof freezeEntry>[4] & { observedAt?: string }): Promise<Cursor> {
+  const previous = blocked.pending!;
+  const failed = await getWriteRequest(engine, blocked.authority.writer.principal, previous.requestId);
+  if (!failed || !['failed', 'conflict', 'cancelled'].includes(failed.state) || !isContentRefusal(failed.error_code, failed.error_message)) return blocked;
+  const unfinished = await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1", [blocked.sourceId]);
+  assertActive();
+  if (unfinished.length) return blocked;
+  const base: Cursor = { ...blocked }; delete base.pending;
+  const again = await freezeEntry(engine, base, key, assertActive, run);
+  const converted = [...(blocked.convertedFromFailed ?? []), previous.requestId];
+  const logged = (outcome: 'held' | 'refrozen') => (tx: BrainEngine) => recordSyncConversion(tx, blocked.sourceId, blocked.incarnation,
+    { request_id: previous.requestId, path: previous.intent.path ?? null, slug: previous.slug, run_id: blocked.runId, outcome });
+  if ('hold' in again) {
+    return saveCursor(engine, key, blocked, advanceHeld(base, converted), false, assertActive,
+      async tx => { await heldWrite(blocked, again.hold, run.observedAt!)(tx); await logged('held')(tx); });
+  }
+  if (previous.converted && again.intent.rawHash === previous.intent.rawHash && again.intent.content === previous.intent.content) return blocked;
+  return saveCursor(engine, key, blocked, { ...blocked, convertedFromFailed: converted, pending: { ...again, converted: true } }, false, assertActive, logged('refrozen'));
 }
 
 /**
@@ -321,6 +424,8 @@ function countCommitted(counts: Cursor['counts'], pending: Pending, outcome: Wri
     else if (pending.pageId === null) counts.added++; else counts.modified++;
   }
   counts.chunks += Number(outcome?.chunks ?? 0);
+  if ((outcome?.recovered_frontmatter || outcome?.comment_value) && pending.intent.path) counts.recovered = addRecovered(counts.recovered,
+    { paths: outcome.recovered_frontmatter ? [pending.intent.path] : [], commentValues: outcome.comment_value ? 1 : 0 });
 }
 interface BulkPass { settings: BulkSettings; perMemberMs: number | null }
 /**
@@ -375,7 +480,6 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
   return { cursor: saved };
 }
 
-/** One immutable page is admitted at a time; foreground writes can never sit behind a whole scan. */
 /** A finished cursor is deleted (compare-and-swap) before the next run discovers; returns whichever cursor replaced it. */
 async function retireCompletedCursor(engine: BrainEngine, key: string, completed: Cursor, assertActive: () => void): Promise<Cursor | null> {
   await engine.transaction(async tx => {
@@ -387,7 +491,31 @@ async function retireCompletedCursor(engine: BrainEngine, key: string, completed
   await clearManagedSyncFailureAfterSuccess(engine, key);
   return readCursor(engine, key);
 }
+/** What the hold report needs from a managed run: its source, cursor and authority. */
+interface HoldRunState { sourceId?: string; incarnation?: string; remote?: boolean; cursor?: () => Cursor | CursorHeader | null }
+
+/**
+ * One immutable page is admitted at a time; foreground writes can never sit behind a whole scan.
+ * #5988: every result (resumed, no-change and blocked runs included) carries this run's holds and the source's outstanding total.
+ */
 export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
+  const state: HoldRunState = {};
+  const synced = await runManagedSync(engine, opts, slice, state);
+  if (!state.sourceId || !state.incarnation || synced.status === 'dry_run') return synced;
+  const cursor = state.cursor?.() ?? null;
+  try {
+    const report = await buildHoldReport(engine, { sourceId: state.sourceId, incarnation: state.incarnation, runId: cursor?.runId ?? '', remote: state.remote === true,
+      policy: await readSyncHoldPolicy(engine), pendingScreen: synced.reason === 'writer_yield',
+      screened: 'entries' in (cursor ?? {}) ? (cursor as Cursor).entries.slice(0, cursor!.index).filter(entry => entry.action === 'import').length : 0 });
+    const recovered = state.remote ? undefined : recoveredReport(state.sourceId, cursor?.counts.recovered);
+    return { ...synced, ...report, ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
+      ...(recovered ? { recovered_frontmatter: recovered } : {}) };
+  } catch {
+    return synced;
+  }
+}
+
+async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxPages: number; maxMs: number } | undefined, state: HoldRunState): Promise<SyncResult> {
   await assertManagedSyncActive(engine);
   if (opts.sourceId && !currentCompanyBrainSync(opts.sourceId) && await getCompanyBrainProfile(engine, opts.sourceId)) {
     return (await import('../company-brain/runtime.ts')).performCompanyBrainSync(engine, opts);
@@ -401,11 +529,14 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
   const processingOptions = syncProcessingOptions(opts);
   const syncOptions: SyncCursorOptions = { full: opts.full ?? false, workingTree: opts.workingTree ?? false, srcSubpath: opts.srcSubpath ?? null,
     exclude: opts.exclude ?? [], includeHidden: opts.includeHidden ?? [], strategy: opts.strategy ?? null };
-  const frozenRun = { syncOptions, ...(opts.repoPath ? { repoPath: resolve(opts.repoPath) } : {}) };
+  const frozenRun: { syncOptions: SyncCursorOptions; repoPath?: string; screen?: SyncScreenRun | null; observedAt?: string } = { syncOptions, ...(opts.repoPath ? { repoPath: resolve(opts.repoPath) } : {}) };
+  const runStartedAt = new Date().toISOString();
   const key = digest({ source: context.incarnation, principal: authority.writer.principal, authority, ...(company ? { company: { receiptId: company.receiptId, planDigest: company.plan.plan_digest } } : {}),
     options: syncOptions });
   let cursor: Cursor | null = null;
   let missingManifestCursor: CursorHeader | null = null;
+  if (!company) Object.assign(state, { sourceId: context.sourceId, incarnation: context.incarnation, remote: authority.writer.remote, cursor: () => cursor });
+  const dryRun = (value: Cursor, base: Cursor = value) => managedDryRun(engine, value, base, { company: !!company, processingOptions, syncOptions, repoPath: frozenRun.repoPath, remote: authority.writer.remote });
   let phase: ManagedSyncFailure['phase'] = 'resume';
   let discoveryTarget: string | null = null;
   const discoveryRun = randomUUID();
@@ -452,7 +583,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         }
         phase = 'freeze';
         const retry = { ...cursor, processingOptions };
-        cursor = await saveCursor(engine, key, cursor, { ...retry, pending: await freezeEntry(engine, retry, key, assertActive, frozenRun) }, true, assertActive);
+        cursor = await saveCursor(engine, key, cursor, { ...retry, pending: await freezeEntry(engine, retry, key, assertActive, frozenRun) as Pending }, true, assertActive);
       }
     }
     if (cursor && opts.retryFailed && !opts.dryRun && !company && !cursor.done) {
@@ -473,7 +604,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }
     }
     assertActive();
-    if (cursor?.done && opts.dryRun) return result(cursor, 'dry_run');
+    // #5988: a finished run is not pending work; the dry run previews the holds of what a new run would discover.
+    if (cursor?.done && opts.dryRun) return dryRun({ ...await discoverManagedSync(engine, opts, context), authority, processingOptions, syncOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 } }, cursor);
     if (cursor?.done && company) {
       await clearManagedSyncFailureAfterSuccess(engine, key);
       assertActive();
@@ -487,7 +619,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       const discovery = await discoverManagedSync(engine, opts, context);
       assertActive();
       const fresh: Cursor = { ...discovery, authority, processingOptions, syncOptions, runId: discoveryRun, index: 0, counts: { added: 0, modified: 0, deleted: 0, chunks: 0 }, ...(company ? { companyReceiptId: company.receiptId } : {}) };
-      if (opts.dryRun) return result(fresh, 'dry_run');
+      if (opts.dryRun) return dryRun(fresh);
       if (!fresh.entries.length && fresh.from === fresh.target) {
         await clearManagedSyncFailureAfterSuccess(engine, key);
         assertActive();
@@ -496,6 +628,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       if (company) await company.protect([{ op: OP, fingerprint: key, kind: 'managed_cursor' }, { op: `${OP}-manifest`, fingerprint: fresh.runId, kind: 'manifest' }]);
       assertActive();
       cursor = await saveCursor(engine, key, null, fresh, false, assertActive);
+      if (fresh.retryTaken?.length) await clearGitHoldRetryPaths(engine, fresh.sourceId, fresh.incarnation, fresh.retryTaken);
     }
     assertActive();
     if (cursor.incarnation !== context.incarnation || cursor.binding.worktree_id !== context.binding.worktree_id ||
@@ -505,22 +638,14 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         { sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? syncOptions, repoPath: frozenRun.repoPath },
         `The unfinished sync cursor of source ${cursor.sourceId} was written under an older binding (its owner epoch, topology generation, worktree or root changed since), so this run stopped without importing; the retry rediscovers against the current binding.`);
     }
-    const stored = cursor.processingOptions;
-    if (stored ? digest(stored) !== digest(processingOptions) : !cursor.pending) {
-      // An unattended or flagless resume adopts the cursor's options; freezeEntry reads them from the cursor.
-      const explicit = opts.explicitProcessing ?? SYNC_PROCESSING_KEYS;
-      if (!stored || explicit.some(key => stored[key] !== processingOptions[key])) {
-        const flags = { noEmbed: '--no-embed', noExtract: '--no-extract', noSchemaPack: '--no-schema-pack' } as const;
-        const resume = stored ? ` Resume it with: gbrain sync --source ${cursor.sourceId} --no-pull${SYNC_PROCESSING_KEYS.filter(key => stored[key]).map(key => ` ${flags[key]}`).join('')}`
-          + ' (or omit the conflicting flag to adopt the stored options).' : '';
-        const error = new OperationError('invalid_params', 'The unfinished sync has different or unknown processing options.',
-          `The unfinished sync cursor for source ${cursor.sourceId} stores ${stored ? SYNC_PROCESSING_KEYS.map(key => `${key}=${stored[key]}`).join(', ') : 'no processing options'}.${resume}`
-          + ' After resolving pending requests, use --retry-failed for explicit rediscovery; existing requests are not rewritten.');
-        error.detail = 'cursor_processing_options_conflict';
-        throw error;
-      }
+    assertCursorProcessingOptions(cursor, processingOptions, opts.explicitProcessing);
+    if (opts.dryRun) return dryRun(cursor);
+    frozenRun.screen = company ? null : await loadSyncScreenRun(engine, cursor.sourceId, cursor.processingOptions ?? processingOptions, authority.writer.remote);
+    const observedAt = frozenRun.observedAt = cursor.discoveredAt ?? runStartedAt;
+    if (frozenRun.screen && !opts.retryFailed && cursor.pending && !cursor.done) {
+      phase = 'freeze';
+      cursor = await convertBlockedCursor(engine, cursor, key, assertActive, frozenRun);
     }
-    if (opts.dryRun) return result(cursor, 'dry_run');
     const config = loadConfig() ?? { engine: engine.kind };
     const analyzeEvery = await importAnalyzeEveryPages(engine);
     let batchStart = performance.now(), batchPages = 0, foregroundWaitStart = 0, foregroundBaseline = 0;
@@ -554,6 +679,12 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         foregroundWaitStart = 0;
         phase = 'freeze';
         const frozen = await freezeEntry(engine, cursor, key, assertActive, frozenRun);
+        if ('hold' in frozen) {
+          cursor = await saveCursor(engine, key, cursor, advanceHeld(cursor), false, assertActive, heldWrite(cursor, frozen.hold, observedAt));
+          opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index }); assertActive();
+          if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
+          continue;
+        }
         cursor = await saveCursor(engine, key, cursor, { ...cursor, ...(frozen.rebound ? { overtaken: true as const } : {}), pending: frozen }, false, assertActive);
       }
       if (!cursor.pending) continue; // another owner-loop advanced the cursor
@@ -564,7 +695,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       // #5470/#5984: a frozen entry whose publication would change nothing advances the cursor without an admission.
       const screened: Cursor = cursor;
       const waived: Cursor | null = prior ? null : await waiveNoopEntry(engine, screened, pending, config, key,
-        (tx, noop) => writeCursor(tx, key, screened, { ...waivedCursor(screened, noop), progress: stampProgress(screened.progress, screened.index, screened.index + 1, drainStartedAt) }), tx => currentCursor(tx, key, screened));
+        (tx, noop) => writeCursor(tx, key, screened, { ...waivedCursor(screened, noop), progress: stampProgress(screened.progress, screened.index, screened.index + 1, drainStartedAt) },
+          holdClear(screened, pending.intent.path, observedAt)), tx => currentCursor(tx, key, screened));
       if (waived) {
         cursor = waived;
         opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true });
@@ -576,7 +708,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       if (bulk.settings.enabled && !foregroundQueued && !prior && !cursor.group && !pending.rebound && groupableIntent(pending.intent)) {
         const head: Cursor = cursor;
         const followers = await freezeFollowers(engine, head, config, nextGroupSize(bulk.settings, bulk.perMemberMs) - 1,
-          index => freezeEntry(engine, { ...head, index }, key, assertActive, frozenRun));
+          async index => { const frozen = await freezeEntry(engine, { ...head, index }, key, assertActive, frozenRun); return 'hold' in frozen ? null : frozen; });
         // Members name their group (the head's request ID), so a consumer can claim them together.
         const members = [pending, ...followers].map(member => ({ ...member, intent: { ...member.intent, group: pending.requestId } }));
         if (followers.length) cursor = await saveCursor(engine, key, head, { ...head, pending: members[0], group: members }, false, assertActive);

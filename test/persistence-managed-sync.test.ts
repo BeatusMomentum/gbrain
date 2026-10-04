@@ -492,8 +492,10 @@ test('managed sync still rejects conflicting explicit slugs on extension-bearing
     for (const engine of engines) {
       const f = await fixture(engine, { 'notes/example.md.md':
         '---\ntype: note\ntitle: Example\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' });
-      expect(await performManagedSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true }))
-        .toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
+      // #5988: the conflicting file is held (never imported) instead of blocking the sync.
+      const synced = await performManagedSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true });
+      expect(synced).toMatchObject({ status: 'first_sync', held_count: 1 });
+      expect(synced.held?.[0]).toMatchObject({ path: 'notes/example.md.md', code: 'frontmatter_slug_conflict' });
       expect(await engine.getPage('notes/example.md', { sourceId: f.id })).toBeNull();
       expect(await engine.getPage('notes/other', { sourceId: f.id })).toBeNull();
     }

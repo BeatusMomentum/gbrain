@@ -87,7 +87,10 @@ test('a bulk drain publishes groups in one transaction while every page keeps it
 test('a failing member is attributed to its own page, earlier members commit and later members are cancelled, not published', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
   if (!engine) return;
   const f = await fixture(engine, notes(10, i => i === 3 ? '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' : null));
-  const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+  // #5988 holds such a file by default; the fail-closed policy keeps it a publication failure inside the group.
+  await engine.setConfig('sync.holds', 'fail');
+  const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true })
+    .finally(() => engine!.unsetConfig('sync.holds'));
   expect(result).toMatchObject({ status: 'blocked_by_failures', failedFiles: 1 });
   expect(result.drain).toMatchObject({ outcome: 'blocked', stop_reason: 'blocked_by_failures' });
   expect(result.managedWrite?.slug).toBe('notes/n3');
@@ -98,6 +101,20 @@ test('a failing member is attributed to its own page, earlier members commit and
   expect(states.find(row => row.slug === 'notes/n3')?.state).toBe('failed');
   expect(states.filter(row => row.state === 'committed').map(row => row.slug)).toEqual(['notes/n0', 'notes/n1', 'notes/n2']);
   expect(states.filter(row => !['committed', 'failed'].includes(row.state)).every(row => row.state === 'cancelled')).toBe(true);
+}), 300_000);
+
+test('a held file ends the group before it: it is held without a request and every other page commits (#5988)', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  if (!engine) return;
+  const f = await fixture(engine, notes(10, i => i === 3 ? '---\ntitle: Conflict\nslug: notes/other\n---\nA conflicting identity must not be imported.\n' : null));
+  const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true });
+  expect(result.drain).toMatchObject({ outcome: 'synced' });
+  expect(result).toMatchObject({ holds_outstanding: 1 });
+  const states = await engine.executeRaw<{ slug: string; state: string }>(
+    `SELECT slug,state FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [f.id]);
+  expect(states.map(row => row.slug)).not.toContain('notes/n3');
+  expect(states.every(row => row.state === 'committed')).toBe(true);
+  expect(states).toHaveLength(9);
+  expect(await engine.getPage('notes/n3', { sourceId: f.id })).toBeNull();
 }), 300_000);
 
 test('--no-bulk publishes one page per transaction', async () => withEnv({ GBRAIN_HOME: home }, async () => {
