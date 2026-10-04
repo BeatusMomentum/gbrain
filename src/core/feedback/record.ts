@@ -84,6 +84,7 @@ type Job =
 interface QueueState {
   engine: BrainEngine;
   jobs: Job[];
+  inFlight: number;
   running: Promise<void> | null;
 }
 
@@ -95,7 +96,7 @@ let answersSinceHint = new Map<string, number>();
 function enqueue(engine: BrainEngine, job: Job): void {
   let q = queues.get(engine);
   if (!q) {
-    q = { engine, jobs: [], running: null };
+    q = { engine, jobs: [], inFlight: 0, running: null };
     queues.set(engine, q);
   }
   q.jobs.push(job);
@@ -115,9 +116,11 @@ async function runQueue(q: QueueState): Promise<void> {
       while (q.jobs.length > 0 && batch.length < 50 && q.jobs[0]!.kind === 'event') batch.push(q.jobs.shift()!);
       try {
         if (batch.length > 0) {
+          q.inFlight = batch.length;
           await insertRetrievalEvents(q.engine, batch.map(j => (j as Extract<Job, { kind: 'event' }>).event));
         } else {
           const job = q.jobs.shift() as Extract<Job, { kind: 'cited' }>;
+          q.inFlight = 1;
           await applyRatings(q.engine, {
             eventId: job.eventId,
             clientId: job.clientId,
@@ -131,6 +134,7 @@ async function runQueue(q: QueueState): Promise<void> {
       } catch {
         dropped += Math.max(1, batch.length);
       } finally {
+        q.inFlight = 0;
         for (const j of batch) pendingEventIds.delete((j as Extract<Job, { kind: 'event' }>).event.id);
       }
     }
@@ -156,7 +160,7 @@ export async function drainFeedbackQueue(timeoutMs: number): Promise<{ unfinishe
   const outcome = await Promise.race([Promise.allSettled(running).then(() => 'done' as const), timeout]);
   if (timer) clearTimeout(timer);
   if (outcome === 'done') return { unfinished: 0 };
-  return { unfinished: [...queues.values()].reduce((n, q) => n + q.jobs.length, 0) };
+  return { unfinished: [...queues.values()].reduce((n, q) => n + q.inFlight + q.jobs.length, 0) };
 }
 
 registerBackgroundWorkDrainer({

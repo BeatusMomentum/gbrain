@@ -9,8 +9,10 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { insertRetrievalEvents, readWeights } from '../src/core/feedback/store.ts';
 import { rateAnswer } from '../src/core/feedback/rate.ts';
 import {
-  _resetFeedbackRecordingForTests, answerIdTime, canTeachSource, drainFeedbackQueue, mintAnswerId, recordAnswer,
+  _resetFeedbackRecordingForTests, answerIdTime, canTeachSource, drainFeedbackQueue, droppedFeedbackEvents, isAnswerPending,
+  mintAnswerId, QUEUE_CAP, recordAnswer,
 } from '../src/core/feedback/record.ts';
+import { __listDrainerNamesForTest } from '../src/core/background-work.ts';
 import { _resetFeedbackSettingsCacheForTests } from '../src/core/feedback/settings.ts';
 
 let engine: PGLiteEngine;
@@ -198,5 +200,60 @@ describe('recordAnswer', () => {
     await drainFeedbackQueue(5000);
     const rows = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM retrieval_events');
     expect(rows[0]!.n).toBe(0);
+  });
+});
+
+describe('write-behind queue', () => {
+  async function withBlockedWrites(run: (release: () => void) => Promise<void>): Promise<void> {
+    const original = engine.executeRaw.bind(engine);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    (engine as unknown as { executeRaw: typeof original }).executeRaw = (async (sql: string, params?: unknown[]) => {
+      if (sql.includes('INSERT INTO retrieval_events')) await gate;
+      return original(sql, params);
+    }) as typeof original;
+    try {
+      await run(release);
+    } finally {
+      release();
+      (engine as unknown as { executeRaw: typeof original }).executeRaw = original;
+    }
+  }
+
+  test('a rating that races its answer gets answer_pending, then succeeds once the write lands', async () => {
+    await withBlockedWrites(async (release) => {
+      const meta = await recordAnswer(localCtx(), { op: 'query', pages: [{ source_id: 'default', slug: 'people/alice-example', content_hash: await hashOf('people/alice-example') }] });
+      const id = meta!.answer_id!;
+      expect(isAnswerPending(id)).toBe(true);
+      await expect(rateAnswer(localCtx(), { answer_id: id, rating: 5 })).rejects.toMatchObject({ code: 'answer_pending' });
+      expect(await drainFeedbackQueue(50)).toEqual({ unfinished: 1 });
+      release();
+      expect(await drainFeedbackQueue(5000)).toEqual({ unfinished: 0 });
+      expect(isAnswerPending(id)).toBe(false);
+      const receipt = await rateAnswer(localCtx(), { answer_id: id, rating: 5 });
+      expect(receipt).toBeTruthy();
+    });
+  });
+
+  test('overflow drops the oldest answers, counts them, and never blocks the caller', async () => {
+    await withBlockedWrites(async (release) => {
+      const ids: string[] = [];
+      for (let i = 0; i < QUEUE_CAP + 5; i++) {
+        const meta = await recordAnswer(localCtx(), { op: 'query', pages: [{ source_id: 'default', slug: 'notes/meeting-example' }] });
+        ids.push(meta!.answer_id!);
+      }
+      expect(droppedFeedbackEvents()).toBe(4);
+      expect(isAnswerPending(ids[1]!)).toBe(false);
+      expect(isAnswerPending(ids.at(-1)!)).toBe(true);
+      expect((await drainFeedbackQueue(50)).unfinished).toBe(QUEUE_CAP + 1);
+      release();
+      expect(await drainFeedbackQueue(10_000)).toEqual({ unfinished: 0 });
+    });
+    const rows = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM retrieval_events');
+    expect(rows[0]!.n).toBe(QUEUE_CAP + 1);
+  });
+
+  test('the queue drains on CLI exit and before disconnect', () => {
+    expect(__listDrainerNamesForTest()).toContain('retrieval-feedback');
   });
 });
