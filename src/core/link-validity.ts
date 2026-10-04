@@ -46,15 +46,30 @@ export const RELATION_SEMANTICS: Readonly<Record<string, RelationSemantics>> = {
   cited: 'event',
 };
 
+/**
+ * Pack-declared semantics (`link_types[].temporal`) layered over the built-in
+ * table; a pack declaration wins for its type. Set by
+ * `primeRelationSemantics` (link-semantics-pack.ts) at write entry points.
+ */
+let packSemantics: ReadonlyMap<string, 'state' | 'event'> = new Map();
+
+export function setPackRelationSemantics(semantics: ReadonlyMap<string, 'state' | 'event'>): void {
+  packSemantics = semantics;
+}
+
 export function relationSemantics(linkType: string | null | undefined): RelationSemantics {
-  return (linkType && RELATION_SEMANTICS[linkType]) || 'reference';
+  if (!linkType) return 'reference';
+  return packSemantics.get(linkType) ?? RELATION_SEMANTICS[linkType] ?? 'reference';
 }
 
 export function isTemporalLinkType(linkType: string | null | undefined): boolean {
   return relationSemantics(linkType) !== 'reference';
 }
 
-export const TEMPORAL_LINK_TYPES: readonly string[] = Object.keys(RELATION_SEMANTICS);
+/** Every relation type with temporal state: the built-in table plus pack declarations. */
+export function temporalLinkTypes(): string[] {
+  return [...new Set([...Object.keys(RELATION_SEMANTICS), ...packSemantics.keys()])].filter(isTemporalLinkType).sort();
+}
 
 // ─── Dates ───────────────────────────────────────────────────────────────
 
@@ -457,8 +472,9 @@ export function annotateTemporalRow<T extends { link_type: string }>(row: T, asO
   const semantics = r.temporal_semantics as 'state' | 'event' | null | undefined;
   const out = { ...row } as T & TemporalAnnotation & { first_start?: string | null };
   for (const c of TEMPORAL_COLUMNS) delete (out as unknown as Record<string, unknown>)[c];
-  if (relationSemantics(row.link_type) === 'reference') return Object.assign(out, { status: 'reference' as const });
-  if (ranges == null || !semantics) return Object.assign(out, { status: 'live' as const });
+  if (ranges == null || !semantics) {
+    return Object.assign(out, { status: relationSemantics(row.link_type) === 'reference' ? 'reference' as const : 'live' as const });
+  }
   const stints = parseMultirange(ranges);
   const status = statusAt({ semantics, stints, disputed: r.temporal_disputed === true, undatedPast: Number(r.temporal_undated_past ?? 0) }, asOf);
   return Object.assign(out, {

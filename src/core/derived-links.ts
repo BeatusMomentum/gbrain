@@ -3,6 +3,7 @@ import { assertPageRevision } from './page-state/types.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from './link-temporal-apply.ts';
+import { primeRelationSemantics } from './link-semantics-pack.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -53,6 +54,7 @@ export async function replaceDerivedLinks(
   links: LinkBatchInput[],
   opts: DerivedLinkReplacementOptions = {},
 ): Promise<{ created: number; removed: number }> {
+  await primeRelationSemantics(engine as Partial<Pick<BrainEngine, 'getConfig' | 'listConfigKeys'>>);
   const producers = ['markdown', 'wikilink-resolved', ...(opts.includeFrontmatter === false ? [] : ['frontmatter'])];
   const unique = new Map<string, LinkBatchInput>();
   for (const link of links) {

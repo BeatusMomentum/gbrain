@@ -24,6 +24,27 @@ Relationship types fall into three groups:
 Open-loop edges (`owes_to`, `awaiting_reply_from`) keep their own lifecycle in
 open loops.
 
+A schema pack adds its own relations to the first two groups with
+`link_types[].temporal`:
+
+```yaml
+link_types:
+  - name: reports_to
+    inverse: manages
+    temporal: state     # can end: reads return the manager true today
+  - name: promoted
+    temporal: event
+```
+
+The table above is the default; a pack declaration wins for its relation. The brain
+uses the union of its active pack and every per-source pack, and `state` wins if two
+packs disagree. `mentions` never carries a date. `gbrain schema lint` reports a
+`temporal` on `mentions` (error), a built-in relation redeclared with different
+semantics, and an inverse pair that disagrees (warnings). Natural-language cues
+("left", "joined") date the built-in relations only; a pack relation takes its dates
+from the explicit grammar (`Ended reports_to [[people/x]]`), frontmatter
+`since`/`until`, and `add_link valid_from` / `valid_until`.
+
 ## How dates get recorded (no model calls)
 
 Every write re-reads the page and records dated evidence for the relationships

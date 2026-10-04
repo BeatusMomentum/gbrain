@@ -29,9 +29,10 @@ import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
 import { TEMPORAL_EDGE_PARAMS, STARTER_STATUS_PARAM, STARTER_AS_OF_PARAM, resolveEdgeTemporal, filterTemporalLinks, reportTemporal } from './edge-temporal.ts';
-import { isCalendarDate, relationSemantics, TEMPORAL_LINK_TYPES } from '../link-validity.ts';
+import { isCalendarDate, relationSemantics, temporalLinkTypes } from '../link-validity.ts';
 import { writeManualTransitions, removeManualTransitions } from '../link-temporal-apply.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { primeRelationSemantics } from '../link-semantics-pack.ts';
 // #4655: write-time pack vocabulary enforcement for explicit link verbs.
 import {
   loadActivePackForWriteVocabulary,
@@ -68,7 +69,7 @@ function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, li
     throw opError('invalid_params', 'add_link: valid_until is before valid_from', `Swap them, or pass only ${paramUse(ctx, 'valid_until')} to record when the relationship ended.`);
   }
   if (relationSemantics(linkType) === 'reference') {
-    throw opError('invalid_params', `add_link: link_type '${linkType || '(none)'}' has no dates; valid_from/valid_until apply to dated relations (${TEMPORAL_LINK_TYPES.join(', ')})`,
+    throw opError('invalid_params', `add_link: link_type '${linkType || '(none)'}' has no dates; valid_from/valid_until apply to dated relations (${temporalLinkTypes().join(', ')})`,
       `Pass link_type such as works_at with the dates, or drop valid_from/valid_until.`);
   }
   if (relationSemantics(linkType) === 'event' && validUntil !== undefined) {
@@ -113,6 +114,7 @@ const add_link: Operation = {
         );
       }
     }
+    await primeRelationSemantics(ctx.engine);
     const dates = validateLinkDates(ctx, p, linkType);
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
@@ -184,6 +186,7 @@ const remove_link: Operation = {
   handler: async (ctx, p) => {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
+    await primeRelationSemantics(ctx.engine);
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
       : undefined;

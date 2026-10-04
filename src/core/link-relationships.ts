@@ -21,7 +21,7 @@ import type { BrainEngine } from './engine.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { privatePagesFilterFragment } from './search/private-visibility.ts';
 import {
-  buildRelationshipState, relationSemantics, statusAt, stintsToMultirange, dateKey, TEMPORAL_LINK_TYPES,
+  buildRelationshipState, relationSemantics, statusAt, stintsToMultirange, dateKey, temporalLinkTypes,
   type AssertionEvidence, type TransitionEvidence, type RelationshipScope, type TransitionProducer,
 } from './link-validity.ts';
 
@@ -187,7 +187,7 @@ export async function relationshipKeysForPages(exec: RawExec, pageIds: readonly 
      UNION
      SELECT from_page_id, to_page_id, link_type FROM link_relationships
       WHERE from_page_id = ANY($1::int[]) OR to_page_id = ANY($1::int[])`,
-    [ids, [...TEMPORAL_LINK_TYPES]]);
+    [ids, temporalLinkTypes()]);
   return rows.map(r => ({ from_page_id: Number(r.from_page_id), to_page_id: Number(r.to_page_id), link_type: r.link_type }));
 }
 
@@ -209,7 +209,7 @@ export async function staleRelationshipKeys(exec: RawExec, limit = 500): Promise
          AND lr.to_page_id = e.to_page_id AND lr.link_type = e.link_type AND lr.scope = 'all' AND lr.refreshed_at >= e.newest)
      GROUP BY from_page_id, to_page_id, link_type
      ORDER BY min(newest) LIMIT $2`,
-    [[...TEMPORAL_LINK_TYPES], limit]);
+    [temporalLinkTypes(), limit]);
   // Relationships whose evidence-owning page was deleted, restored or edited
   // after the last refresh (soft deletes change no evidence row).
   const originChanged = rows.length >= limit ? [] : await exec.executeRaw<RelationshipKey>(
@@ -237,6 +237,8 @@ export async function staleRelationshipKeys(exec: RawExec, limit = 500): Promise
  */
 export async function sweepStaleRelationships(engine: BrainEngine, limit = 2000): Promise<Record<string, unknown>> {
   try {
+    const { primeRelationSemantics } = await import('./link-semantics-pack.ts');
+    await primeRelationSemantics(engine);
     const keys = await staleRelationshipKeys(engine, limit);
     if (!keys.length) return {};
     const { maintenanceTransaction } = await import('./persistence/attribution.ts');

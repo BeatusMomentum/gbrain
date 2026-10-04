@@ -11,8 +11,7 @@
  */
 
 import {
-  annotateTemporalRow, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, TEMPORAL_LINK_TYPES, relationSemantics,
-  type RelationshipStatus,
+  annotateTemporalRow, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type RelationshipStatus,
 } from './link-validity.ts';
 import { privateLinkOriginFilterFragment, privatePagesFilterFragment } from './search/private-visibility.ts';
 
@@ -58,7 +57,6 @@ export async function loadRelationshipNotes(
 ): Promise<Map<string, string>> {
   const notes = new Map<string, string>();
   if (subjects.length === 0) return notes;
-  const stateTypes = TEMPORAL_LINK_TYPES.filter(t => relationSemantics(t) === 'state');
   const privacy = opts.excludePrivate ? ` AND ${privatePagesFilterFragment('t')} AND ${privateLinkOriginFilterFragment('l')}` : '';
   const rows = await engine.executeRaw<{ from_slug: string; source_id: string; to_slug: string; to_title: string | null; link_type: string }>(
     `SELECT f.slug AS from_slug, f.source_id, t.slug AS to_slug, t.title AS to_title, l.link_type${TEMPORAL_LINK_SELECT_SQL}
@@ -67,8 +65,8 @@ export async function loadRelationshipNotes(
        JOIN pages t ON t.id = l.to_page_id
        ${temporalLinkJoinSql('l', opts.excludePrivate)}
       WHERE (f.source_id, f.slug) IN (SELECT s.source_id, s.slug FROM unnest($1::text[], $2::text[]) AS s(source_id, slug))
-        AND l.link_type = ANY($3::text[]) AND lr_t.semantics = 'state' AND t.deleted_at IS NULL${privacy}`,
-    [subjects.map(s => s.source_id), subjects.map(s => s.slug), stateTypes],
+        AND lr_t.semantics = 'state' AND t.deleted_at IS NULL${privacy}`,
+    [subjects.map(s => s.source_id), subjects.map(s => s.slug)],
   );
   const bySubject = new Map<string, Map<string, NoteEdge>>();
   for (const raw of rows) {

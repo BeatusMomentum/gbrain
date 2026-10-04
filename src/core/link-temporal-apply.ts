@@ -16,7 +16,7 @@ import type { Page } from './types.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { deriveTemporalEvidence, rowKey, type TemporalEvidence } from './link-temporal-evidence.ts';
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
-import { TEMPORAL_LINK_TYPES } from './link-validity.ts';
+import { temporalLinkTypes } from './link-validity.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 
@@ -37,7 +37,7 @@ export async function relationshipKeysForOrigin(tx: Tx, pageId: number): Promise
      SELECT from_page_id, to_page_id, link_type FROM link_transitions WHERE origin_page_id = $1
      UNION
      SELECT from_page_id, to_page_id, link_type FROM link_relationships WHERE from_page_id = $1 AND scope = 'all'`,
-    [pageId, [...TEMPORAL_LINK_TYPES]]);
+    [pageId, temporalLinkTypes()]);
   return rows.map(r => ({ from_page_id: Number(r.from_page_id), to_page_id: Number(r.to_page_id), link_type: r.link_type }));
 }
 

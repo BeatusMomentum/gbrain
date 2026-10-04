@@ -26,7 +26,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
 import { resolveModel } from '../model-config.ts';
-import { closeContradiction, parseMultirange, relationSemantics, utcToday, dateKey, type Stint } from '../link-validity.ts';
+import { closeContradiction, parseMultirange, utcToday, dateKey, type Stint } from '../link-validity.ts';
 
 export interface EdgeContradictionsResult {
   name: 'edge_contradictions';
@@ -188,7 +188,6 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
     [today, maxSubjects]);
   const groups = new Map<string, SubjectGroup>();
   for (const r of rows) {
-    if (relationSemantics(r.link_type) !== 'state') continue;
     const key = `${r.from_page_id}\0${r.link_type}`;
     let g = groups.get(key);
     if (!g) { g = { sourceId: r.source_id, fromId: Number(r.from_page_id), slug: r.subject_slug, title: r.subject_title ?? r.subject_slug, linkType: r.link_type, rels: [] }; groups.set(key, g); }
