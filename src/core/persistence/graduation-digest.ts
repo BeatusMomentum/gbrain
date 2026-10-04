@@ -91,9 +91,12 @@ export async function tableColumns(engine: BrainEngine, relation: string): Promi
 
 /** Primary-key columns in index order; graduation requires one on every copied table. */
 export async function primaryKey(engine: BrainEngine, relation: string): Promise<readonly ColumnMeta[]> {
-  const rows = await engine.executeRaw<Parameters<typeof toMeta>[0]>(`${COLUMN_META_SQL}
-    AND a.attnum = ANY((SELECT i.indkey::int2[] FROM pg_index i WHERE i.indrelid=c.oid AND i.indisprimary))
-    ORDER BY array_position((SELECT i.indkey::int2[] FROM pg_index i WHERE i.indrelid=c.oid AND i.indisprimary), a.attnum)`, [relation]);
+  const rows = await engine.executeRaw<Parameters<typeof toMeta>[0]>(`SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
+      t.typcategory::text AS category, (t.typcollation <> 0) AS collatable, (a.attgenerated::text = 's') AS generated
+    FROM pg_index i JOIN pg_class c ON c.oid=i.indrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+    CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+    JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.attnum JOIN pg_type t ON t.oid=a.atttypid
+    WHERE n.nspname=current_schema() AND c.relname=$1 AND i.indisprimary ORDER BY k.ord`, [relation]);
   if (!rows.length) throw new Error(`Table ${relation} has no primary key; graduation digests and copies need one.`);
   return rows.map(toMeta);
 }
