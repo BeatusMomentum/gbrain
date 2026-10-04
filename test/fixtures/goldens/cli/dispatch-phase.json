@@ -1677,6 +1677,15 @@
               "forget",
               "call"
             ]
+          },
+          {
+            "condition": "command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('./commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": []
           }
         ],
         "thinClient": "refuse",

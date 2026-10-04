@@ -4869,7 +4869,7 @@ Different users have different constraints:
 | Researcher | Analytics, bulk exports, embeddings | DuckDBEngine (someday) |
 | Edge/mobile | Offline-first, sync later | PGLiteEngine + sync (someday) |
 
-The engine interface means we don't have to choose. PGLite is the zero-friction default. Supabase is the production scale path. `gbrain migrate --to supabase/pglite` moves between them.
+The engine interface means we don't have to choose. PGLite is the zero-friction default. Supabase is the production scale path. `gbrain migrate --to postgres|pglite` moves between them (`supabase` is an alias of `postgres`).
 
 ## The interface
 
@@ -5143,7 +5143,16 @@ Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 | Concurrency | Single process | Connection pooling |
 | Backups | Manual (file copy) | Managed by Supabase |
 
-**Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline, facts) and imports into Supabase. Config rows copy in full minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. `gbrain migrate --to pglite` goes the other direction. The copy is lossless for what it carries, but it refuses two kinds of brain: a managed brain (`writer_coordinator_required`, "cannot mutate a managed brain through the legacy writer") and any brain with durable write history, fact withdrawals or canonical worktree ownership (rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees`), because the copier cannot carry request IDs, withdrawals or ownership. A brain that has saved memory through the write coordinator (`remember`, `put_page` from an agent or a resident `gbrain serve`) has that history, so in practice `migrate --to` works only for brains that never used it. For those brains, keep the datastore and repair forward (`gbrain doctor`, `gbrain repair`) instead of migrating, and choose Postgres up front if you expect 1000+ files or several machines. An engine move that preserves request IDs, withdrawals, attribution, grants and ownership is planned, not shipped.
+**Migration:** `gbrain migrate --to postgres` (alias `--to supabase`) exports everything (pages, chunks, embeddings, links, tags, timeline, facts) and imports into Postgres. Config rows copy in full minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. `gbrain migrate --to pglite` goes the other direction. The copy is lossless for what it carries, but it refuses two kinds of brain: a managed brain and any brain with durable write history, fact withdrawals or canonical worktree ownership (rows in `persistence_requests`, `fact_withdrawals` or `persistence_worktrees`), because the copier cannot carry request IDs, withdrawals or ownership. A brain that has saved memory through the write coordinator (`remember`, `put_page` from an agent or a resident `gbrain serve`) has that history, so in practice `migrate --to` works only for brains that never used it. Choose Postgres up front if you expect 1000+ files or several machines.
+
+<a id="engine-migration-refused"></a>**Engine migration refused (`writer_coordinator_required`).** The refusal is an agent-contract envelope whose `fix` names the refusing side; every branch verifies with the read-only `gbrain doctor --no-migrate --json`, and nothing has changed in either datastore:
+
+| Refusing side | `fix.next` | Next step |
+|---|---|---|
+| A PGLite brain moving to Postgres (history or managed) | `ask_user` | Relay `user_message`: keep the brain on PGLite and share it with other machines through `gbrain mcp expose` (effects `persistent_install`, `egress`), or leave it as it is. A verified PGLite-to-Postgres graduation that carries this history is not available yet. |
+| A Postgres brain moving to PGLite | `report` | The brain stays on Postgres; moving down would drop its history. |
+| A target that already holds persistence history | `tell_user_to_run` | `gbrain migrate --to <engine> --url <empty_database_url>` with an empty database the user provides (`--path` for a PGLite target). |
+
 
 The migration and the autopilot daemon do not race: `migrate --to` claims a
 cooperative pause marker before touching the target. The marker doubles as a
@@ -9659,6 +9668,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain doctor --only connector_held_items --json` |
+| [`gbrain migrate --to` refused with `writer_coordinator_required`](../ENGINES.md#engine-migration-refused) | follow the refusal's `fix`: relay its `user_message` (stay on PGLite and share with `gbrain mcp expose`, or leave the brain as it is) | agent, after the user agrees | `persistent_install`, `egress` (for `gbrain mcp expose`) | `gbrain doctor --no-migrate --json` |
 | [A write was refused with a named reason](#write-refused) | the reason's recovery in [write refusal reasons](write-refusals.md) | as the refusal's `fix` | as the refusal's `fix` | the refusal's `verify` |
 | [Managed sync blocked with `checkpoint_validation_timeout`](#checkpoint-validation-timeout) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …` | brain host | none | `gbrain doctor --only persistence_request_indexes --json` |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
