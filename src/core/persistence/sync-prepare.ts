@@ -74,6 +74,19 @@ export interface SyncIntent extends Record<string, unknown> {
  * root, cursor, owner epoch) runs once per transaction; a bulk group's
  * members share it. Its rows stay locked FOR SHARE until the transaction ends.
  */
+/**
+ * #5984: the requests the managed-sync cursor holds: its head (`pending`), the bulk `group` and the groups
+ * admitted ahead (`window`). FOR KEY SHARE keeps the cursor row in place without blocking the drain's
+ * cursor saves, so the next group is admitted while this one publishes.
+ */
+async function readSyncCursorFence(tx: BrainEngine, cursorKey: string): Promise<{ run_id: string; request_id: string | null; group: string[] | null } | undefined> {
+  const [held] = await tx.executeRaw<{ run_id: string; request_id: string | null; group: string[] | null }>(
+    `SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id,
+      (SELECT jsonb_agg(m->>'requestId') FROM (SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'group','[]'::jsonb)) m
+        UNION ALL SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'window','[]'::jsonb)) g, jsonb_array_elements(g) m) members) AS group
+     FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR KEY SHARE`, [cursorKey]);
+  return held;
+}
 const sharedValidations = new WeakMap<object, Map<string, Promise<{ run_id: string; request_id: string | null; group: string[] | null } | null>>>();
 function sharedSyncValidation(tx: BrainEngine, key: string, run: () => Promise<{ run_id: string; request_id: string | null; group: string[] | null } | null>) {
   if ((tx as { _pageTransaction?: boolean })._pageTransaction !== true) return run();
@@ -231,14 +244,7 @@ export async function prepareManagedSyncMutation(engine: BrainEngine, row: Write
       await assertManagedSyncActive(tx, true);
       const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
       assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
-      // #5984: a bulk group's members are held by the cursor's `group`, its head also by `pending`, and
-      // admitted-ahead groups by `window`. FOR KEY SHARE keeps the cursor row in place without blocking the
-      // drain's cursor saves, so the next group is admitted while this one publishes.
-      const [held] = await tx.executeRaw<{ run_id: string; request_id: string | null; group: string[] | null }>(
-        `SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id,
-          (SELECT jsonb_agg(m->>'requestId') FROM (SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'group','[]'::jsonb)) m
-            UNION ALL SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'window','[]'::jsonb)) g, jsonb_array_elements(g) m) members) AS group
-         FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR KEY SHARE`, [p.cursorKey]);
+      const held = await readSyncCursorFence(tx, p.cursorKey);
       if (after && !await windowPredecessorCommitted(tx, row)) throw syncPublicationRefusal('revision_conflict', 'An earlier page of this sync did not commit.', row, p,
         `Request ${row.request_id} was admitted ahead of request ${after} of the same sync run, which did not commit, so this page must not publish after it.`);
       const current = await getWorktreeBinding(tx, row.source_id);
