@@ -797,7 +797,6 @@
   "test/extraction-review.test.ts": 5143,
   "test/fact-backfill-resident.test.ts": 3635,
   "test/fact-withdrawal-normalized.test.ts": 299,
-  "test/fact-withdrawal-prepare-wiring.test.ts": 14,
   "test/facts-absorb-log.test.ts": 212,
   "test/facts-anti-loop.test.ts": 380,
   "test/facts-backstop-gating.test.ts": 839,
