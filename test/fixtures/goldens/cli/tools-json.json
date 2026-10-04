@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 196835,
-    "stdoutSha256": "7c6a8f58d1ecf9152a0bef45fe6b85d84ea6bc81c4610fc65b2a65eeec68370a",
+    "stdoutBytes": 198663,
+    "stdoutSha256": "f4ab69309b217f6abb19b58b29d9d39cc5ee4b486b2f9b43d887f7dde7bf9d9e",
     "toolNames": [
       "remember",
       "entity",
@@ -164,7 +164,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save one fact (or up to 20 with items); provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -172,9 +172,10 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string",
+          "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
+          "items": "array?",
           "kind": "string?",
           "provenance": "string",
           "request_id": "string?",
@@ -194,7 +195,7 @@
               "type": "string"
             },
             "fact": {
-              "description": "One claim.",
+              "description": "One claim (or use items).",
               "type": "string"
             },
             "force": {
@@ -204,6 +205,58 @@
             "infer_entity": {
               "description": "Default true.",
               "type": "boolean"
+            },
+            "items": {
+              "description": "Save up to 20 facts in one call (e.g. before context compaction); each item takes fact plus optional entity, kind, ttl, visibility, provenance (defaults to the top-level provenance). Use instead of fact.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "entity": {
+                    "description": "Who or what it is about.",
+                    "type": "string"
+                  },
+                  "fact": {
+                    "description": "One claim.",
+                    "type": "string"
+                  },
+                  "infer_entity": {
+                    "description": "Default true.",
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "description": "Default fact.",
+                    "enum": [
+                      "event",
+                      "preference",
+                      "commitment",
+                      "belief",
+                      "fact"
+                    ],
+                    "type": "string"
+                  },
+                  "provenance": {
+                    "description": "Overrides the top-level provenance.",
+                    "type": "string"
+                  },
+                  "ttl": {
+                    "description": "\"30d\", \"12h\" or ISO time.",
+                    "type": "string"
+                  },
+                  "visibility": {
+                    "description": "Default world.",
+                    "enum": [
+                      "world",
+                      "private"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fact"
+                ],
+                "type": "object"
+              },
+              "type": "array"
             },
             "kind": {
               "description": "Default fact.",
@@ -242,7 +295,6 @@
             }
           },
           "required": [
-            "fact",
             "provenance"
           ],
           "type": "object"
@@ -5163,14 +5215,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): the always-loaded core block plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction; omit entities for core only.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string",
+          "entities": "string?",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5183,7 +5235,7 @@
               "type": "number"
             },
             "entities": {
-              "description": "Comma-separated names or slugs (max 8).",
+              "description": "Comma-separated names or slugs (max 8); omit for the core block only.",
               "type": "string"
             },
             "include_private": {
@@ -5199,9 +5251,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "entities"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "read"

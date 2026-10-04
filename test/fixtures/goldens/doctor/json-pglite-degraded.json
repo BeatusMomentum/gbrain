@@ -507,13 +507,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 200 (latest: 200)",
+          "message": "Version 201 (latest: 201)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "853 column(s) verified against live schema",
+          "message": "863 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1518,6 +1518,20 @@
           },
           "message": "Planner statistics are fresh on 6 hot tables.",
           "name": "planner_stats_stale",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "bad_config": [],
+            "chars_limit": 4000,
+            "chars_used": 0,
+            "docs": "docs/guides/core-memory.md",
+            "enabled": true,
+            "pages": 0
+          },
+          "message": "No core pages. Start one with gbrain core init, then fill it in with the user.",
+          "name": "core_memory",
           "status": "ok"
         },
         {
