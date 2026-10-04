@@ -172,8 +172,8 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
     record: async (tx, revision) => {
       if (!remote || !before.core || !contentChanged || settings.remoteEdit !== 'notify') return;
       const actor = `${row.authority.principal.kind}:${row.authority.principal.id}`;
-      await tx.executeRaw(`INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, actor) VALUES ($1, $2, $3, $4, $5, $6)`,
-        [row.source_id, row.slug, live?.page.id ?? null, revision, live?.revision ?? null, actor]);
+      await tx.executeRaw(`INSERT INTO core_edit_notices (source_id, slug, page_id, revision, base_revision, base_text, actor) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [row.source_id, row.slug, live?.page.id ?? null, revision, live?.revision ?? null, beforeRendered, actor]);
     },
   };
 }

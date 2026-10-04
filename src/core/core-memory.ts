@@ -215,9 +215,8 @@ export interface ListCorePagesOpts {
 interface CoreRow { source_id: string; slug: string; title: string | null; compiled_truth: string | null; frontmatter: unknown; withdrawn: boolean }
 
 /**
- * Live core pages. Bounded: the partial index `idx_pages_always_load`
- * serves the filter, and the cap leaves headroom over CORE_MAX_PAGES so the
- * renderer can still report what it left out.
+ * Live core pages. Bounded: the cap leaves headroom over CORE_MAX_PAGES so
+ * the renderer can still report what it left out.
  */
 export async function listCorePages(exec: RawExec, opts: ListCorePagesOpts = {}): Promise<CorePage[]> {
   const params: unknown[] = [];
@@ -268,17 +267,67 @@ export interface LoadCoreBlockOpts {
   settings?: CoreSettings;
 }
 
+/** Credential-like PII withholds the page; contact details and private paths are redacted in place. */
+const REDACT_IN_PLACE = new Set(['pii:email', 'pii:phone', 'path']);
+
+/**
+ * Delivery sensitivity policy (sensitivity-scan.ts, the compile-context
+ * detector): a page with a secret, blocklist, operator-pattern or
+ * credential-shaped PII hit is withheld with a visible line naming the
+ * family; email, phone and private-path hits are redacted in place.
+ */
+export async function applyCoreSensitivity(pages: readonly CorePage[]): Promise<{ pages: CorePage[]; withheld: Array<{ source_id: string; slug: string; family: string }> }> {
+  const { loadSensitivityConfig, scanSensitive, PATH_SHAPE_RES } = await import('./context/sensitivity-scan.ts');
+  const { findPii } = await import('./eval-capture-scrub.ts');
+  let config: ReturnType<typeof loadSensitivityConfig>;
+  // A broken operator pattern file must not switch the secret scan off: fall back to the built-in detectors.
+  try { config = loadSensitivityConfig({}); } catch { config = { allowlist: [], blocklistRe: null, patterns: [] } as unknown as ReturnType<typeof loadSensitivityConfig>; }
+  const out: CorePage[] = [];
+  const withheld: Array<{ source_id: string; slug: string; family: string }> = [];
+  for (const page of pages) {
+    const findings = scanSensitive(page.rendered, config);
+    // The operator pattern file also matches contact details; the same value found as email/phone is redacted, not withheld.
+    const redactable = new Set(findings.filter(f => REDACT_IN_PLACE.has(f.family)).map(f => f.fingerprint));
+    const blocking = findings.find(f => !REDACT_IN_PLACE.has(f.family) && !redactable.has(f.fingerprint));
+    if (blocking) { withheld.push({ source_id: page.source_id, slug: page.slug, family: blocking.family }); continue; }
+    if (!findings.length) { out.push(page); continue; }
+    let text = page.compiled_truth;
+    for (const f of findPii(text).filter(x => x.family === 'email' || x.family === 'phone').sort((a, b) => b.start - a.start)) {
+      text = `${text.slice(0, f.start)}[redacted ${f.family}]${text.slice(f.end)}`;
+    }
+    for (const re of PATH_SHAPE_RES) text = text.replace(new RegExp(re.source, 'g'), '[redacted path]/');
+    out.push({ ...toCorePage({ ...page, compiled_truth: text }), priority: page.priority });
+  }
+  return { pages: out, withheld };
+}
+
+/** Pending remote-edit notices for the given sources, newest first (notify policy). */
+export async function pendingCoreNotices(exec: Pick<BrainEngine, 'executeRaw'>, sourceIds?: readonly string[]): Promise<Array<{ source_id: string; slug: string; revision: string | null; actor: string; created_at: string }>> {
+  try {
+    return await exec.executeRaw(
+      `SELECT DISTINCT ON (source_id, slug) source_id, slug, revision, actor, created_at::text AS created_at
+         FROM core_edit_notices WHERE acked_at IS NULL ${sourceIds ? 'AND source_id = ANY($1::text[])' : ''}
+        ORDER BY source_id, slug, id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
+  } catch {
+    return [];
+  }
+}
+
+export function coreNoticeLine(n: { source_id: string; slug: string; revision: string | null; actor: string }): string {
+  return `Core page ${n.source_id}:${n.slug} was edited remotely by ${n.actor}. The user should review it: gbrain core diff --source ${n.source_id} ${n.slug}, then gbrain core ack --source ${n.source_id} ${n.slug} --revision ${n.revision ?? 'latest'}.`;
+}
+
 /** The block a session receives; empty text when core is disabled or empty. */
 export async function loadCoreBlock(engine: Pick<BrainEngine, 'executeRaw' | 'readPageSnapshot' | 'getConfig'>, opts: LoadCoreBlockOpts = {}): Promise<CoreBlock & { enabled: boolean }> {
   const settings = opts.settings ?? await readCoreSettings(engine);
   if (!settings.enabled) {
     return { text: '', chars_used: 0, chars_limit: settings.maxChars, pages: [], truncated: false, omitted: [], revision: 'disabled', enabled: false };
   }
-  const pages = await listCorePages(engine, {
-    sourceIds: sessionCoreSources(opts.sessionSourceId, opts.allowedSources ?? null),
-    excludePrivate: opts.excludePrivate ?? true,
-  });
-  return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices: opts.notices }), enabled: true };
+  const sourceIds = sessionCoreSources(opts.sessionSourceId, opts.allowedSources ?? null);
+  const listed = await listCorePages(engine, { sourceIds, excludePrivate: opts.excludePrivate ?? true });
+  const { pages, withheld } = await applyCoreSensitivity(listed);
+  const notices = opts.notices ?? (listed.length ? (await pendingCoreNotices(engine, sourceIds)).map(coreNoticeLine) : []);
+  return { ...renderCoreBlock(pages, { maxChars: settings.maxChars, notices, withheld }), enabled: true };
 }
 
 /** Brain-wide accounting used by the write-path guard and `gbrain core status`. */

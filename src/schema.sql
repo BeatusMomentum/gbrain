@@ -2552,6 +2552,7 @@ CREATE TABLE IF NOT EXISTS core_edit_notices (
   page_id         BIGINT,
   revision        TEXT,
   base_revision   TEXT,
+  base_text       TEXT,
   actor           TEXT NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   acked_at        TIMESTAMPTZ

@@ -362,6 +362,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // CLI_ONLY: Open-loop engine CLI (engine-bound; trusted-local op dispatch).
   { name: 'waiting', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/waiting.ts') },
   { name: 'loops', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/loops.ts') },
+  // selfHelp: core prints its own usage (commands/core.ts). Always-loaded core memory, docs/guides/core-memory.md.
+  { name: 'core', phase: 'post-connect', thinClient: 'none', selfHelp: true, jsonSubcommands: { list: 'document', show: 'document', status: 'document', diff: 'document', suggest: 'document' }, load: () => import('./commands/core.ts') },
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
