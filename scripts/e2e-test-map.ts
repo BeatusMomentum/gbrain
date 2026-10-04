@@ -505,6 +505,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/schema-migrations/v188-facts-ontology-stint-dedup.ts": ["test/e2e/ontology-merge-parity.test.ts", "test/e2e/schema-drift.test.ts"],
   "src/core/persistence/memory-mutations.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
   "src/core/persistence/coordinator.ts": ["test/e2e/withdrawal-followup-writes-postgres.test.ts"],
+  "src/core/repair/failed-writes.ts": ["test/e2e/repair-failed-writes-5983-postgres.test.ts"],
   "src/core/persistence/writer-guard-schema.ts": ["test/e2e/managed-writer-guard-null-source-5983-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/schema-migrations/v197-managed-guard-null-source-fallback.ts": ["test/e2e/managed-writer-guard-null-source-5983-postgres.test.ts", "test/e2e/schema-drift.test.ts", "test/e2e/schema-catalog-golden.test.ts"],
   "src/core/facts/meta-hook.ts": ["test/e2e/capture-dedup-postgres.test.ts", "test/e2e/hot-memory-invalidation-postgres.test.ts", "test/e2e/facts-context-injection-postgres.test.ts", "test/e2e/serve-http-meta.test.ts"],
