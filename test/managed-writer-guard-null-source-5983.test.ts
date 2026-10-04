@@ -26,6 +26,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { installPre5983Guard } from './helpers/pre-5983-guard.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -184,22 +185,10 @@ test('a managed put_page of a tagged page with timeline lines commits on a brain
   }
 }, 120_000);
 
-/** gbrain_require_managed_writer() as shipped through 0.60.37.0 (schema v196): source_id read whenever the key exists. */
-const PRE_5983_SOURCE_LOOKUP = `IF row_data ? 'source_id' THEN target_source := row_data->>'source_id';
-  ELSE SELECT source_id INTO target_source FROM pages WHERE id=(row_data->>'page_id')::integer; END IF;
-  IF TG_OP='UPDATE' THEN
-    IF old_data ? 'source_id' THEN old_source := old_data->>'source_id';
-    ELSE SELECT source_id INTO old_source FROM pages WHERE id=(old_data->>'page_id')::integer; END IF;
-  END IF;`;
-
 test('upgrading a v196 brain with the pre-fix guard: v197 unblocks the refused write and is idempotent', async () => {
   const v197 = MIGRATIONS.find(migration => migration.version === 197)!;
   for (const engine of engines) {
-    const [{ src }] = await engine.executeRaw<{ src: string }>(
-      `SELECT pg_get_functiondef('gbrain_require_managed_writer'::regproc) AS src`);
-    const current = src.slice(src.indexOf("IF TG_TABLE_NAME NOT IN ('tags','timeline_entries','takes')"), src.indexOf('-- Cascaded projection removal'));
-    expect(current.length).toBeGreaterThan(0);
-    await engine.executeRaw(src.replace(current, `${PRE_5983_SOURCE_LOOKUP}\n  `));
+    await installPre5983Guard(engine);
     const pageId = await pageIn(engine, 'default');
     await expect(guarded(engine, ['default'], INSERTS.tags, [pageId])).rejects.toThrow(REFUSED);
     const triggers = `SELECT tgrelid::regclass::text AS tbl, oid FROM pg_trigger WHERE tgname='managed_writer_guard' ORDER BY 1`;

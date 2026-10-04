@@ -272,6 +272,23 @@ test('13. drain starvation: a writer every 50 ms is refused during draining and 
   expect(existsSync(join(f.root, 'alpha/two.md'))).toBe(true);
 }), 180_000);
 
+test('13b. a publication in flight (recovery under a live claim) is drained, not refused; one no live claim holds is recovery_required', () => each(async f => {
+  f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  await f.put(f.alpha, 'notes/seed', page('Seed', 'Has a worktree request.'));
+  const [request] = await f.engine.executeRaw<{ id: string }>(
+    'SELECT id::text FROM persistence_requests WHERE source_id=$1 AND worktree_id IS NOT NULL ORDER BY sequence DESC LIMIT 1', [f.alpha]);
+  const publishing = (claim: string) => f.engine.executeRaw(
+    `UPDATE persistence_requests SET state='running', recovery='{"version":1}'::jsonb, claim_expires_at=now()+$2::interval WHERE id=$1::uuid`, [request.id, claim]);
+  try {
+    await publishing('10 minutes');
+    await refusedWith(refreshWorktree(f.engine, f.alpha, { waitDrainMs: 300 }), 'refresh_drain_timeout');
+    await publishing('-1 minute');
+    await refusedWith(refreshWorktree(f.engine, f.alpha, { waitDrainMs: 300 }), 'refresh_recovery_required');
+  } finally {
+    await f.engine.executeRaw(`UPDATE persistence_requests SET state='committed', recovery=NULL, claim_expires_at=NULL WHERE id=$1::uuid`, [request.id]);
+  }
+}), 120_000);
+
 test('admission completes a syncing refresh whose members all reached the target, and refuses while one lags', () => each(async f => {
   const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
   expect((await refreshWorktree(f.engine, f.alpha)).status).toBe('completed');
