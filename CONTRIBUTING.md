@@ -310,9 +310,10 @@ and it automatically appears in the CLI, MCP server, and tools-json:
    queued extraction job), `'opt_in_media'` (generative preprocessing before commit
    only behind a user opt-in), `'explicit_llm'` (the op is itself a model call) or
    `'non_content'` (administrative state). Unset resolves to `'none'`, the strictest
-   promise, and `test/write-path-zero-llm.serial.test.ts` fails the build if a commit
-   path calls a generative model. Types and the existing classification:
-   `src/core/ops/write-inference.ts`.
+   promise. For a `'none'`, `'embedding'` or `'async_derived'` op, add a runtime case to
+   `test/write-path-zero-llm.serial.test.ts` (and its `COVERED` set): the test fails if
+   that write calls a generative model before commit, and only lists ops without a case.
+   Types and the existing classification: `src/core/ops/write-inference.ts`.
 3. Add tests
 4. That's it. The CLI, MCP server, and tools-json are generated from operations.
 
