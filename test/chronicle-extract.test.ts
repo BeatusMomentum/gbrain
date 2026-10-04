@@ -179,7 +179,8 @@ describe('runChronicleBackstop gating', () => {
     await engine.putPage('meetings/bs', { type: 'meeting', title: 'bs', compiled_truth: LONG_BODY });
   });
 
-  test('skips when auto_chronicle is off (default)', async () => {
+  test('skips when auto_chronicle is set false (the opt-out; unset is on since #5876)', async () => {
+    await engine.setConfig('auto_chronicle', 'false');
     const r = await runChronicleBackstop({ slug: 'meetings/bs', type: 'meeting', compiled_truth: LONG_BODY }, { engine, sourceId: 'default' });
     expect(r).toEqual({ enqueued: false, skipped: 'auto_chronicle_off' });
   });

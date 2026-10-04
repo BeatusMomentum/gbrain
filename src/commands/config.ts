@@ -294,6 +294,21 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   } catch { /* the value already persisted */ }
 }
 
+/**
+ * #5876: an explicit `config set auto_chronicle` answers the default-on change, which clears the
+ * durable doctor/advisor `auto_chronicle_default_on` notice. Best-effort: the value already persisted.
+ */
+async function acknowledgeAutoChronicle(engine: BrainEngine, value: string): Promise<void> {
+  const { CHRONICLE_ACK_KEY, parseAutoChronicle } = await import('../core/chronicle/config.ts');
+  try { await engine.setConfig(CHRONICLE_ACK_KEY, new Date().toISOString()); } catch { /* the notice stays; harmless */ }
+  if (parseAutoChronicle(value).enabled) {
+    console.log('Automatic event extraction is on: each eligible new or changed meeting, conversation or calendar page gets one paid chat call, bounded by chronicle.job_budget_usd per page and chronicle.auto_daily_limit per day.');
+    console.log('To turn it off: gbrain config set auto_chronicle false');
+  } else {
+    console.log('Automatic event extraction is off. To extract history on request (paid; ask the user first): gbrain chronicle-backfill --dry-run');
+  }
+}
+
 /** #5232: the CLI write wait is file-plane so the engine-free CLI reads it before choosing a transport. */
 async function setFileWriteWait(cfg: GBrainConfig, value: string, saveConfig: (cfg: GBrainConfig) => void): Promise<void> {
   const { MAX_WRITE_WAIT_MS, WRITE_WAIT_CONFIG_KEY, WRITE_WAIT_ENV } = await import('../core/persistence/write-wait.ts');
@@ -667,6 +682,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (n > 0) {
       console.log(`Unset ${key}`);
       if (key === 'facts.default_visibility') await restampVisibilityPosture(null);
+      if (key === 'auto_chronicle') {
+        console.log('auto_chronicle now uses its default, which is ON: eligible new or changed meeting, conversation and calendar pages each get one paid extraction call.');
+        console.log('To turn automatic extraction off, run: gbrain config set auto_chronicle false');
+      }
     } else {
       console.error(`Config key not found: ${key}`);
       process.exit(1);
@@ -1090,6 +1109,21 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
+    // #5876: auto_chronicle and chronicle.* knobs gate paid extraction, so a
+    // typo is refused here instead of silently falling back at run time.
+    if (key === 'auto_chronicle' || key.startsWith('chronicle.')) {
+      const { validateChronicleConfigValue, CHRONICLE_CONFIG_KEYS } = await import('../core/chronicle/config.ts');
+      if (key.startsWith('chronicle.') && !CHRONICLE_CONFIG_KEYS.includes(key) && !forceFlag) {
+        const { suggestNearest } = await import('../core/levenshtein.ts');
+        const suggestion = suggestNearest(key, [...CHRONICLE_CONFIG_KEYS], 3);
+        console.error(`[config] Unknown config key "${key}".${suggestion ? ` Did you mean "${suggestion}"?` : ''}`);
+        console.error(`[config] chronicle keys: ${CHRONICLE_CONFIG_KEYS.join(', ')}. Nothing was written.`);
+        process.exit(1);
+      }
+      const err = validateChronicleConfigValue(key, value);
+      if (err) { console.error(`[config] ${err}`); process.exit(1); }
+    }
+
     if (key === 'embedding_columns') {
       try {
         const parsed = JSON.parse(value);
@@ -1207,6 +1241,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // scrollback; echoing the raw value to stderr leaks the secret.
     console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
     if (key === 'facts.default_visibility') await restampVisibilityPosture(value);
+    if (key === 'auto_chronicle') await acknowledgeAutoChronicle(engine, value);
 
     // v0.40.3.0 (D3 + Phase 2B): mode-switch UX. Fires only on
     // search.mode writes. Honors GBRAIN_NO_MODE_SWITCH_UX=1 + non-TTY.
