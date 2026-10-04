@@ -87,6 +87,12 @@ async function verifyTable(e: GraduationEngines, entry: InventoryEntry, recorded
     failures.push({ relation, kind: 'digest', detail: `The source changed since the copy (rows ${recorded.rows} -> ${source.rows}); re-copy this table and its FK closure.` });
   }
   if (source.rows !== target.rows) failures.push({ relation, kind: 'count', detail: `Source has ${source.rows} rows, target has ${target.rows}.` });
+  const countSql = `SELECT count(*)::text AS n FROM ${quoteIdent(relation)}${entry.rowFilter ? ` WHERE (${entry.rowFilter})` : ''}`;
+  const [[srcCount], [dstCount]] = await Promise.all([
+    e.source.executeRaw<{ n: string }>(countSql), e.target.executeRaw<{ n: string }>(countSql)]);
+  for (const [side, counted, digested] of [['source', Number(srcCount?.n), source.rows], ['target', Number(dstCount?.n), target.rows]] as const) {
+    if (counted !== digested) failures.push({ relation, kind: 'count', detail: `The ${side} has ${counted} rows by count(*) but the keyset digest read ${digested}; batching skipped rows.` });
+  }
   if (source.rootSha256 !== target.rootSha256) {
     const diff = await firstDifference(e, entry, source, target, batchRows);
     failures.push({ relation, kind: 'digest', ...diff, detail: `Canonical content differs${diff.firstKey ? ` first at key ${diff.firstKey}` : ''}${diff.column ? ` in column ${diff.column}` : ''}.` });

@@ -129,7 +129,7 @@ const ENABLE_BY_MODE: Readonly<Record<string, string>> = { O: 'ENABLE TRIGGER', 
 async function readSourceBatch(source: BrainEngine, plan: DigestPlan, extraWhere: string | null, afterKey: readonly string[] | null, limit: number):
   Promise<Array<{ key: string[]; values: Array<string | null> }>> {
   const collate = (c: ColumnMeta, expr: string) => c.collatable ? `${expr} COLLATE "C"` : expr;
-  const order = plan.key.map(k => collate(k, quoteIdent(k.name))).join(', ');
+  const order = plan.key.map(k => collate(k, `t.${quoteIdent(k.name)}`)).join(', ');
   const where = [
     plan.filter ? `(${plan.filter})` : '',
     extraWhere ? `(${extraWhere})` : '',

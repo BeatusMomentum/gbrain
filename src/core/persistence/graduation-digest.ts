@@ -121,9 +121,9 @@ export async function digestPlan(engine: BrainEngine, entry: InventoryEntry, app
     if (!columns.some(c => c.name === column)) throw new Error(`Transform names ${entry.relation}.${column}, which does not exist.`);
     if (key.some(k => k.name === column)) throw new Error(`Transform on primary-key column ${entry.relation}.${column} is not permitted.`);
   }
-  const keyCols = key.map((k, i) => `${quoteIdent(k.name)}::text AS ${quoteIdent(`k${i}`)}`);
+  const keyCols = key.map((k, i) => `t.${quoteIdent(k.name)}::text AS ${quoteIdent(`k${i}`)}`);
   const valueCols = columns.map((c, i) => `(${transforms.get(c.name) ?? quoteIdent(c.name)})::text AS ${quoteIdent(`c${i}`)}`);
-  return { relation: entry.relation, columns, key, select: `SELECT ${[...keyCols, ...valueCols].join(', ')} FROM ${quoteIdent(entry.relation)}`, filter: entry.rowFilter ?? '' };
+  return { relation: entry.relation, columns, key, select: `SELECT ${[...keyCols, ...valueCols].join(', ')} FROM ${quoteIdent(entry.relation)} AS t`, filter: entry.rowFilter ?? '' };
 }
 
 export interface DigestRow { key: readonly string[]; text: string }
@@ -132,7 +132,7 @@ const collate = (c: ColumnMeta, expr: string) => c.collatable ? `${expr} COLLATE
 
 /** Up to `limit` rows strictly after `afterKey` (raw key texts), in COLLATE "C" primary-key order. Run inside a digest transaction. */
 export async function readDigestRows(tx: BrainEngine, plan: DigestPlan, afterKey: readonly string[] | null, limit: number): Promise<DigestRow[]> {
-  const order = plan.key.map(k => collate(k, quoteIdent(k.name))).join(', ');
+  const order = plan.key.map(k => collate(k, `t.${quoteIdent(k.name)}`)).join(', ');
   const where = [
     plan.filter ? `(${plan.filter})` : '',
     afterKey ? `(${order}) > (${plan.key.map((k, i) => collate(k, `$${i + 1}::${k.type}`)).join(', ')})` : '',
