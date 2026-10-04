@@ -293,7 +293,9 @@ jobs:
       - name: Install hermes (pinned installer digest)
         timeout-minutes: 15
         run: |
-          curl -fsSL --retry 3 -o hermes-install.sh https://raw.githubusercontent.com/NousResearch/hermes-agent/95d42656021a22f20201c618a67da07a618d16f3/scripts/install.sh
+          # raw.githubusercontent.com answers 429 to shared runner IPs at times (runs 2026-09-28, 2026-10-04);
+          # long spaced retries ride it out (curl honors Retry-After).
+          curl -fsSL --retry 6 --retry-delay 30 --retry-all-errors -o hermes-install.sh https://raw.githubusercontent.com/NousResearch/hermes-agent/95d42656021a22f20201c618a67da07a618d16f3/scripts/install.sh
           if ! echo "$HERMES_INSTALL_SHA256  hermes-install.sh" | sha256sum -c -; then
             echo "::error::hermes installer digest drift — re-pin deliberately: update HERMES_INSTALL_SHA256 + HERMES_VERSION in this workflow and docs/mcp/HERMES-CLI-PIN.md after reviewing upstream changes" >&2
             exit 1
