@@ -6,6 +6,7 @@ import { parseMarkdown } from './markdown.ts';
 import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from './wanted-links.ts';
+import { lineGrammarOptions } from './line-grammar.ts';
 
 export interface LinkPageMetadata {
   slug: string;
@@ -74,6 +75,7 @@ export async function reconcileSourceLinks(
     const index = new Map(pages.map(page => [page.slug, page]));
     const resolver = makeIndexedLinkResolver(pages, sourceId);
     const wantedEnabled = await isWantedPagesEnabled(engine);
+    const lineGrammar = await lineGrammarOptions(engine);
     const remaining = pages.filter(page => !opts.afterSlug || page.slug > opts.afterSlug)
       .sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
     for (const metadata of remaining.slice(0, limit)) {
@@ -85,7 +87,7 @@ export async function reconcileSourceLinks(
       }
       const page = snapshot.page;
       const extracted = await extractPageLinks(page.slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter,
-        page.type, resolver, { pack: opts.pack, globalBasename: opts.globalBasename,
+        page.type, resolver, { pack: opts.pack, globalBasename: opts.globalBasename, lineGrammar,
           targetType: (slug, source) => !source || source === sourceId ? index.get(slug)?.type : undefined });
       for (const ref of extracted.unresolved) {
         const target = unwrapWikilink(ref.name);

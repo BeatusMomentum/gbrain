@@ -1573,6 +1573,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // when the target appears (src/core/wanted-links.ts). On by default; the
   // off switch is `gbrain config set wanted_pages.enabled false`.
   'wanted_pages.enabled',
+  // Line grammar (src/core/line-grammar.ts): typed relation lines on by default;
+  // undeclared relation types fall back to inference unless allowed.
+  'line_grammar.enabled',
+  'line_grammar.allow_undeclared_types',
   // #5584: skillopt optimizer output cap (default 32000 thinking / 4096 otherwise).
   'skillopt.reflect_max_tokens',
   // #5585: skillopt strict model provenance (true|1|yes|on; other values count as on).

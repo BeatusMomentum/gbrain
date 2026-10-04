@@ -1,5 +1,6 @@
 import { lookupRefsForSlugs } from './link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled, type WantedLinkInput } from './wanted-links.ts';
+import { lineGrammarOptions } from './line-grammar.ts';
 /**
  * Serve-resident maintenance sweep [CX-P0.1, CX-P0.3, CX2-4].
  *
@@ -412,6 +413,7 @@ async function runLinksTimelinePass(
   const incomplete = new Set<string>();
   const wantedBySlug = new Map<string, WantedLinkInput[]>();
   const wantedEnabled = await isWantedPagesEnabled(engine);
+  const lineGrammar = await lineGrammarOptions(engine);
   if (pageCandidates.length > 0) {
     const needed = new Set<string>();
     for (const { slug, candidates } of pageCandidates) {
@@ -442,7 +444,7 @@ async function runLinksTimelinePass(
     for (const { slug } of pageCandidates) {
       const page = snapshots.get(slug)!.page;
       const { candidates, attendanceComplete } = await extractPageLinks(slug, `${page.compiled_truth}\n${page.timeline}`, page.frontmatter,
-        page.type, resolver, { skipFrontmatter: true, globalBasename, pack, targetType: (targetSlug, targetSourceId) => {
+        page.type, resolver, { skipFrontmatter: true, globalBasename, pack, lineGrammar, targetType: (targetSlug, targetSourceId) => {
           const resolved = resolveCandidateSources({ targetSlug, targetSourceId, linkType: '', context: '' }, slug,
             sourceId, allSlugs, slugToSources, allowCrossSource, { crossSource, defaultSourceId: linkDefaultSourceId });
           return resolved.ok ? endpointMetadata.get(`${resolved.toSourceId}\0${targetSlug}`)?.type : undefined;

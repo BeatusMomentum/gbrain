@@ -7,6 +7,7 @@ import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, resolveCandidateSources } from '../link-reconciliation.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { lineGrammarOptions } from '../line-grammar.ts';
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
@@ -25,7 +26,7 @@ async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: s
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'>, sourceId: string) {
   const resolver = makeResolver(engine, { mode: 'live', sourceId });
-  const opts = { globalBasename: await isGlobalBasenameEnabled(engine),
+  const opts = { globalBasename: await isGlobalBasenameEnabled(engine), lineGrammar: await lineGrammarOptions(engine),
     pack: (await loadActivePackForLocalEngine(engine, { sourceId }))?.manifest ?? null };
   if (!opts.pack) return { pageKeys: [{ sourceId, slug }], attendanceComplete: true,
     apply: async () => ({ created: 0, removed: 0, errors: 1, unresolved_count: 1 }) };

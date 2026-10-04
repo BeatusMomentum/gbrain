@@ -15,6 +15,8 @@ import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
+import { inSuppressedRange, rolePriorSuppressedRanges } from './machine-sections.ts';
+import { statedRelationTypes } from './line-grammar.ts';
 import { isValidSourceId } from './source-id.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { isMaterializedMarkerLine } from './timeline-marker.ts';
@@ -617,6 +619,21 @@ export interface LinkCandidate {
   authoredRef?: AuthoredRef;
 }
 
+export interface ExtractPageLinksOptions {
+  globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null;
+  /** Typed relation lines (core/line-grammar.ts); on unless `enabled: false`. */
+  lineGrammar?: { enabled?: boolean; allowUndeclaredTypes?: boolean };
+  targetType?: (slug: string, sourceId?: string) => string | undefined;
+  onResolvedFrontmatterTarget?: (slug: string) => void;
+}
+
+/** The authored reference of a wikilink at `idx`: a slug path, or a bare name keyed by its basename. */
+function wikilinkAuthoredRef(target: string, idx: number): AuthoredRef | undefined {
+  if (target.includes('/')) return { key: `ref:${idx}`, kind: 'slug', target };
+  const name = normalizeBasename(target);
+  return name ? { key: `ref:${idx}`, kind: 'name', target: name } : undefined;
+}
+
 /** One authored body reference, as recorded in `wanted_links` when it does not resolve. */
 export interface AuthoredRef {
   key: string;
@@ -661,9 +678,7 @@ export async function extractPageLinks(
   frontmatter: Record<string, unknown>,
   pageType: PageType,
   resolver: SlugResolver,
-  opts: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null;
-    targetType?: (slug: string, sourceId?: string) => string | undefined;
-    onResolvedFrontmatterTarget?: (slug: string) => void } = {},
+  opts: ExtractPageLinksOptions = {},
 ): Promise<PageLinksResult> {
   const candidates: LinkCandidate[] = [];
 
@@ -687,7 +702,10 @@ export async function extractPageLinks(
   const attendancePending = new Set<number>();
   const attendanceResolved = new Set<number>();
   const attendanceAmbiguous = new Set<number>();
+  const statedType = statedRelationTypes(content, { ...opts.lineGrammar, declaredVerbs: pack?.link_types.map(lt => lt.name) });
   const typeFor = (ctx: string, targetSlug: string, idx?: number, sourceId?: string, bodyReference = true): Pick<LinkCandidate, 'linkType' | 'canonicalAttendance'> => {
+    const stated = bodyReference ? statedType(idx) : undefined; // a typed relation line wins (core/line-grammar.ts)
+    if (stated && !(stated === 'attended' && pageType === 'meeting')) return { linkType: stated };
     const targetType = opts.targetType?.(targetSlug, sourceId);
     if (pack) {
       const packVerb = inferLinkTypeFromPack(pack, pageType as string, ctx, packBudget, targetType);
@@ -835,9 +853,7 @@ export async function extractPageLinks(
       const uniquePerson = personTargets.length === 1;
       if (pageType === 'meeting' && opts.targetType && !uniquePerson
         && targets.filter(target => opts.targetType!(target) !== undefined).length > 1) attendanceAmbiguous.add(idx);
-      const authoredRef: AuthoredRef | undefined = slashIdx === -1
-        ? (normalizeBasename(ref.slug) ? { key: `ref:${idx}`, kind: 'name', target: normalizeBasename(ref.slug) } : undefined)
-        : { key: `ref:${idx}`, kind: 'slug', target: ref.slug };
+      const authoredRef = wikilinkAuthoredRef(ref.slug, idx);
       for (const target of bareDirect) {
         const inferred = typeFor(context, target, idx);
         candidates.push({ targetSlug: target,
@@ -1208,48 +1224,6 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 // pages mentioning their employees use the page-role layer differently.
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
 
-/**
- * Content index ranges where the page-role prior must NOT apply: the
- * machine-written list sections — Timeline, See also, Related, Facts,
- * Sources, Links, Email mention links, Backlinks, Significant moments
- * (headingRe below is the one source of truth). Links there are list-shaped, per-event references
- * ("2026-05-12 — met with [[companies/x]]", Iron-Law back-links) — the
- * role prior is a statement about the AUTHOR's standing relationships, not
- * about every entity that passes through their timeline, so applying it
- * there mints unevidenced works_at/advises edges on every re-import (on
- * one 12k-page brain: ~7.4k such edges re-minted in a month, right after
- * a ~19.5k cleanup; same class as #3466). Per-edge verbs inside these
- * sections still type normally — only the globalContext fallback is
- * suppressed, so absent explicit evidence the edge stays 'mentions'.
- *
- * A range runs from its heading to the next heading of the same or higher
- * level (or EOF). Case-insensitive; matches "See also" / "See-also". Both
- * grammars require the ATX space after the `#`s, so a column-0 tag line
- * (`#links`) is neither an opener nor a closer.
- */
-function rolePriorSuppressedRanges(content: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  const headingRe = /^(#{1,6})[ \t]+(?:timeline|see[ -]also|related|facts|sources|links|email mention links|backlinks|significant moments)\b[^\n]*$/gim;
-  const anyHeadingRe = /^(#{1,6})[ \t]/gm;
-  let m: RegExpExecArray | null;
-  while ((m = headingRe.exec(content)) !== null) {
-    const level = m[1].length;
-    anyHeadingRe.lastIndex = m.index + m[0].length;
-    // Deeper headings (`###` under `## Timeline`) stay inside the range; the
-    // first same-or-higher one closes it.
-    let next: RegExpExecArray | null;
-    while ((next = anyHeadingRe.exec(content)) !== null && next[1].length > level) { /* nested subsection */ }
-    ranges.push([m.index, next ? next.index : content.length]);
-  }
-  return ranges;
-}
-
-function inSuppressedRange(ranges: Array<[number, number]>, idx: number): boolean {
-  for (const [start, end] of ranges) {
-    if (idx >= start && idx < end) return true;
-  }
-  return false;
-}
 
 /**
  * Infer link_type from page context. Deterministic regex heuristics, no LLM.
