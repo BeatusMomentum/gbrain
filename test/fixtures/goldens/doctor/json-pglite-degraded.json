@@ -1291,6 +1291,24 @@
         {
           "category": "brain",
           "details": {
+            "contradiction_mode": "propose (default)",
+            "lagging": 0,
+            "proposals": {
+              "applied": 0,
+              "proposed": 0,
+              "undated": 0
+            },
+            "read_policy": "on",
+            "relationships": {},
+            "stale_assertions": []
+          },
+          "message": "relationships: none yet; read policy on; contradiction mode propose (default)",
+          "name": "edge_validity",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "auto_calls_24h": 0,
             "chat_available": false,
             "daily_limit": 200,

@@ -209,6 +209,15 @@ export async function staleRelationshipKeys(exec: RawExec, limit = 500): Promise
      GROUP BY from_page_id, to_page_id, link_type
      ORDER BY min(newest) LIMIT $2`,
     [[...TEMPORAL_LINK_TYPES], limit]);
+  // Relationships whose evidence-owning page was deleted, restored or edited
+  // after the last refresh (soft deletes change no evidence row).
+  const originChanged = rows.length >= limit ? [] : await exec.executeRaw<RelationshipKey>(
+    `SELECT DISTINCT lr.from_page_id, lr.to_page_id, lr.link_type FROM link_relationships lr
+       JOIN links l ON l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id AND l.link_type = lr.link_type
+       JOIN pages o ON o.id = COALESCE(l.origin_page_id, l.from_page_id)
+      WHERE lr.scope = 'all' AND GREATEST(o.updated_at, COALESCE(o.deleted_at, o.updated_at)) > lr.refreshed_at
+      LIMIT $1`, [limit - rows.length]);
+  rows.push(...originChanged.filter(k => !rows.some(r => r.from_page_id === k.from_page_id && r.to_page_id === k.to_page_id && r.link_type === k.link_type)));
   // State rows whose evidence is gone entirely (raw deletes) are refreshed away too.
   const orphans = rows.length >= limit ? [] : await exec.executeRaw<RelationshipKey>(
     `SELECT lr.from_page_id, lr.to_page_id, lr.link_type FROM link_relationships lr
