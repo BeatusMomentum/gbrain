@@ -111,6 +111,7 @@ async function batchLinks(ctx: OperationContext, sourceId: string, results: Page
   if (committed.length > 1 && rows.every(isTerminal)) await queueLinksReconcile(ctx.engine, { sourceId, requestIds: committed });
   const effects = committed.length ? await ctx.engine.executeRaw<{ state: string; outcome: Record<string, unknown> | null }>(
     "SELECT state,outcome FROM persistence_effects WHERE kind='links' AND request_id=ANY($1::uuid[])", [committed]) : [];
+  if (!effects.length && ctx.remote === false) return { state: 'inline', why: 'Trusted local writes build their links during publication.' };
   if (!effects.length) return { state: 'off', why: 'No mention-link pass was queued: links are built only for remote writes while auto_link and mcp.remote_auto_links are on. Add links with add_link if you need them.' };
   const done = effects.filter(effect => effect.state === 'committed');
   return { state: done.length === effects.length ? 'committed' : 'queued', pages: effects.length,
