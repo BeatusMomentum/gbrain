@@ -21,9 +21,14 @@
  * cold-process first query, two concurrent receipt-bearing writers, a no-op
  * re-import and cross-source duplicates. scripts/scale/gates.ts decides.
  *
+ * The harness runs as a child of an out-of-process phase watchdog
+ * (scripts/scale/watchdog.ts) that kills a phase stalled past 1.5x its gate
+ * ceiling and names it; the vectors phase prints one progress line per batch.
+ *
  * Exit codes: 0 all enforced gates pass, or a report-only run (no --enforce);
  * 1 an enforced gate failed (each failure names the gate, the op and its
- * EXPLAIN); 2 usage error; 3 the harness itself crashed (not a verdict).
+ * EXPLAIN) or the watchdog killed a stalled phase (diagnostic in
+ * <out>.watchdog.txt); 2 usage error; 3 the harness itself crashed (not a verdict).
  * The JSON report (and a .explain.txt for failures) lands in --out.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -31,7 +36,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { corpusMarkdownFiles, generateScaleFixture, SCALE_SOURCES, scaleVector, writeScaleCorpus, type ScaleFixture } from './fixture.ts';
 import {
-  BUDGET_MULTIPLIER, evaluateScaleGates, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, reproduceCommand, resultHits, verdictLines,
+  BUDGET_MULTIPLIER, evaluateScaleGates, FIND_ORPHANS_PARAMS, HEADLINE_OP, HOT_TABLES, PLANNER_HEALTH_ENFORCED, PLANNER_STATS_MIN_ROWS, orphansProblem, reproduceCommand, resultHits, verdictLines,
   type DataCheck, type GatePolicy, type OpPlan, type OpResult, type PlanStatement, type ScaleReport,
 } from './gates.ts';
 
@@ -64,7 +69,32 @@ if (engineKind === 'postgres' && !adminUrl) {
     + 'e.g. DATABASE_URL=postgresql://<user>:<password>@localhost:5432/gbrain_test.');
 }
 const out = resolve(flag('--out', join('.context', 'scale', `report-${engineKind}-${pagesArg}-seed${seed}.json`)));
+
+// The harness runs as a child of an out-of-process phase watchdog (scripts/scale/watchdog.ts).
+if (process.env.GBRAIN_SCALE_SUPERVISED !== '1') {
+  const { superviseScaleRun, watchdogLimitsMs } = await import('./watchdog.ts');
+  let limits;
+  try { limits = watchdogLimitsMs(pagesArg); } catch (e) { usage(e instanceof Error ? e.message : String(e)); }
+  const dropDatabase = async (name: string) => {
+    const { default: postgres } = await import('#postgres');
+    const admin = postgres(adminUrl!, { max: 1, onnotice: () => {} });
+    try { await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); } finally { await admin.end(); }
+  };
+  process.exit(await superviseScaleRun({
+    command: [process.execPath, ...process.argv.slice(1)],
+    pages: pagesArg,
+    limits,
+    reproduce: `bun run test:scale -- ${process.argv.slice(2).join(' ')}`,
+    dropDatabase: engineKind === 'postgres' ? dropDatabase : undefined,
+    onDiagnostic: text => {
+      mkdirSync(dirname(out), { recursive: true });
+      writeFileSync(out.replace(/\.json$/, '') + '.watchdog.txt', text + '\n');
+    },
+  }));
+}
+
 const home = mkdtempSync(join(tmpdir(), 'gbrain-scale-'));
+console.log(`[scale] brain home: ${home}`);
 const corpusDir = resolve(flag('--corpus-dir', join(home, 'corpus')));
 const policy: GatePolicy = { enforce, enforcePlanner: PLANNER_HEALTH_ENFORCED, enforceCeilings: process.env.GBRAIN_SCALE_ENFORCE_CEILINGS === '1' };
 
@@ -113,6 +143,7 @@ async function createFreshPostgres(): Promise<void> {
   const name = `gbrain_scale_${process.pid}_${Date.now()}`;
   await admin.unsafe(`CREATE DATABASE ${name}`);
   await admin.end();
+  console.log(`[scale] scale database: ${name}`);
   const url = new URL(adminUrl!);
   url.pathname = `/${name}`;
   databaseUrl = url.toString();
@@ -236,7 +267,8 @@ async function main(): Promise<FullReport> {
   const phases: Record<string, number> = {};
   const timed = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     const t = performance.now();
-    try { return await fn(); } finally { phases[name] = Math.round(performance.now() - t); }
+    console.log(`[scale] phase ${name} start`);
+    try { return await fn(); } finally { phases[name] = Math.round(performance.now() - t); console.log(`[scale] phase ${name} done in ${phases[name]} ms`); }
   };
   console.log(`[scale] engine=${engineKind} pages=${pagesArg} seed=${seed} import-mode=${importMode} ${enforce ? 'enforce' : 'report-only'}`);
   const fixture: ScaleFixture = generateScaleFixture({ pages: pagesArg, seed });
@@ -303,11 +335,17 @@ async function main(): Promise<FullReport> {
     if (!Number.isInteger(d)) throw new Error(`content_chunks.embedding is ${col?.t ?? 'missing'}; expected vector(N)`);
     const ids = new Map((await engine.executeRaw<{ id: number; source_id: string; slug: string }>('SELECT id, source_id, slug FROM pages'))
       .map(r => [`${r.source_id}:${r.slug}`, r.id]));
+    const batches = Math.ceil(fixture.pages.length / 500);
+    const vectorsStart = performance.now();
     for (let i = 0; i < fixture.pages.length; i += 500) {
       const batch = fixture.pages.slice(i, i + 500);
+      const t = performance.now();
       await engine.executeRaw(
         'UPDATE content_chunks c SET embedding = u.vec::vector FROM unnest($1::int[], $2::text[]) AS u(page_id, vec) WHERE c.page_id = u.page_id',
         [batch.map(p => ids.get(`${p.sourceId}:${p.slug}`)!), batch.map(p => `[${Array.from(scaleVector(p.index, d)).join(',')}]`)]);
+      const rss = Math.round(process.memoryUsage.rss() / 1048576);
+      console.log(`[scale] vectors batch ${i / 500 + 1}/${batches}: ${batch.length} pages in ${Math.round(performance.now() - t)} ms `
+        + `(${i + batch.length}/${fixture.pages.length} pages, ${Math.round(performance.now() - vectorsStart)} ms total, dim ${d}, rss ${rss} MiB)`);
     }
     return d;
   });
@@ -363,8 +401,8 @@ async function main(): Promise<FullReport> {
       verify: r => hub.links.every(target => resultHits(r).some(h => h.slug === target)) ? null : 'a direct link target of the hub is missing' },
     { op: 'get_backlinks', run: () => op('get_backlinks').handler(local, { slug: hub.links[0] }),
       verify: r => JSON.stringify(r).includes(`"${fixture.hub}"`) ? null : `${fixture.hub} missing from backlinks of ${hub.links[0]}` },
-    { op: 'find_orphans', run: () => op('find_orphans').handler(local, {}),
-      verify: r => fixture.islands.every(slug => resultHits(r).some(h => h.slug === slug)) ? null : 'an island page is missing from find_orphans' },
+    { op: 'find_orphans', run: () => op('find_orphans').handler(local, { ...FIND_ORPHANS_PARAMS }),
+      verify: r => orphansProblem(r, fixture.islands) },
   ];
   const ops: OpResult[] = [];
   const statRows: Record<string, number> = {};

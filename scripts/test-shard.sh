@@ -58,6 +58,7 @@ fi
 cd "$(dirname "$0")/.."
 
 . scripts/lib/test-env.sh
+receipts_init unit
 
 # Collect non-E2E, non-serial unit test files. Slow files INCLUDED — see
 # header comment. Local run-unit-shard.sh excludes slow files (different
@@ -130,6 +131,7 @@ echo "shard $SHARD_INDEX/$TOTAL_SHARDS: ${SHARD_COUNT}/${ALL_COUNT} files (LPT-b
 
 if [ "$SHARD_COUNT" -eq 0 ]; then
   echo "warning: shard $SHARD_INDEX has no files (total shards may exceed file count)" >&2
+  receipt_empty "s${SHARD_INDEX}of${TOTAL_SHARDS}" "$SHARD_INDEX" "$TOTAL_SHARDS"
   exit 0
 fi
 
@@ -153,11 +155,19 @@ if [ -n "${COVERAGE_DIR:-}" ]; then
   COVERAGE_ARGS=(--coverage --coverage-reporter=lcov --coverage-dir="$COVERAGE_DIR/shard")
   XARGS_FLAGS=(-n 100000 -x)
 fi
+# Receipts (X2): one JUnit report per bun process. A second xargs batch would
+# overwrite it the same way it overwrites lcov.info, so receipts also force
+# the single-invocation -x tripwire.
+shard_file_args=()
+while IFS= read -r f; do [ -n "$f" ] && shard_file_args+=("$f"); done <<< "$SHARD_FILES"
+receipt_begin primary "s${SHARD_INDEX}of${TOTAL_SHARDS}" "$SHARD_INDEX" "$TOTAL_SHARDS" "" "${shard_file_args[@]}"
+[ "${#RECEIPT_ARGS[@]}" -eq 0 ] || XARGS_FLAGS=(-n 100000 -x)
 # --max-concurrency mirrors the local runner: unbounded intra-process
 # concurrency under parallel PGLite boots produced real shard deaths (the
 # 22-minute matrix timeout in test.yml records 13 of them).
 rc=0
-printf '%s\n' "$SHARD_FILES" | xargs ${XARGS_FLAGS[@]+"${XARGS_FLAGS[@]}"} bun test --timeout=60000 --max-concurrency="${GBRAIN_TEST_MAX_CONCURRENCY:-4}" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} || rc=$?
+printf '%s\n' "$SHARD_FILES" | xargs ${XARGS_FLAGS[@]+"${XARGS_FLAGS[@]}"} bun test --timeout=60000 --max-concurrency="${GBRAIN_TEST_MAX_CONCURRENCY:-4}" ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} || rc=$?
+receipt_end "$rc"
 
 # Lane manifest: written ONLY on a fully green run (complete:true means the
 # lcov data represents the whole shard). The real exit code is preserved

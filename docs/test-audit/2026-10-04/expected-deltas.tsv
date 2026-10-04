@@ -1,0 +1,26 @@
+# Expected executed-test deltas for the GBRA-47 test/eval/CI wave (X2).
+#
+# scripts/ci-executed-counts.ts compares the executed test identities of a
+# baseline run with a head run. Identity = (lane, file, test, arm). Every base
+# identity that no longer executes in head must match a row below, or the
+# comparison fails and prints the row to add. New tests need no row.
+#
+# Columns (tab-separated; \t, \n and \\ escape a tab, newline or backslash):
+#   kind      retire | move | skip | job
+#   lane      identity lane: unit, serial, slow, verify, e2e, backend-matrix,
+#             tier1, tier2, jsonb-parity, shared-skills (job rows: the CI
+#             artifact name that no longer exists, * allowed, e.g. receipts-slow-eval)
+#   file      test file (exact; verify checks use "verify")
+#   test      full test name ("describe > test"), or * for every test in the file
+#   arm       backend arm (postgres-direct, pgbouncer) or empty; * matches any
+#   new_lane  move only: lane the test runs in now (empty = unchanged)
+#   new_file  move only: file the test lives in now (empty = unchanged)
+#   new_test  move only: new test name (empty = unchanged; with test=* names stay)
+#   reason    why the identity stops executing here (required, never TODO)
+#   evidence  retire only: the Retiring-a-test row, e.g.
+#             docs/test-audit/2026-10-04/implementation/<lane>.md#<anchor>
+#
+# A move passes only when the target identity executes in head; a skip row
+# (planned pass-to-skip) passes only when head reports the test skipped.
+kind	lane	file	test	arm	new_lane	new_file	new_test	reason	evidence
+skip	tier2	test/e2e/skills.test.ts	*					D-1: OPENAI_API_KEY and ANTHROPIC_API_KEY repo secrets are unset, so every Tier 2 skill test skips; delete this row once the owner sets them (TODOS P1)	

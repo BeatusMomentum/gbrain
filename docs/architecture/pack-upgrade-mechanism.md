@@ -113,7 +113,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 
 Implementation: `_versionRangeMatches(version, range)` in
 `src/core/schema-pack/load-active.ts`. Pinned by
-`test/schema-pack-find-pack-successors.test.ts`.
+`test/schema-pack-find-pack-successors.serial.test.ts`.
 
 ## findPackSuccessors discovery
 

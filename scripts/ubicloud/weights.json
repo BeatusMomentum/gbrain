@@ -1288,7 +1288,6 @@
   "unit:test/eval-contradictions-cross-source.test.ts": 206,
   "unit:test/eval-contradictions-date-filter.test.ts": 178,
   "unit:test/eval-contradictions-engine.test.ts": 3253,
-  "unit:test/eval-contradictions-fixture-redact.test.ts": 179,
   "unit:test/eval-contradictions-integrations.test.ts": 2030,
   "unit:test/eval-contradictions-judge-errors.test.ts": 162,
   "unit:test/eval-contradictions-judge.test.ts": 189,

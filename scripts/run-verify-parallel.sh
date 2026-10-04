@@ -16,7 +16,16 @@
 #
 # Env overrides:
 #   GBRAIN_VERIFY_TIMEOUT       per-check wallclock cap, seconds (default 120)
-#   GBRAIN_VERIFY_LOG_DIR       where to write per-check logs (default tempdir)
+#   GBRAIN_VERIFY_LOG_DIR       where to write per-check logs (default tempdir,
+#                               removed on success and kept on failure)
+#   GBRAIN_TEST_RECEIPT_DIR     also write the verify receipt (X2): one JUnit
+#                               testcase per check with its real outcome
+#
+# Outcomes: every check is recorded as pass, fail, timeout or skip in
+# <log dir>/outcomes.tsv and in the receipt. A check that exits 0 without
+# checking anything (its subject is absent) must print a line starting with
+# `GBRAIN_CHECK_SKIPPED: <reason>`; the recorder reads that marker, so a
+# self-skip is never counted as a pass.
 #
 # Exit codes:
 #   0   all checks passed
@@ -30,6 +39,7 @@ cd "$(dirname "$0")/.."
 # detect_cpus + ensure_pglite_snapshot (the PGLite-booting eval checks use
 # the snapshot fast-path when the shape matches).
 . scripts/lib/test-env.sh
+receipts_init verify || exit 2
 
 # ──────────────────────────────────────────────────────────────────────────
 # Checks to run. Each entry is a bun-script name (the `package.json`
@@ -52,6 +62,9 @@ CHECKS=(
   "check:admin-build"
   "check:wasm"
   "check:pglite-embedded"
+  # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
+  # bundles a handful of modules, not the CLI).
+  "check:image-decoders"
   "check:fuzz-purity"
   # W0 fix-wave (Tier-1 #11): guard self-tests — every scanner guard proves it
   # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
@@ -87,9 +100,17 @@ CHECKS=(
   "check:privacy"
   "check:test-names"
   "check:test-isolation"
+  # D7: a test that gates execution on a GBRAIN_* opt-in the operator-env
+  # preload strips is a silent skip; TS AST scan, ~2s.
+  "check:test-env-opt-ins"
+  # D8: every DATABASE_URL-gated PostgreSQL arm outside test/e2e/ runs in a
+  # named Postgres lane (TS AST).
+  "check:postgres-lanes"
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"
+  # Positional $N::jsonb + JSON.stringify double-encode (AST-lite, ~0.2s).
+  "check:jsonb-params"
   "check:search-path"
   "check:source-id-projection"
   "check:source-config-leak"
@@ -122,10 +143,8 @@ CHECKS=(
   "check:skill-refs"
   # Previously reachable ONLY from the deleted check:all (i.e. never run):
   "check:newlines"
-  "check:exports-count"
   "check:no-legacy-getconnection"
   # Revived registered-but-never-executed guards (this pass):
-  "check:pagetype-exhaustive"
   "check:pg-url-redaction"
   # Containment sprint: module-size ratchet + structural-suite freshness.
   "check:module-size"
@@ -157,6 +176,9 @@ CHECKS=(
   "check:retired-phrases"
   "check:schema-migration-order"
   "check:structural-manifest"
+  # Every generated artifact's freshness in one place (GBRA-47 B8); its Fix
+  # line is `bun run regen:all`, the same code path that regenerates them.
+  "check:regen-all"
   # v0.50.5.0 security wave: compiled binaries must not autoload a cwd bunfig.toml.
   "check:compile-autoload"
 )
@@ -188,7 +210,8 @@ if [ -n "${GBRAIN_VERIFY_LOG_DIR:-}" ]; then
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create $LOG_DIR" >&2; exit 2; }
 else
   LOG_DIR="$(mktemp -d /tmp/gbrain-verify-XXXXXX)"
-  trap 'rm -rf "$LOG_DIR"' EXIT
+  KEEP_LOGS=0
+  trap '[ "$KEEP_LOGS" = "1" ] || rm -rf "$LOG_DIR"' EXIT
 fi
 
 # Resolve `timeout` for per-check wallclock cap. macOS doesn't ship one;
@@ -285,8 +308,14 @@ ELAPSED=$((END_TS - START_TS))
 # ──────────────────────────────────────────────────────────────────────────
 PASS=0
 FAIL=0
+SKIP=0
 FAIL_NAMES=()
+SKIP_REPORT=""
 FAIL_REPORT=""
+OUTCOMES="$LOG_DIR/outcomes.tsv"
+printf 'check\toutcome\trc\tdetail\n' > "$OUTCOMES"
+xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
+JUNIT_CASES=""
 
 for i in "${!CHECKS[@]}"; do
   c="${CHECKS[$i]}"
@@ -296,16 +325,32 @@ for i in "${!CHECKS[@]}"; do
 
   rc=1
   [ -f "$EXIT_FILE" ] && rc=$(cat "$EXIT_FILE" 2>/dev/null || echo 1)
+  skip_reason=""
+  if [ "$rc" = "0" ] && [ -f "$LOG_FILE" ]; then
+    skip_reason=$(sed -n 's/^GBRAIN_CHECK_SKIPPED:[[:space:]]*//p' "$LOG_FILE" | head -1 | tr '\t' ' ')
+    [ -n "$skip_reason" ] || ! grep -q '^GBRAIN_CHECK_SKIPPED:' "$LOG_FILE" || skip_reason="(no reason given)"
+  fi
 
-  if [ "$rc" = "0" ]; then
+  if [ "$rc" = "0" ] && [ -n "$skip_reason" ]; then
+    SKIP=$((SKIP + 1))
+    SKIP_REPORT+="  $c: $skip_reason"$'\n'
+    printf '%s\tskip\t0\t%s\n' "$c" "$skip_reason" >> "$OUTCOMES"
+    JUNIT_CASES+="    <testcase name=\"$c\" classname=\"verify\" file=\"verify\"><skipped message=\"$(printf '%s' "$skip_reason" | xml_escape)\" /></testcase>"$'\n'
+  elif [ "$rc" = "0" ]; then
     PASS=$((PASS + 1))
+    printf '%s\tpass\t0\t\n' "$c" >> "$OUTCOMES"
+    JUNIT_CASES+="    <testcase name=\"$c\" classname=\"verify\" file=\"verify\" />"$'\n'
   else
+    outcome=fail
+    [ "$rc" = "124" ] && outcome=timeout
+    printf '%s\t%s\t%s\t%s\n' "$c" "$outcome" "$rc" "$LOG_FILE" >> "$OUTCOMES"
+    JUNIT_CASES+="    <testcase name=\"$c\" classname=\"verify\" file=\"verify\"><failure message=\"$outcome rc=$rc\" /></testcase>"$'\n'
     FAIL=$((FAIL + 1))
     FAIL_NAMES+=("$c")
     if [ "$rc" = "124" ]; then
-      FAIL_REPORT+=$'\n--- '"$c"' (TIMED OUT after '"${TIMEOUT}"'s) ---\n'
+      FAIL_REPORT+=$'\n--- '"$c"' (TIMED OUT after '"${TIMEOUT}"'s) ---'$'\n'
     else
-      FAIL_REPORT+=$'\n--- '"$c"' (rc='"$rc"') ---\n'
+      FAIL_REPORT+=$'\n--- '"$c"' (rc='"$rc"') ---'$'\n'
     fi
     if [ -f "$LOG_FILE" ]; then
       FAIL_REPORT+="$(tail -30 "$LOG_FILE")"
@@ -314,7 +359,28 @@ for i in "${!CHECKS[@]}"; do
   fi
 done
 
+if [ -n "$SKIP_REPORT" ]; then
+  {
+    echo "[verify-parallel] $SKIP check(s) self-skipped (recorded as skip, not pass):"
+    printf '%s' "$SKIP_REPORT"
+  } >&2
+fi
+
+receipt_begin primary all "" "" "" verify
+if [ -n "$RECEIPT_ID" ]; then
+  {
+    echo '<?xml version="1.0" encoding="UTF-8"?>'
+    echo "<testsuites name=\"verify\" tests=\"${#CHECKS[@]}\" failures=\"$FAIL\" skipped=\"$SKIP\">"
+    echo "  <testsuite name=\"verify\" file=\"verify\" tests=\"${#CHECKS[@]}\" failures=\"$FAIL\" skipped=\"$SKIP\">"
+    printf '%s' "$JUNIT_CASES"
+    echo "  </testsuite>"
+    echo "</testsuites>"
+  } > "$TEST_RECEIPT_DIR/$RECEIPT_ID.junit.xml"
+  receipt_end "$([ "$FAIL" -eq 0 ] && echo 0 || echo 1)"
+fi
+
 if [ "$FAIL" -gt 0 ]; then
+  KEEP_LOGS=1
   {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -323,10 +389,12 @@ if [ "$FAIL" -gt 0 ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     printf '%s' "$FAIL_REPORT"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "[verify-parallel] elapsed=${ELAPSED}s | pass=$PASS fail=$FAIL"
+    echo "Generated artifact, golden or manifest drift? Run: bun run regen:all (offline, keyless; prints what changed)."
+    echo "[verify-parallel] elapsed=${ELAPSED}s | pass=$PASS fail=$FAIL skip=$SKIP"
+    echo "[verify-parallel] per-check logs kept in $LOG_DIR (outcomes.tsv lists every check)"
   } >&2
   exit 1
 fi
 
-echo "[verify-parallel] elapsed=${ELAPSED}s | pass=$PASS fail=0 | all checks green" >&2
+echo "[verify-parallel] elapsed=${ELAPSED}s | pass=$PASS fail=0 skip=$SKIP | all checks green" >&2
 exit 0
