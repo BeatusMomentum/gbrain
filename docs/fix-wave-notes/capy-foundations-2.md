@@ -58,6 +58,18 @@ Every P0 item shipped. Nothing was cut.
   PGLite `releaseAbandonedClaims` with Lane F's refresh-fence predicate in the
   idle probe; released claims are still fenced when they are claimed again.
 
+- `gbrain sources add` on a 20,000-file checkout failed intermittently on
+  4-vCPU runners (also on branches without this wave): the background `git gc`
+  that the fixture's large commit starts pruned `.git/objects/<xx>` while the
+  physical-root overlap scan walked the checkout, and the scan's `readdirSync`
+  threw ENOENT. The scan now skips a subdirectory that vanished mid-walk
+  (`test/persistence-physical-root.test.ts` races it against a churning
+  directory). Reproduced 4 of 5 times on a standard-4 VM before the fix.
+- `test/sweep.test.ts` counted 4 raw queries instead of 3 when an earlier file
+  in the same process had registered a local CLI writer in the shared test
+  home: snapshot brains share one `brain_id`, so the maintenance principal
+  lookup found and verified that registration. The test now runs with its own
+  `GBRAIN_HOME`.
 - PR-budget coverage cut: the 150 s pull-request robot run on Postgres skips
   the seams and the fault that can wait out a dead owner's 2-minute claim
   lease (`effect:*`, `consumer:prepared`, `publication:prepared`,

@@ -111,6 +111,7 @@ gbrain config set facts.extraction_enabled false                  # turn automat
 - `gbrain extract timeline --source db` refreshes PGLite planner statistics on batch boundaries during the walk.
 - `gbrain migrate --to` refusals carry why and a filled fix naming the refusing side; an unknown engine is `invalid_params`; `postgres` is the canonical engine name (`supabase` stays an alias).
 - `gbrain sources refresh` runs inside a resident PGLite owner (`writer_refresh` administration operation); delegated syncs keep the progress-aware deadline; the consumer's idle probe honors the refresh fence.
+- `gbrain sources add` no longer fails with `internal_error` (ENOENT under `.git/objects`) when a background `git gc` prunes the checkout while it is being registered.
 - Search reuses its projection-readiness answer until the brain changes (`GBRAIN_PROJECTION_READINESS_CACHE=0` turns it off).
 - The OpenClaw context-engine heartbeat reports seat write failures with their hints; a pattern page drops a seat its reflections no longer share (#4618).
 
