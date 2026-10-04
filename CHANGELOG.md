@@ -10,6 +10,110 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.50.0] - 2026-10-04
+
+**`gbrain sources add` no longer crashes when Git cleans up mid-registration, big PGLite brains stop freezing in long write and timeline passes, and every test CI claims to run now proves it ran, by name.**
+
+This is a test, eval and CI fix wave. For you it fixes three real bugs the test suite had been flaking on. For anyone changing gbrain, CI stops crying wolf: flaky tests are fixed at the root, red nightly runs open an issue instead of going unseen, coverage that never executed now executes, and pull-request CI is faster.
+
+### What changes for you
+
+- **`gbrain sources add` survives `git gc`.** Registering a source walks its directory to check for overlapping brains and measure its size. When Git pruned `.git/objects` during that walk, a vanished subdirectory made the command fail with `internal_error`. Both walks now skip a subdirectory that disappears or turns into a file mid-walk; errors on the root itself and permission errors still stop the command.
+- **PGLite writes outside a transaction take the WAL checkpoint guard.** Raw autocommit writes (bulk vector updates, for one) skipped the guard that `engine.transaction()` already had, so once the write-ahead log crossed its automatic checkpoint trigger, PGLite ran the checkpoint inside the crossing write and spun at 100% CPU. A 64 MB-WAL brain writing 200 MB of autocommit WAL hung before and finishes in about 3 s now. Statement order is unchanged.
+- **`extract timeline --source db` refreshes planner statistics as it goes.** PGLite has no autovacuum, so a timeline walk that grew `timeline_entries` from empty kept planning every read against an empty table and slowed with each row (655 s at 20,000 pages). It now refreshes statistics on the `import.analyze_every_pages` cadence, like import and managed sync. The 20,000-page PGLite scale run finishes import, extract and vectors in about 6 minutes.
+- **`gbrain eval run-all` tells the truth.** A bare run runs only the suites it can run (BrainBench). Naming a suite it does not run (`--suites longmemeval,replay`) exits 1 with `eval_suite_unwired` and the per-suite commands as the fix, and a failed suite exits 1 instead of 0.
+- **`gbrain eval takes-quality` prices every model the canonical pricing table knows.** The private six-model allowlist is gone. An unpriced model warns and runs; under a `--budget-usd` cap it refuses with `no_pricing` and the `gbrain pricing set` command to register its rate.
+
+The three runtime fixes are folded from GBRA-40 Foundations 2 Lane F, along with the scale harness's `find_orphans` known-answer fix. Thank you.
+
+### What changes for contributors
+
+| Pull-request CI (`test.yml` + `e2e.yml`) | Before | Now |
+| --- | --- | --- |
+| Time to green | 1010-1067 s | 933 s (required checks green at 905 s) |
+| Ubicloud vCPU-minutes per run | 899-940 | 754 |
+| Critical path | Selected E2E | a unit shard (Test) |
+| Selected E2E shard max / mean | 904 / 721 s (4 workers) | 452 / 382 s (8 workers) |
+| Unit shard max / mean | 762 / 542 s | 767 / 535 s (before the weight re-mine below) |
+| Tests that ran in no lane | 55 PostgreSQL arms and 12 dead opt-in gates (the compile smoke among them) | 0 (one allowlisted arm with a TODO) |
+
+Before: the three baseline runs of the master tree on 2026-10-04 (`docs/test-audit/2026-10-04/baseline.md`). Now: run Test 37235275086 + E2E 37235274833 of this branch.
+
+### Things to watch
+
+| Change | What to do |
+| --- | --- |
+| Test opt-ins under the old names stop the run with the rename command | `GBRAIN_BASH32_REQUIRE` → `GBRAIN_TEST_BASH32_REQUIRE`, `GBRAIN_PERF_BUDGET_MULTIPLIER` → `GBRAIN_TEST_PERF_BUDGET_MULTIPLIER`, `GBRAIN_SKIP_SUBPROCESS_TESTS` → `GBRAIN_TEST_SKIP_SUBPROCESS`, `GBRAIN_REQUIRE_LAUNCHD` → `GBRAIN_TEST_REQUIRE_LAUNCHD`, `GBRAIN_SKIP_LAUNCHD_E2E` → `GBRAIN_TEST_SKIP_LAUNCHD`, `GBRAIN_ENFORCE_E5_BUDGET` → `GBRAIN_TEST_ENFORCE_E5_BUDGET`, `GBRAIN_REQUIRE_COMPILE` → `GBRAIN_TEST_REQUIRE_COMPILE`. Under the old names the test preload deleted them, so they never worked. |
+| A new `*.serial.test.ts` file needs a row in `scripts/serial-files.tsv` | run `bash scripts/check-test-isolation.sh --as-parallel <file>` first; if it passes and the file touches no process-wide state, name it `*.test.ts` instead |
+| A test file with a `DATABASE_URL`-gated arm needs a Postgres lane | `bun run check:postgres-lanes` names the file and the workflow list to add it to |
+| A stale generated artifact fails `verify` | `bun run regen:all` regenerates everything and lists what changed |
+| `docs/TESTING.md` has a 120 KB cap that only goes down | move subsystem detail next to its code instead of growing the file |
+| E2E narrowing is retired | doc-only changes skip E2E; every other change runs the whole E2E corpus |
+| Removed modules | `src/core/chunkers/semantic.ts`, `src/core/chunkers/llm.ts`, `src/core/search/keyword.ts` and `src/core/search/vector.ts` had no importer (use `src/core/search/hybrid.ts`); the forward-reference bootstrap facade (import `src/core/engine-sql/bootstrap.ts`); `scripts/check-exports-count.sh` (`test/public-exports.test.ts` owns the contract); the skillopt judge and reflect evals |
+| The eval ledger `.gbrain-evals/eval-results.jsonl` is local | it is gitignored; `--record` modes keep appending to your local copy |
+
+## To take advantage of v0.60.50.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+2. **Nothing else to migrate.** There is no schema change; the fixes apply to the next `gbrain sources add`, PGLite write and `extract timeline` run.
+3. **Verify:**
+   ```bash
+   gbrain doctor --json
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+#### Fixes
+
+- `gbrain sources add`: the physical-root overlap walk and the directory-size count skip a subdirectory that vanishes or becomes a file mid-walk; root errors and EACCES still throw; `.git` is still walked (`test/physical-root-walk.test.ts`, including a 20,000-file walk in about 0.9 s).
+- PGLite: an autocommit statement that may write WAL issues the checkpoint-guard probe right behind itself and queues a needed `CHECKPOINT` before the caller's next statement.
+- `extract timeline --source db` refreshes stale planner statistics every `import.analyze_every_pages` pages on PGLite.
+- `gbrain eval run-all`: bare runs run wired suites only; `eval_suite_unwired` (exit 1, with `gbrain errors eval_suite_unwired`); a failed suite exits 1.
+- `gbrain eval takes-quality`: canonical pricing for every model, registered overrides first; unpriced models warn and run; `no_pricing` under a user cap.
+- Scale harness: the `find_orphans` known answer reads the op's maximum page and compares with `total_orphans`.
+
+#### Flakes fixed at the root
+
+- The `sources add` race above (B1); a leaked `check-update --refresh-cache` child in the self-upgrade breadcrumb test; facts-queue tests wait on queue counters instead of fixed sleeps; the child-readiness test requires the confirmed timeout message (tini contract documented); a `persistence-deactivate` race where an `await` inside a `.rejects` matcher let Postgres reject before the handler attached and leaked env into later files; the gateway baseline is restored after `gateway-chat.test.ts`, folded from community PR #5907, contributed by @nezovskii. Thank you.
+- `waitFor` deadlines scale with `GBRAIN_TEST_WAIT_MULTIPLIER` (1 to 4; coverage lanes set 2), capped at 50 s.
+- Verify's fallback watchdog (hosts without `timeout`) no longer leaves orphaned `sleep` processes holding the caller's pipes.
+
+#### Every claimed test now runs
+
+- Executed-test receipts: every Bun invocation in CI writes a receipt and a JUnit report; `scripts/ci-executed-counts.ts` compares runs by (lane, file, test, backend arm) and fails on an undeclared drop or an incomplete run. Verify records each check as pass, fail, timeout or skip (`GBRAIN_CHECK_SKIPPED:`) and keeps its logs on failure. A red job's step summary lists the failing tests with a reproduce command.
+- 55 unit-file PostgreSQL arms that ran in no lane run in persistence-validation's `unit-postgres-arms` job, one Bun process per file; `check:postgres-lanes` keeps it that way.
+- 12 dead opt-in gates renamed under `GBRAIN_TEST_*`; the compiled self-update smoke runs unconditionally; `check:test-env-opt-ins` fails on a test gated on a name the preload strips.
+- The agent-voice recipe's unit suite runs in CI (`bun run test:agent-voice`); `check:jsonb-params` and `check:image-decoders` run in `verify`; scripts/ is typechecked; guard self-test fixtures cover seven more guards; the privacy guard scans `evals/` and `docs/test-audit/`; `test/docs-repo-paths.test.ts` fails on a doc naming a missing repo path; the skill-refs allowlist fails on stale rows.
+- Blind source pins in six suites (each passed with its behavior broken) are replaced by behavioral owners; probes are in `docs/test-audit/2026-10-04/implementation/lane-c.md`.
+
+#### Red nightlies become issues
+
+- `nightly-watch.yml` opens, updates, reopens and closes one `Nightly red: <workflow>` issue per scheduled workflow, with the failing jobs, the last green commit and the next step; `.github/nightly-known-red.tsv` holds at most three known-red or known-skipped rows, each owned by a TODO.
+- A weekly `ci-health.yml` report lists first-attempt pass rates and the most-failing test files.
+- Heavy Tests: the Docker image copies `patches/`; `postinstall.ts` exits 0 without `src/`; every heavy script runs and prints a rerun command per failure; the Claude door runs even when the Codex door fails.
+- Missing provider secrets are a visible warning (Hermes, real-agent doors, publish-template, key-gated E2E), never a silent green.
+- The scale tier runs under an out-of-process phase watchdog that names the stalled phase; the vectors phase prints one line per batch.
+
+#### Faster and cheaper pull-request CI
+
+- E2E selection is one rule: doc-only changes select nothing, everything else selects the whole corpus, read from the pull request files API on a shallow checkout and failing closed on a truncated list. Up to eight Selected E2E workers on 2 vCPU; the E2E backend matrix moves to its own 4 vCPU job and stops running a second time in Selected E2E; serial tests on 4 vCPU; the longmemeval slow file joins the unit shards; unit shards stay on 4 vCPU (2 vCPU raised the shard mean from 542 s to 608 s).
+- 92 serial files that pass the isolation lint and touch no process-wide state rejoin the parallel lane; `scripts/serial-files.tsv` lists the remaining serial files with a class and reason.
+- Shorter test waits through production-default seams (connector fixture, maintenance publish wait, effect renewal interval), and `test/helpers/brain-template.ts` clones initialized disk brains instead of replaying migrations.
+- Shard weights re-mined from this branch's green run; `check:weight-coverage` fails on stale entries and warns on unweighted shares.
+- `merge_group` triggers (inert until the merge queue is enabled) use the PR profile; a version-only `package.json` diff no longer widens the native test scope; dependency audit blocks only when dependencies change or on master, schedules and dispatches; Semgrep uploads SARIF weekly.
+
+#### Docs and tooling
+
+- `bun run regen:all` regenerates every generated artifact; `check:regen-all` in verify.
+- `docs/TESTING.md` opens with a quick start, drops the test inventories and moves subsystem detail beside its code (120 KB ratchet cap).
+- Removed: unreferenced chunkers and search modules, the forward-reference facade, dead test seams, finished one-off scripts, a broken benchmark, the skillopt judge and reflect evals, a fixture naming a real person, and the exports-count and pagetype-exhaustive guards.
+
 ## [0.60.48.0] - 2026-10-04
 
 **A managed Postgres brain now catches up a big sync backlog in one `gbrain sync` run, about 4.6 times faster, and the run tells your agent exactly what happened and what to do next (#5984).**
