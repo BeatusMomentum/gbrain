@@ -157,6 +157,9 @@ CHECKS=(
   "check:retired-phrases"
   "check:schema-migration-order"
   "check:structural-manifest"
+  # Every generated artifact's freshness in one place (GBRA-47 B8); its Fix
+  # line is `bun run regen:all`, the same code path that regenerates them.
+  "check:regen-all"
   # v0.50.5.0 security wave: compiled binaries must not autoload a cwd bunfig.toml.
   "check:compile-autoload"
 )
@@ -317,6 +320,7 @@ if [ "$FAIL" -gt 0 ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     printf '%s' "$FAIL_REPORT"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Generated artifact, golden or manifest drift? Run: bun run regen:all (offline, keyless; prints what changed)."
     echo "[verify-parallel] elapsed=${ELAPSED}s | pass=$PASS fail=$FAIL"
   } >&2
   exit 1

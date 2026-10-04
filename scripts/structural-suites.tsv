@@ -267,7 +267,7 @@ test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSy
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
 test/scripts/ci-manifest-diff.test.ts	test.yml dependency-audit scope	2	readFileSync
-test/scripts/ci-pr-scope.test.ts	pull-request CI scope	8	readFileSync
+test/scripts/ci-pr-scope.test.ts	pull-request CI scope	9	readFileSync
 test/scripts/ci-runner-routing.test.ts	CI runner routing	6	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
@@ -283,6 +283,7 @@ test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/nightly-issue.test.ts	.github/nightly-known-red.tsv	2	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
+test/scripts/regen-all.test.ts	regen:all	4	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	readFileSync

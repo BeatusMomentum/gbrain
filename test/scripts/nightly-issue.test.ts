@@ -206,6 +206,7 @@ describe('.github/nightly-known-red.tsv', () => {
 
   test('the committed file is valid: at most 3 rows, ISO review-by dates, each TODO present in TODOS.md', () => {
     expect(validateKnownRed(readFileSync(join(ROOT, '.github/nightly-known-red.tsv'), 'utf8'), todos)).toEqual([]);
+    expect(readFileSync(join(ROOT, 'docs/RELEASING.md'), 'utf8')).toContain('\n## Nightly-red issues\n');
   });
 
   test('a fourth row, a bad date, an unknown kind or a missing TODO is refused with the fix', () => {
