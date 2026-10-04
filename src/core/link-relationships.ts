@@ -209,6 +209,13 @@ export async function staleRelationshipKeys(exec: RawExec, limit = 500): Promise
      GROUP BY from_page_id, to_page_id, link_type
      ORDER BY min(newest) LIMIT $2`,
     [[...TEMPORAL_LINK_TYPES], limit]);
-  return rows.map(r => ({ from_page_id: Number(r.from_page_id), to_page_id: Number(r.to_page_id), link_type: r.link_type }));
+  // State rows whose evidence is gone entirely (raw deletes) are refreshed away too.
+  const orphans = rows.length >= limit ? [] : await exec.executeRaw<RelationshipKey>(
+    `SELECT lr.from_page_id, lr.to_page_id, lr.link_type FROM link_relationships lr
+      WHERE lr.scope = 'all'
+        AND NOT EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id AND l.link_type = lr.link_type)
+        AND NOT EXISTS (SELECT 1 FROM link_transitions t WHERE t.from_page_id = lr.from_page_id AND t.to_page_id = lr.to_page_id AND t.link_type = lr.link_type)
+      LIMIT $1`, [limit - rows.length]);
+  return [...rows, ...orphans].map(r => ({ from_page_id: Number(r.from_page_id), to_page_id: Number(r.to_page_id), link_type: r.link_type }));
 }
 

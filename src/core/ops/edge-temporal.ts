@@ -15,11 +15,15 @@ import type { Link } from '../types.ts';
 import { edgeMatchesTemporal, edgeValidityEnabled, parseTemporalParams, utcToday, type EdgeTemporalOpts, type TemporalAnnotation } from '../link-validity.ts';
 
 export const TEMPORAL_EDGE_PARAMS: Record<'status' | 'as_of' | 'during', ParamDef> = {
-  status: { type: 'string', enum: ['live', 'ended', 'all'], description: "Relationship status: live (default: what is true now, or at as_of), ended (former only), all (history)." },
-  as_of: { type: 'string', description: 'Answer as of this date (YYYY-MM-DD) instead of today.' },
-  during: { type: 'string', description: 'Relationships true at any point in a period: YYYY, YYYY-MM, YYYY-MM-DD or FROM..UNTIL (e.g. 2022, 2021..2023-06).' },
+  status: { type: 'string', enum: ['live', 'ended', 'all'], description: 'Default live (true now).' },
+  as_of: { type: 'string', description: 'YYYY-MM-DD.' },
+  during: { type: 'string', description: 'Period: 2022, 2022-03 or 2021..2023.' },
 };
 
+
+/** Starter-surface (budgeted) forms: live is the default; `all` = history. */
+export const STARTER_STATUS_PARAM: ParamDef = { type: 'string', enum: ['live', 'all'], description: 'Default live.' };
+export const STARTER_AS_OF_PARAM: ParamDef = { type: 'string', description: 'YYYY-MM-DD' };
 
 /** Validate the temporal params and resolve the effective policy for this call. */
 export async function resolveEdgeTemporal(ctx: OperationContext, p: Record<string, unknown>, opName: string): Promise<EdgeTemporalOpts> {
@@ -36,7 +40,17 @@ export async function resolveEdgeTemporal(ctx: OperationContext, p: Record<strin
 export function filterTemporalLinks(links: Link[], temporal: EdgeTemporalOpts): { kept: Link[]; hidden: number } {
   if (temporal.disabled) return { kept: links, hidden: 0 };
   const kept = links.filter(l => edgeMatchesTemporal(l as Link & TemporalAnnotation, temporal));
-  return { kept, hidden: links.length - kept.length };
+  // A default (live, today) read keeps the established row shape: every kept
+  // row is live, so the annotation adds nothing. History reads (status, as_of,
+  // during) return each row's status, stints, recorded_at and retired_at.
+  const historyRead = (temporal.status ?? 'live') !== 'live' || !!temporal.asOf || !!temporal.during;
+  const shaped = kept.map(l => {
+    const { first_start: _first, ...rest } = l as Link & { first_start?: unknown };
+    if (historyRead) return rest as Link;
+    const { status: _s, stints: _st, recorded_at: _r, retired_at: _rt, ...plain } = rest as Link & TemporalAnnotation;
+    return plain as Link;
+  });
+  return { kept: shaped, hidden: links.length - kept.length };
 }
 
 /**

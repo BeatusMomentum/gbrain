@@ -28,7 +28,10 @@ import { PageMissingError } from '../engine-errors.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
-import { TEMPORAL_EDGE_PARAMS, resolveEdgeTemporal, filterTemporalLinks, reportTemporal } from './edge-temporal.ts';
+import { TEMPORAL_EDGE_PARAMS, STARTER_STATUS_PARAM, STARTER_AS_OF_PARAM, resolveEdgeTemporal, filterTemporalLinks, reportTemporal } from './edge-temporal.ts';
+import { isCalendarDate, relationSemantics, TEMPORAL_LINK_TYPES } from '../link-validity.ts';
+import { writeManualTransitions, removeManualTransitions } from '../link-temporal-apply.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 // #4655: write-time pack vocabulary enforcement for explicit link verbs.
 import {
   loadActivePackForWriteVocabulary,
@@ -51,6 +54,29 @@ import {
  */
 export const MANAGED_LINK_SOURCES = ['markdown', 'frontmatter', 'mentions', 'wikilink-resolved'];
 
+/** add_link valid_from / valid_until: calendar dates on a dated relation type. Null when neither is given. */
+function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, linkType: string): { validFrom?: string; validUntil?: string } | null {
+  const validFrom = p.valid_from, validUntil = p.valid_until;
+  if (validFrom === undefined && validUntil === undefined) return null;
+  for (const [name, value] of [['valid_from', validFrom], ['valid_until', validUntil]] as const) {
+    if (value !== undefined && !isCalendarDate(value)) {
+      throw opError('invalid_params', `add_link: ${name} must be a calendar date YYYY-MM-DD (got ${JSON.stringify(value)})`,
+        `Pass ${paramUse(ctx, name, '2025-03-01')}; omit it when the date is unknown.`);
+    }
+  }
+  if (typeof validFrom === 'string' && typeof validUntil === 'string' && validUntil < validFrom) {
+    throw opError('invalid_params', 'add_link: valid_until is before valid_from', `Swap them, or pass only ${paramUse(ctx, 'valid_until')} to record when the relationship ended.`);
+  }
+  if (relationSemantics(linkType) === 'reference') {
+    throw opError('invalid_params', `add_link: link_type '${linkType || '(none)'}' has no dates; valid_from/valid_until apply to dated relations (${TEMPORAL_LINK_TYPES.join(', ')})`,
+      `Pass link_type such as works_at with the dates, or drop valid_from/valid_until.`);
+  }
+  if (relationSemantics(linkType) === 'event' && validUntil !== undefined) {
+    throw opError('invalid_params', `add_link: ${linkType} is an event and does not end; pass only valid_from (when it happened)`, `Drop ${paramUse(ctx, 'valid_until')}.`);
+  }
+  return { ...(typeof validFrom === 'string' ? { validFrom } : {}), ...(typeof validUntil === 'string' ? { validUntil } : {}) };
+}
+
 const add_link: Operation = {
   name: 'add_link',
   idempotent: false,
@@ -62,6 +88,8 @@ const add_link: Operation = {
     link_type: { type: 'string', description: 'Link type (e.g., invested_in, works_at). When the active schema pack declares a link vocabulary, an explicit link_type must be one of its declared verbs (undeclared verbs are rejected, also under dry_run). Omitted = untyped edge.' },
     context: { type: 'string', description: 'Context for the link' },
     link_source: { type: 'string', description: "Provenance tag (kebab-case, e.g. 'citation-graph'). Defaults to 'manual'. Reconciliation-managed built-ins (markdown/frontmatter/mentions/wikilink-resolved) are rejected." },
+    valid_from: { type: 'string', description: 'When the relationship started (YYYY-MM-DD), for dated relations such as works_at or invested_in.' },
+    valid_until: { type: 'string', description: 'When it ended (YYYY-MM-DD, exclusive). Re-run add_link with valid_until to record that a relationship ended.' },
   },
   mutating: true,
   scope: 'write',
@@ -85,6 +113,7 @@ const add_link: Operation = {
         );
       }
     }
+    const dates = validateLinkDates(ctx, p, linkType);
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
@@ -107,15 +136,25 @@ const add_link: Operation = {
     await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
     try {
       // #5280: a managed brain takes the coordinated database-only path.
-      const managed = await coordinatedManualLinkWrite(ctx, 'add_link', p.from as string, p.to as string, (engine, sourceId) =>
-        engine.addLink(p.from as string, p.to as string, (p.context as string) || '', linkType, linkSource, undefined, undefined, // gbrain-allow-direct-insert: coordinated manual link inside withCoordinatedWrite
-          { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId }));
-      if (!managed) await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
+      const managed = await coordinatedManualLinkWrite(ctx, 'add_link', p.from as string, p.to as string, async (engine, sourceId) => {
+        await engine.addLink(p.from as string, p.to as string, (p.context as string) || '', linkType, linkSource, undefined, undefined, // gbrain-allow-direct-insert: coordinated manual link inside withCoordinatedWrite
+          { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId });
+        if (dates) await writeManualTransitions(engine, { from: p.from as string, to: p.to as string, linkType, sourceId }, dates);
+      });
+      if (!managed && !dates) await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
         p.from as string, p.to as string,
         (p.context as string) || '', linkType,
         linkSource, undefined, undefined,
         linkOpts,
       );
+      if (!managed && dates) {
+        const sourceId = ctx.sourceId ?? 'default';
+        await maintenanceTransaction(ctx.engine, async tx => {
+          await tx.addLink(p.from as string, p.to as string, (p.context as string) || '', linkType, linkSource, undefined, undefined, // gbrain-allow-direct-insert: add_link with dated manual evidence, one maintenance transaction
+            linkOpts);
+          await writeManualTransitions(tx, { from: p.from as string, to: p.to as string, linkType, sourceId }, dates);
+        });
+      }
     } catch (error) {
       // An endpoint hard-deleted between preflight and mutation: reclassify
       // the typed engine miss instead of surfacing it as internal_error.
@@ -148,12 +187,19 @@ const remove_link: Operation = {
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
       : undefined;
-    const remove = (engine: typeof ctx.engine, opts: typeof linkOpts) => engine.removeLink(
-      p.from as string, p.to as string,
-      (p.link_type as string) || undefined,
-      (p.link_source as string) || undefined,
-      opts,
-    );
+    const remove = async (engine: typeof ctx.engine, opts: typeof linkOpts) => {
+      const removed = await engine.removeLink(
+        p.from as string, p.to as string,
+        (p.link_type as string) || undefined,
+        (p.link_source as string) || undefined,
+        opts,
+      );
+      // Manual dated statements belong to manual edges; drop them with the edge.
+      if (removed > 0 && (!p.link_source || p.link_source === 'manual')) {
+        await removeManualTransitions(engine, { from: p.from as string, to: p.to as string, linkType: (p.link_type as string) || undefined, sourceId: opts?.fromSourceId ?? 'default' });
+      }
+      return removed;
+    };
     // #4527: report how many edges actually died — an unconditional
     // `{ status: 'ok' }` made a zero-match delete (typo'd slug, wrong
     // link_type, already removed) indistinguishable from a real removal.
@@ -324,10 +370,10 @@ const get_links: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List a page\'s outgoing links (typed edges to other pages). Returns relationships that are true today, each with status and dates; pass status: "all" for history, as_of for a past date, during for a period (e.g. where someone worked in 2022). Pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
+  description: 'List a page\'s outgoing links (typed edges to other pages). Use when exploring what a page points at; rows carry status and dates, live relationships by default (status: "all" for history, during: "2022" for a period). Pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.',
   params: {
     slug: { type: 'string', required: true, description: 'Slug of the page whose outgoing links to list.' },
-    link_type: { type: 'string', description: 'Only this link type (e.g. works_at).' },
+    link_type: { type: 'string', description: 'Only this type.' },
     ...TEMPORAL_EDGE_PARAMS,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
@@ -342,11 +388,11 @@ const get_backlinks: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List links pointing to a page, such as who works at a company. Returns relationships true today; status: "ended" lists former ones, status: "all" history, as_of / during a past date or period.',
+  description: 'List links pointing to a page. Use when finding what mentions an entity.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
-    link_type: { type: 'string', description: 'Only this link type (e.g. works_at).' },
-    ...TEMPORAL_EDGE_PARAMS,
+    status: STARTER_STATUS_PARAM,
+    as_of: STARTER_AS_OF_PARAM,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },
@@ -401,14 +447,14 @@ const traverse_graph: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: `Walk the link graph from a page along relationships that are true today (status: "all" walks history, as_of a past date). Remote callers get bidirectional paths at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} by default.`,
+  description: `Walk the link graph from a page. Remote callers get bidirectional paths at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} by default.`,
   params: {
     slug: { type: 'string', description: 'Start page slug.', required: true },
     depth: { type: 'number', description: `Max depth (cap ${TRAVERSE_DEPTH_CAP}).` },
     link_type: { type: 'string', description: 'Follow only this link type.' },
     direction: { type: 'string', description: 'Remote default both.', enum: ['in', 'out', 'both'] },
-    status: TEMPORAL_EDGE_PARAMS.status,
-    as_of: TEMPORAL_EDGE_PARAMS.as_of,
+    status: STARTER_STATUS_PARAM,
+    as_of: STARTER_AS_OF_PARAM,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },

@@ -56,8 +56,10 @@ describe('get_links / get_backlinks', () => {
     notices.length = 0;
     const rows = await op('get_links').handler(ctx(), { slug: 'people/alice-example', link_type: 'works_at' }) as Array<Record<string, unknown>>;
     expect(targets(rows)).toEqual(['companies/widget-co']);
-    expect(rows[0].status).toBe('live');
-    expect(rows[0].stints).toEqual([{ from: '2025-03-01', until: null }]);
+    expect(rows[0].status).toBeUndefined(); // default reads keep the established row shape
+    const history = await op('get_links').handler(ctx(), { slug: 'people/alice-example', link_type: 'works_at', status: 'live', as_of: '2026-01-01' }) as Array<Record<string, unknown>>;
+    expect(history[0].status).toBe('live');
+    expect(history[0].stints).toEqual([{ from: '2025-03-01', until: null }]);
     const notice = notices.find(n => n.code === 'former_relationships_hidden')!;
     expect(notice.why).toContain('1 relationship');
     expect(notice.fix?.mcp).toEqual({ tool: 'get_links', arguments: { slug: 'people/alice-example', link_type: 'works_at', status: 'all' } });
@@ -117,5 +119,23 @@ describe('relational search arm', () => {
     const former = await buildRelationalArm(engine, 'who were the former employees of acme-example', {});
     const worked = await buildRelationalArm(engine, 'who worked at acme-example', {});
     expect([...former, ...worked].map(r => r.slug)).toContain('people/alice-example');
+  });
+});
+
+describe('add_link valid_from / valid_until', () => {
+  test('dated manual edges close and reopen; invalid dates are rejected', async () => {
+    await put('companies/fund-b', 'type: company\ntitle: Fund B', 'A fund.');
+    await op('add_link').handler(ctx(), { from: 'people/alice-example', to: 'companies/fund-b', link_type: 'advises', valid_from: '2020-01-01' });
+    const live = async () => targets(await op('get_links').handler(ctx(), { slug: 'people/alice-example', link_type: 'advises' }));
+    expect(await live()).toEqual(['companies/fund-b']);
+    await op('add_link').handler(ctx(), { from: 'people/alice-example', to: 'companies/fund-b', link_type: 'advises', valid_until: '2024-01-01' });
+    expect(await live()).toEqual([]);
+    expect(targets(await op('get_links').handler(ctx(), { slug: 'people/alice-example', link_type: 'advises', as_of: '2022-01-01' }))).toEqual(['companies/fund-b']);
+    await expect(op('add_link').handler(ctx(), { from: 'people/alice-example', to: 'companies/fund-b', link_type: 'advises', valid_until: '2024-13-01' })).rejects.toThrow(/valid_until/);
+    await expect(op('add_link').handler(ctx(), { from: 'people/alice-example', to: 'companies/fund-b', link_type: 'mentions', valid_from: '2024-01-01' })).rejects.toThrow(/no dates/);
+    await expect(op('add_link').handler(ctx(), { from: 'people/alice-example', to: 'companies/fund-b', link_type: 'invested_in', valid_until: '2024-01-01' })).rejects.toThrow(/does not end/);
+    await op('remove_link').handler(ctx(), { from: 'people/alice-example', to: 'companies/fund-b', link_type: 'advises' });
+    const left = await engine.executeRaw(`SELECT 1 FROM link_transitions WHERE producer = 'manual'`);
+    expect(left.length).toBe(0);
   });
 });
