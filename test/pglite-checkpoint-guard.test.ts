@@ -195,12 +195,20 @@ describe('autocommit write statements take the guard', () => {
       'BEGIN', 'COMMIT', 'ROLLBACK', 'SAVEPOINT s', 'SET search_path = public', 'CHECKPOINT']) expect(writesWal(sql)).toBe(false);
   });
 
-  test('an autocommit write past the threshold checkpoints first; a read never does', async () => {
+  test('an autocommit write past the threshold checkpoints before the next statement; a read never does', async () => {
     const spy = install(engine, { threshold: 0 });
     await engine.executeRaw("INSERT INTO autocommit_probe VALUES (1, 'guarded')");
     expect(spy.checkpoints()).toBe(1);
     await engine.executeRaw('SELECT * FROM autocommit_probe');
     expect(spy.checkpoints()).toBe(1);
+  });
+
+  test('statements keep their issue order: a read issued after an unawaited write sees it', async () => {
+    install(engine, { threshold: 0 });
+    const write = engine.executeRaw("UPDATE autocommit_probe SET v = 'ordered' WHERE id = 1");
+    const read = engine.executeRaw<{ v: string }>('SELECT v FROM autocommit_probe WHERE id = 1');
+    await write;
+    expect((await read)[0]?.v).toBe('ordered');
   });
 
   test('about 200 MB of autocommit WAL past a 64 MB max_wal_size completes instead of wedging', async () => {

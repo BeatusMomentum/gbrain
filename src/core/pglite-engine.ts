@@ -2749,7 +2749,8 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.signal?.aborted) {
       throw new DOMException('aborted', 'AbortError');
     }
-    const queryPromise = this.autocommitWrite(sql)
+    // #5449: an autocommit write is its own outermost transaction, so it takes the WAL checkpoint guard.
+    const queryPromise = !this._pageTransaction && this._dbWork !== null && writesWal(sql)
       ? (this._checkpointGuard ??= new PgliteCheckpointGuard())
         .runStatement(q => this.db.query(q), () => this.db.query(sql, params)).then((r) => r.rows as T[])
       : this.db.query(sql, params).then((r) => r.rows as T[]);
@@ -2760,16 +2761,6 @@ export class PGLiteEngine implements BrainEngine {
       }, { once: true });
     });
     return Promise.race([queryPromise, abortPromise]);
-  }
-
-  /**
-   * #5449 for statements outside engine.transaction(): an autocommit write is
-   * its own outermost transaction, so it takes the same checkpoint guard. Bulk
-   * raw writers (extract batches, vector updates) otherwise grow WAL past the
-   * automatic trigger and wedge PGLite inside the write that crosses it.
-   */
-  private autocommitWrite(sql: string): boolean {
-    return !this._pageTransaction && this._dbWork !== null && writesWal(sql);
   }
 
   /**
