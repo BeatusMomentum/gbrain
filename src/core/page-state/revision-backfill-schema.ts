@@ -41,13 +41,6 @@ async function readState(engine: BrainEngine): Promise<BackfillState> {
   return { cursor: 0, backfilled: 0, failed: [] };
 }
 
-/**
- * Assign revisions to the given rows in one statement. A managed brain's
- * writer guard refuses a revision change outside a source capability, so the
- * statement grants exactly the rows' sources (`gbrain.write_sources`,
- * transaction-local, as schema migration v191 does) before any row updates;
- * no content column changes.
- */
 export interface RevisionBackfillStatus {
   /** `absent`: pre-v150 schema; `not_null`: the backfill finished; `nullable`: it has not. */
   column: 'absent' | 'not_null' | 'nullable';
@@ -73,6 +66,13 @@ export async function readRevisionBackfillStatus(engine: BrainEngine): Promise<R
   return { column: 'nullable', pending: Number(n), failed };
 }
 
+/**
+ * Assign revisions to the given rows in one statement. A managed brain's
+ * writer guard refuses a revision change outside a source capability, so the
+ * statement grants exactly the rows' sources (`gbrain.write_sources`,
+ * transaction-local, as schema migration v191 does) before any row updates;
+ * no content column changes.
+ */
 async function assignRows(engine: BrainEngine, ids: number[]): Promise<void> {
   await engine.executeRaw(
     `UPDATE pages SET knowledge_revision = gen_random_uuid()
