@@ -84,6 +84,8 @@ export interface ColumnTransform {
   column: string;
   /** Human-readable rule, also printed by --plan (e.g. "cleared", "active -> waiting"). */
   rule: string;
+  /** SQL expression over the source row's columns that yields the target value; the copier selects it and verify digests it. */
+  expression?: string;
 }
 
 export interface InventoryEntry {
@@ -94,7 +96,24 @@ export interface InventoryEntry {
   lossKind: LossKind;
   /** The only differences verify tolerates between source snapshot and target. */
   transforms: readonly ColumnTransform[];
+  /** Columns the per-column copy contract tolerates differing between source and target (name -> reason). */
+  columnAllowlist?: Readonly<Record<string, string>>;
+  /** SQL predicate selecting the rows that belong to the copy; rows outside it stay engine-local on both sides (copy and digest). */
+  rowFilter?: string;
   reason: string;
+}
+
+/** One column as both the column contract and the canonical digest read it from the catalog. */
+export interface ColumnMeta {
+  name: string;
+  /** format_type(atttypid, atttypmod), e.g. 'vector(1024)', 'timestamp with time zone', 'text[]'. */
+  type: string;
+  /** pg_type.typcategory of the column type ('A' array, 'S' string, 'D' date/time, 'U' user-defined, ...). */
+  category: string;
+  /** The type has a collation, so ORDER BY and keyset predicates need COLLATE "C". */
+  collatable: boolean;
+  /** GENERATED ALWAYS ... STORED: never inserted, but digested. */
+  generated: boolean;
 }
 
 export interface Inventory {
@@ -117,6 +136,39 @@ export interface TargetRoutes {
   ddl: string;
   /** Name of the env var the URL came from when --url-env was used. */
   urlEnv?: string;
+}
+
+export interface EmbeddingColumn {
+  relation: string;
+  column: string;
+  /** format_type rendering, e.g. "vector(1536)" or "halfvec(1024)". */
+  type: string;
+  dims: number | null;
+}
+
+export interface TargetProbe {
+  reachable: boolean;
+  auth: boolean;
+  /** Redacted; never carries the URL or password. */
+  error?: { code: string; message: string };
+  ddl: { reachable: boolean; auth: boolean; error?: { code: string; message: string } };
+  serverVersion: string | null;
+  serverVersionNum: number | null;
+  vector: { installed: string | null; available: string | null; halfvec: boolean };
+  createPrivilege: { database: boolean; schema: boolean };
+  /** BEGIN; SET LOCAL session_replication_role = replica; ROLLBACK succeeded. */
+  replicaRole: boolean;
+  /** Every existing public table is owned by a role the current user can act as. */
+  ownsTables: boolean;
+  triggerBypass: TriggerBypass | null;
+  /** A gbrain schema exists (the config table is present). */
+  gbrainSchema: boolean;
+  /** No public tables, or a gbrain schema holding only the initSchema seed rows. */
+  empty: boolean;
+  nonEmptyTables: readonly string[];
+  embeddingColumns: readonly EmbeddingColumn[];
+  /** Other sessions on the target database (informational). */
+  otherSessions: number;
 }
 
 export interface SourceIdentity {
@@ -195,7 +247,7 @@ export interface Tombstone {
 export interface GraduationBlocker {
   kind: 'request' | 'topology_recovery' | 'writer_admin_lock' | 'effect_recovery' | 'foreign_host_binding'
     | 'writer_held' | 'env_override' | 'embedding_dimension' | 'unclassified_relation' | 'target_not_empty'
-    | 'target_unsupported' | 'unsupported_platform' | 'source_doctor';
+    | 'target_unsupported' | 'unsupported_platform' | 'source_doctor' | 'dangling_reference';
   id: string;
   detail: string;
   /** Exact command or MCP call that clears it, with real values filled in. */
@@ -226,7 +278,7 @@ export interface GraduationPlan {
 
 export type ReplayProbeResult =
   | { status: 'passed'; requestId: string }
-  | { status: 'not_available'; reason: 'no_caller_input' | 'archived_source' | 'revoked_principal' | 'no_uncompacted_request' }
+  | { status: 'not_available'; reason: 'no_caller_input' | 'archived_source' | 'revoked_principal' | 'no_uncompacted_request' | 'source_changed' }
   | { status: 'failed'; requestId: string; detail: string };
 
 export interface VerifyFailure {
