@@ -108,7 +108,6 @@ function runPhases(noShard: boolean, diff: boolean, failStage = '') {
     for (const name of ['git', 'python3', 'ps', 'psql', 'apt-get']) put(`bin/${name}`, 'exit 0');
     put('bin/bun', `
 case "$*" in
-  "run scripts/select-e2e.ts") printf '%s\\n' test/e2e/one.test.ts test/e2e/two.test.ts; exit 0 ;;
   "run verify") stage=verify ;;
   "run test:serial") stage=serial ;;
   "run test:slow") stage=slow ;;
@@ -178,7 +177,8 @@ describe('ci-local execution coverage', () => {
         const targets = result.trace.filter(line => line.startsWith('target:'));
         expect(targets).toHaveLength(noShard ? 3 : 12);
         for (const target of targets) expect(() => assertSafeE2eDatabaseUrl(target.slice(7), {})).not.toThrow();
-        if (diff) expect(e2e.every(line => line.endsWith('test/e2e/one.test.ts test/e2e/two.test.ts'))).toBe(true);
+        // --diff no longer narrows: every shard runs run-e2e.sh's full discovery.
+        expect(e2e.every(line => line.endsWith(':'))).toBe(true);
         if (!noShard) {
           expect(result.stdout).toContain('Complete shard logs saved to .context/ci-local-shards/');
           for (const log of result.archivedLogs) {
@@ -226,16 +226,54 @@ describe('ci-local execution coverage', () => {
         // the real detector/configuration canary runs separately in CI.
         writeFileSync(join(home, 'scripts/test-gitleaks-config.sh'), 'exit 0\n');
         writeFileSync(join(home, 'scripts/scan-worktree-secrets.sh'), 'gitleaks dir . --redact --no-banner\n');
+        writeFileSync(join(home, 'scripts/ci-doc-checks.sh'), 'printf "%s\\n" docs >> "$SCAN_LOG"\n');
         const result = spawnSync('bash', ['-c', script, join(home, 'scripts/ci-local.sh'), '--diff'], {
           encoding: 'utf8', timeout: 5_000,
           env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SCAN_MODE: gitleaks, SCAN_LOG: log },
         });
         expect(result.status, result.stderr).toBe(gitleaks === 'success' ? 0 : 1);
         const scans = existsSync(log) ? readFileSync(log, 'utf8') : '';
-        expect(scans).toBe(gitleaks === 'success' ? 'dir\ngit\n' : gitleaks === 'failure' ? 'dir\n' : '');
+        expect(scans).toBe(gitleaks === 'success' ? 'dir\ngit\ndocs\n' : gitleaks === 'failure' ? 'dir\n' : '');
       } finally {
         rmSync(home, { recursive: true, force: true });
       }
+    });
+  }
+
+  function diffPreflight(classification: string, docChecks = 'exit 0') {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-ci-diff-'));
+    try {
+      const bin = join(home, 'bin');
+      mkdirSync(bin);
+      mkdirSync(join(home, 'scripts'));
+      writeFileSync(join(bin, 'bun'), `#!/bin/sh\necho ${classification}\n`, { mode: 0o755 });
+      writeFileSync(join(bin, 'docker'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeFileSync(join(bin, 'gitleaks'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeFileSync(join(home, 'scripts/test-gitleaks-config.sh'), 'exit 0\n');
+      writeFileSync(join(home, 'scripts/scan-worktree-secrets.sh'), 'exit 0\n');
+      writeFileSync(join(home, 'scripts/ci-doc-checks.sh'), `${docChecks}\n`);
+      const end = source.indexOf('# Pre-flight: postgres host ports');
+      return spawnSync('bash', ['-c', `${source.slice(0, end)}\necho FULL_GATE_CONTINUES`, join(home, 'scripts/ci-local.sh'), '--diff'], {
+        encoding: 'utf8', timeout: 5_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  test('doc-only diff fails when a doc check fails (e.g. llms.txt not rebuilt)', () => {
+    const result = diffPreflight('DOC_ONLY', 'echo "Fix: bun run build:llms" >&2; exit 1');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Fix: bun run build:llms');
+    expect(result.stdout).not.toContain('FULL_GATE_CONTINUES');
+  });
+
+  for (const classification of ['SRC', 'EMPTY', 'ERR']) {
+    test(`a ${classification} diff says narrowing is retired and runs the full gate`, () => {
+      const result = diffPreflight(classification);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('E2E narrowing is retired; running the full E2E corpus (see docs/TESTING.md#e2e-selection)');
+      expect(result.stdout).toContain('FULL_GATE_CONTINUES');
     });
   }
 });

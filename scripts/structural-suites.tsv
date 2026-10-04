@@ -257,21 +257,21 @@ test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
 test/scripts/ci-gates.test.ts	CI execution evidence	6	readFileSync
 test/scripts/ci-gates.test.ts	test:full exit status	0	readFileSync
 test/scripts/ci-local-rendering.test.ts	ci-local command rendering	1	readFileSync
-test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	3	readFileSync
+test/scripts/ci-local-rendering.test.ts	ci-local execution coverage	5	readFileSync
 test/scripts/ci-local-rendering.test.ts	local test configuration through run-e2e	2	readFileSync
 test/scripts/ci-local-rendering.test.ts	required PgBouncer execution through run-e2e	1	readFileSync
 test/scripts/ci-manifest-diff.test.ts	test.yml dependency-audit scope	2	readFileSync
 test/scripts/ci-pr-scope.test.ts	pull-request CI scope	9	readFileSync
-test/scripts/ci-runner-routing.test.ts	CI runner routing	6	readFileSync
+test/scripts/ci-runner-routing.test.ts	CI runner routing	7	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	23	bun-file,doctor-source-helper,exec-scan,readFileSync,source-surface-helper
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
 test/scripts/data-safety-native-workflow.test.ts	data-safety native CI coverage	12	readFileSync
 test/scripts/e2e-backend-matrix.test.ts	scripts/e2e-backend-matrix.txt	3	readFileSync
 test/scripts/e2e-live-key-only.test.ts	shared live-key E2E exclusion list	4	readFileSync
+test/scripts/e2e-matrix.test.ts	frozen E2E matrix	9	readFileSync
 test/scripts/e2e-runner.test.ts	second	5	readFileSync
 test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubActions})	9	readFileSync
-test/scripts/e2e-wiring.test.ts	e2e file claim ratchet	5	readFileSync
-test/scripts/e2e-wiring.test.ts	selected-e2e job wiring	6	readFileSync
+test/scripts/e2e-wiring.test.ts	(file-level)	12	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
