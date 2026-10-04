@@ -200,6 +200,19 @@ describe('a page whose file is held refuses put_page naming the hold', () => {
     expect(error.message).not.toContain('continued tweet text');
   });
 
+  test('a remote caller hitting a held file gets the code and the host operator command, never the path or key', async () => {
+    const { snapshot, file, row } = await seed('notes/held-remote');
+    writeFileSync(file, readFileSync(file, 'utf8').replace(/^title:.*$/m, 'title: Broken\n  continued tweet text'));
+    await writeGitHold(engine, hold(sourceId, await incarnationOf(engine, sourceId), 'notes/held-remote.md', { page_id: Number(snapshot.page.id) }));
+    let error: any;
+    try { await prepareFileTarget(engine, row, snapshot, 'Replacement', undefined, { remote: true }); } catch (e) { error = e; }
+    expect(error).toMatchObject({ code: 'source_changed', detail: 'file_database_drift', message: heldFileMessage('drift', 'invalid_frontmatter'),
+      fix: { actor: 'host_admin', argv: ['gbrain', 'repair', 'frontmatter', '--source', sourceId] } });
+    const text = JSON.stringify({ message: error.message, suggestion: error.suggestion, fix: error.fix });
+    expect(text).toContain('read-only for put_page until the brain host operator repairs the file');
+    for (const hidden of ['held-remote.md', '"title"', root, 'continued tweet text']) expect(text).not.toContain(hidden);
+  });
+
   test('an unindexed held file occupying a new page path names the hold', async () => {
     const file = join(root, 'notes', 'new-held.md');
     mkdirSync(dirname(file), { recursive: true });

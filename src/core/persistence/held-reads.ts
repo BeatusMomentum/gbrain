@@ -96,7 +96,7 @@ function repairArgv(sourceId: string): string[] {
 }
 
 /** The fix a remote caller relays: only the brain host operator can inspect and repair held files. */
-function hostOperatorFix(sourceIds: string[], why: string): Action {
+export function hostOperatorFix(sourceIds: string[], why: string): Action {
   const commands = sourceIds.map(id => `'${repairArgv(id).join(' ')}'`).join(', ');
   return { argv: repairArgv(sourceIds[0]!), consent: [], actor: 'host_admin', requires_exclusive: false, why,
     user_message: `Some files in your brain could not be imported, so answers from it can miss or show outdated notes. Please run ${commands} on the brain host to preview the fixes, then apply them.` };
