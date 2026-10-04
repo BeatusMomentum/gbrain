@@ -676,6 +676,7 @@ walk me through it before changing anything."*
 
 | Symptom or error text | Issue | Preview | Apply | Verify |
 | --- | --- | --- | --- | --- |
+| Tag, timeline or take writes fail with `writer_coordinator_required` or `storage_error: Publication failed (P0001)` on a managed brain; sync ends `PARTIAL` at a tagged page | #5983 | `gbrain doctor --json` (`schema_version` is 197 or later) | the original `gbrain sync --source <source> … --no-pull --retry-failed --json`, then `gbrain extract --stale --source-id <source>` and `gbrain extract timeline --source db --source-id <source>`, then `gbrain facts relink --source <source> --dry-run` (paid tier only after the user agrees) | `gbrain sources status` shows the new `last_commit`; a second `gbrain extract timeline --source db` run adds no rows |
 | Sync `BLOCKED` with `checkpoint_validation_timeout` | #5762 | `gbrain doctor` (`persistence_request_indexes`) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <source> --no-pull --retry-failed …` | `gbrain doctor` shows `persistence_request_indexes` ok; `gbrain sources status` shows the new `last_commit` |
 | Doctor `persistence_request_indexes` warns | #5762 | `gbrain repair request-indexes` | `gbrain repair request-indexes --apply` | `gbrain doctor` |
 | Doctor `persistence_request_growth` warns | #5751, #5762 | `gbrain doctor --json` | the printed `gbrain config set persistence.limits.<limit> <value>` | `gbrain doctor --json` (check `persistence_request_growth`) |

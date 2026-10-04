@@ -10,6 +10,47 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.38.0] - 2026-10-03
+
+**On a managed brain whose `tags`, `timeline_entries` or `takes` table carries a `source_id` column gbrain never created, every tag, timeline and take write was refused, even coordinated ones. Managed sync stalled at the first tagged page, `facts relink` aborted, autopilot dropped timeline rows every cycle, and `remember`, `add_timeline_entry` and maintenance-page writes failed. Those writes commit again (#5983).**
+
+The managed writer guard (`gbrain_require_managed_writer`) decides which source a row belongs to before it lets a write through. It took the row's `source_id` whenever the column existed, even when the value was NULL. gbrain's schema has no such column on those three tables, so on a canonical brain the guard looked up the parent page instead. A brain where something else had added a nullable `source_id` column to them sent every insert and update to the "no source" branch and refused it as `writer_coordinator_required`. Deletes passed through the NULL-source cascade exemption, so delete-only work kept succeeding. The client saw `storage_error: Publication failed (P0001). Inspect owner diagnostics.`
+
+Tags, timeline entries and takes now always take their source from their page. A `source_id` column on them is ignored whatever it holds, so it can neither block a write nor let one through for another source. On such a brain, an uncoordinated delete of a tag, timeline or take row on a live page now needs the coordinator, as it always did on a canonical brain. Deleting a page still removes its children. Migration v197 replaces the guard function only; it re-creates no trigger.
+
+## To take advantage of v0.60.38.0
+
+`gbrain upgrade` installs the binary and runs schema migration v197. Run the upgrade on the brain host (a thin client cannot run it; hand the owner these steps). Pause autopilot during the upgrade: as on every upgrade, the schema replay re-creates the guard triggers.
+
+1. **Keep the failed writes' content while you recover.** Failed write requests keep their original content for 30 days (`persistence.receipt_retention_days`). Brains hit by this bug since activation should keep them longer until the replay tool lands:
+   ```bash
+   gbrain config set persistence.receipt_retention_days 90
+   ```
+2. **Run the migration if the upgrade did not, then verify:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   gbrain doctor --json          # the schema_version check reports 197 or later
+   ```
+3. **Unstick each managed sync.** Re-run the original sync invocation for each affected source unchanged (same brain, source, `--working-tree` and other options), adding `--no-pull --retry-failed --json`. A different sync can succeed while the original failed run stays unresolved.
+   ```bash
+   gbrain sync --source <id> --no-pull --retry-failed --json
+   ```
+   Check that the source's `last_commit` advances (`gbrain sources status <id>`).
+4. **Rebuild the timeline rows autopilot dropped:**
+   ```bash
+   gbrain extract --stale --source-id <id> --json
+   gbrain extract timeline --source db --source-id <id> --json   # rows the page text has but the table lacks
+   ```
+   Run the second command until it reports no new rows.
+5. **Re-link facts. Preview first; the model tier costs money, so ask the user before it:**
+   ```bash
+   gbrain facts relink --source <id> --dry-run
+   gbrain facts relink --source <id> --no-llm
+   gbrain facts relink --source <id> --max-usd <n>   # only after the user agrees
+   ```
+   Follow the printed `next_command` until `has_more` is false. Exit 0 alone does not mean the backlog is done.
+6. **Writes that failed outright are not replayed by the upgrade.** A `remember`, `add_timeline_entry` or maintenance-page write refused by this bug keeps its failed receipt; resubmitting the same request id returns that failure. Re-issue the ones you have a record of with a new request id, and tell the user which writes from the incident window could not be recovered.
+
 ## [0.60.37.0] - 2026-10-03
 
 **Foundations 1: a 10,000-page PGLite brain answers health and orphan checks in well under a second instead of 12 to 15 seconds, imports in about a third less time, records who wrote each page version, fact, take and timeline entry, lets several agents share one brain without losing track of whose session produced what, and gives every legacy token the same grant shape as an OAuth client.**
