@@ -39,6 +39,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
@@ -503,8 +504,12 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
     writeFileSync(target, bound.content);
   }
   if (repair.rename_from) {
-    const moved = await ctx.engine.updateSlug(repair.rename_from.slug, repair.slug, { sourceId: repair.source_id });
-    if (moved === 1) await ctx.engine.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [repair.source_path, repair.rename_from.pageId, repair.source_id]);
+    const from = repair.rename_from;
+    await maintenanceTransaction(ctx.engine, async tx => {
+      if (await tx.updateSlug(from.slug, repair.slug, { sourceId: repair.source_id }) === 1) {
+        await tx.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [repair.source_path, from.pageId, repair.source_id]);
+      }
+    });
   }
   const imported = await importFromFile(ctx.engine, target, repair.source_path, { sourceId: repair.source_id, noEmbed: !embed });
   const ok = imported.status !== 'error' && !imported.refusal;

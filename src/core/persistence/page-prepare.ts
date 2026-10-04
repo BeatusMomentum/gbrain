@@ -6,7 +6,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
-import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
+import { frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
@@ -334,7 +334,9 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
   });
   signal?.throwIfAborted();
   if (!prepared) {
-    const refusal = result.refusal;
+    // A remote caller's refusal names the line, never a key: keys can be private, and the receipt keeps the message.
+    const refusal = result.refusal && row.authority.remote && result.refusal.code === 'invalid_frontmatter'
+      ? { ...result.refusal, key: undefined, message: frontmatterHoldMessageWithoutKeys(result.refusal.message) } : result.refusal;
     if (refusal?.code === 'file_too_large') throw contentRefusalError(refusal, 'Split the content into smaller pages, then submit each with its own request_id.', { legacy_error: 'request_too_large' });
     if (refusal) throw contentRefusalError(refusal, `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
       { legacy_error: 'invalid_params' });

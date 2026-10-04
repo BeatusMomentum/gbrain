@@ -339,7 +339,10 @@ export async function readSyncHoldPolicy(engine: Pick<BrainEngine, 'getConfig'>)
     const parsed = value === null ? NaN : Number(value);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   };
-  const [mode, cap, count, pct, regression] = await Promise.all(['sync.holds', 'sync.hold_cap', 'sync.hold_escalate_count', 'sync.hold_escalate_pct', 'sync.parser_regression'].map(read));
+  // Sequential: five point reads, without widening the caller's connection pool.
+  const values: Array<string | null> = [];
+  for (const key of ['sync.holds', 'sync.hold_cap', 'sync.hold_escalate_count', 'sync.hold_escalate_pct', 'sync.parser_regression']) values.push(await read(key));
+  const [mode, cap, count, pct, regression] = values;
   return { mode: mode === 'fail' ? 'fail' : 'hold', cap: Math.floor(number(cap, GIT_HOLD_CAP)), escalateCount: number(count, GIT_HOLD_ESCALATE_COUNT),
     escalatePct: number(pct, GIT_HOLD_ESCALATE_PCT), parserRegression: regression === 'hold' ? 'hold' : 'stop' };
 }

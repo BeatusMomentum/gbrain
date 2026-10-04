@@ -490,14 +490,19 @@ const HOLD_GUIDANCE: Record<InvalidFrontmatterReason, string> = {
   ambiguous_protected_key: 'gbrain never guesses who may read a page or where it came from. Write that key on its own line with one quoted value, then import it again.',
 };
 
-const HOLD_MESSAGE = new RegExp(`^Invalid YAML frontmatter: (?:ambiguous (?:protected|identity) key "[\\w-]{1,100}" at line \\d+`
-  + `|key "[\\w-]{1,100}" at line \\d+ (?:continues on unquoted lines|appears more than once|opens \\[ or \\{ without closing it)`
+const HOLD_MESSAGE = new RegExp(`^Invalid YAML frontmatter: (?:ambiguous (?:protected|identity) key(?: "[\\w-]{1,100}")? at line \\d+`
+  + `|key(?: "[\\w-]{1,100}")? at line \\d+ (?:continues on unquoted lines|appears more than once|opens \\[ or \\{ without closing it)`
   + `|[a-z ;,'-]{1,200}(?: at line \\d+(?:, column \\d+)?)?(?: \\(key "[\\w-]{1,100}"\\))?)\\. `
   + `(?:${Object.values(HOLD_GUIDANCE).map(text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`);
 
 /** True for a frontmatter hold message exactly as `classifyImportHold` builds it: key, line and cause only, safe to show. */
 export function isFrontmatterHoldMessage(message: string | null | undefined): boolean {
   return typeof message === 'string' && HOLD_MESSAGE.test(message);
+}
+
+/** A hold message without its key names (keys can be private): line, cause and guidance only, for receipts and remote callers. */
+export function frontmatterHoldMessageWithoutKeys(message: string): string {
+  return message.replace(/ \(key "[\w-]{1,100}"\)/, '').replace(/key "[\w-]{1,100}"/, 'key');
 }
 
 /**

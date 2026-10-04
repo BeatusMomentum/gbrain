@@ -60,8 +60,9 @@ export async function openLegacyHolds(engine: BrainEngine, sourceId: string | un
   const id = sourceId ?? DEFAULT_SOURCE_ID;
   const [row] = await engine.executeRaw<{ incarnation: string | null }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [id]).catch(() => []);
   if (!row?.incarnation) return null;
-  const [policy, listed, retry] = await Promise.all([readSyncHoldPolicy(engine), readGitSourceHolds(engine, { sourceIds: [id] }),
-    readGitHoldRetryPaths(engine, id, row.incarnation)]);
+  const policy = await readSyncHoldPolicy(engine);
+  const listed = await readGitSourceHolds(engine, { sourceIds: [id] });
+  const retry = await readGitHoldRetryPaths(engine, id, row.incarnation);
   return {
     sourceId: id, incarnation: row.incarnation, runId: `legacy-${randomUUID()}`, observedAt: new Date().toISOString(), policy,
     active: policy.mode === 'hold', existing: new Map((listed[0]?.holds ?? []).map(record => [record.path, record])), retryPaths: new Set(retry),
