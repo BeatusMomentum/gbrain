@@ -30,6 +30,7 @@ import { digest } from '../core/persistence/digest.ts';
 import type { PreparedMutation } from '../core/persistence/coordinator.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { createProgress } from '../core/progress.ts';
+import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../core/planner-stats.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { filterRefsSince } from './extract.ts';
 
@@ -113,6 +114,11 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   const managed = !opts.dryRun && await managedPersistenceEnabled(engine);
   const dryRunSeen = opts.dryRun ? new Set<string>() : null;
   const batch: TimelineBatchInput[] = [];
+  // PGLite has no autovacuum: a walk that grows timeline_entries from empty
+  // re-plans its per-page reads against stale statistics and slows with
+  // every row, so it refreshes them on the bulk-import cadence.
+  const analyzeEvery = opts.dryRun ? 0 : await importAnalyzeEveryPages(engine);
+  let walked = 0;
 
   async function flush() {
     if (batch.length === 0) return;
@@ -129,6 +135,10 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   }
 
   for (const { slug, source_id } of refs) {
+    if (analyzeEvery > 0 && ++walked % analyzeEvery === 0) {
+      await flush();
+      await maybeRefreshPlannerStats(engine, 'extract', { throttle: false }).catch(() => undefined);
+    }
     if (managed) {
       try {
         const outcome = await publishPageTimeline(engine, await authorityFor(source_id), slug, source_id, opts);
