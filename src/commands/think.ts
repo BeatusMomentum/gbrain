@@ -78,6 +78,9 @@ the synthesis page is persisted AND printed. If --save is given but no synthesis
 was produced (no LLM available, or empty result), nothing is saved and the command
 exits non-zero.
 
+Dates: the reader sees today's date in brain.timezone and each page's content
+date; see docs/guides/time-aware-recall.md.
+
 Set ANTHROPIC_API_KEY (or run: gbrain config set anthropic_api_key ...) to run
 real synthesis. Without it AND without --save, the gather phase still runs and
 prints what would have been the input (exit 0).

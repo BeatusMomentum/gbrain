@@ -189,6 +189,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/guides/push-context.md",
       },
       {
+        title: "docs/guides/time-aware-recall.md",
+        description:
+          "Time-aware recall in `gbrain think`: the current date in brain.timezone (or `--reference-date`), content dates on each page block, and notes-first reading (`think.reading_notes off|on|auto`, per-call `--reading-notes`); notes never enter the answer or a saved synthesis.",
+        path: "docs/guides/time-aware-recall.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/evidence-delivery.md",
         description:
           "Evidence delivery (`return_unit`): window / section / page / auto evidence instead of chunks on search, query, recall and think, packed into a token budget; response fields, fallback codes, authorization guarantees, latency, and the frozen-hit `assemble_evidence` interface for evals.",
