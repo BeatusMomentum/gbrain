@@ -1,0 +1,173 @@
+// Life Chronicle (#5876): the one reason table for automatic event extraction, and the
+// `chronicle_backstop` write-receipt field built from it. Docs (docs/guides/life-chronicle.md)
+// and tests render from CHRONICLE_REASONS; nothing else spells these codes out.
+
+/**
+ * Local equivalent of the agent-operator `Action` (GBRA-42 `src/core/agent-output.ts`), same field
+ * names. Stored form: never carries `next` or a rendered command; both are derived at render time.
+ */
+export type ChronicleEffect = 'paid' | 'destructive' | 'credentials' | 'egress' | 'persistent_install';
+export type ChronicleActor = 'agent' | 'user' | 'host_admin' | 'provider';
+export interface ChronicleAction {
+  argv?: string[];
+  preview_argv?: string[];
+  consent: ChronicleEffect[];
+  actor: ChronicleActor;
+  why: string;
+  requires_exclusive: boolean;
+  inputs?: Array<{ name: string; how: string }>;
+}
+
+/** `decision`: decided when the page was written (receipt). `execution`: decided when the chronicle phase ran. */
+export type ChronicleStage = 'decision' | 'execution';
+
+export interface ChronicleReasonContext {
+  /** Omitted on brain-wide surfaces (doctor, advisor): the pointer then covers every source. */
+  sourceId?: string;
+  /** The day to scope a backfill pointer to (YYYY-MM-DD, compared with the page's updated date). */
+  since: string;
+  /** Configured chat model, for the pricing registration command. */
+  model?: string;
+  dailyLimit?: number;
+  recentDays?: number;
+}
+
+interface ChronicleReason {
+  stage: ChronicleStage;
+  meaning: (ctx: ChronicleReasonContext) => string;
+  fix?: (ctx: ChronicleReasonContext) => ChronicleAction;
+}
+
+/** The backfill pointer every surface emits. Swap here when backfill gains a consent flag. */
+export function chronicleBackfillArgv(opts: { sourceId?: string; since: string; limit?: number; dryRun: boolean }): string[] {
+  return ['gbrain', 'chronicle-backfill', ...(opts.sourceId ? ['--source', opts.sourceId] : []),
+    '--since', opts.since, '--limit', String(opts.limit ?? 50), ...(opts.dryRun ? ['--dry-run'] : [])];
+}
+
+const backfill = (actor: ChronicleActor, why: string) => (ctx: ChronicleReasonContext): ChronicleAction => ({
+  argv: chronicleBackfillArgv({ sourceId: ctx.sourceId, since: ctx.since, dryRun: false }),
+  preview_argv: chronicleBackfillArgv({ sourceId: ctx.sourceId, since: ctx.since, dryRun: true }),
+  consent: ['paid'], actor, why, requires_exclusive: false,
+});
+
+const FIX_BY_BACKFILL = 'Preview with the dry run, then backfill these pages if the user agrees to one paid chat call per page.';
+const FIX_ON_HOST = 'Only the brain host operator can extract these pages: preview and backfill on the brain host if the user agrees to the cost.';
+
+export const CHRONICLE_REASONS = {
+  auto_chronicle_off: { stage: 'decision',
+    meaning: () => 'Automatic event extraction is off on this brain by choice (`gbrain config set auto_chronicle false`).' },
+  auto_chronicle_invalid: { stage: 'decision',
+    meaning: () => 'auto_chronicle holds a value that is neither true nor false, so it reads as off.',
+    fix: () => ({ argv: ['gbrain', 'config', 'set', 'auto_chronicle', 'true'], consent: ['paid'], actor: 'agent',
+      why: 'Ask the user whether automatic extraction should be on (one paid chat call per eligible page) or off (`gbrain config set auto_chronicle false`).',
+      requires_exclusive: false }) },
+  slug_bound_client: { stage: 'decision',
+    meaning: () => 'The writer is confined (slug-bound, delegated or namespace-restricted), so its writes never trigger extraction into life/events/.',
+    fix: backfill('host_admin', FIX_ON_HOST) },
+  operation_bound_client: { stage: 'decision',
+    meaning: () => 'The writer\'s grant lists operations without extract_facts, the permission that covers derived extraction.',
+    fix: backfill('host_admin', FIX_ON_HOST) },
+  no_extract: { stage: 'decision',
+    meaning: () => 'The sync ran with extraction turned off (--no-extract, or a remote sync, which never extracts).',
+    fix: backfill('agent', FIX_BY_BACKFILL) },
+  history: { stage: 'decision',
+    meaning: (ctx) => `The page's own date is more than ${ctx.recentDays ?? 30} days old (chronicle.auto_recent_days); history is extracted only on request.`,
+    fix: backfill('agent', FIX_BY_BACKFILL) },
+  not_yet_happened: { stage: 'decision',
+    meaning: () => 'The calendar event has not ended yet; it is picked up automatically after its end time, with no edit needed.' },
+  too_short: { stage: 'decision',
+    meaning: () => 'The page body is under 80 characters, too short to hold events.' },
+  dream_generated: { stage: 'decision',
+    meaning: () => 'Dream-generated pages are never mined for events.' },
+  decision_error: { stage: 'decision',
+    meaning: () => 'The extraction decision failed for this write; the write itself committed.',
+    fix: () => ({ argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent',
+      why: 'Read the auto_chronicle check for the cause, then backfill the page if the user agrees.', requires_exclusive: false }) },
+  no_write_decision: { stage: 'execution',
+    meaning: () => 'This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it.',
+    fix: backfill('agent', FIX_BY_BACKFILL) },
+  superseded: { stage: 'execution',
+    meaning: () => 'A newer revision replaced this content before extraction ran; the newer revision carries its own decision.' },
+  daily_limit: { stage: 'execution',
+    meaning: (ctx) => `The automatic daily limit (chronicle.auto_daily_limit = ${ctx.dailyLimit ?? 200} calls per rolling 24 hours) was used up.`,
+    fix: backfill('agent', FIX_BY_BACKFILL) },
+  judge_llm_unavailable: { stage: 'execution',
+    meaning: () => 'No chat provider is configured on the brain host, so extraction cannot run.',
+    fix: () => ({ consent: ['credentials'], actor: 'user', requires_exclusive: false,
+      why: 'Ask the user to configure a chat provider key on the brain host (see docs/ai-providers/); pending pages run on the next cycle.' }) },
+  no_pricing: { stage: 'execution',
+    meaning: (ctx) => `chronicle.job_budget_usd was set explicitly, and gbrain has no price for ${ctx.model ?? 'the chat model'}, so the cap cannot be enforced.`,
+    fix: (ctx) => ({ argv: ['gbrain', 'pricing', 'set', ctx.model ?? '<model>', '--input', '<usd-per-1M-input-tokens>',
+      '--output', '<usd-per-1M-output-tokens>', '--source', '<pricing-page-url>'], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Look up the model\'s current price and register it on the brain host; extraction retries on the next cycle.',
+    inputs: [{ name: 'usd-per-1M-input-tokens', how: 'the provider pricing page' },
+      { name: 'usd-per-1M-output-tokens', how: 'the provider pricing page' },
+      { name: 'pricing-page-url', how: 'the URL you read the price from' }] }) },
+  job_budget_exceeded: { stage: 'execution',
+    meaning: () => 'The extraction call cost more than chronicle.job_budget_usd allows for one page.',
+    fix: () => ({ argv: ['gbrain', 'config', 'set', 'chronicle.job_budget_usd', '0.50'], consent: ['paid'], actor: 'agent',
+      requires_exclusive: false, why: 'Raising the per-page cap lets long pages finish; ask the user before raising spend.' }) },
+  chat_error: { stage: 'execution',
+    meaning: () => 'The chat provider returned an error; the page retries with backoff.',
+    fix: () => ({ consent: [], actor: 'provider', requires_exclusive: false,
+      why: 'Wait for the retry; if it keeps failing, check the provider status and key.' }) },
+  judge_truncated: { stage: 'execution',
+    meaning: () => 'The extraction output hit chronicle.judge_max_tokens and was cut off, so nothing was written.',
+    fix: () => ({ argv: ['gbrain', 'config', 'set', 'chronicle.judge_max_tokens', '8000'], consent: ['paid'], actor: 'agent',
+      requires_exclusive: false, why: 'A higher output cap lets event-dense pages finish; ask the user before raising spend.' }) },
+  malformed_proposal: { stage: 'execution',
+    meaning: () => 'The extraction output was not valid event JSON, so nothing was written; the page is tried again when its content changes.' },
+  judge_refused: { stage: 'execution',
+    meaning: () => 'The chat model refused or filtered the page; no events were written.' },
+  page_not_found: { stage: 'execution',
+    meaning: () => 'The page was deleted or renamed before extraction ran.' },
+} as const satisfies Record<string, ChronicleReason>;
+
+export type ChronicleReasonCode = keyof typeof CHRONICLE_REASONS;
+
+/** Eligibility reasons for pages that are not chronicle-shaped: the receipt omits the field for them. */
+const NOT_CHRONICLE_SHAPED = /^(kind:|diary_excluded$|event_self$|subagent_scratch$)/;
+
+export type ChronicleDecision = { state: 'pending' } | { state: 'skipped'; reason: string };
+
+export type ChronicleBackstopReceipt =
+  | { pending: 'next_cycle'; daily_remaining?: number }
+  | { skipped: string; stage: ChronicleStage; why: string; fix?: ChronicleAction };
+
+/**
+ * The `chronicle_backstop` receipt field (sibling of `facts_backstop`). Omitted (undefined) for pages
+ * that are not chronicle-shaped, so ordinary notes carry no `kind:<type>` noise. An unknown reason
+ * still reports itself with a doctor pointer rather than disappearing.
+ */
+export function chronicleBackstopReceipt(decision: ChronicleDecision, ctx: ChronicleReasonContext & { dailyRemaining?: number }): ChronicleBackstopReceipt | undefined {
+  if (decision.state === 'pending') {
+    return { pending: 'next_cycle', ...(ctx.dailyRemaining === undefined ? {} : { daily_remaining: ctx.dailyRemaining }) };
+  }
+  if (NOT_CHRONICLE_SHAPED.test(decision.reason)) return undefined;
+  const entry: ChronicleReason | undefined = (CHRONICLE_REASONS as Record<string, ChronicleReason>)[decision.reason];
+  if (!entry) {
+    return { skipped: decision.reason, stage: 'decision', why: `Extraction was skipped (${decision.reason}).`,
+      fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Read the auto_chronicle check for details.' } };
+  }
+  const fix = entry.fix?.(ctx);
+  return { skipped: decision.reason, stage: entry.stage, why: entry.meaning(ctx), ...(fix ? { fix } : {}) };
+}
+
+function shellWord(word: string): string {
+  return /^[\w.:/@+=<>-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+/** Markdown reason table for docs/guides/life-chronicle.md (rendered with placeholder values). */
+export function renderChronicleReasonTable(): string {
+  const ctx: ChronicleReasonContext = { sourceId: '<source>', since: '<YYYY-MM-DD>', model: '<provider:model>', dailyLimit: 200, recentDays: 30 };
+  const rows = Object.entries(CHRONICLE_REASONS).map(([code, reason]) => {
+    const entry: ChronicleReason = reason;
+    const fix = entry.fix?.(ctx);
+    const command = fix?.argv ? `\`${fix.argv.map(shellWord).join(' ')}\`` : '—';
+    const preview = fix?.preview_argv ? ` (preview: \`${fix.preview_argv.map(shellWord).join(' ')}\`)` : '';
+    const consent = fix && fix.consent.length > 0 ? fix.consent.join(', ') : '—';
+    return `| \`${code}\` | ${entry.stage} | ${entry.meaning(ctx)} | ${fix ? `${command}${preview}` : '—'} | ${fix?.actor ?? '—'} | ${consent} |`;
+  });
+  return ['| Code | Stage | Meaning | Fix | Who acts | Consent |', '|---|---|---|---|---|---|', ...rows].join('\n');
+}
