@@ -130,8 +130,8 @@ ratings): identical retrieval lists on all 500 questions (strict Recall@5 0.9277
 **E2 dev (implicit citations, LoCoMo dev conversations, 25 train and 20 score questions each, judge 3x, build
 `23d2597e2`, cost $23.65).** Judge mean against off (0.783): frozen +0.0 [−4.4, 5.0] points, sparse −2.2 [−9.4, 6.7],
 online −1.7 [−6.7, 2.2]; judge SD across replicates 0.014. Gather Recall@5 is 0.739 in every arm: at λ = 0.1 the
-citation signal (rating 4, half learning rate) moves a cited page's multiplier by under 1%, too little to change which
-pages `think` gathers, so the judge differences are answer-sampling noise. Cited events: 369 to 416 per 100 answers.
+citation signal (rating 4 at half the learning rate) raises a cited page's multiplier by about 0.25% per citation and
+at most 5%, too little to change which pages `think` gathers here, so the judge differences are answer-sampling noise. Cited events: 369 to 416 per 100 answers.
 Summary: [`dev/think-replay-locomo-dev.json`](dev/think-replay-locomo-dev.json).
 
 **E4 dev (constrained-relational, seeds 11 and 13, 142 questions, build `23d2597e2`).** The relational arm fires on
