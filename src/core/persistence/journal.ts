@@ -99,6 +99,13 @@ export async function getWriteRequestById(engine: SqlEngine, id: string, signal?
   const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], { signal });
   return row ?? null;
 }
+/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
+export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome'>;
+export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome FROM persistence_requests WHERE id=$1::uuid';
+export async function getWriteRequestProgress(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
+  const [row] = await engine.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], { signal });
+  return row ?? null;
+}
 export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 'slug' | 'callerIntent'>): string {
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });
 }

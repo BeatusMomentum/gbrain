@@ -83,9 +83,11 @@ export class PersistenceConsumer {
   private lastPhaseError: string | undefined;
   private preparationAttempts = 0;
   private preparing = new Map<string, { request_id: string; started_at: string; deadline_exceeded: boolean; attempt: number }>();
+  private executing = new Set<string>();
   readonly hostId: string;
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
-    private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void } = {}) {
+    private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void;
+      onSettled?: (row: WriteRequest) => void } = {}) {
     this.hostId = opts.hostId ?? localHostId();
   }
   private get checkoutObservable(): ((listener: () => void) => () => void) | undefined {
@@ -308,6 +310,7 @@ export class PersistenceConsumer {
         this.rootRetryAfter.set(root, Date.now() + delay);
         try {
           const recovered = await this.phase('recovery', () => recoverPublication(this.engine, row.id, this.hostId));
+          if (isTerminal(recovered)) this.settled(recovered);
           if (!recovered.recovery) this.rootRetryAfter.delete(root);
           else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
         } catch (error) {
@@ -354,6 +357,12 @@ export class PersistenceConsumer {
       { hostId: this.hostId, limit, signal: this.abort.signal }) >= limit);
   }
   foregroundCompletions(worktreeId: string): number { return this.foregroundCounts.get(worktreeId) ?? 0; }
+  /** CEO-A7: this process holds the claim, so its outcome reaches waiters through `onSettled` without a read. */
+  holds(id: string): boolean { return this.executing.has(id); }
+  private settled(row: WriteRequest): boolean {
+    try { this.opts.onSettled?.(row); } catch (error) { this.report(error); }
+    return isTerminal(row);
+  }
   status() {
     return { accepting: !this.stopping, active_preparations: this.active.size, active_worktrees: this.activeRoots.size,
       sampled_at: new Date().toISOString(), observation_scope: 'current_process_reset_on_restart',
@@ -438,6 +447,7 @@ export class PersistenceConsumer {
     const abort = new AbortController();
     const observation = { request_id: row.request_id, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.preparationAttempts };
     this.preparing.set(row.id, observation);
+    this.executing.add(row.id);
     const stop = () => abort.abort({ code: 'consumer_stopping' });
     this.abort.signal.addEventListener('abort', stop, { once: true });
     // edit_page (#5616) builds its content during preparation like put_page, so it shares the deadline.
@@ -475,7 +485,7 @@ export class PersistenceConsumer {
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
-      return isTerminal(done);
+      return this.settled(done);
     } catch (error) {
       if (preparationActive && bounded && performance.now() >= deadline) observation.deadline_exceeded = true;
       if (preparationActive && (abort.signal.aborted || observation.deadline_exceeded)) {
@@ -484,12 +494,12 @@ export class PersistenceConsumer {
       }
       const current = await getWriteRequestById(this.engine, row.id);
       if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
-        return isTerminal(await finishUnpublishedFailure(this.engine, current, error));
+        return this.settled(await finishUnpublishedFailure(this.engine, current, error));
       }
       throw error;
     } finally {
       closed = true; clearInterval(interval); if (timeout) clearTimeout(timeout);
-      this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id); await renewing;
+      this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id); this.executing.delete(row.id); await renewing;
     }
   }
   /** Mandatory barrier: engine.close must be sequenced AFTER this promise. */
