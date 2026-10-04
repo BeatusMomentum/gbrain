@@ -58,6 +58,16 @@ Every P0 item shipped. Nothing was cut.
   PGLite `releaseAbandonedClaims` with Lane F's refresh-fence predicate in the
   idle probe; released claims are still fenced when they are claimed again.
 
+- PR-budget coverage cut: the 150 s pull-request robot run on Postgres skips
+  the seams and the fault that can wait out a dead owner's 2-minute claim
+  lease (`effect:*`, `consumer:prepared`, `publication:prepared`,
+  `publication:before_publication`, `publication:after_publication`, and the
+  pooler disconnect fault). Before the cut that run took 669 s locally (three
+  publication seams at about 128 s each, the pooler disconnect at 125 s). The
+  manifest lists the cut as `lease_bound_seams_skipped` and
+  `lease_bound_faults_skipped`; 600 s runs on pushes, schedules and manual
+  dispatch still crash every seam and run every fault.
+
 ## Gates
 
 - `bun run verify` (69 checks) and `bun run typecheck`.

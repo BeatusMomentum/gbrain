@@ -196,7 +196,7 @@ export async function runValidation(options: ValidationOptions) {
     const executedBoundaries = manifest.crash_cases.map((entry: { boundary: string }) => entry.boundary);
     if (options.crashes !== false) assert.deepEqual(executedBoundaries, [...CRASH_BOUNDARIES]);
     if (manifest.robot) manifest.robot_full_gate = (options.robotSeconds ?? 0) >= FULL_ROBOT_SECONDS && manifest.robot.violations.length === 0
-      && (manifest.robot.lease_bound_seams_skipped ?? []).length === 0;
+      && (manifest.robot.lease_bound_seams_skipped ?? []).length === 0 && (manifest.robot.lease_bound_faults_skipped ?? []).length === 0;
     manifest.full_gate = counts.schedules >= 1000 && counts.operations >= 10_000
       && executedBoundaries.length === CRASH_BOUNDARIES.length && CRASH_BOUNDARIES.every((boundary, index) => executedBoundaries[index] === boundary)
       && manifest.crash_cases.every((entry: { staging_cleanup_verified?: boolean }) => entry.staging_cleanup_verified === true)

@@ -25,12 +25,20 @@ export const PROCESS_FAULTS: ProcessFault[] = ['stale_index_lock', 'hung_git', '
 
 /** One executed run, enough to replay it exactly: `--replay` re-injects this entry. */
 /**
- * Seams whose recovery on Postgres waits out a dead owner's claim lease
- * (requests 30 s, effects 2 minutes). A Postgres run with a budget under
- * FULL_ROBOT_SECONDS skips them; full runs (master, nightly) crash every seam.
+ * Seams and process faults whose recovery on Postgres can wait out a dead
+ * owner's claim lease (requests 30 s, effects 2 minutes): a publication seam
+ * does when the dead owner also held an effect claim, and the pooler
+ * disconnect fault holds its run for about two minutes. A Postgres run with a
+ * budget under FULL_ROBOT_SECONDS skips them and lists them in the manifest
+ * (`lease_bound_seams_skipped`, `lease_bound_faults_skipped`); full runs
+ * (master, nightly, manual) crash every seam and run every fault.
  */
 export const FULL_ROBOT_SECONDS = 300;
-export function leaseBoundSeam(point: FaultPoint): boolean { return point.startsWith('effect:') || point === 'consumer:prepared'; }
+const LEASE_BOUND_PUBLICATION_SEAMS: readonly FaultPoint[] = ['publication:prepared', 'publication:before_publication', 'publication:after_publication'];
+export function leaseBoundSeam(point: FaultPoint): boolean {
+  return point.startsWith('effect:') || point === 'consumer:prepared' || LEASE_BOUND_PUBLICATION_SEAMS.includes(point);
+}
+export const LEASE_BOUND_FAULTS: readonly ProcessFault[] = ['pooler_disconnect'];
 
 export interface RobotRun {
   schedule: string; seed: number; length: number; fault?: { point: FaultPoint; nth: number }; process?: ProcessFault;
@@ -146,8 +154,10 @@ export async function runRobotPhase(o: RobotOptions) {
     if (!mandatory && over()) break;
     record(await execute(item.schedule, 'run', { fault: { point: item.point, nth: 1 + Math.floor(rand() * item.count) } }));
   }
+  const skippedFaults = new Set<ProcessFault>();
   for (const fault of PROCESS_FAULTS) {
     if (fault === 'pooler_disconnect' && !o.admin) continue;
+    if (skipLease && LEASE_BOUND_FAULTS.includes(fault)) { skippedFaults.add(fault); continue; }
     record(await execute(fixed[1], 'run', { process: fault }));
   }
   // serve killed right after the facts-absorb job's extraction commits; the job then runs again.
@@ -162,7 +172,7 @@ export async function runRobotPhase(o: RobotOptions) {
     const [point, count] = points[Math.floor(rand() * points.length)];
     record(await execute(schedule, 'run', { fault: { point, nth: 1 + Math.floor(rand() * count) } }));
   }
-  return { ...summarize(runs, started, o), lease_bound_seams_skipped: [...skipped].sort() };
+  return { ...summarize(runs, started, o), lease_bound_seams_skipped: [...skipped].sort(), lease_bound_faults_skipped: [...skippedFaults].sort() };
 }
 
 function summarize(runs: RobotRun[], started: number, o: RobotOptions) {

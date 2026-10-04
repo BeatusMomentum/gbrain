@@ -212,8 +212,9 @@ jobs:
   # The crash robot runs beside the soak: generated sequences of real operations,
   # SIGKILL at every crash seam they reach, and process faults, checked by the
   # reference model. Postgres connects through a transaction-mode PgBouncer.
-  # Pull requests run a 150 s budget (Postgres skips the seams that wait out a
-  # dead owner's claim lease); pushes, schedules and manual runs crash every seam.
+  # Pull requests run a 150 s budget (Postgres skips the seams and the pooler
+  # disconnect fault that can wait out a dead owner's claim lease, listed in the
+  # manifest); pushes, schedules and manual runs crash every seam.
   crash-robot:
     name: Crash robot / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
     runs-on: ubicloud-standard-4-ubuntu-2404

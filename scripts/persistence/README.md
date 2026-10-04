@@ -122,11 +122,14 @@ transaction's row locks: worktrees before sources, sources in id order, and
 no exclusive brain-row lock inside a publication.
 
 Postgres runs connect through `GBRAIN_PGBOUNCER_URL` when it is set, with
-prepared statements off. A Postgres run with a budget under 300 s skips the
-seams whose recovery waits out a dead owner's claim lease; full runs crash
-every seam. The manifest's `robot` key lists every run (schedule, seed,
-seam and occurrence or process fault), `sequences_x_crash_points`,
-`lease_bound_seams_skipped` and violations with the observed trace;
+prepared statements off. A Postgres run with a budget under 300 s (the
+pull-request run) skips what can wait out a dead owner's claim lease: the
+`effect:*` seams, `consumer:prepared`, the publication seams `prepared`,
+`before_publication` and `after_publication`, and the pooler disconnect
+fault. Full runs crash every seam and run every fault. The manifest's `robot`
+key lists every run (schedule, seed, seam and occurrence or process fault),
+`sequences_x_crash_points`, `lease_bound_seams_skipped`,
+`lease_bound_faults_skipped` and violations with the observed trace;
 `robot_full_gate` is true for a full-budget run with no violations.
 
 A failing run prints two commands. `--replay=<manifest>` re-runs exactly the
