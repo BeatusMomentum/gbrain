@@ -262,6 +262,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
+    "test/e2e/job-deferral-postgres.test.ts",
     "test/e2e/minions-legacy-coalesce-postgres.test.ts",
     "test/e2e/minions-legacy-journey-postgres.test.ts",
     "test/e2e/worker-readiness-cli.test.ts",

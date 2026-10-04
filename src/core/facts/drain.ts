@@ -26,6 +26,9 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import type { MinionJob } from '../minions/types.ts';
+import { FACTS_DRAIN_KEYS, parseFactsDrainKey, type FactsDrainKey } from './drain-config.ts';
+export { FACTS_DRAIN_KEYS, validateFactsDrainConfigValue, type FactsDrainKey } from './drain-config.ts';
+
 
 export const FACTS_DRAIN_JOB = 'facts-absorb';
 export const FACTS_DRAIN_QUEUE = 'default';
@@ -37,32 +40,6 @@ export const FACTS_DRAIN_WALL_MS = 5 * 60_000;
 /** Tokens the extractor adds around the page text (system prompt + framing). */
 const PROMPT_OVERHEAD_TOKENS = 1_500;
 const RUN_HISTORY = 20;
-
-interface NumericKeySpec { fallback: number; min: number; max: number; integer: boolean; meaning: string }
-export const FACTS_DRAIN_KEYS = {
-  'facts.drain_budget_usd': { fallback: 1, min: 0.01, max: 100, integer: false, meaning: 'USD cap for one automatic drain run' },
-  'facts.drain_daily_budget_usd': { fallback: 5, min: 0.01, max: 1000, integer: false, meaning: 'USD cap for automatic drain runs per rolling 24 hours' },
-  'facts.drain_max_jobs': { fallback: 50, min: 1, max: 1000, integer: true, meaning: 'jobs one automatic drain run takes at most' },
-} as const satisfies Record<string, NumericKeySpec>;
-export type FactsDrainKey = keyof typeof FACTS_DRAIN_KEYS;
-
-function parseKey(key: FactsDrainKey, raw: string): number | null {
-  const spec: NumericKeySpec = FACTS_DRAIN_KEYS[key];
-  const text = raw.trim();
-  if (!/^\d+(\.\d+)?$/.test(text)) return null;
-  const n = Number(text);
-  if (spec.integer && !Number.isInteger(n)) return null;
-  return n >= spec.min && n <= spec.max ? n : null;
-}
-
-/** `config set` validation for facts.drain_*; the refusal text, or null when valid. */
-export function validateFactsDrainConfigValue(key: string, value: string): string | null {
-  if (!(key in FACTS_DRAIN_KEYS)) return null;
-  const k = key as FactsDrainKey;
-  const spec: NumericKeySpec = FACTS_DRAIN_KEYS[k];
-  return parseKey(k, value) !== null ? null
-    : `${key} must be ${spec.integer ? 'a whole number' : 'a number'} from ${spec.min} to ${spec.max} (${spec.meaning}; default ${spec.fallback}) (got '${value}'). Nothing was written.`;
-}
 
 export interface FactsDrainSettings {
   enabled: boolean;
@@ -79,7 +56,7 @@ export async function factsDrainSettings(engine: BrainEngine): Promise<FactsDrai
   let explicitCap = false;
   for (const key of Object.keys(FACTS_DRAIN_KEYS) as FactsDrainKey[]) {
     const raw = await engine.getConfig(key).catch(() => null);
-    const parsed = raw == null || raw.trim() === '' ? null : parseKey(key, raw);
+    const parsed = raw == null || raw.trim() === '' ? null : parseFactsDrainKey(key, raw);
     values[key] = parsed ?? FACTS_DRAIN_KEYS[key].fallback;
     if (parsed !== null && key !== 'facts.drain_max_jobs') explicitCap = true;
   }
