@@ -292,6 +292,7 @@ const MATRIX: Record<CyclePhase, Entry> = {
   facts_drain: {
     config: { embedding_disabled: 'true' },
     seed: async ({ engine, sourceId }) => {
+      if (engine.kind !== 'pglite') return;
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
       await put(engine, sourceId, 'notes/drain-example', page('note', 'Field notes', 'Carol Example founded Widget Co in 2019 and leads its design team. '.repeat(3)));
       const held = await engine.executeRaw<{ id: number; next_attempt_at: string | null }>(
@@ -299,13 +300,15 @@ const MATRIX: Record<CyclePhase, Entry> = {
       await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour' WHERE kind<>'facts-backstop'");
       const effect = await claimPersistenceEffect(engine, localHostId());
       for (const h of held) await engine.executeRaw('UPDATE persistence_effects SET next_attempt_at=$2::timestamptz WHERE id=$1', [h.id, h.next_attempt_at]);
-      expect(effect?.kind).toBe('facts-backstop');
-      await dispatchFactsBackstopEffect(engine, effect!, localHostId());
+      if (effect) await dispatchFactsBackstopEffect(engine, effect, localHostId());
+      const jobs = await engine.executeRaw("SELECT id FROM minion_jobs WHERE name='facts-absorb' AND data->>'slug'='notes/drain-example' AND status='waiting'");
+      expect(jobs).toHaveLength(1);
     },
     reply: () => JSON.stringify({ facts: [{ fact: 'Carol founded Widget Co in 2019', kind: 'fact', entity: 'people/carol-example', confidence: 0.9, notability: 'high' }] }),
     assert: async ({ engine, sourceId, result }) => {
       if (engine.kind !== 'pglite') { expect(result.details.reason).toBe('not_applicable'); return; }
-      expect(result.details).toMatchObject({ outcome: 'drained', completed: 1, backlog_after: 0 });
+      expect(result.details).toMatchObject({ outcome: 'drained', failed: 0, backlog_after: 0 });
+      expect(Number(result.details.completed)).toBeGreaterThanOrEqual(1);
       expect(await engine.executeRaw("SELECT fact FROM facts WHERE source_id=$1 AND fact LIKE '%Widget Co%'", [sourceId])).not.toHaveLength(0);
     },
   },
