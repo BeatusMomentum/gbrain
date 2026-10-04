@@ -13,6 +13,84 @@ results erode trust. The brain becomes unreliable.
 With this: edits show up in search within minutes. The vector DB stays current
 with the brain repo automatically. You never have to remember to run sync.
 
+## Catching up a large backlog on managed Postgres
+
+On a managed brain (managed persistence on, Postgres), every changed file
+publishes through its own durable write request, in manifest order. One
+command drains the whole backlog:
+
+```bash
+gbrain sync --source <id> --no-pull --json
+```
+
+`--no-pull` is required on managed brains: the checkout is fast-forwarded by
+`gbrain sources refresh <id>`, never by sync. Sync then catches the index up
+to whatever the checkout holds.
+
+The run prints one line before the first write and a progress line about
+every 10 seconds on stderr:
+
+```
+[sync] managed catch-up: 9382 entries frozen, 9382 remaining; publishing in bulk groups (each page keeps its own request).
+[sync] 1240/9382 processed (1200 written, 40 waived this run) · 42.1 pages/min · indexing ETA 3h13m
+```
+
+On Postgres the drain publishes in **bulk groups**: it freezes up to 16
+following page imports and deletes with the current one, admits them in one
+transaction, and the writer publishes the group in one transaction. Every
+page still gets its own write request, receipt, attribution and failure
+report; if one page fails, the pages before it commit, that page is reported,
+and the pages after it are cancelled and re-frozen once it is fixed. Group size
+adapts so a group takes about `sync.bulk_max_txn_ms` (default 15 s); a
+foreground write waits behind at most one group. Turn bulk off with
+`--no-bulk`, `GBRAIN_SYNC_BULK=0` or `gbrain config set sync.bulk false`. The
+final JSON reports `drain.bulk` (`enabled`, `reason` when off, `groups`,
+`largest_group`). PGLite publishes without network round trips and does not
+use bulk groups.
+
+*Written* pages published a change. *Waived* entries needed no write (an
+unchanged file, or a delete of a page that is already deleted) and advanced
+the cursor without a request. The ETA covers indexing only; embeddings and
+extraction queued by the run drain afterwards. Measured throughput by database
+distance is in [`docs/eval/managed-sync-catchup.md`](../eval/managed-sync-catchup.md).
+
+The run ends in exactly one outcome:
+
+| Outcome | Exit | Meaning | What to do |
+| --- | --- | --- | --- |
+| `synced` | 0 | The cursor reached its target. | Nothing. |
+| `resumable` | 0 | A deadline, `--timeout` or Ctrl-C stopped it; the cursor and accepted writes are intact. | Rerun `next.command`; safe in a loop. |
+| `blocked` | 1 | A page failed or the writer needs intervention. | Follow `next.why`, then run `next.command`. See [drain stops](write-refusals.md#managed-sync-drain-stops). |
+
+**Say to your agent:** *"Catch up my managed brain's sync backlog and tell me
+how long it will take."* or *"My managed sync stopped. Is it safe to rerun?"*
+
+Timing knobs the drain uses:
+
+| Knob | Scope | Default | At expiry |
+| --- | --- | --- | --- |
+| `--timeout <dur>` | Whole drain (per source under `--all`). Never extended by progress. | none | Stops as `resumable`. |
+| `--hard-deadline <dur>` | Whole process, enforced out of band. | none | The drain stops itself about 15 s early as `resumable`; the watchdog stops a hung process. |
+| `GBRAIN_SYNC_MAX_RUNTIME_SECONDS` | Whole process, non-interactive runs. Extends while pages keep committing. | 3600 (non-TTY) | Stops only after `GBRAIN_SYNC_STALL_ABORT_SECONDS` without progress. |
+| `GBRAIN_SYNC_STALL_ABORT_SECONDS` | Progress window for the deadline above. | 900 | The watchdog stops the run and prints the resume command. |
+| No-progress detector | Awaited write and checkout head unchanged. | 30 s and 3 passes | Stops as `blocked` / `drain_stalled` with diagnostics. |
+| Page write wait | One page's (or group's) publication before the drain re-checks. | 30 s inside a drain (5 s, checkpoint 8 s, for a single pass) | The drain re-enters; this is not a stop. |
+| `sync.bulk_max_txn_ms` / `GBRAIN_SYNC_BULK_MAX_TXN_MS` | Target time per bulk group; sizes the next group from the last one's time per page. | 15000 | A smaller next group. |
+| `sync.bulk_size` / `GBRAIN_SYNC_BULK_SIZE` | Largest bulk group. | 16 | — |
+
+Two more tips:
+
+- **Run the catch-up near the database.** Each page costs several database
+  round trips, so a host in the database's region drains far faster than a
+  laptop across the internet.
+- **Triage.** `gbrain sources writer status <id>` shows the oldest unfinished
+  request and why it waits. `gbrain doctor` reports a managed cursor's
+  remaining entries and ETA from any process.
+
+Before this drain shipped, the workaround was a shell loop around
+`gbrain sync --source <id> --no-pull` until it printed `synced`. That loop
+still works, and each run now drains as far as its deadline allows.
+
 ## Implementation
 
 ### Prerequisite: a reachable direct connection

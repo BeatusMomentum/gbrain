@@ -47,7 +47,7 @@ export interface SyncResult {
    */
   malformedSkipped?: number;
   /** #5751: unchanged managed working-tree files skipped although a no-op publication cannot resolve their admit reason. */
-  legacySkips?: { contextualMode: number; canonicalBytes: number };
+  legacySkips?: { contextualMode: number; canonicalBytes: number }; /** #5984: managed entries advanced without a write (DX-A7), and how a still-unfinished managed write's wait ended (DX-A3). */ waived?: { imports: number; deletes: number }; writeWait?: import('../core/persistence/sync-run.ts').ManagedSyncWriteWait;
   /** Managed sync: files skipped because another origin keeps their slug, and links derived after the checkpoint. */
   slugCollisions?: import('../core/persistence/sync-discovery.ts').SyncSlugCollision[];
   fileRefusals?: import('../core/persistence/sync-discovery.ts').SyncFileRefusal[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
@@ -94,6 +94,10 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /** #5984: the managed drain's verdict and the next step for the agent (see sync-drain.ts). */
+  drain?: import('../core/persistence/sync-drain.ts').DrainReport;
+  /** #5984: managed cursor position (`index` of `total` manifest entries) and its active drain window. */
+  managedCursor?: { index: number; total: number; progress?: import('../core/persistence/sync-run.ts').CursorProgress };
   /** Fix wave 4: connector items held after repeated item-scoped failures (not blocking freshness). */
   connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string };
   /**
@@ -324,7 +328,17 @@ export interface SyncOpts {
    * `sync_status` IPC polls read. Absent for direct CLI runs (stderr
    * breadcrumbs already cover that surface).
    */
-  onProgress?: (p: { phase: string; bankedFiles?: number }) => void;
+  onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean; group?: number }) => void;
+  /**
+   * #5984: managed sync only. Re-enter the single-pass managed sync until the
+   * cursor is done, the caller's signal/deadline stops it, or it is blocked
+   * (src/core/persistence/sync-drain.ts). Set by the CLI; jobs and library
+   * callers keep the single-pass contract.
+   */
+  drain?: boolean;
+  /** #5984: wall-clock ms the current drain started; managed cursors measure their rate from it. */
+  drainStartedAt?: number;
+  /** #5984: `--no-bulk`; and the drain's resolved bulk settings (internal; absent = one request per pass step). */ noBulk?: boolean; bulk?: import('../core/persistence/sync-group.ts').BulkSettings;
 }
 
 // The git-plumbing cluster (git(), discoverGitRoot, createSyncBaselineCommit,

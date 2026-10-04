@@ -27,6 +27,7 @@ import { writerAdminState } from '../src/core/persistence/admin-intent.ts';
 import { carryLegacyFailCounts } from '../src/core/connectors/item-holds.ts';
 import { connectorCheckpointKey, connectorIdentity } from '../src/core/persistence/connector-identity.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { put } from './helpers/wave-fixture.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 
@@ -266,6 +267,9 @@ describe('Git holds and writer mode changes (X14)', () => {
     await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector',$1,$2::text::jsonb)`,
       [key, JSON.stringify([{ state: { history_id: 'h1', item_holds: carryLegacyFailCounts(undefined, { 'thread-1': 3 }, id => id, '2026-10-01T00:00:00.000Z') } }])]);
 
+    // The put_page above returns at publication; its Git effect finishes in the background before the writer is quiet.
+    await waitFor(async () => (await engine.executeRaw("SELECT 1 FROM persistence_effects WHERE state IN ('queued','running') LIMIT 1")).length === 0,
+      { timeoutMs: 15_000, label: 'put_page effects settled' });
     const dry = await admin(engine, 'writer_deactivate', { dry_run: true });
     expect(dry.blockers.map((b: { kind: string; source_id?: string }) => `${b.kind}:${b.source_id ?? ''}`)).toEqual(['connector_holds:gmail-x']);
     await expect(admin(engine, 'writer_deactivate', { admin_intent: 'writer_deactivate', expected_state: await writerAdminState(engine) }))
