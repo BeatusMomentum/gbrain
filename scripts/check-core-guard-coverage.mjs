@@ -66,7 +66,8 @@ for (const file of walk(join(ROOT, 'src'))) {
   const reassigned = [...text.matchAll(/\b(\w+)\s*=\s*await\s+[^;\n]*?\b(?:preparePageMutation|prepareMemoryMutation)\s*\(/g)].map(m => m[1]);
   const vars = [...new Set([...names, ...reassigned])];
   const returnsDirect = /return\s+(?:await\s+)?(?:preparePageMutation|prepareMemoryMutation)\s*\(/.test(text);
-  const forwards = text.includes('exclusiveSources') || vars.some(v => new RegExp(`\\.\\.\\.${v}\\b`).test(text));
+  const spread = new Set([...text.matchAll(/\.\.\.(\w+)\b/g)].map(m => m[1]));
+  const forwards = text.includes('exclusiveSources') || vars.some(v => spread.has(v));
   if (!returnsDirect && !forwards) problems.push(`${rel}: wraps preparePageMutation but drops exclusiveSources, so a core write would publish without the ordered source lock. Spread the prepared result or forward exclusiveSources.`);
 }
 
