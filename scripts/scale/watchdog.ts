@@ -32,7 +32,8 @@ const COVERS: Record<string, WatchedPhase[]> = {
   ops: ['budgets'], reimport: ['budgets'], cold_query: ['budgets'], writers: ['budgets'],
 };
 export const WATCHDOG_GRACE = 1.5;
-export const X5_TODO = 'TODOS.md "PGLite bulk-embedding cliff at ~20k chunks" (X5)';
+export const X5_TODO_TITLE = 'PGLite bulk-embedding cost at 20k+ chunks';
+export const X5_TODO = `TODOS.md "${X5_TODO_TITLE}" (X5)`;
 export const HOME_LINE = '[scale] brain home: ';
 export const DATABASE_LINE = '[scale] scale database: ';
 
@@ -61,7 +62,7 @@ export function watchdogDiagnostic(phase: WatchedPhase, elapsedMs: number, limit
     `[scale] FAIL phase watchdog: ${phase} ran ${Math.round(elapsedMs / 1000)} s, limit ${Math.round(limitMs / 1000)} s; the harness was killed (exit 1).`,
     `[scale]   last progress line: ${lastLine || '(none)'}`,
     `[scale]   Why: a phase past its watchdog limit (${WATCHDOG_GRACE}x its gate ceiling unless overridden) is a stall, and an in-process timer cannot fire while PGLite blocks the main thread.`,
-    `[scale]   Known issue: ${X5_TODO} tracks the PGLite vectors stall at 20k pages.`,
+    `[scale]   Known issue: ${X5_TODO} tracks PGLite bulk-embedding cost and the 20k vectors stall history.`,
     `[scale]   Fix: profile the named phase; to let it run longer locally, set ${overrideVariable(phase)}=<ms> and rerun: ${reproduce}`,
   ].join('\n');
 }

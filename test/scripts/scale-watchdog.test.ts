@@ -5,10 +5,10 @@
  * the X5 TODO and the override variable.
  */
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { superviseScaleRun, watchdogLimitsMs, type WatchedPhase } from '../../scripts/scale/watchdog.ts';
+import { X5_TODO_TITLE, superviseScaleRun, watchdogLimitsMs, type WatchedPhase } from '../../scripts/scale/watchdog.ts';
 
 const HOUR = 3_600_000;
 const limits = (vectors: number): Record<WatchedPhase, number> => ({ import: HOUR, extract: HOUR, vectors, budgets: HOUR });
@@ -55,7 +55,8 @@ describe('scale phase watchdog', () => {
       expect(diagnostic).toContain('FAIL phase watchdog: vectors ran');
       expect(diagnostic).toContain('limit 2 s');
       expect(diagnostic).toContain('last progress line: [scale] vectors batch 3/40: 500 pages in 12 ms');
-      expect(diagnostic).toContain('PGLite bulk-embedding cliff at ~20k chunks" (X5)');
+      expect(diagnostic).toContain(`TODOS.md "${X5_TODO_TITLE}" (X5)`);
+      expect(readFileSync(join(import.meta.dir, '../../TODOS.md'), 'utf8')).toContain(X5_TODO_TITLE);
       expect(diagnostic).toContain('GBRAIN_SCALE_PHASE_LIMIT_MS_VECTORS=<ms>');
       expect(diagnostic).toContain('bun run test:scale -- --pages 20000');
       const output = lines.join('');

@@ -49,6 +49,8 @@ const heavy = () => ({
   annotations: Object.fromEntries([111415376248, 111415376292, 111415376359].map(id => [id, load<unknown[]>(`annotations-${id}.json`)])),
 });
 const realRows = parseKnownRed(readFileSync(join(ROOT, '.github/nightly-known-red.tsv'), 'utf8')).rows;
+const scaleRow: KnownRow = { workflow: 'Scale tier', job: 'scale pglite 20000', signature: 'phase watchdog: vectors', kind: 'known-red', todo: 'PGLite bulk-embedding cost at 20k+ chunks', review_by: '2026-10-25' };
+const scaleRows = [...realRows, scaleRow];
 const recordOf = (body: unknown) => readJsonBlock<IncidentRecord>(String(body), JSON_MARKER)!;
 const issueWith = (state: 'open' | 'closed', record: Partial<IncidentRecord>, labels = ['nightly-red']): Issue => ({
   number: 7, title: 'Nightly red: Heavy Tests', state, labels: labels.map(name => ({ name })),
@@ -130,18 +132,18 @@ describe('nightly-watch incidents', () => {
   test('a failure matching a known-red row is tracked (known-red label, no comment when unchanged); new error text in the same job is a new incident', async () => {
     const watchdog = '[scale] FAIL phase watchdog: vectors ran 676 s, limit 675 s; the harness was killed (exit 1).';
     const first = fakeClient(scaleRun(watchdog));
-    const known = await watchRun({ client: first.client, repo: REPO, runId: 1, rows: realRows, today: TODAY, dryRun: false });
+    const known = await watchRun({ client: first.client, repo: REPO, runId: 1, rows: scaleRows, today: TODAY, dryRun: false });
     expect(known.assessment.state).toBe('known-red');
     expect(known.plan.labels).toEqual(['nightly-red', 'known-red']);
     expect(known.plan.record!.next_step).toBe('known_red_wait');
     expect(known.plan.record!.dispatch_argv).toEqual(['gh', 'workflow', 'run', 'scale-tier.yml', '--ref', 'master', '-f', 'pages=20000']);
 
     const unchanged = fakeClient({ ...scaleRun(watchdog), issues: [{ ...issueWith('open', known.plan.record!, ['nightly-red', 'known-red']), title: 'Nightly red: Scale tier' }] });
-    await watchRun({ client: unchanged.client, repo: REPO, runId: 1, rows: realRows, today: TODAY, dryRun: false });
+    await watchRun({ client: unchanged.client, repo: REPO, runId: 1, rows: scaleRows, today: TODAY, dryRun: false });
     expect(unchanged.calls.some(c => c.path.endsWith('/comments'))).toBe(false);
 
     const other = fakeClient(scaleRun('[scale] FAIL find_orphans: an island page is missing'));
-    const fresh = await watchRun({ client: other.client, repo: REPO, runId: 1, rows: realRows, today: TODAY, dryRun: false });
+    const fresh = await watchRun({ client: other.client, repo: REPO, runId: 1, rows: scaleRows, today: TODAY, dryRun: false });
     expect(fresh.assessment.state).toBe('red');
     expect(fresh.plan.labels).toEqual(['nightly-red']);
   });
@@ -150,14 +152,14 @@ describe('nightly-watch incidents', () => {
     const watchdog = '[scale] FAIL phase watchdog: vectors ran 676 s';
     const late = '2026-11-01';
     const first = fakeClient(scaleRun(watchdog));
-    const created = await watchRun({ client: first.client, repo: REPO, runId: 1, rows: realRows, today: late, dryRun: false });
+    const created = await watchRun({ client: first.client, repo: REPO, runId: 1, rows: scaleRows, today: late, dryRun: false });
     expect(created.plan.record!.next_step).toBe('review_by_passed');
     const before = { ...created.plan.record!, review_by_notified: [] };
     const open = fakeClient({ ...scaleRun(watchdog), issues: [{ ...issueWith('open', before, ['nightly-red', 'known-red']), title: 'Nightly red: Scale tier' }] });
-    const notified = await watchRun({ client: open.client, repo: REPO, runId: 1, rows: realRows, today: late, dryRun: false });
+    const notified = await watchRun({ client: open.client, repo: REPO, runId: 1, rows: scaleRows, today: late, dryRun: false });
     expect(String(open.calls.find(c => c.path.endsWith('/comments'))!.body!.body)).toContain('Review-by date passed');
     const quiet = fakeClient({ ...scaleRun(watchdog), issues: [{ ...issueWith('open', notified.plan.record!, ['nightly-red', 'known-red']), title: 'Nightly red: Scale tier' }] });
-    await watchRun({ client: quiet.client, repo: REPO, runId: 1, rows: realRows, today: late, dryRun: false });
+    await watchRun({ client: quiet.client, repo: REPO, runId: 1, rows: scaleRows, today: late, dryRun: false });
     expect(quiet.calls.some(c => c.path.endsWith('/comments'))).toBe(false);
   });
 
@@ -202,7 +204,7 @@ describe('nightly-watch incidents', () => {
 describe('.github/nightly-known-red.tsv', () => {
   const todos = readFileSync(join(ROOT, 'TODOS.md'), 'utf8');
   const header = '# Columns: workflow, job, signature, kind, todo, review_by\n';
-  const row = (r: Partial<KnownRow> = {}) => [r.workflow ?? 'W', r.job ?? 'j', r.signature ?? 's', r.kind ?? 'known-red', r.todo ?? 'PGLite bulk-embedding cliff at ~20k chunks', r.review_by ?? '2026-10-25'].join('\t');
+  const row = (r: Partial<KnownRow> = {}) => [r.workflow ?? 'W', r.job ?? 'j', r.signature ?? 's', r.kind ?? 'known-red', r.todo ?? 'Set the ANTHROPIC_API_KEY and OPENAI_API_KEY repo secrets', r.review_by ?? '2026-10-25'].join('\t');
 
   test('the committed file is valid: at most 3 rows, ISO review-by dates, each TODO present in TODOS.md', () => {
     expect(validateKnownRed(readFileSync(join(ROOT, '.github/nightly-known-red.tsv'), 'utf8'), todos)).toEqual([]);
