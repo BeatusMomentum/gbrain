@@ -5,11 +5,13 @@ import { throwIfAborted } from '../abort-check.ts';
  * Dream-provenance DB stamp (#2569): marks pages a dream child wrote with
  * `dream_generated` and a stable first cycle date. Shared by synthesize and
  * patterns (#5733); a page that existed before the child's first write to it
- * is not stamped. `seat` (#4618) credits the capturing agent seat.
+ * is not stamped. `seat` (#4618) credits the capturing agent seat; `seat: null`
+ * removes a seat the page no longer earns (a pattern whose reflections no
+ * longer share one).
  */
 export async function stampDreamProvenance(
   engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string; raw_source?: string; seat?: string; raw_trace_exempt_reason?: string; first_write_at?: Date }>,
+  refs: Array<{ slug: string; source_id: string; raw_source?: string; seat?: string | null; raw_trace_exempt_reason?: string; first_write_at?: Date }>,
   cycleDate: string,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -23,8 +25,8 @@ export async function stampDreamProvenance(
       await executeRawJsonb(
         engine,
         `UPDATE pages
-            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
-                              || $5::jsonb
+            SET frontmatter = (COALESCE(frontmatter, '{}'::jsonb) - CASE WHEN $5::boolean THEN 'seat' ELSE '' END)
+                              || $6::jsonb
                               || jsonb_build_object(
                                    'dream_cycle_date',
                                    COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3),
@@ -38,7 +40,7 @@ export async function stampDreamProvenance(
         // C-8: a page that existed before the child's first write to it is
         // not dream output; stamping it would hide it from extract_facts
         // and transcript discovery forever.
-        [slug, source_id, cycleDate, first_write_at?.toISOString() ?? null],
+        [slug, source_id, cycleDate, first_write_at?.toISOString() ?? null, seat === null],
         // #1978 raw-source persistence: record the transcript path the
         // synthesis was derived from, so `gbrain doctor` (raw_provenance
         // check) can verify every generated page carries a raw trace.
