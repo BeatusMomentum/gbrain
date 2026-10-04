@@ -16,6 +16,8 @@ import { prepareManagedFactsMutation } from '../../src/core/persistence/facts-pr
 import { serializePageToMarkdown } from '../../src/core/markdown.ts';
 import { upsertFactRow } from '../../src/core/facts-fence.ts';
 import { withEnv } from './with-env.ts';
+import { testWaitMs } from './wait-for.ts';
+import { __setMaintenanceWriteWaitForTests } from '../../src/core/persistence/maintenance-wait.ts';
 
 const hostModel = 'openai:text-embedding-3-large';
 const selectedModel = 'openai:text-embedding-3-small';
@@ -27,6 +29,7 @@ type Case = typeof managedEmbeddingCases[number];
 
 export async function exerciseManagedEmbedding(engine: BrainEngine, scenario: Case): Promise<void> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-fact-model-'));
+  const restoreWait = __setMaintenanceWriteWaitForTests(testWaitMs(250));
   try {
     await withEnv({ GBRAIN_HOME: home }, async () => {
       await disposePersistenceConsumer(engine);
@@ -144,6 +147,7 @@ export async function exerciseManagedEmbedding(engine: BrainEngine, scenario: Ca
       expect(getEmbeddingModel()).toBe(hostModel);
     });
   } finally {
+    restoreWait();
     await disposePersistenceConsumer(engine);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     __setChatTransportForTests(null); __setEmbedTransportForTests(null); resetGateway();

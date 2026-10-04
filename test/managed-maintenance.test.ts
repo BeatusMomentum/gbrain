@@ -29,13 +29,15 @@ import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { rawProvenanceCheck } from '../src/commands/doctor/checks/core-health.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
+import { testWaitMs } from './helpers/wait-for.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
 const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-maintenance-db-'));
 let closePostgres: (() => Promise<void>) | undefined;
+let restoreWriteWait: () => void = () => {};
 beforeAll(async () => {
-  __setMaintenanceWriteWaitForTests(5_000);
+  restoreWriteWait = __setMaintenanceWriteWaitForTests(testWaitMs(500));
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
   if (backends.includes('pglite')) {
     const engine = new PGLiteEngine();
@@ -47,7 +49,7 @@ beforeAll(async () => {
   }
 }, 120_000);
 afterAll(async () => {
-  __setMaintenanceWriteWaitForTests(null);
+  restoreWriteWait();
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
   await closePostgres?.(); resetGateway(); rmSync(dataDir, { recursive: true, force: true });
 });
