@@ -870,6 +870,8 @@ frozen development split only.
 | `--time-scope-pool N` | 50 | Pool depth for `--time-scope`; rows carry `time_scope` and the same pool's unscoped top-k (`unscoped_recall_all_hit`), a paired control inside one run |
 
 Active arms fold into `retrieval_config_hash` as `retrieval_arms`.
+Kill gates, sealed bars and budgets are fixed in
+[`docs/eval/TIME_AWARE_RETRIEVAL_PREREG.md`](eval/TIME_AWARE_RETRIEVAL_PREREG.md).
 
 ### System One arms (`--decide`)
 
