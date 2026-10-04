@@ -1314,6 +1314,18 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.mcp_keyword_only',
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
+  // Use-attributed retrieval feedback (src/core/feedback/settings.ts) and the
+  // relational-arm triplet scoring knobs (src/core/search/triplet-score.ts).
+  'feedback.enabled',
+  'feedback.learn',
+  'feedback.influence',
+  'feedback.implicit',
+  'feedback.alpha',
+  'feedback.max_ratings_per_hour',
+  'feedback.event_retention_days',
+  'feedback.hint',
+  'search.triplet_scoring',
+  'search.triplet_penalty',
   // #4415: per-brain query-intent pattern extensions (JSON bank→regex[]),
   // merged over the shipped banks in src/core/search/query-intent.ts.
   'search.intent_patterns',
