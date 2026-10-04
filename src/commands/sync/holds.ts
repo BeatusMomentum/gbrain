@@ -300,20 +300,35 @@ export async function holdRenameDestination(engine: BrainEngine, holds: LegacyHo
   if (!pending) return false;
   const current = await currentPage(engine, holds.sourceId, { id: pending.pageId });
   if (!current || (current.slug === pending.slug && current.revision === pending.revision)) return false;
-  await recordLegacyHold(engine, holds, { path: input.to, upstreamVersion: screen.upstreamVersion, renameFrom: pending, refusal: { code: 'rename_held',
-    reason: 'rename_source_changed', message: `The page ${input.to} was renamed from changed after the rename, so moving it onto the new file would overwrite those changes.` } });
+  await holdChangedRename(engine, holds, input.to, pending, screen.upstreamVersion);
   return true;
 }
 
-/** Full sync: a held rename destination that now screens clean moves its page (same id) before the walk imports it. */
+/** Holds a rename destination whose old page changed after the rename was recorded: moving it would overwrite those changes. */
+async function holdChangedRename(engine: BrainEngine, holds: LegacyHolds, to: string, renameFrom: SyncRename, upstreamVersion: string | null): Promise<void> {
+  await recordLegacyHold(engine, holds, { path: to, upstreamVersion, renameFrom, refusal: { code: 'rename_held', reason: 'rename_source_changed',
+    message: `${to} is a rename of page ${renameFrom.slug}, which changed after the rename was recorded, so the page was not moved onto the new file.` } });
+}
+
+/**
+ * Full sync: a held rename destination that now screens clean moves its page
+ * (same id) before the walk imports it. One whose old page changed since is
+ * held as `rename_held` (the walk skips it), never imported as a second page.
+ */
 export async function moveHeldRenames(engine: BrainEngine, holds: LegacyHolds | null, root: string): Promise<void> {
   if (!holds?.active) return;
   for (const record of holds.existing.values()) {
     const origin = record.meta.rename_from;
     const filePath = join(root, record.path);
-    if (!origin || !existsSync(filePath) || screenLegacyFile(filePath, record.path).refusal) continue;
+    if (!origin || !existsSync(filePath)) continue;
+    const screen = screenLegacyFile(filePath, record.path);
+    if (screen.refusal) continue;
     const current = await currentPage(engine, holds.sourceId, { id: origin.pageId });
-    if (!current || current.slug !== origin.slug || current.revision !== origin.revision) continue;
+    if (!current) continue;
+    if (current.slug !== origin.slug || current.revision !== origin.revision) {
+      await holdChangedRename(engine, holds, record.path, origin, screen.upstreamVersion);
+      continue;
+    }
     try {
       if (await engine.updateSlug(origin.slug, resolveSlugForPath(record.path), { sourceId: holds.sourceId }) === 0) continue;
       await engine.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [record.path, origin.pageId, holds.sourceId]);

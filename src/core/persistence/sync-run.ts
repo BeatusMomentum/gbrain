@@ -32,7 +32,7 @@ import { assertManagedSyncAllowed } from './worktree-refresh.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, pinnedBlob, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
-import { addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, readSyncHoldPolicy, recoveredReport, writeGitHold } from './sync-holds.ts';
+import { addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, readSyncHoldPolicy, recordSyncConversion, recoveredReport, writeGitHold } from './sync-holds.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -316,9 +316,14 @@ async function convertBlockedCursor(engine: BrainEngine, blocked: Cursor, key: s
   const base: Cursor = { ...blocked }; delete base.pending;
   const again = await freezeEntry(engine, base, key, assertActive, run);
   const converted = [...(blocked.convertedFromFailed ?? []), previous.requestId];
-  if ('hold' in again) return saveCursor(engine, key, blocked, advanceHeld(base, converted), false, assertActive, heldWrite(blocked, again.hold, run.observedAt!));
+  const logged = (outcome: 'held' | 'refrozen') => (tx: BrainEngine) => recordSyncConversion(tx, blocked.sourceId, blocked.incarnation,
+    { request_id: previous.requestId, path: previous.intent.path ?? null, slug: previous.slug, run_id: blocked.runId, outcome });
+  if ('hold' in again) {
+    return saveCursor(engine, key, blocked, advanceHeld(base, converted), false, assertActive,
+      async tx => { await heldWrite(blocked, again.hold, run.observedAt!)(tx); await logged('held')(tx); });
+  }
   if (previous.converted && again.intent.rawHash === previous.intent.rawHash && again.intent.content === previous.intent.content) return blocked;
-  return saveCursor(engine, key, blocked, { ...blocked, convertedFromFailed: converted, pending: { ...again, converted: true } }, false, assertActive);
+  return saveCursor(engine, key, blocked, { ...blocked, convertedFromFailed: converted, pending: { ...again, converted: true } }, false, assertActive, logged('refrozen'));
 }
 
 /**
