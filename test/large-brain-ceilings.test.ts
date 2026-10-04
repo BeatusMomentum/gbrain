@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { writeLargeWorktree } from './helpers/large-worktree.ts';
 
+const LARGE_CHECKOUT_FILES = 20_000;
 const KEYS = { OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined, VOYAGE_API_KEY: undefined };
 
 function commitWorktree(root: string, files: number): void {
@@ -68,7 +69,7 @@ describe('large-brain ceilings (CLI)', () => {
   test('sources add registers a 20,000-file checkout', async () => {
     const home = await freshBrain('add');
     const repo = join(dir, 'add', 'repo');
-    commitWorktree(repo, 20_000);
+    commitWorktree(repo, LARGE_CHECKOUT_FILES);
     const add = await runCli(['sources', 'add', 'big', '--path', repo], { home, env: KEYS, timeoutMs: 180_000 });
     expect(add.stderr).not.toContain('request_too_large');
     expect(add.exitCode, add.stderr).toBe(0);
