@@ -1991,10 +1991,8 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   `src/core/model-pricing.ts` (`CANONICAL_PRICING` + `canonicalLookup`). Every other table
   (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, the contradictions/cross-modal/skillopt cost
   views) is a DERIVED view, never a hand-copied duplicate — so cross-table price drift is
-  structurally impossible; takes-quality reads `pricing.overrides`, then `canonicalLookup`. Update a
-  price in `model-pricing.ts` only; each consumer keeps its own miss policy (an unpriced model
-  warns and runs, and refuses with a register-the-rate fix only under a user-set cap), not its
-  own numbers. Pinned by `test/model-pricing.test.ts`
+  structurally impossible (takes-quality reads `pricing.overrides`, then canonical). Update a
+  price in `model-pricing.ts` only; each consumer keeps its own miss policy, not its own numbers. Pinned by `test/model-pricing.test.ts`
   (drift guard asserts each view equals canonical). Embeddings price separately in
   `embedding-pricing.ts` (different unit).
 - **Module-size ratchet.** `scripts/module-size-limits.tsv` pins per-file line ceilings

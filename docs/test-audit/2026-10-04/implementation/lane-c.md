@@ -80,3 +80,39 @@ return no claims; press attribution leaks; one strong take typed as a bet)
 and incomplete archetype labels (valid unlabeled claims count as imprecise).
 Next: complete the labels per archetype, then fix bio-fact recall and
 press-claim attribution, then rerun.
+
+## Postgres arms and blind pins sub-lane (D8, D9)
+
+### D8: unit-lane PostgreSQL arms
+
+`scripts/check-postgres-lane-coverage.ts` (TS AST) found 167 test files outside
+`test/e2e/` with a DATABASE_URL-gated arm (`testBackends()` loops and gated
+`process.env.DATABASE_URL` reads included, not only arms that report `skip`).
+111 were already covered, mostly by `test/e2e` `registerPostgresTests`
+wrappers; two of the audit's seven (export-safety via
+`test/e2e/export-snapshot-postgres`, symbol-resolver-projection-race via
+`projection-recovery-parity`) were among them. 55 ran in no lane; they now run
+in persistence-validation's `unit-postgres-arms` job (2 shards: 215 and 242
+pass, 0 fail, 0 skip on a fresh pgvector database). One allowlist row:
+`test/export-scale.slow.test.ts` (its 100,001-page arm passes but takes 527s).
+One real failure, fixed: `persistence-memory-mutations` shared the
+`gbrain_test` database and inherited another file's embedding width ("expected
+1024 dimensions, not 1536"); it now uses `isolatedPersistencePostgres`.
+Guard probe: removing a file from the workflow list fails the guard with the
+exact fix line (`test/scripts/postgres-lane-coverage.test.ts`, 10 cases).
+
+### D9: retired blind pins and their behavioral owners
+
+| Deleted / changed test | Probe edit | Result | Surviving owner | Owner result |
+|---|---|---|---|---|
+| `test/fact-withdrawal-prepare-wiring.test.ts` › import-prepare row | `src/core/persistence/import-prepare.ts:198` `await ready.validate(tx)` -> `if (Date.now() < 0) await ready.validate(tx)` | pin passes 7/7 (blind) | `persistence-file-import` › "publication refuses a fact withdrawn between managed-import preparation and publication" (PGLite and Postgres) | fails (boundaries include `before_publication`, `before_file`) |
+| same › sync row | disable validate at `sync-prepare.ts:415` | pin passes (blind); `persistence-sync-failures` also passes | `persistence-managed-sync` › "a fact withdrawn between sync preparation and canonical file writeback" | fails |
+| same › connector row | disable validate at `connector-sync.ts:1057` | pin passes (blind); `google-attachment-backfill` also passes | `persistence-connectors` › "a fact withdrawn between bound connector preparation" | fails |
+| same › reconcile row | disable validate at `reconcile-prepare.ts:106` | equivalent mutant (the preview's `withdrawals_digest` pin refuses first) | `persistence-reconcile` › "a fact withdrawn between reconciliation preparation" | fails with both the digest check and validate disabled |
+| same › page-prepare and coordinator rows | page-prepare:394; coordinator:265 | pin passes (blind) | `withdrawal-publication-file`; two `persistence-file-import` cases | fail (1; 3) |
+| same › sync code-file and rename rows | disable validate | equivalent mutants (code imports' validate is a no-op; `applyPrepared` repeats the rename check) | n/a | n/a |
+| `think-save-source` pins | clear the save scope in `think.ts`, `ops/takes.ts`, `auto-think.ts` | pin passes 5/5 (blind) | `think-cli-source-flag.serial` (CLI `--save` x3, think op), `auto-think-phase` (scoped cycle) | each fails under its probe |
+| `post-upgrade-banner` pin | `upgrade.ts:819` `if (Date.now() < 0) console.log(line)` | pin passes (blind) | `post-upgrade-banner` › real `gbrain post-upgrade` CLI block on a brain with findings | fails |
+| `autopilot-operator-pause` pins | disable worker gate 1 (`worker.ts:830`), gate 2 (`:894`), shadow the daemon's `autopilotPaused` | pin passes each time (blind) | in-process worker parks then runs after resume; released-un-run job claimed as the pause lands; spawned daemon reports the pause and resumes | each fails under its probe |
+| `embed-concurrency-pool-clamp` pins | `workers: Number(process.env.GBRAIN_EMBED_CONCURRENCY ?? 20)` at `embed.ts:1378` and `:2100` | pin passes 4/4 (blind) | `embed.serial` #5183 case (pool 3, both loops) | fails under each |
+| `consent` source pin (~195) | extra argv on the post-upgrade `applyMigrations` call | pin passes (blind) | `upgrade-no-autopilot.serial` › "post-upgrade passes the opt-out to migrations"; the pin became a direct consent-matrix assertion | fails |

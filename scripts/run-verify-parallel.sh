@@ -93,6 +93,9 @@ CHECKS=(
   # D7: a test that gates execution on a GBRAIN_* opt-in the operator-env
   # preload strips is a silent skip; TS AST scan, ~2s.
   "check:test-env-opt-ins"
+  # D8: every DATABASE_URL-gated PostgreSQL arm outside test/e2e/ runs in a
+  # named Postgres lane (TS AST).
+  "check:postgres-lanes"
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"
