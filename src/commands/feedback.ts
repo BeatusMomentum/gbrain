@@ -8,6 +8,7 @@
  * Zero LLM calls. Ratings come from `gbrain rate` / the rate_answer op.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { loadFeedbackSettings } from '../core/feedback/settings.ts';
 import { droppedFeedbackEvents } from '../core/feedback/record.ts';
 import { feedbackStatus, resetRetrievalWeights } from '../core/feedback/store.ts';
@@ -45,7 +46,7 @@ export async function runFeedback(engine: BrainEngine, args: string[]): Promise<
   }
   if (sub !== 'status') {
     process.stderr.write(`Unknown subcommand: ${sub}\n\n${HELP}`);
-    process.exitCode = 2;
+    setCliExitVerdict(2);
     return;
   }
   const [settings, status] = await Promise.all([loadFeedbackSettings(engine), feedbackStatus(engine)]);

@@ -1,4 +1,3 @@
-import { FEEDBACK_CONFIG_KEYS } from './feedback/settings.ts';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, renameSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
@@ -1316,7 +1315,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
   // Retrieval feedback (feedback/settings.ts) and relational triplet scoring.
-  ...FEEDBACK_CONFIG_KEYS, 'search.triplet_scoring', 'search.triplet_penalty',
+  'feedback.enabled', 'feedback.learn', 'feedback.influence', 'feedback.implicit', 'feedback.alpha',
+  'feedback.max_ratings_per_hour', 'feedback.event_retention_days', 'feedback.rating_prompt', 'search.triplet_scoring', 'search.triplet_penalty',
   // #4415: per-brain query-intent pattern extensions (JSON bank→regex[]),
   // merged over the shipped banks in src/core/search/query-intent.ts.
   'search.intent_patterns',

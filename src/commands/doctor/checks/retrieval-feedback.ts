@@ -42,7 +42,7 @@ async function runRetrievalFeedback(ctx: DoctorContext): Promise<Check[]> {
 }
 
 export const retrievalFeedbackEntry: DoctorEntry = {
-  name: 'retrieval_feedback',
+  name: 'retrieval_feedback_health',
   emits: ['retrieval_feedback_health'],
   run: runRetrievalFeedback,
 };

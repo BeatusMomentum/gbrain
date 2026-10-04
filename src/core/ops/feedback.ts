@@ -7,6 +7,7 @@ import { rateAnswer } from '../feedback/rate.ts';
 
 const rate_answer: Operation = {
   name: 'rate_answer',
+  area: 'search',
   outputRedaction: 'no_stored_text',
   mutating: true,
   idempotent: true,

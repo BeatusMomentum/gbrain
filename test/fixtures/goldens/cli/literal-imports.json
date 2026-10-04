@@ -71,6 +71,9 @@
       "features": [
         "./commands/features.ts"
       ],
+      "feedback": [
+        "./commands/feedback.ts"
+      ],
       "files": [
         "./commands/files.ts"
       ],
