@@ -1812,6 +1812,7 @@ CREATE TABLE IF NOT EXISTS chronicle_page_state (
   cost_usd NUMERIC,
   unpriced BOOLEAN NOT NULL DEFAULT false,
   event_slugs TEXT[] NOT NULL DEFAULT '{}',
+  event_hashes TEXT[] NOT NULL DEFAULT '{}',
   decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, page_id, content_hash, extractor_version)

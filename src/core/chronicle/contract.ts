@@ -56,6 +56,9 @@ export interface ChronicleLedgerRow {
   unpriced: boolean;
   /** Event page slugs this content produced (the generation reconciliation reads). */
   event_slugs: string[];
+  /** content_hash of each event page as the extractor wrote it, parallel to event_slugs. An event whose
+   *  live hash is no longer in any row of its depth page was edited by an operator and is never touched. */
+  event_hashes: string[];
   decided_at: Date | string;
   updated_at: Date | string;
 }

@@ -80,6 +80,11 @@ export type CyclePhase =
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
   | 'drift'
+  // #5876 — Life Chronicle: extracts timeline events from meeting,
+  // conversation and calendar pages decided at write time (ledger rows),
+  // bounded per run and by a rolling daily limit. Default ON
+  // (`gbrain config set auto_chronicle false` opts out).
+  | 'chronicle'
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
@@ -169,6 +174,9 @@ export const ALL_PHASES: CyclePhase[] = [
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
   'drift',
+  // #5876 — Life Chronicle events. Global (scans every source with per-source
+  // fairness). AFTER drift, BEFORE embed so new event pages embed same-cycle.
+  'chronicle',
   // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
   // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
   // Ordered AFTER calibration_profile (matches the runCycle dispatch
@@ -327,6 +335,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'calibration_profile',
   // #2653 — writes the reports/drift-<date> page.
   'drift',
+  // #5876 — writes event pages, projections and the chronicle ledger.
+  'chronicle',
   // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
   // synthesize_concepts writes concept-typed pages + tier updates. Both
   // mutate DB state and need the lock.
@@ -2728,6 +2738,38 @@ export async function runCycle(
             details: { ...(r.totals ?? {}) },
           };
         }, 'drift');
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // ── #5876: Life Chronicle ──────────────────────────────────
+    // Default ON. Executes ledger rows decided at write time (and backfill
+    // rows): ≤50 items and a wall-time bound per run, per-source fairness,
+    // a rolling daily reservation and a per-page BudgetTracker scope.
+    if (phases.includes('chronicle')) {
+      checkAborted(cycleSignal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'chronicle',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.chronicle');
+        const { runPhaseChronicle } = await import('./cycle/chronicle.ts');
+        const { result, duration_ms } = await timePhase(() =>
+          runPhaseChronicle(engine, {
+            dryRun,
+            signal: cycleSignal,
+            yieldDuringPhase: opts.yieldDuringPhase,
+            deadlineAtMs: opts.deadlineAtMs ?? null,
+          }), 'chronicle',
+        );
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

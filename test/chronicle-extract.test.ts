@@ -1,15 +1,14 @@
 /**
  * v0.42.x — Life Chronicle (#2390) auto-emit extractor (Phase A.3).
  * PGLite in-memory. Covers eligibility, the extractor's parse barrier +
- * idempotent writes (event pages + timeline projection), and the backstop's
- * auto_chronicle gating + enqueue. The LLM judge is stubbed so the deterministic
+ * idempotent writes (event pages + timeline projection). The write-path
+ * decision and execution live in test/chronicle-auto-*.test.ts. The LLM judge is stubbed so the deterministic
  * write path is tested without a gateway.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isChronicleEligible } from '../src/core/chronicle/eligibility.ts';
 import { runChronicleExtract, parseJudgeJson, type ChronicleJudge } from '../src/core/chronicle/extract-events.ts';
-import { runChronicleBackstop } from '../src/core/chronicle/backstop.ts';
 
 let engine: PGLiteEngine;
 const LONG_BODY = 'A'.repeat(120);
@@ -170,30 +169,5 @@ describe('parseJudgeJson failure signalling (#2606)', () => {
     // Truncated mid-array (the maxTokens-cap shape from the issue).
     expect(parseJudgeJson('[{"when":"2026-06-18","who":["a"],"what":"long ev')).toBeNull();
     expect(parseJudgeJson('{"events": 1}')).toBeNull();
-  });
-});
-
-describe('runChronicleBackstop gating', () => {
-  beforeEach(async () => {
-    await engine.unsetConfig('auto_chronicle');
-    await engine.putPage('meetings/bs', { type: 'meeting', title: 'bs', compiled_truth: LONG_BODY });
-  });
-
-  test('skips when auto_chronicle is off (default)', async () => {
-    const r = await runChronicleBackstop({ slug: 'meetings/bs', type: 'meeting', compiled_truth: LONG_BODY }, { engine, sourceId: 'default' });
-    expect(r).toEqual({ enqueued: false, skipped: 'auto_chronicle_off' });
-  });
-
-  test('skips a diary page before consulting the flag', async () => {
-    const r = await runChronicleBackstop({ slug: 'life/diary/x', type: 'diary', compiled_truth: LONG_BODY }, { engine, sourceId: 'default' });
-    expect(r).toEqual({ enqueued: false, skipped: 'diary_excluded' });
-  });
-
-  test('enqueues a chronicle_extract job when enabled + eligible', async () => {
-    await engine.setConfig('auto_chronicle', 'true');
-    const r = await runChronicleBackstop({ slug: 'meetings/bs', type: 'meeting', compiled_truth: LONG_BODY }, { engine, sourceId: 'default' });
-    expect(r.enqueued).toBe(true);
-    const jobs = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'chronicle_extract'`);
-    expect(Number(jobs[0].n)).toBeGreaterThanOrEqual(1);
   });
 });
