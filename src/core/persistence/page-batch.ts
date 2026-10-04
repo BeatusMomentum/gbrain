@@ -31,7 +31,7 @@ export const PAGE_BATCH_MAX_PAGES = 50;
 export const PAGE_BATCH_MAX_BYTES = 8 * 1024 * 1024;
 export const PAGE_BATCH_DEFAULT_WAIT_MS = 25_000;
 /** Page preparation reads run this many pages at a time. */
-const PREPARE_CONCURRENCY = 4;
+const PREPARE_CONCURRENCY = 8;
 /** Batch admission is one transaction over every page; it gets more than a single write's budget. */
 const BATCH_ADMISSION_BUDGET_MS = 30_000;
 const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty']);
