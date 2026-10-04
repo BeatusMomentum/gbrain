@@ -87,7 +87,10 @@ export function assertNoPhysicalRootOverlap(root: string): void {
   }
   if (!existsSync(root)) return;
   const visit = (directory: string) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    let entries;
+    try { entries = readdirSync(directory, { withFileTypes: true }); }
+    catch (error) { if (directory !== root && (error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    for (const entry of entries) {
       if (entry.name.startsWith(RESERVATION_PREFIX) && entry.name.endsWith('.json') || directory !== root && entry.name === PHYSICAL_ROOT_MARKER) {
         throw physicalRootError('This root contains another reserved canonical root.');
       }
