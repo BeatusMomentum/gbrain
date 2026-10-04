@@ -7,7 +7,7 @@ import {
   AUTO_CHRONICLE_KEEP_ARGV, AUTO_CHRONICLE_OPT_OUT_ARGV, CHRONICLE_NOTICE_SHOWN_KEY, autoChronicleNeedsAcknowledgement,
   chronicleSettings,
 } from './config.ts';
-import { chronicleBackfillArgv } from './reasons.ts';
+import { CHRONICLE_RUN_NOW_ARGV, chronicleBackfillArgv } from './reasons.ts';
 
 export interface ChronicleProviderView {
   /** Configured chat model id, or null when it cannot be resolved. */
@@ -38,9 +38,8 @@ export async function autoChronicleUpgradeNotice(engine: BrainEngine, view?: Chr
   const provider = view ?? await providerView(engine);
   const ceiling = settings.dailyLimit * settings.jobBudgetUsd;
   const since = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
-  const runs = engine.kind === 'pglite'
-    ? 'On this PGLite brain, pending pages run inside the autopilot cycle; `gbrain dream --phase chronicle` runs them now.'
-    : 'On this Postgres brain, pending pages run in the autopilot cycle; `gbrain dream --phase chronicle` runs them now.';
+  const runs = `On this ${engine.kind === 'pglite' ? 'PGLite' : 'Postgres'} brain, pending pages run in the autopilot cycle; ` +
+    `\`${CHRONICLE_RUN_NOW_ARGV.join(' ')}\` runs them now.`;
   const cost = provider.priced
     ? `Worst case: ${settings.dailyLimit} calls/day x $${settings.jobBudgetUsd.toFixed(2)} per-page cap = $${ceiling.toFixed(2)}/day with ${provider.model}. ` +
       'The cap is per page, not a daily budget; typical pages cost far less.'

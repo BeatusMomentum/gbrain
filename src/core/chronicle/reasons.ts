@@ -1,6 +1,7 @@
 // Life Chronicle (#5876): the one reason table for automatic event extraction, and the
 // `chronicle_backstop` write-receipt field built from it. Docs (docs/guides/life-chronicle.md)
 // and tests render from CHRONICLE_REASONS; nothing else spells these codes out.
+import { pricingSetCommand } from '../budget/no-pricing.ts';
 
 /**
  * Local equivalent of the agent-operator `Action` (GBRA-42 `src/core/agent-output.ts`), same field
@@ -104,8 +105,8 @@ export const CHRONICLE_REASONS = {
       why: 'Ask the user to configure a chat provider key on the brain host (see docs/ai-providers/); pending pages run on the next cycle.' }) },
   no_pricing: { stage: 'execution',
     meaning: (ctx) => `chronicle.job_budget_usd was set explicitly, and gbrain has no price for ${ctx.model ?? 'the chat model'}, so the cap cannot be enforced.`,
-    fix: (ctx) => ({ argv: ['gbrain', 'pricing', 'set', ctx.model ?? '<model>', '--input', '<usd-per-1M-input-tokens>',
-      '--output', '<usd-per-1M-output-tokens>', '--source', '<pricing-page-url>'], consent: [], actor: 'agent', requires_exclusive: false,
+    fix: (ctx) => ({ argv: ['gbrain', 'pricing', 'set', ctx.model ?? '<model>', ...pricingSetCommand('model', 'chat').split(' ').slice(4)],
+      consent: [], actor: 'agent', requires_exclusive: false,
     why: 'Look up the model\'s current price and register it on the brain host; extraction retries on the next cycle.',
     inputs: [{ name: 'usd-per-1M-input-tokens', how: 'the provider pricing page' },
       { name: 'usd-per-1M-output-tokens', how: 'the provider pricing page' },
