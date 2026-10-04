@@ -969,7 +969,7 @@ More: [docs/guides/move-to-postgres.md#target-requirements](../../docs/guides/mo
 |---|---|---|---|---|---|---|
 | A database has a relation the graduation inventory does not classify, so moving it could lose data. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
-Reasons: `newer_target`, `missing_row`.
+Reasons: `newer_schema`, `missing_inventory_row`.
 
 More: [docs/guides/move-to-postgres.md#inventory](../../docs/guides/move-to-postgres.md#inventory)
 

@@ -21,6 +21,7 @@ import {
 import { probeStatus, statusPayload, initialStatusState } from '../src/mcp/status-mode.ts';
 import { graduationStateCheck } from '../src/commands/doctor/checks/engine-graduation.ts';
 import { assessPgliteLeftovers } from '../src/core/pglite-leftovers-check.ts';
+import { inspectLockHolder } from '../src/core/pglite-lock.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 const target = { id: 'tid', host: 'db.acme-example.test', port: 5432, database: 'brain', user: 'alice' };
@@ -151,4 +152,24 @@ describe('doctor and engine status', () => {
     expect(report.graduation).toMatchObject({ state: 'graduated', run_id: 'run-1', tombstone: { moved_to: `${dataDir}.graduated-run-1` } });
     expect(JSON.stringify(report)).not.toContain(':pw@');
   }, 60_000);
+});
+
+describe('resident serve hand-off', () => {
+  test('a stdio serve holding a real PGLite brain releases it and exits 75 when a live run writes its marker', async () => {
+    const env = { ...process.env, GBRAIN_HOME: home, GBRAIN_DATABASE_URL: '', DATABASE_URL: '', GBRAIN_NO_UPDATE_CHECK: '1', GBRAIN_SWEEP: '0' };
+    rmSync(dataDir, { recursive: true, force: true });
+    rmSync(join(home, '.gbrain', 'config.json'));
+    const init = Bun.spawnSync(['bun', CLI, 'init', '--pglite', '--no-embedding', '--path', dataDir, '--json'], { env, stdout: 'pipe', stderr: 'pipe' });
+    expect(init.exitCode, init.stderr.toString()).toBe(0);
+    const serve = Bun.spawn(['bun', CLI, 'serve'], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+    const deadline = Date.now() + 45_000;
+    while (!inspectLockHolder(dataDir).held && Date.now() < deadline) await Bun.sleep(100);
+    expect(inspectLockHolder(dataDir).held).toBe(true);
+    writeMarker({ pid: process.pid, state: 'quiesced' });
+    const code = await Promise.race([serve.exited, Bun.sleep(20_000).then(() => 'timeout' as const)]);
+    if (code === 'timeout') serve.kill();
+    expect(code).toBe(75);
+    expect(await new Response(serve.stderr).text()).toContain('graduation_in_progress');
+    expect(inspectLockHolder(dataDir).held).toBe(false);
+  }, 90_000);
 });

@@ -92,14 +92,14 @@ export function sourceWriterHeldError(opts: { owner: LockOwner | null; pid?: num
 }
 
 /** `graduation_unclassified_table`: a relation the built-in inventory does not list. */
-export function unclassifiedTableError(opts: { relations: readonly string[]; side: 'source' | 'target'; cause: 'newer_target' | 'missing_row'; spelling?: GraduationCommandSpelling }): OperationError {
+export function unclassifiedTableError(opts: { relations: readonly string[]; side: 'source' | 'target'; cause: 'newer_schema' | 'missing_inventory_row'; spelling?: GraduationCommandSpelling }): OperationError {
   const list = opts.relations.join(', ');
   const docs = GRADUATION_DOCS.graduation_unclassified_table;
-  if (opts.cause === 'newer_target') {
+  if (opts.cause === 'newer_schema') {
     const why = `The ${opts.side} database has relations this gbrain does not know (${list}); it was created by a newer gbrain, and copying unknown tables could lose data.`;
     return opError('graduation_unclassified_table', `The ${opts.side} has relations this gbrain version does not classify: ${list}.`,
       'Ask the user to upgrade gbrain on this machine (fix), then preview the move again.',
-      { why, reason: 'newer_target', docs,
+      { why, reason: 'newer_schema', docs,
         fix: { argv: ['gbrain', 'upgrade'], consent: [], actor: 'user', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}),
           why: `${why} Upgrading this binary gives it the newer inventory.`,
           user_message: `The Postgres database was set up by a newer gbrain than this one. Can you upgrade gbrain here (gbrain upgrade)? Then I'll check the move again. ${NOTHING_CHANGED}` } });
@@ -107,7 +107,7 @@ export function unclassifiedTableError(opts: { relations: readonly string[]; sid
   const why = `This gbrain's own migrations created relations its graduation inventory does not list (${list}). Moving without a classification for every table could drop data, so the move refuses; this is a gbrain bug.`;
   return opError('graduation_unclassified_table', `The graduation inventory has no row for: ${list}.`,
     'Report this to the gbrain maintainers with `gbrain doctor --json` output; nothing changed and the brain keeps working on PGLite.',
-    { why, reason: 'missing_row', docs,
+    { why, reason: 'missing_inventory_row', docs,
       fix: { consent: [], actor: 'agent', requires_exclusive: false, docs, verify: planVerify(opts.spelling ?? {}),
         why, user_message: `gbrain found a table it does not know how to move (${list}), which is a gbrain bug. Your brain stays on PGLite and keeps working; I can report it to the maintainers.` } });
 }

@@ -502,7 +502,7 @@ function installStdioLifecycle(
   let shuttingDown = false;
   let parentWatchdog: unknown = null;
   let idleSweepTimer: unknown = null;
-  let graduationHandoffTimer: unknown = null;
+  let graduationHandoffTimer: ReturnType<typeof setInterval> | null = null;
   let shutdownExitCode = 0;
   let activateIdleActivityTracking = (): void => {};
   const beginShutdown = (reason: string): void => {
@@ -524,7 +524,7 @@ function installStdioLifecycle(
       idleSweepTimer = null;
     }
     if (graduationHandoffTimer !== null) {
-      deps.clearInterval(graduationHandoffTimer);
+      clearInterval(graduationHandoffTimer);
       graduationHandoffTimer = null;
     }
 
@@ -582,9 +582,10 @@ function installStdioLifecycle(
 
   // Engine graduation hand-off (§13): a live run's intent marker asks the PGLite
   // serve that holds the brain to finish, release the lock and exit 75 so the
-  // run can take the brain; a relaunched serve then exits the same way.
+  // run can take the brain; a relaunched serve then exits the same way. A real
+  // unref'd timer (a stat per tick), separate from the injectable lifecycle timers.
   if (engine.kind === 'pglite') {
-    graduationHandoffTimer = deps.setInterval(() => {
+    graduationHandoffTimer = setInterval(() => {
       if (shuttingDown || isEngineDegradedForServe(engine)) return;
       const request = graduationHandoffRequested();
       if (!request) return;
@@ -592,7 +593,7 @@ function installStdioLifecycle(
       shutdownExitCode = writeServeGraduationEnvelope(request, (s) => deps.log(s.trimEnd()));
       drainThenShutdown('graduation-handoff');
     }, GRADUATION_HANDOFF_POLL_MS);
-    (graduationHandoffTimer as { unref?: () => void } | null)?.unref?.();
+    graduationHandoffTimer.unref?.();
   }
 
   // Signal-based termination. SIGTERM: daemon ask. SIGINT: user Ctrl-C.
