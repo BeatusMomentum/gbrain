@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './persistence-postgres.ts';
@@ -12,6 +11,7 @@ import { syncLockId } from '../../src/core/db-lock.ts';
 import { testBackends } from './test-backends.ts';
 import { CONNECTOR_WAIT_BUDGET_MS, connectorWaitBudget } from '../../src/core/persistence/connector-sync.ts';
 import { testWaitMs } from './wait-for.ts';
+import { connectTemplateBrain } from './brain-template.ts';
 import { readManagedConnectorState } from '../../src/core/persistence/connector-state.ts';
 
 export const options = { noEmbed: true, noExtract: true, noSchemaPack: true };
@@ -53,10 +53,7 @@ export function createConnectorFixture() {
     // Paused-owner fixtures stop on a 1.5 s wait budget instead of the production 30 s.
     connectorWaitBudget.ms = testWaitMs(1_500);
     if (backends.includes('pglite')) {
-      const lite = new PGLiteEngine();
-      await lite.connect({ database_path: join(home, 'database') });
-      await lite.initSchema();
-      engines.push(lite);
+      engines.push(await connectTemplateBrain(join(home, 'database')));
     }
     if (backends.includes('postgres')) {
       const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
