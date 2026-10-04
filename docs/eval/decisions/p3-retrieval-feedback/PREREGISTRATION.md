@@ -26,12 +26,12 @@ guardrail note below).
 | Corpus | Split | Unit |
 |---|---|---|
 | LoCoMo | P0 split `eval/decisions/splits/locomo.json` (gbrain-evals): 3 dev conversations, 7 sealed | conversation = one brain |
-| LongMemEval-S | P0 split `eval/decisions/splits/lme-s.json` | question (own haystack) |
-| world-v1 relational (template + paraphrase) | proposed: [`world-v1-relational-split.json`](world-v1-relational-split.json), 73 dev / 72 sealed base questions, P0 method (`sha256(salt, NUL, id)` order, salt `gbrain-evals-heldout-split-v1`, first half dev); template and paraphrase forms of one question share a half | one shared brain |
+| LongMemEval-S | P0 split `eval/decisions/splits/lme-s.json`: all 500 questions are dev (no sealed portion) | question (own haystack) |
+| world-v1 relational (template + paraphrase) | P0 split `eval/decisions/splits/world-v1-relational.json`: 73 dev / 72 sealed base questions; template and paraphrase forms of one question share a half | one shared brain |
 | NamedThingBench core + relational | as committed | query |
 
-The world-v1 split is a proposal: P0 has no world-v1 split yet. Only its dev half was read. The custodian adopts it
-or replaces it before any sealed world-v1 cell; a replacement must still exclude every dev base question listed in it.
+P0's frozen world-v1 relational split has the same dev half as the split these dev runs used, so no sealed world-v1
+question has been read.
 
 ## Experiments and pass bars
 
@@ -50,8 +50,9 @@ frozen and online arms; full density and a 25% subsampled sparse arm. Sealed: `t
 repetitions ± SD (P0 judge) plus judge-free Recall@5 of the gather. Reported: implicit events per 100 answers.
 The `think` model is the frozen build's default.
 
-**E3. No-regression guards.** LongMemEval-S sealed: retrieval lists identical between baseline and feedback arms
-(no ratings exist, so the stage must be a no-op). NamedThingBench core + relational with weights trained on world-v1
+**E3. No-regression guards.** LongMemEval-S: retrieval lists identical between baseline and feedback arms (no
+ratings exist, so the stage must be a no-op). LongMemEval-S has no sealed portion (P0 split), so this part is decided
+on the full 500-question dev run, decision `p3-e3-lmes-full-dev`. NamedThingBench core + relational with weights trained on world-v1
 dev: 0 hit@1 losses. p50/p95 read latency deltas.
 
 **E4. Triplet scoring.** E4a (wider relational fetch only) and E4b (wider fetch + triplet scoring) against baseline on
@@ -70,16 +71,23 @@ Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2
 - If E1 fails on both corpora: the feedback subsystem leaves the pull request.
 - **Triplet scoring ON** iff E4b sealed NDCG@10 +2.0 points or more with CI excluding 0 and 0 hit@1 losses on the
   plain relational sets; E4a ships alone if it alone passes the same bar. Otherwise `search.triplet_scoring` stays off.
+  The wider fetch only runs with triplet scoring on, so E4a is not a separate arm in this build. Dev evidence below
+  shows no effect on the world-v1 relational dev half and a 48% fire rate, below the 80% precondition, and the
+  constrained-relational set does not exist; unless that set is built, no sealed E4 run is requested and
+  `search.triplet_scoring` stays off.
 - Declared single-value relations (plan E5) are not part of this pull request.
 
 Budget caps: E1 $16, E2 $180, E3 $20, E4 $12 (plan total cap $260, which also covered the dropped E5).
 
 ## Harness requirements
 
-The P0 decision kit (milestone M1) runs independent-question memory-qa sources and category runners as-is. These runs
-additionally need, from milestone M2 or the custodian: the sequential replay mode with a per-question rating callback
-(frozen and online orders, `feedback.learn=false` scoring, per-arm database copies); `think` replay with judge 10x for
-E2; arm config applied to category runners (E4 sets `search.triplet_scoring`); the relational-arm fire rate.
+- E1: `eval/runner/feedback-replay-locomo.ts` and `eval/runner/feedback-replay-world.ts` (gbrain-evals
+  `p0-heldout-harness`), custodian mode `--split sealed --decision-id <id> --purpose <text>` with the access log.
+- E2: not available yet. The memory-qa `think` lane calls `runThink` directly, so no answer is recorded and no
+  citation signal accrues; E2 needs `think` through the `think` operation (trusted local context) in a seeded
+  stream, scored with `feedback.learn=false`, judge 10x.
+- E3: the P0 kit (`eval:decide`), LongMemEval-S as above; NamedThingBench through its committed script.
+- E4: per-arm search pins (`GBRAIN_EVAL_SEARCH_PINS`) cover `search.triplet_scoring`; see the E4 note above.
 
 ## Dev evidence
 
@@ -104,6 +112,16 @@ shows 0, so the swaps came from cache warm-up, not from the feature.
 | world-v1 relational dev (74) | 0.05 | +1.32 [0.4, 2.6] | +1.77 [0.6, 3.4] | +0.84 | +0.17 |
 | world-v1 relational dev (74) | 0.1 | +1.71 [0.5, 3.3] | +2.48 [0.7, 4.6] | +0.42 | −0.80 |
 | world-v1 relational dev (74) | 0.2 | +2.20 [0.6, 3.9] | +4.70 [2.7, 7.3] | +1.46 | −1.33 |
+
+**E3 LongMemEval-S, all 500 dev questions** (P0 kit, decision
+[`p3-e3-lmes-full-dev`](../p3-e3-lmes-full-dev/), baseline `master` 6622a119 against build `70ad30e4e`, feedback on, no
+ratings): identical retrieval lists on all 500 questions (strict Recall@5 0.9277 on both arms), mean read latency
++0.6 ms [−0.3, 1.3], p95 74.8 ms against 73.3 ms. Cost $6.15. This settles the LongMemEval-S part of E3.
+
+**E4-shaped triplet probe on the world-v1 relational dev half** (146 template + paraphrase questions, one shared
+index, build `70ad30e4e`, cost $0.02): with `search.triplet_scoring` on at penalties 1, 3 and 6, ΔNDCG@10 is −0.05
+points [−0.23, 0.06] at every penalty, hit@3 is unchanged (0.692) and there are 0 hit@1 losses or wins. The
+relational arm fires on 48% of these questions. Summary: [`dev/triplet-world-v1-dev.json`](dev/triplet-world-v1-dev.json).
 
 Reading: on a shared entity brain, where the same people and company pages answer many different questions,
 learned usefulness transfers and beats exposure frequency. On conversation sessions, where a session that answers one
