@@ -1,7 +1,7 @@
 /**
  * The crash robot's in-process contracts (scripts/persistence/ops.ts,
  * generator.ts, model.ts, robot-driver.ts, shrink.ts) and the PGLite release
- *
+ * of claims a dead owner left behind (effect-journal.ts releaseAbandonedClaims).
  *
  * Protects: the op-descriptor protocol refuses malformed descriptors; the five
  * cross-boundary sequences exist and pass the reference model through the real
@@ -14,15 +14,16 @@
  * Seams: none (the fault hook stays uninstalled); PGLite.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { descriptor, parseDescriptor } from '../scripts/persistence/ops.ts';
+import { descriptor, executeOp, parseDescriptor } from '../scripts/persistence/ops.ts';
 import { crossBoundarySequences, randomSchedule } from '../scripts/persistence/generator.ts';
 import { ROBOT_TOPOLOGY, restrict } from '../scripts/persistence/robot-driver.ts';
 import { shrinkRun } from '../scripts/persistence/shrink.ts';
 import { runSchedule } from '../scripts/persistence/crash-robot.ts';
 import { prepareTopology } from '../scripts/persistence/history-fixture.ts';
+import { claimPersistenceEffect, releaseAbandonedClaims } from '../src/core/persistence/effect-journal.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -91,4 +92,30 @@ describe('reference model on master behavior', () => {
       expect({ label: schedule.label, violations: result.violations }).toEqual({ label: schedule.label, violations: [] });
     }
   }, 180_000);
+});
+
+describe('PGLite releases claims a dead owner left behind', () => {
+  test('a claim written before this owner started is released; a newer one is kept', async () => {
+    await robotBrain(async ({ world, checkouts }) => {
+      const engine = world.engine;
+      // A Git effect that failed on a stale index.lock is queued for a later attempt.
+      const lock = join(checkouts[0], '.git', 'index.lock'); writeFileSync(lock, '');
+      const seen = await executeOp(world, descriptor('p', 'put_page', 'local', 'robot-0', { slug: 'notes/claim', content: '---\ntype: note\ntitle: c\n---\n\nBody.\n' }));
+      expect(seen.status).toBe('committed');
+      let effect: { id: string } | undefined;
+      for (let i = 0; i < 200 && !effect; i++) {
+        [effect] = await engine.executeRaw<{ id: string }>("SELECT id::text FROM persistence_effects WHERE kind='git' AND state='queued' AND attempts>0");
+        if (!effect) await Bun.sleep(50);
+      }
+      await disposePersistenceConsumer(engine); rmSync(lock);
+      await engine.executeRaw('UPDATE persistence_effects SET next_attempt_at=now() WHERE id=$1', [effect!.id]); // what retry-effects does
+      const [owner] = await engine.executeRaw<{ host: string }>('SELECT owner_host_id::text AS host FROM persistence_worktrees LIMIT 1');
+      const claimed = await claimPersistenceEffect(engine, owner.host);
+      expect({ id: String(claimed?.id), state: claimed?.state }).toEqual({ id: effect!.id, state: 'running' });
+      expect(await releaseAbandonedClaims(engine, new Date(Date.now() - 60_000))).toBe(0);
+      expect(await releaseAbandonedClaims(engine, new Date(Date.now() + 1_000))).toBe(1);
+      const [row] = await engine.executeRaw<{ state: string; token: string | null }>('SELECT state,execution_token AS token FROM persistence_effects WHERE id=$1', [effect!.id]);
+      expect(row).toEqual({ state: 'queued', token: null });
+    });
+  }, 60_000);
 });
