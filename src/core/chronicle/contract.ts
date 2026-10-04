@@ -107,6 +107,7 @@ export const CHRONICLE_REASONS = {
   not_yet_happened: { stage: 'decision', meaning: 'The meeting has not ended yet; the phase picks it up once its end time passes.', next: null, ask_user: false },
   no_write_decision: { stage: 'discovery', meaning: 'A managed page revision has no write decision (written by an older binary or before activation).', next: 'gbrain chronicle-backfill --limit 50 --dry-run', ask_user: true },
   not_chronicle_shaped: { stage: 'decision', meaning: 'The page is no longer a meeting, conversation or calendar page; its automatic events were retired.', next: null, ask_user: false },
+  already_extracted: { stage: 'decision', meaning: 'This exact content was already extracted; its events are current.', next: null, ask_user: false },
   // ── execution outcomes ──
   superseded: { stage: 'execution', meaning: 'The page, its source, its privacy or the writer grant changed before the events were published; the newer revision carries its own decision.', next: null, ask_user: false },
   page_missing: { stage: 'execution', meaning: 'The page was deleted before extraction.', next: null, ask_user: false },

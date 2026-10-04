@@ -134,8 +134,8 @@ export interface ChronicleRowWrite {
  * E9); a pending or failed backfill row is never overwritten by an
  * automatic decision.
  */
-export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWrite): Promise<void> {
-  await engine.executeRaw(
+export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWrite): Promise<boolean> {
+  const written = await engine.executeRaw(
     `INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
        principal_kind, principal_id, request_id, no_extract, next_attempt_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
@@ -146,10 +146,12 @@ export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWri
      WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
        AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
          WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
-           AND newer.state='extracted' AND newer.updated_at > c.updated_at))`,
+           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
+     RETURNING page_id`,
     [w.sourceId, w.pageId, w.contentHash, CHRONICLE_EXTRACTOR_VERSION, w.slug, w.state, w.reason, w.trigger,
       w.principalKind ?? null, w.principalId ?? null, w.requestId ?? null, w.noExtract === true,
       w.nextAttemptAt ? w.nextAttemptAt.toISOString() : null]);
+  return written.length > 0;
 }
 
 /** Does an extracted generation with events exist for this page (so an ineligible revision must retire it)? */
@@ -192,7 +194,14 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   const decision = decideChronicle({ page, authority: row.authority ?? null, noExtract,
     enabled: autoChronicleSetting(enabledRaw) === 'on', settings, now: new Date() });
   if (decision.state === 'skipped') await recordSkip(tx, { ...base, noExtract }, String(decision.reason));
-  else await upsertChronicleRow(tx, { ...base, noExtract, state: 'pending', reason: decision.reason, nextAttemptAt: decision.nextAttemptAt });
+  else if (!(await upsertChronicleRow(tx, { ...base, noExtract, state: 'pending', reason: decision.reason, nextAttemptAt: decision.nextAttemptAt }))) {
+    // The content's current generation is already extracted (or queued by backfill): say so, not "pending".
+    const kept = await readChronicleRow(tx, base);
+    if (kept?.state === 'extracted') {
+      outcome.chronicle_backstop = { skipped: 'already_extracted', next_command: null, ask_user: false } satisfies ChronicleBackstopReceipt;
+      return;
+    }
+  }
   const remaining = decision.state === 'pending' && decision.reason === null ? await chronicleDailyRemaining(tx, settings.dailyLimit) : 0;
   outcome.chronicle_backstop = chronicleReceipt(decision, remaining, page);
 }

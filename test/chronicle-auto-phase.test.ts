@@ -303,6 +303,18 @@ describe('snapshot integrity (E5) and reconciliation (E8/C12/E9)', () => {
 });
 
 describe('ledger and discovery (E1/E6/D12)', () => {
+  test('returning to extracted content before the newer revision ran costs nothing and says so', () => brain(async ({ engine, ctx }) => {
+    const judge = countingJudge(() => ({ events: [ev('Version A decision')] }));
+    await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} A.`));
+    await settle(engine); await runPhaseChronicle(engine, { judge });
+    await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} B.`));
+    const back = await put(ctx, 'meetings/sync', meeting('Sync', `${BODY} A.`));
+    expect(back.chronicle_backstop).toEqual({ skipped: 'already_extracted', next_command: null, ask_user: false });
+    await settle(engine); await runPhaseChronicle(engine, { judge });
+    expect(judge.calls).toBe(1);
+    expect((await events(engine)).map((e) => [e.what, e.deleted])).toEqual([['Version A decision', false]]);
+  }), 120_000);
+
   test('extract, prune jobs, rerun backfill → zero judged calls', () => brain(async ({ engine, ctx }) => {
     await put(ctx, 'meetings/m1', meeting('M1'));
     await settle(engine);

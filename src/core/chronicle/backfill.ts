@@ -15,7 +15,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { usageCostUsd } from '../budget/reservation-cost.ts';
-import { CHRONICLE_EXTRACTOR_VERSION, RUN_NOW_COMMAND } from './contract.ts';
+import { CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, RUN_NOW_COMMAND } from './contract.ts';
 import { chronicleSettings } from './config.ts';
 import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES, chroniclePageDate, isChronicleEligible } from './eligibility.ts';
 import { upsertChronicleRow } from './ledger.ts';
@@ -98,7 +98,7 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
     }>(
       `SELECT p.id, p.source_id, p.slug, p.type, p.compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
               EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
-                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < ${CHRONICLE_DEFAULTS.maxAttempts}))) AS done
          FROM pages p
         WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[]))${scope} AND p.id > $${cursor}
         ORDER BY p.id LIMIT ${PAGE_BATCH}`, params);
