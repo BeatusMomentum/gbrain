@@ -115,6 +115,20 @@ test('fresh process',()=>{
       for (const [file, contents] of Object.entries(prior)) expect(readFileSync(join(coverage, file), 'utf8')).toBe(contents);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  test('coverage runs default GBRAIN_TEST_WAIT_MULTIPLIER to 2 and keep an explicit value through the env scrub', () => {
+    const root = setup();
+    try {
+      writeFileSync(join(root, 'bin/git'), '#!/bin/sh\nprintf fixture-commit\n', { mode: 0o755 });
+      writeFileSync(join(root, 'test/e2e/a.test.ts'), "import {test,expect} from 'bun:test'; test('multiplier',()=>expect(process.env.GBRAIN_TEST_WAIT_MULTIPLIER).toBe(process.env.EXPECTED_MULTIPLIER));");
+      const path = `${join(root, 'bin')}:${process.env.PATH}`;
+      for (const [coverage, multiplier, expected] of [['coverage-a', '', '2'], ['coverage-b', '3', '3'], ['', '1.5', '1.5']]) {
+        const result = spawnSync('bash', ['scripts/run-e2e.sh', 'test/e2e/a.test.ts'], {
+          cwd: root, encoding: 'utf8', env: { ...env, COVERAGE_DIR: coverage, GBRAIN_TEST_WAIT_MULTIPLIER: multiplier, EXPECTED_MULTIPLIER: expected, PATH: path },
+        });
+        expect(result.status, result.stdout + result.stderr).toBe(0);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   test('a fully skipped file has execution evidence but need not emit LCOV', () => {
     const root = setup();
     try {

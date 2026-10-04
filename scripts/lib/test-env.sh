@@ -104,3 +104,17 @@ ensure_default_pglite_snapshot() {
   esac
   echo "[$label] default PGLite snapshot active: $GBRAIN_TEST_DEFAULT_SNAPSHOT" >&2
 }
+
+# ──────────────────────────────────────────────────────────────────────────
+# Coverage wait multiplier: bun's lcov instrumentation slows the code under
+# test while test deadlines stay wall-clock, so a coverage lane (COVERAGE_DIR
+# set) exports GBRAIN_TEST_WAIT_MULTIPLIER=2 unless the caller chose a value.
+# test/helpers/wait-for.ts scales every waitFor deadline by it and keeps the
+# result below bun's 60s per-test timeout. The bun preload keeps GBRAIN_TEST_*
+# and run-e2e.sh's env scrub keep-lists the name.
+# ──────────────────────────────────────────────────────────────────────────
+export_coverage_wait_multiplier() {
+  if [ -n "${COVERAGE_DIR:-}" ] && [ -z "${GBRAIN_TEST_WAIT_MULTIPLIER:-}" ]; then
+    export GBRAIN_TEST_WAIT_MULTIPLIER=2
+  fi
+}

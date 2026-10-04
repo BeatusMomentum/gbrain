@@ -151,6 +151,7 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_TEST_DB) ;;  # explicit schema-reset opt-in for service hosts; schema-drift still requires a test-shaped DB name
     GBRAIN_PGBOUNCER_URL|GBRAIN_PGBOUNCER_DIRECT_URL|GBRAIN_CI_REQUIRE_PGBOUNCER) ;; # explicit pooler test target and execution requirement
     GBRAIN_PGBOUNCER_E2E_URL|GBRAIN_PGBOUNCER_E2E_DB) ;; # backend-matrix pooled target (scripts/e2e-backend-matrix.txt)
+    GBRAIN_TEST_WAIT_MULTIPLIER) ;;  # coverage deadline multiplier read by test/helpers/wait-for.ts — keep
     GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
                              # message tells operators to set it; stripping it
@@ -235,6 +236,7 @@ fi
 # Files asserting the path TO post-initSchema state carry their own per-file
 # `delete process.env.GBRAIN_PGLITE_SNAPSHOT` opt-out.
 . scripts/lib/test-env.sh
+export_coverage_wait_multiplier
 ensure_pglite_snapshot "run-e2e"
 # Absolutize: e2e tests spawn CLI subprocesses with varying cwd; a relative
 # path would silently miss the tar there (cold-init fallback, benefit lost).

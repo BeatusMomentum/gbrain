@@ -73,6 +73,7 @@ case "${1:-}" in
 esac
 
 . scripts/lib/test-env.sh
+export_coverage_wait_multiplier
 
 # ──────────────────────────────────────────────────────────────────────────
 # EXCLUSIVE_FILES: files that must never run concurrently with anything else
