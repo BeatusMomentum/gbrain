@@ -207,6 +207,7 @@ Attributed (inside a request, a coordinated scope or `maintenanceTransaction`,
 or a physical projection that leaves attribution untouched):
 
 <!-- write-attribution-covered:start -->
+- `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` commits one `maintenanceTransaction` per 100-row batch on unmanaged brains; managed brains publish per page through a maintenance request.
 - `src/commands/migrate-engine.ts` (5): engine copy keeps the source rows' attribution values verbatim.
 - `src/commands/sync/holds.ts` (1): a full sync's move of a held rename (`updateSlug` and its `source_path`) runs in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/commands/sync/renames.ts` (1): the legacy sync rename (`updateSlug`) runs in `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
@@ -239,6 +240,9 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
 - `src/core/repair/frontmatter.ts` (1): a `managed_file_repair` request on managed sources; the unmanaged rename runs in `maintenanceTransaction`.
 - `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
+- `src/core/sweep.ts` (1): the maintenance sweep's bounded timeline batch runs in `maintenanceTransaction`.
+- `src/core/timeline-dedup-repair.ts` (1): the legacy timeline source repair rewrites each page's rows in one `maintenanceTransaction`.
+- `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 <!-- write-attribution-covered:end -->
 
 Unattributed until Foundations 2 mutation attribution (on unmanaged brains
@@ -246,7 +250,6 @@ these write with `NULL` attribution):
 
 <!-- write-attribution-unattributed:start -->
 - `src/commands/extract-conversation-facts.ts` (3): the conversation fact index calls the engine directly through `writeDerivedFacts`.
-- `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` batch insert.
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
 - `src/core/calibration/undo-wave.ts` (1): calibration wave undo of take resolutions.
 - `src/core/company-brain/profile.ts` (1): company-brain sync soft deletes.
@@ -276,11 +279,8 @@ these write with `NULL` attribution):
 - `src/core/schema-pack/page-to-link.ts` (1): page-to-link conversion soft delete.
 - `src/core/schema-pack/retype.ts` (1): schema-pack retype.
 - `src/core/schema-pack/sync.ts` (1): schema-pack type sync.
-- `src/core/sweep.ts` (1): sweep timeline batch.
 - `src/core/takes-write.ts` (7): legacy takes file helper mirror rows and resolutions.
 - `src/core/think/index.ts` (1): saved `think` result page.
-- `src/core/timeline-dedup-repair.ts` (1): timeline dedup repair.
-- `src/core/timeline-write-through.ts` (2): timeline write-through entry and page timeline.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary
