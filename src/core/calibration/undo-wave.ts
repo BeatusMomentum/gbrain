@@ -107,7 +107,8 @@ export async function undoWave(
      WHERE wave_version = $1 AND applied = true`,
     [waveVersion],
   );
-  const targetTakeIds = targetTakeRows.map(r => r.take_id);
+  // Postgres returns bigint ids as BigInt, which a `$1::bigint[]` parameter cannot bind.
+  const targetTakeIds = targetTakeRows.map(r => Number(r.take_id));
 
   if (targetTakeIds.length > 0) {
     if (dryRun) {
