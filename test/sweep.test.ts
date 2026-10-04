@@ -676,9 +676,10 @@ describe('runMaintenanceSweep — bounded link resolution (no listAllPageRefs)',
     });
     expect(r.timelineExtracted).toBe(1);
     expect(log).not.toContain('listAllPageRefs');
-    // Exactly two raw queries: the pass-1 fence scan and the pass-2 recency
-    // scan. No candidates ⇒ no third (ref-lookup) query.
-    expect(log.filter((m) => m === 'executeRaw').length).toBe(2);
+    // Exactly three raw queries: the pass-1 fence scan, the pass-2 recency
+    // scan and the maintenance principal lookup the attributed timeline batch
+    // makes. No candidates ⇒ no ref-lookup query.
+    expect(log.filter((m) => m === 'executeRaw').length).toBe(3);
   });
 });
 

@@ -618,7 +618,7 @@ export async function runExtractFacts(
     );
     // Managed: one page at a time under its key, so a concurrent restore is
     // either seen as restored or waited for, never expired underneath it.
-    const expired = managed ? await expireDeletedPagesManaged(engine, sourceId, transact) : await expireDeleted(engine);
+    const expired = managed ? await expireDeletedPagesManaged(engine, sourceId, transact) : await maintenanceTransaction(engine, expireDeleted);
     result.factsExpiredForDeletedPages = expired.length;
   }
 

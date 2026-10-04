@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 /**
  * Dream-provenance DB stamp (#2569): marks pages a dream child wrote with
@@ -22,8 +23,8 @@ export async function stampDreamProvenance(
     // failures and must not swallow the cancellation unwind.
     throwIfAborted(signal, '[dream] synthesize provenance');
     try {
-      await executeRawJsonb(
-        engine,
+      await maintenanceTransaction(engine, tx => executeRawJsonb(
+        tx,
         `UPDATE pages
             SET frontmatter = (COALESCE(frontmatter, '{}'::jsonb) - CASE WHEN $5::boolean THEN 'seat' ELSE '' END)
                               || $6::jsonb
@@ -50,7 +51,7 @@ export async function stampDreamProvenance(
           ...(seat ? { seat } : {}),
           ...(raw_trace_exempt_reason ? { raw_trace_exempt: true, raw_trace_exempt_reason } : {}),
         }],
-      );
+      ));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       process.stderr.write(`[dream] provenance stamp ${slug}@${source_id} failed: ${msg}\n`);
