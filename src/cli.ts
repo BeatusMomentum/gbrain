@@ -2110,14 +2110,13 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
   }
 
   // `eval run-all` is a pure orchestrator — its engine arg is unused
-  // (`_engine`), the brainbench suite it runs in-process is hermetic (brings
-  // its own PGLite via createBenchmarkBrain), and the remaining suites write
-  // stub records. Bypass connectEngine so run-all works with no brain
-  // configured — e.g. in CI, where `--suites brainbench` otherwise died with
-  // "No brain configured" before reaching the hermetic run.
+  // (`_engine`) and the brainbench suite it runs in-process is hermetic (brings
+  // its own PGLite via createBenchmarkBrain). Bypass connectEngine so run-all
+  // works with no brain configured — e.g. in CI. It returns its exit code
+  // (1 when a suite failed).
   if (command === 'eval' && args[0] === 'run-all') {
     const { runEvalRunAll } = await import('./commands/eval-run-all.ts');
-    await runEvalRunAll(null, args.slice(1));
+    setCliExitVerdict(await runEvalRunAll(null, args.slice(1)));
     return true;
   }
 
