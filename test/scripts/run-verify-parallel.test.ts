@@ -272,6 +272,9 @@ describe("run-verify-parallel.sh — no-timeout-binary fallback rc capture (regr
       `#!/usr/bin/env bash
 name="\${2:-}"
 echo "stub check OK: $name"
+if [ -n "\${STUB_SKIP_CHECK:-}" ] && [ "$name" = "\${STUB_SKIP_CHECK}" ]; then
+  echo "GBRAIN_CHECK_SKIPPED: subject absent in this checkout"
+fi
 if [ -n "\${STUB_FAIL_CHECK:-}" ] && [ "$name" = "\${STUB_FAIL_CHECK}" ]; then
   echo "stub check failing: $name" >&2
   exit 7
@@ -304,6 +307,48 @@ exit 0
       for (const f of exits) {
         expect(readFileSync(join(root, "logs", f), "utf8").trim()).toBe("0");
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("records every check's real outcome: a self-skip is a skip (not a pass) in outcomes.tsv and the receipt", () => {
+    const { root, env } = makeFallbackHarness();
+    try {
+      const receipts = join(root, "receipts");
+      const r = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], {
+        encoding: "utf8",
+        env: { ...env, STUB_SKIP_CHECK: "check:grok-pin", STUB_FAIL_CHECK: "check:jsonb", GBRAIN_TEST_RECEIPT_DIR: receipts },
+      });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toMatch(/fail=1 skip=1\b/);
+      expect(r.stderr).toContain("check:grok-pin: subject absent in this checkout");
+      const outcomes = readFileSync(join(root, "logs", "outcomes.tsv"), "utf8");
+      expect(outcomes).toContain("check:grok-pin\tskip\t0\tsubject absent in this checkout");
+      expect(outcomes).toContain("check:jsonb\tfail\t7\t");
+      expect(outcomes).toContain("check:privacy\tpass\t0\t");
+      const junit = readFileSync(join(receipts, "verify--all--primary.junit.xml"), "utf8");
+      expect(junit).toContain('<testcase name="check:grok-pin" classname="verify" file="verify"><skipped message="subject absent in this checkout" /></testcase>');
+      expect(junit).toContain('<testcase name="check:jsonb" classname="verify" file="verify"><failure message="fail rc=7" /></testcase>');
+      expect(readFileSync(join(receipts, "verify--all--primary.receipt"), "utf8")).toContain("exit=1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps its default temp log directory when a check fails and names it", () => {
+    const { root, env } = makeFallbackHarness();
+    const { GBRAIN_VERIFY_LOG_DIR: _unused, ...defaults } = env;
+    try {
+      const r = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], {
+        encoding: "utf8",
+        env: { ...defaults, STUB_FAIL_CHECK: "check:jsonb" },
+      });
+      expect(r.status).toBe(1);
+      const kept = /per-check logs kept in (\S+)/.exec(r.stderr)?.[1];
+      expect(kept).toBeDefined();
+      expect(readFileSync(join(kept!, "check_jsonb.log"), "utf8")).toContain("stub check failing: check:jsonb");
+      rmSync(kept!, { recursive: true, force: true });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

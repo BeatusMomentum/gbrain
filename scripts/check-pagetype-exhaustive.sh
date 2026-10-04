@@ -32,6 +32,7 @@ PAGETYPE_FILES=$(grep -rlE "import.*PageType.*from.*types" src 2>/dev/null || tr
 
 if [ -z "$PAGETYPE_FILES" ]; then
   echo "[check-pagetype-exhaustive] No files import PageType. Skipping."
+  echo "GBRAIN_CHECK_SKIPPED: no src file imports PageType"
   exit 0
 fi
 
