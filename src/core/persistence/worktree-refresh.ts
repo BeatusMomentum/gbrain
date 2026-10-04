@@ -115,10 +115,10 @@ async function dirtyOverlap(git: Git, root: string, from: string, to: string): P
   return { overlap: unique.filter(touches), preserved: unique.filter(path => !touches(path)), incoming: incoming.length };
 }
 
-async function configuredMs(engine: BrainEngine, flag: number | undefined, env: string, key: string, fallback: number): Promise<number> {
+async function configuredMs(engine: BrainEngine, flag: number | undefined, env: string, key: string, fallback: number, max = Infinity): Promise<number> {
   const raw = flag ?? (process.env[env] !== undefined && process.env[env] !== '' ? Number(process.env[env]) : undefined) ?? await engine.getConfig(key).then(v => v == null ? undefined : Number(v));
   if (raw === undefined) return fallback;
-  if (!Number.isFinite(raw) || raw < 0) throw new OperationError('invalid_params', `${key} (or ${env}) must be a whole number of milliseconds; got ${raw}.`,
+  if (!Number.isFinite(raw) || raw < 0 || raw > max) throw new OperationError('invalid_params', `${key} (or ${env}) must be a whole number of milliseconds${max < Infinity ? ` no greater than ${max} (the timer limit)` : ''}; got ${raw}.`,
     `Run gbrain config set ${key} ${fallback} (or unset ${env}), then retry.`);
   return Math.floor(raw);
 }
@@ -202,7 +202,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     if (fetched.code !== 0) throw refusal('fetch_failed',
       fetched.timedOut ? `git fetch ${remote} did not finish within ${fetchTimeoutMs} ms; nothing changed.`
         : `git fetch ${remote} failed (${fetched.stderr.trim().split('\n')[0] || `exit ${fetched.code}`}); nothing changed.`,
-      `Retry gbrain sources refresh ${sourceId}; for a slow remote raise the bound: gbrain sources refresh ${sourceId} --fetch-timeout-ms ${Math.max(fetchTimeoutMs * 2, 120_000)} (or gbrain config set sources.refresh_fetch_timeout_ms <ms>).`);
+      `Retry gbrain sources refresh ${sourceId}; for a slow remote raise the bound: gbrain sources refresh ${sourceId} --fetch-timeout-ms ${Math.min(Math.max(fetchTimeoutMs * 2, 120_000), 2 ** 31 - 1)} (or gbrain config set sources.refresh_fetch_timeout_ms <ms>).`);
   }
   const oldHead = await revParse(git, root, 'HEAD');
   const targetHead = await revParse(git, root, '@{upstream}');
@@ -318,7 +318,7 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}): Promise<WorktreeRefreshResult> {
   if (opts.resume || opts.abandon) return resumeOrAbandon(engine, sourceId, opts);
-  const fetchTimeoutMs = await configuredMs(engine, opts.fetchTimeoutMs, 'GBRAIN_REFRESH_FETCH_TIMEOUT_MS', 'sources.refresh_fetch_timeout_ms', 120_000);
+  const fetchTimeoutMs = await configuredMs(engine, opts.fetchTimeoutMs, 'GBRAIN_REFRESH_FETCH_TIMEOUT_MS', 'sources.refresh_fetch_timeout_ms', 120_000, 2 ** 31 - 1);
   const waitDrainMs = await configuredMs(engine, opts.waitDrainMs, 'GBRAIN_REFRESH_DRAIN_WAIT_MS', 'sources.refresh_drain_wait_ms', 60_000);
   return withGit(async git => {
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs);
