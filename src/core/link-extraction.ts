@@ -1243,6 +1243,7 @@ const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
  * located in the window (callers fall back to plain precedence).
  */
 const LINK_MARK_RE = /\]\(|\]\]|\[\[/;
+const GLOBAL_VERB_RULES = VERB_RULES.map(([re, verb]) => [new RegExp(re.source, `${re.flags.replace('g', '')}g`), verb] as const);
 function attachedVerb(context: string, targetSlug?: string): string | null | undefined {
   const at = targetSlug ? context.indexOf(targetSlug) : -1;
   if (at < 0) return undefined;
@@ -1250,9 +1251,8 @@ function attachedVerb(context: string, targetSlug?: string): string | null | und
   const linkStart = open >= 0 && at - open <= 120 ? (context[open - 1] === '[' ? open - 1 : open) : at;
   const close = context.slice(at).search(/\)|\]\]/);
   const linkEnd = close >= 0 ? at + close + (context[at + close] === ')' ? 1 : 2) : at + targetSlug!.length;
-  for (const [re, verb] of VERB_RULES) {
-    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
-    for (const m of context.matchAll(global)) {
+  for (const [re, verb] of GLOBAL_VERB_RULES) {
+    for (const m of context.matchAll(re)) {
       const start = m.index ?? 0; const end = start + m[0].length;
       if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))) continue;
       if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s{0,3}\[/.test(context.slice(end)))) continue;
