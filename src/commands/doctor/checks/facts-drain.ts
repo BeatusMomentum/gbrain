@@ -6,7 +6,6 @@
  */
 import { FACTS_DRAIN_DOCS, readFactsDrainStatus } from '../../../core/facts/drain.ts';
 import type { Check } from '../../doctor.ts';
-import { infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 
 async function runFactsDrainCheck(ctx: DoctorContext): Promise<Check[]> {
@@ -16,15 +15,17 @@ async function runFactsDrainCheck(ctx: DoctorContext): Promise<Check[]> {
     ...(status.settings ? { enabled: status.settings.enabled, budget_usd: status.settings.budgetUsd, daily_budget_usd: status.settings.dailyBudgetUsd, max_jobs: status.settings.maxJobs } : {}),
     docs: FACTS_DRAIN_DOCS,
   };
-  switch (status.health) {
-    case 'not_applicable': return [infoCheck('facts_drain', status.message, 'not_applicable', undefined, details)];
-    case 'disabled': return [infoCheck('facts_drain', status.message, 'disabled_by_choice', status.fix, details)];
-    case 'deferred':
-    case 'no_owner':
-      return [{ name: 'facts_drain', status: 'warn', message: status.message, ...(status.fix ? { fix: status.fix } : {}), readiness_state: 'degraded', details }];
-    default:
-      return [{ name: 'facts_drain', status: 'ok', message: status.message, details }];
+  const fix = status.fix ? { fix: status.fix } : {};
+  const checks: Check[] = [];
+  if (status.health === 'not_applicable' || status.health === 'disabled') {
+    checks.push({ name: 'facts_drain', status: 'ok', message: status.message, severity: 'info',
+      readiness_state: status.health === 'disabled' ? 'disabled_by_choice' : 'not_applicable', ...fix, details });
+  } else if (status.health === 'deferred' || status.health === 'no_owner') {
+    checks.push({ name: 'facts_drain', status: 'warn', message: status.message, readiness_state: 'degraded', ...fix, details });
+  } else {
+    checks.push({ name: 'facts_drain', status: 'ok', message: status.message, details });
   }
+  return checks;
 }
 
 export const factsDrainEntry: DoctorEntry = { name: 'facts_drain', emits: ['facts_drain'], run: runFactsDrainCheck };

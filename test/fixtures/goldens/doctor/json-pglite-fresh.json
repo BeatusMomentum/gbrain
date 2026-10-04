@@ -1569,6 +1569,27 @@
         {
           "category": "brain",
           "details": {
+            "backlog": {
+              "active": 0,
+              "delayed": 0,
+              "waiting": 0
+            },
+            "budget_usd": 1,
+            "daily_budget_usd": 5,
+            "daily_spent_usd": 0,
+            "docs": "docs/guides/facts-drain.md",
+            "enabled": true,
+            "health": "idle",
+            "last_run": null,
+            "max_jobs": 50
+          },
+          "message": "No facts-absorb jobs are queued (no run recorded yet).",
+          "name": "facts_drain",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "applicable": false
           },
           "message": "Not applicable: embeddings are disabled on this brain (keyword search keeps working).",
@@ -1729,7 +1750,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 10,
+              "global": 11,
               "mixed": 2,
               "source": 12
             },
@@ -1745,6 +1766,7 @@
               "extract": "source",
               "extract_atoms": "source",
               "extract_facts": "source",
+              "facts_drain": "global",
               "grade_takes": "global",
               "lint": "source",
               "orphans": "global",
@@ -1760,7 +1782,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 10 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, chronicle, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 11 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },

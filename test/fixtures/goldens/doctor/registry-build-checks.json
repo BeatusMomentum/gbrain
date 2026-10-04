@@ -623,6 +623,10 @@
       },
       {
         "category": "brain",
+        "name": "facts_drain"
+      },
+      {
+        "category": "brain",
         "name": "fact_take_vectors"
       },
       {
