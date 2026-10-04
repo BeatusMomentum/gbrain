@@ -327,4 +327,6 @@ export const NOTICE_CODES = {
   onboard_opportunities: { kind: 'coaching', summary: 'Onboarding checks found work that would improve this brain (gbrain onboard --check lists it).' },
   features_auto_fix: { kind: 'coaching', summary: 'gbrain features found auto-fixable gaps; the fix is the auto-fix command (it may spend on embeddings).' },
   post_upgrade: { kind: 'safety', summary: 'gbrain was upgraded; behavior for scripts and agents changed — read the behavior table once.' },
+  held_files: { kind: 'degraded', summary: 'Sync holds files in the read scope it cannot import: held new files are missing and pages whose newer file is held are stale; the fix is the repair preview on the brain host.' },
+  recovered_frontmatter: { kind: 'coaching', summary: 'Files imported only after quoting unquoted frontmatter values; the generator writing them should quote values (the fix is the repair preview).' },
 } as const satisfies Record<string, NoticeEntry>;

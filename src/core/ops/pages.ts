@@ -18,6 +18,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
+import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
@@ -77,7 +78,7 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (the soft-delete recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns).',
+  description: 'Read a page by slug (supports optional fuzzy matching). Slug aliases left by renames redirect to the canonical page in the source that owns the alias (archived sources excluded); a redirected read reports `resolved_slug`. To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (the soft-delete recovery window). `timeline` is only the markdown section after the timeline sentinel; entries written by add_timeline_entry or extraction live in timeline rows, which include_timeline_entries: true returns as `timeline_entries` (the same rows get_timeline returns). `file_held` means sync holds this page\'s newer file: you are reading the last good revision, and put_page refuses until the file is repaired (follow its fix).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
@@ -186,6 +187,8 @@ const get_page: Operation = {
     // it" signal it would get from search. The marker is also in frontmatter;
     // this is the clean, documented accessor.
     const content_flag = getContentFlag(page.frontmatter as Record<string, unknown> | null);
+    // #5988: sync holds the page's newer file (one indexed lookup, fail-open).
+    const held = (await readHeldPages(ctx.engine, [page.id], ctx).catch(() => null))?.get(page.id);
     // #2225: `content` is the canonical serialized markdown (frontmatter +
     // compiled_truth + `<!-- timeline -->` sentinel + timeline). Clients that
     // edit-and-put_page this field round-trip losslessly; hand-concatenating
@@ -204,6 +207,7 @@ const get_page: Operation = {
         ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
       ...(resolved_slug ? { resolved_slug } : {}),
       ...(content_flag ? { content_flag } : {}),
+      ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}),
     };
   },
   scope: 'read', mutating: false,

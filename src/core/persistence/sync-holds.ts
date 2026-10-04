@@ -7,8 +7,10 @@
  *
  * Storage: one `op_checkpoints` row per hold (op `sync-hold`, fingerprint
  * `source:incarnation:path`) and one small per-source summary row (op
- * `sync-hold-summary`) holding the count, so a sync that holds 20k files
- * writes O(1) rows per hold and a status read never loads a source-wide list.
+ * `sync-hold-summary`) holding the count (and `stale`, how many name an
+ * existing page), so a sync that holds 20k files writes O(1) rows per hold and
+ * neither a status read nor a search loads a source-wide list. Read paths find
+ * a page's hold by page id through `op_checkpoints_sync_hold_page_idx`.
  * Managed and legacy sync write the same rows; they survive writer mode
  * changes and are exempt from the 7-day checkpoint purge.
  *
@@ -106,18 +108,22 @@ const summaryFingerprint = (sourceId: string, incarnation: string) => `${sourceI
 /** Locks the source's summary row (creating it), so hold writes of one source serialize. */
 async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Promise<number> {
   const [row] = await tx.executeRaw<{ count: number | string }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0)))
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0,'stale',0)))
     ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now()
     RETURNING COALESCE((completed_keys->0->>'count')::int,0) AS count`,
   [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation]);
   return Number(row?.count ?? 0);
 }
 
-async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number): Promise<void> {
-  await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,count}',
-      to_jsonb(GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int))),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta]);
+/** `count` is every hold; `stale` the holds of files whose page exists (the rest are missing pages). */
+async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, staleDelta: number): Promise<void> {
+  await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
+      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),
+      'stale',GREATEST(0,COALESCE((completed_keys->0->>'stale')::int,0)+$4::int))),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
+  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, staleDelta]);
 }
+
+const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record && record.page_id !== null ? 1 : 0;
 
 async function readRow(tx: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
   const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
@@ -140,8 +146,11 @@ export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version
   await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
   [GIT_HOLD_OP, gitHoldFingerprint(input.source_id, input.incarnation, input.path), JSON.stringify([record])]);
-  if (existing) return 'updated';
-  await adjustSummary(tx, input.source_id, input.incarnation, 1);
+  if (existing) {
+    if (staleWeight(input) !== staleWeight(existing)) await adjustSummary(tx, input.source_id, input.incarnation, 0, staleWeight(input) - staleWeight(existing));
+    return 'updated';
+  }
+  await adjustSummary(tx, input.source_id, input.incarnation, 1, staleWeight(input));
   return 'inserted';
 }
 
@@ -157,7 +166,7 @@ export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnat
   const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
   if (!existing || existing.observed_at > input.observedAt) return false;
   await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  await adjustSummary(tx, input.sourceId, input.incarnation, -1);
+  await adjustSummary(tx, input.sourceId, input.incarnation, -1, -staleWeight(existing));
   return true;
 }
 
