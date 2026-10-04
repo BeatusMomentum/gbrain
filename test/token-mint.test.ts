@@ -123,19 +123,20 @@ describe('mintLegacyToken', () => {
 });
 
 describe('mintLegacyToken on a brain without the grant columns', () => {
-  test('refuses with migrations_pending and a filled fix instead of writing a JSONB-only grant', async () => {
-    const bare = new PGLiteEngine();
+  let bare: PGLiteEngine;
+  beforeAll(async () => {
+    bare = new PGLiteEngine();
     await bare.connect({});
-    try {
-      await bare.executeRaw(PRE_GRANT_COLUMNS_TABLE);
-      const refusal = await mintLegacyToken(bare, { name: 'pre-columns', takesHolders: ['world'], scopes: ['read'] }).catch(e => e);
-      expect(refusal).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'], actor: 'agent' } });
-      expect(refusal.why).toBeTruthy();
-      expect(await bare.executeRaw('SELECT 1 FROM access_tokens')).toHaveLength(0);
-    } finally {
-      await bare.disconnect();
-    }
+    await bare.executeRaw(PRE_GRANT_COLUMNS_TABLE);
   }, 60_000);
+  afterAll(async () => { if (bare) await bare.disconnect(); });
+
+  test('refuses with migrations_pending and a filled fix instead of writing a JSONB-only grant', async () => {
+    const refusal = await mintLegacyToken(bare, { name: 'pre-columns', takesHolders: ['world'], scopes: ['read'] }).catch(e => e);
+    expect(refusal).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'], actor: 'agent' } });
+    expect(refusal.why).toBeTruthy();
+    expect(await bare.executeRaw('SELECT 1 FROM access_tokens')).toHaveLength(0);
+  });
 });
 
 describe('revokeLegacyTokenById [C7]', () => {
