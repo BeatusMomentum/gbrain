@@ -7,7 +7,11 @@
  * work is shared: the worktree lock, the recovery and capacity checks, the
  * ownership guard and the counter and request locks. Counters are locked after
  * the members are applied and before their request rows, so the brain-wide
- * counter row is held only for the completion statements (ENG-A5).
+ * counter row is held only for the completion statements (ENG-A5). A group
+ * therefore takes page guards before counters, the reverse of single
+ * publication and of forget/mirror recovery; a deadlock with one of those on
+ * the same page is detected by Postgres (40P01) and both sides retry: the
+ * group falls back to single publication, admission and withdrawal retry.
  *
  * The group is all-or-nothing. Any failure rolls the transaction back and
  * returns null; the caller then publishes the members one at a time, so a

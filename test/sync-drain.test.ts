@@ -74,6 +74,16 @@ describe('runDrain', () => {
     expect(fatal.calls()).toBe(1);
   });
 
+  test('admission contention keeps retrying the frozen request instead of ending the drain', async () => {
+    const contention = new OperationError('storage_error', 'Write admission is temporarily blocked by database contention.');
+    contention.detail = 'database_contention';
+    const s = scripted([contention, contention, contention, contention, contention, done()]);
+    const started = Date.now();
+    expect((await runDrain({ pass: s.pass })).drain?.outcome).toBe('synced');
+    expect(s.calls()).toBe(6);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(4500);
+  }, 15_000);
+
   test('worktree_refreshing waits its retry_after_ms hint', async () => {
     const refreshing = new OperationError('worktree_refreshing', 'refreshing');
     refreshing.detail = 'retry_after_ms=5';

@@ -102,6 +102,8 @@ function transientDelay(error: unknown, attempt: number, refreshWaitedMs: number
     const hinted = Number(/retry_after_ms=(\d+)/.exec(String(error.detail ?? ''))?.[1]);
     return Number.isFinite(hinted) && hinted > 0 ? hinted : 1000;
   }
+  // Admission gave up on lock contention (a concurrent publication holds the shared counters); the frozen request ID is kept.
+  if (error instanceof OperationError && error.detail === 'database_contention') return refreshWaitedMs >= REFRESH_WAIT_MS ? null : 1000;
   if (attempt > TRANSIENT_ATTEMPTS) return null;
   const contention = error instanceof OperationError && error.code === 'database_contention';
   if (!contention && !isRetryableConnError(error) && !isStatementTimeoutError(error) && getCode(error) !== '57014') return null;
@@ -197,7 +199,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
       } catch (error) {
         const delay = transientDelay(error, ++attempt, refreshWaitedMs, input.backoffMs ?? 250);
         if (delay === null || signal?.aborted) throw error;
-        if (error instanceof OperationError && error.code === 'worktree_refreshing') refreshWaitedMs += delay;
+        if (error instanceof OperationError && (error.code === 'worktree_refreshing' || error.detail === 'database_contention')) refreshWaitedMs += delay;
         await sleep(delay, signal);
         continue;
       }
