@@ -129,7 +129,7 @@ import {
 import { hasCJK } from './cjk.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
-import { PgliteCheckpointGuard } from './pglite-engine/checkpoint-guard.ts';
+import { PgliteCheckpointGuard, writesWal } from './pglite-engine/checkpoint-guard.ts';
 import { pgliteExecutor } from './engine-sql/dialect-pglite.ts';
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
@@ -2749,7 +2749,10 @@ export class PGLiteEngine implements BrainEngine {
     if (opts?.signal?.aborted) {
       throw new DOMException('aborted', 'AbortError');
     }
-    const queryPromise = this.db.query(sql, params).then((r) => r.rows as T[]);
+    const queryPromise = this.autocommitWrite(sql)
+      ? (this._checkpointGuard ??= new PgliteCheckpointGuard())
+        .runStatement(q => this.db.query(q), () => this.db.query(sql, params)).then((r) => r.rows as T[])
+      : this.db.query(sql, params).then((r) => r.rows as T[]);
     if (!opts?.signal) return queryPromise;
     const abortPromise = new Promise<T[]>((_resolve, reject) => {
       opts.signal!.addEventListener('abort', () => {
@@ -2757,6 +2760,16 @@ export class PGLiteEngine implements BrainEngine {
       }, { once: true });
     });
     return Promise.race([queryPromise, abortPromise]);
+  }
+
+  /**
+   * #5449 for statements outside engine.transaction(): an autocommit write is
+   * its own outermost transaction, so it takes the same checkpoint guard. Bulk
+   * raw writers (extract batches, vector updates) otherwise grow WAL past the
+   * automatic trigger and wedge PGLite inside the write that crosses it.
+   */
+  private autocommitWrite(sql: string): boolean {
+    return !this._pageTransaction && this._dbWork !== null && writesWal(sql);
   }
 
   /**

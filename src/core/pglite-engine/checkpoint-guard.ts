@@ -6,11 +6,22 @@
  * spins forever at 100% CPU. The guard keeps the automatic trigger from ever
  * firing mid-transaction: before an outermost write transaction begins, it
  * runs a top-level CHECKPOINT once WAL since redo passes half of the trigger
- * distance (256 MB with the default 1 GB max_wal_size).
+ * distance (256 MB with the default 1 GB max_wal_size). A write statement run
+ * outside engine.transaction() is its own outermost transaction and takes the
+ * same guard (`writesWal`).
  */
 import { GBrainError } from '../types.ts';
 
 export const CHECKPOINT_GUARD_MAX_BYTES = 256 * 1024 * 1024;
+
+/** Reads and transaction control never start a WAL-writing transaction of their own. */
+const READ_OR_CONTROL = /^\s*(select|show|explain|values|table|begin|start|commit|end|rollback|savepoint|release|set|reset|checkpoint)\b/i;
+
+/** Whether a statement run on its own (autocommit) may write WAL, so it takes the guard like an outermost transaction. */
+export function writesWal(sql: string): boolean {
+  if (READ_OR_CONTROL.test(sql)) return false;
+  return !/^\s*with\b/i.test(sql) || /\b(insert|update|delete|merge)\b/i.test(sql);
+}
 
 type Query = (sql: string) => Promise<{ rows: Array<Record<string, unknown>> }>;
 
@@ -29,6 +40,7 @@ export class PgliteCheckpointGuard {
   private threshold: number | undefined;
   private warned = false;
   private tail: Promise<void> = Promise.resolve();
+  private outermost = 0;
 
   /** `query` replaces the admitted database's query function (tests inject failures here). */
   constructor(private readonly override?: Query, private readonly warn: (message: string) => void = message => console.warn(message)) {}
@@ -42,11 +54,23 @@ export class PgliteCheckpointGuard {
     const prior = this.tail;
     const turn = Promise.withResolvers<void>();
     this.tail = turn.promise;
-    await prior;
+    this.outermost++;
     try {
+      await prior;
       await this.beforeOutermostTransaction(this.override ?? query);
       return await transaction();
-    } finally { turn.resolve(); }
+    } finally { this.outermost--; turn.resolve(); }
+  }
+
+  /**
+   * An autocommit write statement probes like an outermost transaction but
+   * never queues behind one: a statement issued from inside an open
+   * transaction's callback must not wait for that transaction to finish. While
+   * a guarded transaction is open or queued, its own probe covers the WAL.
+   */
+  async runStatement<T>(query: Query, statement: () => Promise<T>): Promise<T> {
+    if (this.outermost === 0) await this.beforeOutermostTransaction(this.override ?? query);
+    return statement();
   }
 
   private async beforeOutermostTransaction(query: Query): Promise<void> {
