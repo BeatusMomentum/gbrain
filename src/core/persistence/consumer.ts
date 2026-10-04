@@ -15,6 +15,7 @@ import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
 import { maybeRefreshPlannerStats } from '../planner-stats.ts';
+import { refreshFenceClear } from './worktree-refresh-schema.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
@@ -146,7 +147,7 @@ export class PersistenceConsumer {
         AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid)))
       OR EXISTS (SELECT 1 FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
         WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
-        AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND e.recovery IS NULL
+        AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')}) AND e.recovery IS NULL
         AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
         AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
