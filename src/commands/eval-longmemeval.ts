@@ -1435,11 +1435,7 @@ async function runOneQuestion(
         ? { onRerankPool: (p: readonly SearchResult[], pre?: readonly SearchResult[]) => { pool = [...p]; preRerank = pre ? [...pre] : undefined; } }
         : {}),
     };
-    const found = await hybridSearch(engine, q.question, searchOpts);
-    if (!opts.arms.timeScope) return found;
-    const scoped = retrievalArms.applyTimeScopeArm(found, q, pageMeta, opts.arms.timeScope, opts.topK);
-    Object.assign(extra0, retrievalArms.timeScopeRowExtras(scoped.row, slugToRaw, gold, opts.topK));
-    return scoped.results;
+    return retrievalArms.scopeResults(await hybridSearch(engine, q.question, searchOpts), opts.arms, { q, pageMeta, slugToRaw, gold, k: opts.topK, extra: extra0 });
   });
 
   // Trajectory routing for temporal / knowledge_update intents. Skips for

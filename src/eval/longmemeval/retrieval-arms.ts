@@ -298,3 +298,15 @@ export function timeScopeRowExtras(row: TimeScopeArmRow, slugToRaw: SlugToRawMap
     ...(score ? { unscoped_recall_all_hit: score.recall_all_hit, unscoped_recall_any_hit: score.recall_any_hit } : {}),
   };
 }
+
+/** Harness hook: applies the time-scope arm (when on) to a widened search result and records its row fields. */
+export function scopeResults(
+  found: SearchResult[],
+  o: RetrievalArmOptions,
+  c: { q: { question: string; question_date?: string }; pageMeta: ReadonlyArray<{ slug: string; content: string; date?: string }>; slugToRaw: SlugToRawMap; gold: readonly string[]; k: number; extra: Record<string, unknown> },
+): SearchResult[] {
+  if (!o.timeScope) return found;
+  const scoped = applyTimeScopeArm(found, c.q, c.pageMeta, o.timeScope, c.k);
+  Object.assign(c.extra, timeScopeRowExtras(scoped.row, c.slugToRaw, c.gold, c.k));
+  return scoped.results;
+}
