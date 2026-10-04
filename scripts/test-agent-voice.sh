@@ -28,8 +28,9 @@ PREFIX="$(mktemp -d "${TMPDIR:-/tmp}/gbrain-agent-voice.XXXXXX")"
 cleanup() { rm -f "$RECIPE/node_modules"; rm -rf "$PREFIX"; }
 trap cleanup EXIT
 
-npm install --prefix "$PREFIX" --no-audit --no-fund --ignore-scripts --loglevel=error \
-  "vitest@$VITEST_VERSION" "ws@$WS_VERSION" >/dev/null
+printf '{"name":"gbrain-agent-voice-tests","private":true,"dependencies":{"vitest":"%s","ws":"%s"}}\n' \
+  "$VITEST_VERSION" "$WS_VERSION" > "$PREFIX/package.json"
+(cd "$PREFIX" && npm install --no-audit --no-fund --ignore-scripts --no-package-lock --loglevel=error >/dev/null)
 ln -sfn "$PREFIX/node_modules" "$RECIPE/node_modules"
 cd "$RECIPE"
 "$PREFIX/node_modules/.bin/vitest" run tests/unit
