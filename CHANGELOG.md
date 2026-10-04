@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.41.0] - 2026-10-04
+## [0.60.42.0] - 2026-10-04
 
 **When gbrain hits a problem, it now tells the AI agent running it exactly what to do next, who has to do it, and whether to stop and ask you first.**
 
@@ -28,7 +28,7 @@ This release gives every error, refusal and recommendation the same shape: a sta
 
 Scripts that parse exit codes or `--json` output should read the [behavior changes table](#behavior-changes-for-scripts-and-agents) below before upgrading. The changes are additive where they could be: existing `error` values never change, and the canonical value rides a new `code` field.
 
-## To take advantage of v0.60.41.0
+## To take advantage of v0.60.42.0
 
 `gbrain upgrade` should do this automatically. There is no schema migration in this release.
 
@@ -179,6 +179,21 @@ The real-agent eval of the candidate still found nine consent-violation steps an
 - A brain whose automatic PGLite repair failed is never opened again until the user decides: gbrain records the failure next to the brain, and every command (stats, doctor, list, …) exits 3 with the consented `gbrain pglite-repair --yes --expect <plan_hash>` and its `--dry-run` preview, without touching a byte of the data directory. The refusal says plainly not to copy, rebuild, move or modify the brain files by hand. `pglite-repair --dry-run`, the consented repair (which clears the record), `reinit-pglite` and engine-free `doctor --only` checks still work; `gbrain serve` starts in status-only mode with `reason: repair_failed`.
 - A stdio agent learns that local session transcripts exist. Searches about the user's own activity (or that come back empty) carry a `local_transcripts` notice naming where the transcripts are and `gbrain transcripts recent --json`; `gbrain://capabilities` and the initialize readiness tail list them too. `gbrain transcripts recent` now reads through a running `gbrain serve` instead of failing on its lock. The stdio connection still cannot call `get_recent_transcripts`.
 - `gbrain serve` with a configured brain directory that is missing (an unmounted drive) or a writer-lock file it cannot open no longer exits before the handshake: it starts in status-only mode, `gbrain_status` names the path, and nothing is created there. It reopens the brain in place once the drive is back.
+
+## [0.60.41.0] - 2026-10-04
+
+**A keyword-only `query` whose answer is in the top five now grades `moderate` again when the question merely uses a word the brain never writes, while questions about a missing attribute or an unknown company still grade `weak` (#5919). Conversation pages can set their own segmentation gap (#5918).**
+
+v0.60.32.0 started grading an OR-relaxed keyword top (no chunk matched every query word) `weak`. That correctly flagged questions the brain cannot answer, but it also flagged answerable ones such as "Which city is Acme Example headquartered in?" against a page that says "Acme Example is headquartered in ...": the word "city" is never written, so the strict match fails even though the answer is right there. An agent that gates on `moderate` or better then abstained on answers it had.
+
+The grade now checks the top five rows before calling a relaxed top weak. It grades `moderate`, with the new reason `keyword_relaxed_corroborated`, when all of these hold:
+- at most one content word of the question appears in none of the five rows;
+- that word is not a name (a capitalized or acronym word such as an unknown company), because an unmatched name means the question is about something the evidence never mentions;
+- one row holds every other matched word, so the entity and the asked attribute appear together instead of on different pages.
+
+Otherwise it stays `weak` with reason `keyword_relaxed_top`. On the gbrain-evals A4 abstention world (keyword-only, 240 questions), answerable questions graded `moderate` rise from 40 to 100 of 120, and unanswerable questions graded `moderate` stay at 0 of 120. The remaining 20 answerable questions ask for "annual recurring revenue" while the pages write "ARR"; with no shared words, a keyword-only grade cannot tell them from a missing attribute, so they stay `weak`. With an embedding provider configured, relaxed rows are not used whenever the vector search returns results, so this path is mainly the keyless and degraded one.
+
+`gbrain extract-conversation-facts` now reads an optional `conversation_segment_gap_minutes` from a page's frontmatter and splits that page on its own gap instead of the 30-minute default. Set it from a collector that knows its message cadence, as an unquoted whole number of minutes from 1 to 10080. Any other value is ignored. A warning names the page, the rejected value, the accepted range and the command to rerun after fixing it. Changing the value changes the page's content hash, so the next run extracts the page again.
 
 ## [0.60.40.0] - 2026-10-04
 

@@ -267,7 +267,13 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
 - **CRAG-style confidence gate.** `src/core/search/crag.ts` grades every
   `query` op result (`strong`/`moderate`/`weak`) from the already-stamped
   honesty signals — zero LLM, zero added latency — and attaches the grade to
-  response meta. Config-gated and default OFF: `search.crag_escalation=true`
+  response meta. An OR-relaxed keyword top (no chunk matched every query
+  term) grades `weak` (`keyword_relaxed_top`) unless the top five rows
+  corroborate it: at most one query content term appears in none of them,
+  that term is not a name, and one row holds every other matched term. Then
+  it grades `moderate` (`keyword_relaxed_corroborated`): the question used a
+  framing word the corpus never writes, not an attribute or entity the
+  evidence lacks. Config-gated and default OFF: `search.crag_escalation=true`
   re-runs a weak retrieval once at a higher ceiling (expansion + relational
   on, autocut off, limit = the caller's explicit `limit` or the mode-derived
   default — never a hardcoded row count — floored at 50) and keeps the

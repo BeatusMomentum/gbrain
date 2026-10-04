@@ -1,6 +1,6 @@
 # TODOS
 
-## Agent-first operator wave follow-ups (filed 2026-10-03, follow-up from v0.60.41.0)
+## Agent-first operator wave follow-ups (filed 2026-10-03, follow-up from v0.60.42.0)
 
 Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/protocol/AGENT_OPERATOR_v1.md`.
 
