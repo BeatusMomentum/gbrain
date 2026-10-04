@@ -11,6 +11,7 @@ import { sqlQueryForEngine, type SqlQuery } from '../src/core/sql-query.ts';
 import { mintLegacyToken, revokeLegacyTokenById } from '../src/core/token-mint.ts';
 import { normalizeTokenScopes } from '../src/core/legacy-token-scope.ts';
 import { hashToken } from '../src/core/utils.ts';
+import { ACCESS_TOKEN_GRANT_SCHEMA_SQL } from '../src/core/grants/access-token-schema.ts';
 
 let engine: PGLiteEngine;
 let sql: SqlQuery;
@@ -20,8 +21,12 @@ beforeAll(async () => {
   await engine.connect({});
   sql = sqlQueryForEngine(engine);
   // Just the table under test — the migration v4 shape (scopes TEXT[] is
-  // original schema) + the v38 permissions column.
-  await engine.executeRaw(`
+  // original schema) + the v38 permissions column + the F3 grant columns.
+  await engine.executeRaw(PRE_GRANT_COLUMNS_TABLE);
+  for (const statement of ACCESS_TOKEN_GRANT_SCHEMA_SQL.split(";").map(s => s.trim()).filter(Boolean)) await engine.executeRaw(statement);
+}, 60_000);
+
+const PRE_GRANT_COLUMNS_TABLE = `
     CREATE TABLE IF NOT EXISTS access_tokens (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name TEXT NOT NULL,
@@ -32,8 +37,7 @@ beforeAll(async () => {
       last_used_at TIMESTAMPTZ,
       revoked_at TIMESTAMPTZ
     )
-  `);
-}, 60_000);
+  `;
 
 afterAll(async () => {
   if (engine) await engine.disconnect();
@@ -116,6 +120,22 @@ describe('mintLegacyToken', () => {
       mintLegacyToken(engine, { name: '  ', takesHolders: ['world'], scopes: ['read'] }),
     ).rejects.toThrow(/name/);
   });
+});
+
+describe('mintLegacyToken on a brain without the grant columns', () => {
+  test('refuses with migrations_pending and a filled fix instead of writing a JSONB-only grant', async () => {
+    const bare = new PGLiteEngine();
+    await bare.connect({});
+    try {
+      await bare.executeRaw(PRE_GRANT_COLUMNS_TABLE);
+      const refusal = await mintLegacyToken(bare, { name: 'pre-columns', takesHolders: ['world'], scopes: ['read'] }).catch(e => e);
+      expect(refusal).toMatchObject({ code: 'migrations_pending', fix: { argv: ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'], actor: 'agent' } });
+      expect(refusal.why).toBeTruthy();
+      expect(await bare.executeRaw('SELECT 1 FROM access_tokens')).toHaveLength(0);
+    } finally {
+      await bare.disconnect();
+    }
+  }, 60_000);
 });
 
 describe('revokeLegacyTokenById [C7]', () => {

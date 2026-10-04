@@ -37,10 +37,11 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { authSourcesFromGrant, grantFromRow, grantFromTokenRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
+import { authSourcesFromGrant, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
 import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
+import { resolveTokenGrant } from './grants/legacy-token.ts';
 
 /**
  * A slug-prefix write binding is only meaningful if every entry actually
@@ -913,13 +914,14 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)
       `.catch(() => { /* fire-and-forget */ });
       const name = legacyRows[0].name as string;
-      // F3: one grant shape (grants/model.ts), shared with the legacy HTTP
-      // transport so the two cannot drift. Unmigrated rows read through lane
-      // F's JSONB parsers; unified rows read the columns, fail-closed on drift.
-      // Scopes: NULL (every token minted before #4043) is grandfathered full
-      // access; an array is honored as-is, including [] as deny. Takes holders
-      // null → the /mcp dispatch site defaults to the fail-closed ['world'].
-      const grant = grantFromTokenRow(legacyRows[0]);
+      // One grant shape (grants/model.ts), shared with the legacy HTTP
+      // transport so the two cannot drift. Unified rows read the columns,
+      // fail-closed on drift; a row still on the legacy shape is converted on
+      // this read (resolveTokenGrant). Scopes: NULL (every token minted before
+      // #4043) is grandfathered full access; an array is honored as-is,
+      // including [] as deny. Takes holders null → the /mcp dispatch site
+      // defaults to the fail-closed ['world'].
+      const grant = await resolveTokenGrant(this.sql, legacyRows[0]);
       return {
         token,
         clientId: name,

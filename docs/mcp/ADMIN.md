@@ -314,37 +314,44 @@ from `gbrain auth list`. The older commands stay as aliases:
 `auth rescope --client`, and `gbrain auth permissions <name>
 set-takes-holders <list>` is `auth rescope --token <name> --takes-holders <list>`.
 
-### One grant shape and the lazy migration
+### One grant shape
 
 Tokens store their grant in the same columns as OAuth clients
 (`access_tokens.source_grant`, `source_id`, `federated_read`,
 `allowed_operations`, `takes_holders`, `grant_revision`). `source_grant` is
-`default`, `scalar`, `federated` or `none`; NULL means the token still uses the
-older `permissions` JSON shape. Those tokens keep working unchanged and are not
-re-issued: the next `auth rescope` edit, every `auth create` and every harness
-rotation write the columns, bump `grant_revision`, and rewrite `permissions` as
-a mirror (other keys preserved) so older gbrain binaries enforce the same
-grant. To migrate every remaining token at once, without changing any grant:
+`default`, `scalar`, `federated` or `none`. Authorization reads these columns.
+Every grant write also rewrites `permissions` as a mirror (other keys
+preserved) so older gbrain binaries enforce the same grant; the mirror is kept
+until the end date `gbrain doctor` reports (`details.mirror_window_ends`).
+
+The schema migration that ships with this release converts every active
+token still on the older `permissions`-only shape (`source_grant` NULL) in one
+pass without changing any grant, and prints how many it converted. A token
+an older binary creates afterwards converts on its first request (on a
+read-only database role it is authorized with the identical grant and
+converts later). To convert any remaining tokens now:
 
 ```bash
 gbrain auth rescope --migrate-legacy --dry-run    # list
 gbrain auth rescope --migrate-legacy
 ```
 
-A token whose `permissions` value is not a JSON object is skipped: the HTTP
-paths read it as no grant while publication denies it, so there is no faithful
-column form. Ask the user which grant it should hold, then run
-`gbrain auth rescope --id <id>` with explicit `--sources`, `--takes-holders`
-and `--operations` (or `--reset-default sources,takes-holders,operations`).
-`gbrain doctor` reports the count as `legacy_token_grant_shape`
-(`details.legacy_shape_count`, `details.malformed`).
+A token whose `permissions` value is not a JSON object has no faithful
+grant, so it is never converted and every request it makes is refused.
+`gbrain doctor` warns `legacy_token_grant_shape` with the count
+(`details.legacy_shape_count`, `details.convertible_count`) and, per malformed
+token, the command that gives it the `auth create` default grant
+(`details.malformed: [{name, id, argv}]`). Ask the user which grant it should
+hold first, then run that command or `gbrain auth rescope --id <id>` with
+explicit `--sources`, `--takes-holders` and `--operations`.
 
 ### Grant drift
 
 If an older gbrain binary edits a migrated token's `permissions` JSON (for
-example its `auth rescope-token`), the JSON and the columns disagree. Each
-axis that disagrees (`sources`, `takes-holders`, `operations`) denies every
-request until resolved, and grant edits on that token refuse. `gbrain doctor`
+example its `auth rescope-token`), the JSON and the columns disagree. While
+the mirror is kept, each axis that disagrees (`sources`, `takes-holders`,
+`operations`) denies every request until resolved, and grant edits on that
+token refuse; the columns are never widened from the JSON. `gbrain doctor`
 warns `legacy_token_grant_drift` (`details.drift: [{name, id, axes}]`). Ask the
 user which grant is intended, then run one of:
 

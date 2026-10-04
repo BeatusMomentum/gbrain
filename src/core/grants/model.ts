@@ -162,11 +162,22 @@ export interface PrincipalGrant {
    */
   drift: LegacyGrantAxis[];
   /**
-   * Legacy rows only: `permissions` is present but not a JSON object. The HTTP
-   * auth paths read it as no grant; publication and job admission deny it.
+   * Legacy rows only: `permissions` is present but not a JSON object. It has
+   * no column equivalent, so every axis of the grant is deny-all until an
+   * operator gives the token an explicit grant (`auth rescope --id`).
    */
   permissionsMalformed: boolean;
 }
+
+/**
+ * Tokens keep a `permissions` JSONB mirror of their grant columns so gbrain
+ * binaries older than the unified grant shape enforce the same grant. Until
+ * this date (30 days after the release that converted every legacy grant in
+ * bulk) the mirror is written on every grant write and drift between it and
+ * the columns denies the drifted axis; doctor reports the date. Authorization
+ * reads the columns; the mirror is only compared, never granted from.
+ */
+export const GRANT_MIRROR_WINDOW_ENDS = '2026-11-04';
 
 type TokenGrantAxes = Pick<PrincipalGrant, 'sources' | 'allowedOperations' | 'takesHolders'>;
 
@@ -226,9 +237,12 @@ function sameAxis(axis: LegacyGrantAxis, a: TokenGrantAxes, b: TokenGrantAxes): 
 
 /**
  * The effective grant of an `access_tokens` row (SELECT * keeps this working
- * on brains that predate the columns). `source_grant IS NULL` rows are read
- * through lane F's JSONB parsers unchanged; unified rows read the columns,
- * and any axis whose JSONB mirror disagrees evaluates deny-all.
+ * on brains that predate the columns). Unified rows read the columns, and any
+ * axis whose JSONB mirror disagrees evaluates deny-all. A `source_grant IS
+ * NULL` row has not been converted yet (the bulk migration converts every
+ * active one; an older binary's `auth create` can still add one): it reads as
+ * the conversion `migrateLegacyTokens` would write, and a malformed
+ * `permissions` value denies every axis.
  */
 export function grantFromTokenRow(row: Record<string, unknown>): PrincipalGrant {
   const base = {
@@ -237,7 +251,10 @@ export function grantFromTokenRow(row: Record<string, unknown>): PrincipalGrant 
     revision: Number(row.grant_revision ?? 0),
   };
   const { malformed, ...legacy } = tokenGrantFromPermissions(row.permissions);
-  if (row.source_grant == null) return { ...base, ...legacy, shape: 'legacy_permissions', drift: [], permissionsMalformed: malformed };
+  if (row.source_grant == null) {
+    const axes: TokenGrantAxes = malformed ? { sources: { kind: 'none' }, allowedOperations: [], takesHolders: [] } : legacy;
+    return { ...base, ...axes, shape: 'legacy_permissions', drift: [], permissionsMalformed: malformed };
+  }
   const columns = tokenGrantFromColumns(row);
   const drift = LEGACY_GRANT_AXES.filter(axis => malformed || !sameAxis(axis, columns, legacy));
   return {

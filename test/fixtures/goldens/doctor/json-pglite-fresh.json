@@ -510,7 +510,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 200 (latest: 200)",
+          "message": "Version 201 (latest: 201)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1185,11 +1185,13 @@
         {
           "category": "ops",
           "details": {
+            "convertible_count": 0,
             "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
             "legacy_shape_count": 0,
-            "malformed": []
+            "malformed": [],
+            "mirror_window_ends": "2026-11-04"
           },
-          "message": "Every active legacy token uses the unified grant columns.",
+          "message": "Every active legacy token uses the unified grant columns. The permissions mirror for older gbrain binaries is kept until 2026-11-04.",
           "name": "legacy_token_grant_shape",
           "status": "ok"
         },
@@ -1197,7 +1199,8 @@
           "category": "ops",
           "details": {
             "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
-            "drift": []
+            "drift": [],
+            "mirror_window_ends": "2026-11-04"
           },
           "message": "No legacy token grant has drifted from its permissions mirror.",
           "name": "legacy_token_grant_drift",
@@ -1206,7 +1209,7 @@
         {
           "category": "ops",
           "details": {
-            "docs": "docs/mcp/ADMIN.md#legacy-token-grants",
+            "docs": "docs/mcp/ADMIN.md#tokens-without-scopes",
             "null_scope_count": 0,
             "tokens": []
           },
