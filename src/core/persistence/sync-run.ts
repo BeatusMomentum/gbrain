@@ -504,7 +504,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     const config = loadConfig() ?? { engine: engine.kind };
     const analyzeEvery = await importAnalyzeEveryPages(engine);
     let batchStart = performance.now(), batchPages = 0, foregroundWaitStart = 0, foregroundBaseline = 0;
-    let creditedPages = 0, creditStarted = 0;
+    let creditedPages = 0, creditStarted = 0, foregroundQueued = false;
     const sliceStarted = performance.now(), sliceFirstIndex = cursor.index, drainStartedAt = opts.drainStartedAt ?? Date.now();
     const bulk: BulkPass = { settings: opts.bulk && !company ? opts.bulk : { enabled: false, reason: null, size: 1, maxTxnMs: 0 }, perMemberMs: null };
     opts.onProgress?.({ phase: 'managed_sync.start', bankedFiles: cursor.index, total: cursor.entries.length });
@@ -517,6 +517,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         const [foreground] = await engine.executeRaw(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid
           AND state IN ('queued','running','recovering') AND NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1`, [cursor.binding.worktree_id]);
         assertActive();
+        foregroundQueued = Boolean(foreground);
         if (foreground && creditedPages === 0) {
           startPersistenceConsumer(engine, config);
           if (!foregroundWaitStart) {
@@ -552,7 +553,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
         continue;
       }
-      if (bulk.settings.enabled && !prior && !cursor.group && !pending.rebound && groupableIntent(pending.intent)) {
+      if (bulk.settings.enabled && !foregroundQueued && !prior && !cursor.group && !pending.rebound && groupableIntent(pending.intent)) {
         const head: Cursor = cursor;
         const followers = await freezeFollowers(engine, head, config, nextGroupSize(bulk.settings, bulk.perMemberMs) - 1,
           index => freezeEntry(engine, { ...head, index }, key, assertActive, frozenRun));

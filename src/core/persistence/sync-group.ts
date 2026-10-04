@@ -28,7 +28,7 @@ export async function resolveBulkSettings(engine: BrainEngine, noBulk: boolean |
   const env = process.env.GBRAIN_SYNC_BULK;
   const configured = await engine.getConfig('sync.bulk').catch(() => null);
   const size = await whole(engine, 'GBRAIN_SYNC_BULK_SIZE', 'sync.bulk_size', 16, 1, 64);
-  const maxTxnMs = await whole(engine, 'GBRAIN_SYNC_BULK_MAX_TXN_MS', 'sync.bulk_max_txn_ms', 30_000, 100, 300_000);
+  const maxTxnMs = await whole(engine, 'GBRAIN_SYNC_BULK_MAX_TXN_MS', 'sync.bulk_max_txn_ms', 15_000, 100, 300_000);
   const reason = noBulk ? 'disabled by --no-bulk' : env === '0' || env === 'false' ? 'disabled by GBRAIN_SYNC_BULK=0'
     : env === undefined || env === '' ? (configured === 'false' || configured === '0' ? 'disabled by config sync.bulk=false' : null) : null;
   if (reason) return { enabled: false, reason, size, maxTxnMs };
@@ -52,7 +52,8 @@ export function groupableIntent(intent: SyncIntent): boolean {
  * Adaptive group size: as many members as fit the time budget at the last
  * observed per-member time from admission to commit, within the configured
  * maximum. Foreground writes queued behind a group wait at most about this
- * budget (sync.bulk_max_txn_ms).
+ * budget (sync.bulk_max_txn_ms); while a foreground write is queued on the
+ * worktree, no group forms, so it is served before the next page (ENG-A5).
  */
 export function nextGroupSize(settings: BulkSettings, perMemberMs: number | null): number {
   if (perMemberMs === null || perMemberMs <= 0) return Math.min(4, settings.size);
