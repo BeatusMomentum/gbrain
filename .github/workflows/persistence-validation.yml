@@ -265,7 +265,21 @@ jobs:
               ) ;;
             *) echo "::error::unknown shard $SHARD" >&2; exit 1 ;;
           esac
-          bun --no-env-file test --timeout=120000 "${files[@]}"
+          # One bun process per file: *.serial.test.ts files require their own
+          # process, and a test that fails while its body keeps running would
+          # otherwise leak process.env into every later file (one such leak
+          # deleted DATABASE_URL for the rest of a shard and silently dropped
+          # those files' PostgreSQL arms).
+          failed=()
+          for file in "${files[@]}"; do
+            echo "::group::$file"
+            bun --no-env-file test --timeout=120000 "$file" || failed+=("$file")
+            echo "::endgroup::"
+          done
+          for file in ${failed[@]+"${failed[@]}"}; do
+            echo "::error file=$file::PostgreSQL arm failed. Reproduce: DATABASE_URL=<pgvector test database> GBRAIN_TEST_ALLOW_DATABASE_URL=1 bun test $file"
+          done
+          [ "${#failed[@]}" -eq 0 ]
 
   invariants:
     name: ${{ matrix.engine }} / Bun ${{ matrix.bun }}
