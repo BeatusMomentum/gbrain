@@ -510,11 +510,16 @@ async function runSyncAll(
   // Effective parallelism — surfaced in the --json envelope so consumers
   // know how the run was actually dispatched. 1 in the serial fallback,
   // capped at min(sourceCount, --max-sources, 8) in the parallel path.
-  const effectiveParallel = fanOutEligible
+  // #5984 (ENG-A14): managed sources drain one at a time. Parallel drains contend on the brain-wide
+  // publication counters (55P03) and, at high RTT, made no progress at all.
+  const [persistence] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1').catch(() => []);
+  const managedSerial = fanOutEligible && persistence?.enabled === true && runnableSources.length > 1;
+  if (managedSerial) writeHuman('Managed brain: sources drain one at a time (parallel drains contend on the shared publication counters).');
+  const effectiveParallel = fanOutEligible && !managedSerial
     ? Math.min(runnableSources.length, maxSources ?? 8)
     : 1;
 
-  await dispatchSyncAll({ fanOutEligible, effectiveParallel, concurrency, runnableSources, runOne, writeHuman, humanSink, perSourceResults, onAllSigint });
+  await dispatchSyncAll({ fanOutEligible: fanOutEligible && !managedSerial, effectiveParallel, concurrency, runnableSources, runOne, writeHuman, humanSink, perSourceResults, onAllSigint });
 
   const okCount = perSourceResults.filter((r) => r.status === 'ok').length;
   const errCount = perSourceResults.filter((r) => r.status === 'error').length;
