@@ -16,6 +16,7 @@ import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type RecoveryRecord, type WriteRequest } from './model.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
+import { lockCoreSources } from './core-guard.ts';
 import { requestAttribution } from './attribution.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
@@ -33,6 +34,8 @@ import { databaseRefusal, withAttempt, type PublicationFailure, type Publication
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
+  /** Always-loaded core writes: source rows locked FOR UPDATE in id order (core-guard.ts lockCoreSources). */
+  exclusiveSources?: readonly string[];
   observedRevision: string | null;
   additionalPageKeys?: readonly {sourceId:string;slug:string}[];
   noop?: boolean;
@@ -242,7 +245,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await declarePersistenceProtocol(tx);
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
       const liveBinding = await guardOwnership(tx, row, hostId);
-      if (prepared.sourceExclusive) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,
         { fix: ownerStatusFix(row.source_id) });

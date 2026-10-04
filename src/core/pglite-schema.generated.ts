@@ -1826,6 +1826,25 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 
+-- Always-loaded core memory: remote-edit notices.
+CREATE TABLE IF NOT EXISTS core_edit_notices (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  page_id         BIGINT,
+  revision        TEXT,
+  base_revision   TEXT,
+  actor           TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  acked_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS core_edit_notices_pending_idx ON core_edit_notices (source_id, slug, id) WHERE acked_at IS NULL;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
 
 
 `;

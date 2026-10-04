@@ -39,7 +39,7 @@ import { decoratePublicationOutcome, finishUnpublishedFailure, publishMutation, 
 /** Whether a prepared member can share a group transaction. */
 export function groupable(row: WriteRequest, prepared: PreparedMutation): boolean {
   return row.operation === 'submit_job' && (row.intent?.kind === 'managed_sync_import' || row.intent?.kind === 'managed_sync_delete')
-    && (row.target_kind ?? 'page') === 'page' && prepared.target !== 'skill_bundle' && !prepared.file && !prepared.sourceExclusive && typeof prepared.validate === 'function';
+    && (row.target_kind ?? 'page') === 'page' && prepared.target !== 'skill_bundle' && !prepared.file && !prepared.sourceExclusive && !prepared.exclusiveSources?.length && typeof prepared.validate === 'function';
 }
 
 /** Publishes the whole group or nothing; null means the transaction did not commit and the claims are untouched. */
