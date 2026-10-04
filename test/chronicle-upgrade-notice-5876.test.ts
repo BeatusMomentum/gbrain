@@ -14,6 +14,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { CHRONICLE_ACK_KEY, CHRONICLE_NOTICE_SHOWN_KEY } from '../src/core/chronicle/config.ts';
 import { autoChronicleUpgradeNotice, printAutoChronicleUpgradeNotice } from '../src/core/chronicle/upgrade-notice.ts';
+import { __unconfigureGatewayForTests, resetGateway } from '../src/core/ai/gateway.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let engine: PGLiteEngine;
 const priced = { model: 'anthropic:claude-sonnet-4-6', priced: true, chatAvailable: true };
@@ -38,6 +43,23 @@ describe('auto_chronicle upgrade notice', () => {
     const text = (await autoChronicleUpgradeNotice(engine, { model: 'openai:gpt-new', priced: false, chatAvailable: false }))!.join('\n');
     expect(text).toContain('no price for openai:gpt-new');
     expect(text).toContain('No chat provider is configured, so nothing runs');
+  });
+
+  test('post-upgrade opens its engine without configuring the gateway: the notice still reads the configured model', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'chronicle-notice-'));
+    mkdirSync(join(home, '.gbrain'));
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', chat_model: 'anthropic:claude-sonnet-4-6' }));
+    try {
+      await withEnv({ GBRAIN_HOME: home, ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+        __unconfigureGatewayForTests();
+        const text = (await autoChronicleUpgradeNotice(engine))!.join('\n');
+        expect(text).toContain('$50.00/day with anthropic:claude-sonnet-4-6');
+        expect(text).not.toContain('No chat provider is configured');
+      });
+    } finally {
+      resetGateway();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('prints once, then never again', async () => {

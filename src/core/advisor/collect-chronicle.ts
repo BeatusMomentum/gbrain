@@ -41,7 +41,7 @@ async function collectAutoChronicle(ctx: AdvisorContext): Promise<AdvisorFinding
   const findings: AdvisorFinding[] = [];
   const settings = await readChronicleSettings(ctx.engine);
   const stats = await readChronicleLedgerStats(ctx.engine);
-  const activity = stats.available ? describeChronicleActivity(stats, settings.autoDailyLimit) : '';
+  const activity = stats.available ? describeChronicleActivity(stats, settings.autoDailyLimit, { nameWriters: ctx.remote === false }) : '';
   if (await autoChronicleNeedsAcknowledgement(ctx.engine)) {
     findings.push({
       id: 'auto_chronicle_default_on',

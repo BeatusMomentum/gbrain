@@ -179,6 +179,16 @@ describe('advisor', () => {
     expect(byName(await doctor(), 'auto_chronicle').status).toBe('ok');
   });
 
+  test('remote advisor callers see the largest writer\'s share but not who it is', async () => {
+    await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'extracted', principal: ['oauth_client', 'client-a'], cost: 0.01 });
+    const remote = { engine, remote: true, now: new Date('2026-10-04T12:00:00Z') } as unknown as AdvisorContext;
+    const remoteDetail = (await collectChronicle.collect(remote)).find((f) => f.id === 'auto_chronicle_default_on')!.detail!;
+    expect(remoteDetail).toContain('largest writer used 1% of the daily limit');
+    expect(remoteDetail).not.toContain('client-a');
+    expect((await collectChronicle.collect(advisorCtx())).find((f) => f.id === 'auto_chronicle_default_on')!.detail)
+      .toContain('largest writer oauth_client:client-a used 1%');
+  });
+
   test('pending pages with no chat provider warn', async () => {
     await insertChronicleLedgerRow(engine, { slug: 'meetings/a', state: 'pending' });
     expect((await collectChronicle.collect(advisorCtx())).find((f) => f.id === 'chronicle_chat_unavailable'))

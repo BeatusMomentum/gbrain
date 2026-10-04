@@ -76,10 +76,14 @@ export async function readChronicleLedgerStats(engine: BrainEngine): Promise<Chr
   }
 }
 
-/** One line for doctor/advisor: 24 h usage against the limit, the largest writer's share, 7-day outcomes and spend. */
-export function describeChronicleActivity(stats: ChronicleLedgerStats, dailyLimit: number): string {
+/**
+ * One line for doctor/advisor: 24 h usage against the limit, the largest writer's share, 7-day
+ * outcomes and spend. `nameWriters: false` (remote advisor callers) keeps the share but not who.
+ */
+export function describeChronicleActivity(stats: ChronicleLedgerStats, dailyLimit: number, opts: { nameWriters?: boolean } = {}): string {
   const top = stats.principals24h[0];
-  const share = top ? `; largest writer ${top.principal} used ${Math.round((top.calls / dailyLimit) * 100)}% of the daily limit` : '';
+  const who = opts.nameWriters === false ? '' : ` ${top?.principal}`;
+  const share = top ? `; largest writer${who} used ${Math.round((top.calls / dailyLimit) * 100)}% of the daily limit` : '';
   const reasons = Object.entries(stats.last7d.reasons).slice(0, 4).map(([r, n]) => `${r} ${n}`).join(', ');
   const usd = `$${stats.spend7d.knownUsd.toFixed(2)} known spend`;
   const unpriced = stats.spend7d.unpricedCalls > 0 ? ` + ${stats.spend7d.unpricedCalls} unpriced call(s)` : '';

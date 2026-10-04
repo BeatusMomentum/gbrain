@@ -18,8 +18,10 @@ export interface ChronicleProviderView {
 
 async function providerView(engine: BrainEngine): Promise<ChronicleProviderView> {
   try {
-    const { getChatModel, isAvailable } = await import('../ai/gateway.ts');
+    const { configureGatewayIfUninitialized, getChatModel, isAvailable } = await import('../ai/gateway.ts');
     const { isModelPriceable, loadPricingOverrides } = await import('../budget/budget-tracker.ts');
+    // post-upgrade opens its engine without cli.ts's connect path, so the gateway may be unconfigured.
+    configureGatewayIfUninitialized();
     const model = getChatModel();
     return { model, priced: isModelPriceable(model, 'chat', await loadPricingOverrides(engine)), chatAvailable: isAvailable('chat') };
   } catch {
