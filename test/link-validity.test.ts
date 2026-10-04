@@ -84,11 +84,11 @@ describe('buildRelationshipState — state relations', () => {
     expect(s.stints).toEqual([{ from: '2020-01-01', until: null }]);
   });
 
-  test('dated start with only past-tense assertions: ended at an unknown date after the start', () => {
+  test('dated start with only past-tense assertions stays open: only a dated end closes a dated start', () => {
     const s = buildRelationshipState('state', [past()], [start('2021-01-01')]);
-    expect(s.stints).toEqual([]);
+    expect(s.stints).toEqual([{ from: '2021-01-01', until: null }]);
     expect(s.firstStart).toBe('2021-01-01');
-    expect(statusAt(s, '2026-01-01')).toBe('ended_unknown_date');
+    expect(statusAt(s, '2026-01-01')).toBe('live');
   });
 
   test('future end stays live until then', () => {

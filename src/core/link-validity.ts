@@ -159,7 +159,8 @@ export interface RelationshipState {
  *    stale assertions.
  * 4. Undated past assertions with no dated events: no undated present →
  *    ended at an unknown date (no stints); undated present from another origin
- *    → disputed (kept live, flagged).
+ *    → disputed (kept live, flagged). With a dated start and no dated end, past
+ *    assertions never close the stint: only a dated end does.
  * Event relations: [earliest dated occurrence, inf), or (-inf, inf) undated.
  */
 export function buildRelationshipState(
@@ -209,16 +210,10 @@ export function buildRelationshipState(
   const lastEvent = events[events.length - 1];
   const staleAssertions = lastEvent.kind === 'end' ? undatedPresent : 0;
   let disputed = false;
-  if (open && undatedPast > 0) {
-    if (undatedPresent === 0) {
-      // Dated start, no dated end, and every assertion says it is over: the
-      // stint ended at an unknown date, so it is neither live now nor at any
-      // later as-of date. Earlier closed stints keep their history.
-      stints.pop();
-    } else {
-      disputed = pastFromOtherOrigin(assertions);
-    }
-  }
+  // A dated start stays open until a dated end: past-tense prose alone never
+  // closes it (a promotion or "has worked at" reads as past). Present and past
+  // assertions from different pages flag the relationship as disputed.
+  if (open && undatedPast > 0 && undatedPresent > 0) disputed = pastFromOtherOrigin(assertions);
   return { ...base, stints: mergeStints(stints), disputed, staleAssertions };
 }
 

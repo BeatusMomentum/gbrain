@@ -60,12 +60,31 @@ export const rowKey = (r: Pick<OwnedRow, 'from_slug' | 'to_slug' | 'link_type'>)
 // [Helix]": end for Wisp, start for Helix).
 
 const ROLE = String.raw`(?:[\w&./-]+\s+){0,4}?`;
+/** Role phrases that describe a change inside the job ("was promoted to CTO at"), not a past job. */
+const NOT_PAST_ROLE = String.raw`(?!(?:promoted|hired|named|appointed|made|elected|brought|recently|just|newly|now|still|currently)\b)`;
+/** Present perfect ("has worked at", "have spent years at") describes a job that is still going. */
+const NOT_PERFECT = String.raw`(?<!\b(?:has|have|'s|’s)\s+(?:\w+\s+)?)`;
+const OWNED = String.raw`(?:(?:her|his|their|my|the)\s+)?(?:time|stint|tenure|role|job|run)\s+`;
 
 const EMPLOYMENT = {
-  end: new RegExp(String.raw`\b(?:left|departed(?:\s+from)?|quit|resigned(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+down(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|(?:was\s+)?laid\s+off\s+(?:from|by|at)|(?:was\s+)?let\s+go\s+(?:from|by)|(?:was\s+)?fired\s+(?:from|by)|no\s+longer\s+(?:at|with|works\s+at|working\s+at)|exited|parted\s+ways\s+with)\s*$`, 'i'),
-  start: new RegExp(String.raw`\b(?:join(?:ed|s)?(?:\s+${ROLE}(?:at|as))?|hired\s+(?:by|at|as\s+${ROLE}at)|started\s+(?:at|with|working\s+at)|became\s+${ROLE}(?:at|of)|promoted\s+to\s+${ROLE}(?:at|of)|signed\s+on\s+(?:at|with)|named\s+${ROLE}(?:at|of))\s*$`, 'i'),
-  past: new RegExp(String.raw`\b(?:previously(?:\s+worked)?\s+(?:at|with|for)|formerly(?:\s+${ROLE})?\s*(?:at|of|with)|former\s+${ROLE}(?:at|of|with)|ex-[\w-]+\s+(?:at|of)|used\s+to\s+work\s+(?:at|for)|worked\s+(?:at|for|with)|spent\s+(?:[\w-]+\s+){1,4}?(?:at|with)|(?:his|her|their|my)\s+(?:time|stint|tenure)\s+at|stint\s+at|was\s+${ROLE}(?:at|of)|alum(?:nus|na|ni)?\s+of)\s*$`, 'i'),
+  end: new RegExp(String.raw`\b(?:left|leaving|departed(?:\s+from)?|quit|resigned(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+down(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+away\s+from|moved\s+on\s+from|(?:moved|switched|transitioned|jumped)\s+(?:over\s+|out\s+)?from|(?:was\s+)?laid\s+off\s+(?:from|by|at)|(?:was\s+)?let\s+go\s+(?:from|by)|(?:was\s+)?fired\s+(?:from|by)|no\s+longer\s+(?:at|with|works\s+at|working\s+at)|exited|parted\s+ways\s+with|retired\s+from|(?:wrapped\s+up|finished|ended|concluded)\s+(?:${OWNED})?(?:at|with)|last\s+day\s+at|departure\s+from)\s*$`, 'i'),
+  start: new RegExp(String.raw`\b(?:(?:re-?)?join(?:ed|s|ing)?(?:\s+${ROLE}(?:at|as))?|(?:was\s+)?hired\s+(?:by|at|as\s+${ROLE}at)|started\s+(?:at|with|working\s+(?:at|for)|(?:a\s+)?new\s+(?:role|job|position)\s+at)|became\s+${ROLE}(?:at|of)|promoted\s+to\s+${ROLE}(?:at|of)|signed\s+on\s+(?:at|with)|named\s+${ROLE}(?:at|of)|accepted\s+(?:an?\s+)?(?:offer|role|position|job)\s+(?:at|with|from)|took\s+(?:an?\s+|the\s+)?(?:\w+\s+){0,2}?(?:role|job|position)\s+(?:at|with)|came\s+(?:on\s+board|aboard)\s+(?:at|with)|went\s+to\s+work\s+(?:at|for)|returned\s+to)\s*$`, 'i'),
+  past: new RegExp(String.raw`\b(?:previously(?:\s+worked)?\s+(?:at|with|for)|formerly(?:\s+${ROLE})?\s*(?:at|of|with)|former\s+${ROLE}(?:at|of|with)|ex-[\w-]+\s+(?:at|of)|used\s+to\s+work\s+(?:at|for)|${NOT_PERFECT}worked\s+(?:at|for|with)|${NOT_PERFECT}spent\s+(?:[\w-]+\s+){1,4}?(?:at|with)|(?:his|her|their|my)\s+(?:time|stint|tenure)\s+at|stint\s+at|was\s+${NOT_PAST_ROLE}${ROLE}(?:at|of)|alum(?:nus|na|ni)?\s+of)\s*$`, 'i'),
 };
+
+/**
+ * Lines about investing, meetings or events mention organizations without
+ * changing anyone's job ("joined Acme's Series B", "back at Acme for an
+ * alumni dinner"). Natural cues on such lines never start or end a state
+ * relationship; only the explicit grammar does.
+ */
+const EVENT_CONTEXT = /\b(?:invest(?:ed|s|ing|or|ors|ment)?|angel|check|cap\s+table|round|seed|series\s+[a-z]|bridge|portfolio|fund(?:ing|raise)|alumni|alums?|reunion|dinner|lunch|breakfast|coffee|drinks|met\s+(?:with|up)|meet(?:ing|up)s?|panel|talk|keynote|conference|summit|event|offsite|party|visit(?:ed|ing)?|interview(?:ed|s|ing)?|demo\s+day|podcast|webinar|office\s+hours|hackathon|speaker|spoke|guest)\b/i;
+
+/** "[Acme]'s advisory board": the one qualified reference that is about the relation itself (advises). */
+const ADVISORY_BOARD_AFTER = /^\s*(?:'s|’s)\s+(?:advisory\s+board|board\s+of\s+advisors)\b/i;
+
+/** After a reference: a possessive or a qualifying noun means the line is about something of the organization's, not the organization. */
+const QUALIFIED_AFTER = /^(?:\s*(?:'s|’s)|\s+(?:alumni|alums?|investors?|board|round|event|team\s+event|community|network|office|campus))\b/i;
 
 const ADVISORY = {
   end: /\b(?:stepped\s+down\s+as\s+(?:an?\s+)?(?:\w+\s+)?advisor\s+(?:to|at|of|for)|left\s+(?:the\s+)?advisory\s+board\s+(?:of|at)|no\s+longer\s+advis(?:es|ing)|stopped\s+advising|ended\s+(?:the\s+|(?:his|her|their)\s+)?advisory\s+(?:role|work)\s+(?:with|at|for))\s*$/i,
@@ -102,15 +121,15 @@ export function normalizeLinkTarget(raw: string): string {
   return s.replace(/^\/+/, '');
 }
 
-interface RefHit { index: number; target: string }
+interface RefHit { index: number; end: number; target: string }
 
 const MD_LINK_RE = /\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const WIKI_LINK_RE = /\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]/g;
 
 function referencesIn(text: string): RefHit[] {
   const hits: RefHit[] = [];
-  for (const m of text.matchAll(MD_LINK_RE)) hits.push({ index: m.index!, target: normalizeLinkTarget(m[1]) });
-  for (const m of text.matchAll(WIKI_LINK_RE)) hits.push({ index: m.index!, target: normalizeLinkTarget(m[1].replace(/^[a-z0-9-]+:(?=[a-z])/i, '')) });
+  for (const m of text.matchAll(MD_LINK_RE)) hits.push({ index: m.index!, end: m.index! + m[0].length, target: normalizeLinkTarget(m[1]) });
+  for (const m of text.matchAll(WIKI_LINK_RE)) hits.push({ index: m.index!, end: m.index! + m[0].length, target: normalizeLinkTarget(m[1].replace(/^[a-z0-9-]+:(?=[a-z])/i, '')) });
   return hits.sort((a, b) => a.index - b.index);
 }
 
@@ -195,23 +214,41 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
   }
 
   // 2. Natural cues on dated lines, for relationships this page asserts.
+  //    State relations take a cue only when it governs the reference itself:
+  //    not on investing/meeting/event lines, not when the reference is
+  //    qualified ("Acme's round", "Acme alumni"). "Left/moved from [A] to/for
+  //    [B]" also starts B.
   for (const line of lines) {
     if (EXPLICIT_TEST.test(line.text)) continue;
     const refs = referencesIn(line.text);
+    const eventLine = EVENT_CONTEXT.test(line.text.replace(/\[[^\]\n]*\]\([^)\s]*\)|\[\[[^\]\n]*\]\]/g, ' '));
     let prevEnd = 0;
+    let prevEndedOnLine = false;
     for (const ref of refs) {
       const window = windowBefore(line.text, ref.index, prevEnd);
+      const between = window.replace(/^[^)\]]*(?:\)|\]\])/, '');
+      const qualified = QUALIFIED_AFTER.test(line.text.slice(ref.end));
       prevEnd = ref.index + 2;
+      let endedHere = false;
       for (const r of temporalRows) {
         if (!refersTo(ref.target, other(r)) || !r.link_type) continue;
         const cues = cuesFor(r.link_type);
         let kind: TransitionKind | null = null;
-        if (cues) kind = cues.end.test(window) ? 'end' : cues.start.test(window) ? 'start' : null;
-        else if (EVENT_START[r.link_type]?.test(window)) kind = 'start';
+        if (cues) {
+          if (eventLine) continue;
+          if (qualified) {
+            if (r.link_type !== 'advises' || !ADVISORY_BOARD_AFTER.test(line.text.slice(ref.end))) continue;
+            kind = /\b(?:left|stepped\s+(?:down|off|away)\s+from|resigned\s+from)\s*$/i.test(window) ? 'end'
+              : /\b(?:(?:re-?)?joined|was\s+(?:added|named|appointed)\s+to)\s*$/i.test(window) ? 'start' : null;
+          } else kind = cues.end.test(window) ? 'end'
+            : cues.start.test(window) || (prevEndedOnLine && /^\s*(?:to|for)\s*$/i.test(between)) ? 'start' : null;
+        } else if (EVENT_START[r.link_type]?.test(window)) kind = 'start';
         if (!kind) continue;
+        if (kind === 'end') endedHere = true;
         push({ from_slug: r.from_slug, to_slug: r.to_slug, link_type: r.link_type, kind, occurred_on: line.date,
           date_precision: 'day', producer: line.dream ? 'dream' : 'timeline', line_hash: lineHash(line.text) });
       }
+      prevEndedOnLine = endedHere;
     }
   }
 
@@ -239,8 +276,8 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
   const narrative = stripDatedLines(page.compiled_truth ?? '');
   const narrativeRefs = referencesIn(narrative);
   for (const r of temporalRows) {
-    if (relationSemantics(r.link_type) !== 'state') continue;
-    const cues = cuesFor(r.link_type!)!;
+    const cues = relationSemantics(r.link_type) === 'state' ? cuesFor(r.link_type!) : null;
+    if (!cues) { if (relationSemantics(r.link_type) === 'state') tense.set(rowKey(r), 'present'); continue; }
     let past = 0, present = 0, prevEnd = 0;
     for (const ref of narrativeRefs) {
       const window = windowBefore(narrative, ref.index, prevEnd);
