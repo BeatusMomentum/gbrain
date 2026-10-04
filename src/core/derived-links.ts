@@ -54,7 +54,6 @@ export async function replaceDerivedLinks(
   links: LinkBatchInput[],
   opts: DerivedLinkReplacementOptions = {},
 ): Promise<{ created: number; removed: number }> {
-  await primeRelationSemantics(engine as Partial<Pick<BrainEngine, 'getConfig' | 'listConfigKeys'>>);
   const producers = ['markdown', 'wikilink-resolved', ...(opts.includeFrontmatter === false ? [] : ['frontmatter'])];
   const unique = new Map<string, LinkBatchInput>();
   for (const link of links) {
@@ -81,6 +80,7 @@ export async function replaceDerivedLinks(
   }
   const rows = [...unique.values()];
   return engine.transaction(async tx => {
+    await primeRelationSemantics(tx);
     await tx.lockPageKeys([{ sourceId: origin.sourceId, slug: origin.slug }, ...rows.flatMap(row => [
       { sourceId: row.from_source_id!, slug: row.from_slug }, { sourceId: row.to_source_id!, slug: row.to_slug },
     ])]);
