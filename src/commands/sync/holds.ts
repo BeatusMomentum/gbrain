@@ -27,6 +27,14 @@ import {
 } from '../../core/persistence/sync-holds.ts';
 import { DEFAULT_SOURCE_ID, hasMalformedPathSegment, isCodeFilePath, resolveSlugForPath, sanitizePathForDisplay, slugifyPath } from '../../core/sync.ts';
 import type { SyncActivePack } from './sync-run.ts';
+import { isPathContained } from '../../core/path-confine.ts';
+
+/** The file at a repo-relative path from git or a hold row, or null when it is missing or resolves outside the source root. */
+function fileUnderRoot(root: string, path: string): string | null {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- path is a repo-relative path from git or a hold row; isPathContained realpaths both sides and rejects anything outside root
+  const filePath = join(root, path);
+  return isPathContained(filePath, root) ? filePath : null;
+}
 
 export interface LegacyHolds {
   readonly sourceId: string;
@@ -97,8 +105,8 @@ export function planHoldRescreen(holds: LegacyHolds, input: { root: string; touc
     }
     const selected = input.selected(path);
     if (selected === null) continue;
-    const filePath = join(input.root, path);
-    if (!selected || !existsSync(filePath)) {
+    const filePath = fileUnderRoot(input.root, path);
+    if (!selected || !filePath) {
       holds.gone.push(path);
       if (holds.retryPaths.has(path)) holds.retryTaken.push(path);
       continue;
@@ -221,8 +229,8 @@ export async function wouldHoldFields(engine: BrainEngine, holds: LegacyHolds | 
   const now = new Date().toISOString();
   const refused: Array<{ path: string; screen: HoldScreen & { refusal: ContentRefusal } }> = [];
   for (const path of new Set(paths)) {
-    const filePath = join(root, path);
-    if (!existsSync(filePath)) continue;
+    const filePath = fileUnderRoot(root, path);
+    if (!filePath) continue;
     const screen = screenLegacyFile(filePath, path, activePack);
     if (screen.refusal) refused.push({ path, screen: screen as HoldScreen & { refusal: ContentRefusal } });
   }
@@ -320,8 +328,8 @@ export async function moveHeldRenames(engine: BrainEngine, holds: LegacyHolds | 
   if (!holds?.active) return;
   for (const record of holds.existing.values()) {
     const origin = record.meta.rename_from;
-    const filePath = join(root, record.path);
-    if (!origin || !existsSync(filePath)) continue;
+    const filePath = fileUnderRoot(root, record.path);
+    if (!origin || !filePath) continue;
     const screen = screenLegacyFile(filePath, record.path);
     if (screen.refusal) continue;
     const current = await currentPage(engine, holds.sourceId, { id: origin.pageId });
@@ -346,7 +354,7 @@ export async function settleFullSyncHolds(engine: BrainEngine, holds: LegacyHold
   if (!holds) return;
   for (const path of holds.existing.keys()) {
     if (input.failed.has(path)) continue;
-    if (input.walked.has(path) || !existsSync(join(input.root, path))) await clearLegacyHold(engine, holds, path);
+    if (input.walked.has(path) || !fileUnderRoot(input.root, path)) await clearLegacyHold(engine, holds, path);
   }
   holds.retryTaken.push(...holds.retryPaths);
   await settleLegacyHolds(engine, holds);

@@ -44,6 +44,7 @@ import {
 } from '../core/brain-writer.ts';
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
 import { isMarkdownFilePath, pruneDir, slugifyPath } from '../core/sync.ts';
+import { isPathContained } from '../core/path-confine.ts';
 
 /** Test seams: the stream `validate --stdin` reads, and the directory `--staged` runs git in. */
 export interface FrontmatterIo {
@@ -404,8 +405,9 @@ async function runValidate(rest: string[], io: FrontmatterIo): Promise<void> {
       const check = checkContent(file.content, file.rel, flags.importable);
       const result = toResult(file.rel, check);
       if (check.failed) {
+        // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- file.rel is a staged path from git diff --cached; isPathContained rejects anything outside the work tree
         const working = join(staged.root, file.rel);
-        result.working_copy_ok = existsSync(working) && lstatSync(working).isFile()
+        result.working_copy_ok = isPathContained(working, staged.root) && lstatSync(working).isFile()
           && !checkContent(readFileSync(working, 'utf8'), file.rel, flags.importable).failed;
       }
       results.push(result);
