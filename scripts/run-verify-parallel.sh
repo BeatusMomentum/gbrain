@@ -330,9 +330,9 @@ for i in "${!CHECKS[@]}"; do
     FAIL=$((FAIL + 1))
     FAIL_NAMES+=("$c")
     if [ "$rc" = "124" ]; then
-      FAIL_REPORT+=$'\n--- '"$c"' (TIMED OUT after '"${TIMEOUT}"'s) ---\n'
+      FAIL_REPORT+=$'\n--- '"$c"' (TIMED OUT after '"${TIMEOUT}"'s) ---'$'\n'
     else
-      FAIL_REPORT+=$'\n--- '"$c"' (rc='"$rc"') ---\n'
+      FAIL_REPORT+=$'\n--- '"$c"' (rc='"$rc"') ---'$'\n'
     fi
     if [ -f "$LOG_FILE" ]; then
       FAIL_REPORT+="$(tail -30 "$LOG_FILE")"
