@@ -4014,7 +4014,7 @@
         "kind": "function",
         "name": "extractLinksFromFile",
         "signature": [
-          "(content: string, relPath: string, allSlugs: Set<string>, opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; pack?: LinkExtractionPack | null; pageTypes?: ReadonlyMap<string, string>; aliases?: ReadonlyMap<string, string>; }) => Promise<ExtractedLink[]>"
+          "(content: string, relPath: string, allSlugs: Set<string>, opts?: { includeFrontmatter?: boolean; globalBasename?: boolean; pack?: LinkExtractionPack | null; pageTypes?: ReadonlyMap<string, string>; aliases?: ReadonlyMap<string, string>; lineGrammar?: { enabled?: boolean; allowUndeclaredTypes?: boolean; }; }) => Promise<ExtractedLink[]>"
         ]
       },
       {
@@ -4485,6 +4485,16 @@
       {
         "kind": "interface",
         "members": [
+          "key: string",
+          "kind: \"slug\" | \"name\"",
+          "target: string",
+          "targetSourceId?: string | undefined"
+        ],
+        "name": "AuthoredRef"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "index: number",
           "line?: number | undefined",
           "path: string"
@@ -4504,6 +4514,18 @@
           "upLevels?: number | undefined"
         ],
         "name": "EntityRef"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "globalBasename?: boolean | undefined",
+          "lineGrammar?: { enabled?: boolean; allowUndeclaredTypes?: boolean; } | undefined",
+          "onResolvedFrontmatterTarget?: ((slug: string) => void) | undefined",
+          "pack?: LinkExtractionPack | null | undefined",
+          "skipFrontmatter?: boolean | undefined",
+          "targetType?: ((slug: string, sourceId?: string) => string | undefined) | undefined"
+        ],
+        "name": "ExtractPageLinksOptions"
       },
       {
         "kind": "variable",
@@ -4551,6 +4573,7 @@
       {
         "kind": "interface",
         "members": [
+          "authoredRef?: AuthoredRef | undefined",
           "canonicalAttendance?: boolean | undefined",
           "context: string",
           "fromSlug?: string | undefined",
@@ -4692,7 +4715,7 @@
         "kind": "function",
         "name": "extractPageLinks",
         "signature": [
-          "(slug: string, content: string, frontmatter: Record<string, unknown>, pageType: PageType, resolver: SlugResolver, opts?: { globalBasename?: boolean; skipFrontmatter?: boolean; pack?: LinkExtractionPack | null; targetType?: (slug: string, sourceId?: string) => string | undefined; onResolvedFrontmatterTarget?: (slug: string) => void; }) => Promise<PageLinksResult>"
+          "(slug: string, content: string, frontmatter: Record<string, unknown>, pageType: PageType, resolver: SlugResolver, opts?: ExtractPageLinksOptions) => Promise<PageLinksResult>"
         ]
       },
       {

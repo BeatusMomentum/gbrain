@@ -609,12 +609,17 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Doctor check modules peeled from doctor.ts feed the same e2e surface.
   "src/commands/doctor/**": ["test/e2e/doctor-progress.test.ts", "test/e2e/recovery-layer.test.ts", "test/e2e/fix-wave-3-integration.test.ts", "test/e2e/doctor-json-golden.test.ts", "test/e2e/agent-journey-postgres.test.ts"],
   // Knowledge graph layer feeds graph-quality.
-  "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/link-extraction.ts": ["test/e2e/graph-quality.test.ts", "test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/wanted-links-postgres.test.ts"],
   "src/core/attendance-repair.ts": ["test/e2e/attendance-repair-postgres.test.ts"],
   "src/core/extract-timeline-from-meetings.ts": ["test/e2e/extract-timeline-attendance-postgres.test.ts"],
-  "src/core/derived-links.ts": ["test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/attendance-repair-postgres.test.ts"],
+  "src/core/derived-links.ts": ["test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/attendance-repair-postgres.test.ts", "test/e2e/wanted-links-postgres.test.ts"],
+  // Wanted pages (unresolved authored links) and the stale-for-extraction wake-up.
+  "src/core/wanted-links*.ts": ["test/e2e/wanted-links-postgres.test.ts"],
+  "src/core/line-grammar.ts": ["test/e2e/wanted-links-postgres.test.ts"],
+  "src/core/similar-pages.ts": ["test/e2e/p5-graph-postgres.test.ts"],
+  "src/core/persistence/page-advisories.ts": ["test/e2e/p5-graph-postgres.test.ts"],
   "src/core/link-reconciliation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
-  "src/core/persistence/links-preparation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
+  "src/core/persistence/links-preparation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/wanted-links-postgres.test.ts"],
   "src/core/sweep.ts": ["test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   // v0.38 ingestion substrate. POST /ingest lives inside serve-http.ts
   // (per the plan-eng-review E1 decision); the daemon + built-in sources
