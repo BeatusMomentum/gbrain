@@ -221,25 +221,8 @@ at the deadline).
 
 **Say to your agent:** *"Why aren't my meetings showing up as timeline events?"*
 
-`gbrain config set auto_chronicle true` is accepted, but in this version no
-write or cycle step reads it: nothing enqueues chronicle extraction, so new
-meetings and conversations are not swept into `life/events/` pages on their
-own. `gbrain doctor` reports this as the `auto_chronicle` check (code
-`auto_chronicle_no_effect`) and the advisor shows the same finding.
-
-Sweep recent meetings by hand instead. Preview first, then run it:
-
-```bash
-gbrain chronicle-backfill --dry-run
-gbrain chronicle-backfill
-```
-
-To clear the setting so the warning stops:
-
-```bash
-gbrain config unset auto_chronicle
-```
-
-The backfill is not yet idempotent, so run it when you want new events rather
-than on a schedule. Restoring the automatic trigger is tracked for a later
-release.
+Automatic event extraction works again and is on by default. See the
+[Life Chronicle guide](life-chronicle.md) for what qualifies, the cost, the
+three-step check, and the skip codes. `gbrain doctor` reports it as the
+`auto_chronicle` check. To turn it off, run
+`gbrain config set auto_chronicle false`.

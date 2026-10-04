@@ -707,6 +707,13 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           // Banner is cosmetic; never block the upgrade.
         }
 
+        // #5876: auto_chronicle now defaults on. One-shot [AGENT] notice naming
+        // the per-page cost, the daily ceiling and the opt-out; best-effort.
+        {
+          const { printAutoChronicleUpgradeNotice } = await import('../core/chronicle/upgrade-notice.ts');
+          await printAutoChronicleUpgradeNotice(engine);
+        }
+
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on
         // its own sentinel + the setting being unset; [AGENT]-relayed;
