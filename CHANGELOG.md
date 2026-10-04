@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.46.0] - 2026-10-04
+## [0.60.48.0] - 2026-10-04
 
 **A managed Postgres brain now catches up a big sync backlog in one `gbrain sync` run, about 4.6 times faster, and the run tells your agent exactly what happened and what to do next (#5984).**
 
@@ -40,7 +40,7 @@ The JSON ends with `outcome` (`synced`, `resumable` or `blocked`) and, unless it
 - Managed sources under `sync --all` drain one at a time.
 - 150 pages/min at 57 ms is not reached. Each page's database write is still a chain of about 40 dependent statements; reaching it needs pages to publish in parallel, which is a separate design.
 
-## To take advantage of v0.60.46.0
+## To take advantage of v0.60.48.0
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
 
