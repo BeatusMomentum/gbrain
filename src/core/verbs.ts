@@ -331,6 +331,7 @@ const synthesize: Operation = {
 
     return {
       answer: result.answer,
+      ...(result.answer_raw !== undefined ? { answer_raw: result.answer_raw, quote_check: result.quote_check, unverified_quotes: result.unverified_quotes } : {}),
       sources: result.citations.map(c => c.page_slug),
       gaps: result.gaps,
       cost,
@@ -581,7 +582,10 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
     required: ['answer', 'sources', 'cost', 'protocol_version'],
     properties: {
       protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
-      answer: { type: 'string' },
+      answer: { type: 'string', description: 'Quoted words not found in the evidence are unquoted and marked [unverified]; never present them as quotes.' },
+      answer_raw: { type: 'string', description: 'Present when the answer contained quotes: the answer as the model wrote it.' },
+      quote_check: { type: 'object', properties: { grounded: { type: 'integer' }, repaired: { type: 'integer' }, unverified: { type: 'integer' } } },
+      unverified_quotes: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, reason: { type: 'string' } } } },
       sources: { type: 'array', items: { type: 'string' } },
       gaps: { type: 'array', items: { type: 'string' } },
       cost: {

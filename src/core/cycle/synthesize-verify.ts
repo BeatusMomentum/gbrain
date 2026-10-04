@@ -838,6 +838,55 @@ function groundAcross(inner: string, sources: GroundedSource[]): { result: Exclu
   return best ?? { result: { status: 'none', reason: crossed ? 'crosses_speakers' : 'not_found' } };
 }
 
+/**
+ * The dream quote-verify kill switch: `dream.quote_verify` (covers synthesis,
+ * patterns and concepts), with `dream.synthesize.quote_verify` as an alias read
+ * when the new key is unset. Default on; only an explicit off spelling disables.
+ */
+export async function dreamQuoteVerifyEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  const raw = ((await engine.getConfig('dream.quote_verify')) ?? (await engine.getConfig('dream.synthesize.quote_verify')))?.trim().toLowerCase();
+  return !(raw === 'false' || raw === '0' || raw === 'off' || raw === 'no');
+}
+
+export interface AnswerQuoteCheck {
+  /** The answer with near-match quotes repaired to the evidence's words and unverified quotes unquoted and marked. */
+  answer: string;
+  quote_check: { grounded: number; repaired: number; unverified: number };
+  unverified_quotes: Array<{ text: string; reason: 'quote_not_in_source' | 'quote_crosses_speakers' }>;
+}
+
+export const UNVERIFIED_QUOTE_MARK = '[unverified]';
+
+/**
+ * Span-level quote check for a live answer (`think`, `synthesize`): every
+ * quoted span is grounded against the evidence the answer was written from.
+ * Exact matches stay; normalized or near matches are replaced with the
+ * evidence's own words; a quote found nowhere loses its quotation marks and
+ * gains `[unverified]`, so no caller can present it as a quotation. Pure.
+ */
+export function groundAnswerQuotes(answer: string, sources: GroundedSource[]): AnswerQuoteCheck {
+  const { spans } = extractQuoteSpans(answer);
+  const edits: Array<{ start: number; end: number; text: string }> = [];
+  const out: AnswerQuoteCheck = { answer, quote_check: { grounded: 0, repaired: 0, unverified: 0 }, unverified_quotes: [] };
+  for (const sp of spans) {
+    const g = groundAcross(sp.inner, sources);
+    if (g.result.status === 'none') {
+      out.quote_check.unverified++;
+      out.unverified_quotes.push({ text: clip(sp.inner, 300), reason: g.result.reason === 'crosses_speakers' ? 'quote_crosses_speakers' : 'quote_not_in_source' });
+      edits.push({ start: sp.start, end: sp.end + 1, text: `${sp.inner} ${UNVERIFIED_QUOTE_MARK}` });
+    } else if (g.result.status === 'exact') {
+      out.quote_check.grounded++;
+    } else {
+      out.quote_check.repaired++;
+      edits.push({ start: sp.start + 1, end: sp.end, text: g.result.replacement.replace(/\s*\n\s*/g, ' ') });
+    }
+  }
+  let body = answer;
+  for (const e of edits.sort((a, b) => b.start - a.start)) body = body.slice(0, e.start) + e.text + body.slice(e.end);
+  out.answer = body;
+  return out;
+}
+
 function blank(s: string, ranges: Array<[number, number]>): string {
   let out = s;
   for (const [a, b] of ranges) out = out.slice(0, a) + ' '.repeat(b - a) + out.slice(b);
@@ -853,9 +902,11 @@ function clip(s: string, n = PROVENANCE_TEXT_CHARS): string {
  * Verify one body (compiled_truth or timeline) against its source
  * transcripts. Pure. With `priorNorm` (the normalized pre-run revision of a
  * page that already existed), only units absent from it are checked; every
- * other unit is left exactly as it was.
+ * other unit is left exactly as it was. `checks: 'quotes'` grounds quotes and
+ * their speaker attribution only (no number, date or decision checks), for
+ * writers whose prose legitimately derives numbers from its sources.
  */
-export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string } = {}): BodyVerification {
+export function verifyBody(body: string, sources: GroundedSource[], opts: { priorNorm?: string; checks?: 'all' | 'quotes' } = {}): BodyVerification {
   const { spans, unbalanced } = extractQuoteSpans(body);
   const masked = maskNonProse(body);
   const failures: Record<ClaimFailure, number> = { quote_not_in_source: 0, quote_crosses_speakers: 0, speaker_mismatch: 0, number_not_in_source: 0, decision_misattributed: 0 };
@@ -914,9 +965,10 @@ export function verifyBody(body: string, sources: GroundedSource[], opts: { prio
       });
     }
     const unquoted = blank(masked.slice(u.start, u.end), quoteRanges);
-    const numbers = unsupportedNumericClaims(unquoted, sources);
+    // Quotes-only mode (answers that legitimately compute numbers): no number or decision checks.
+    const numbers = opts.checks === 'quotes' ? [] : unsupportedNumericClaims(unquoted, sources);
     for (const n of numbers) fail('number_not_in_source', n);
-    if (numbers.length === 0) {
+    if (numbers.length === 0 && opts.checks !== 'quotes') {
       for (const n of misattributedDecisionClaims(unquoted, attribution, sources, [...mentioned.keys()])) {
         fail('decision_misattributed', `${[...mentioned.values()].join(', ')}: ${n} was stated only by another speaker`);
       }

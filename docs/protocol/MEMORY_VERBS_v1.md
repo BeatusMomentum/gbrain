@@ -364,6 +364,17 @@ output_tokens, usd_estimate}, protocol_version }`.
 - No LLM configured ⇒ the protocol error `unavailable` with a fix — never a
   fake answer.
 
+#### synthesize quote check (additive)
+
+Every quoted span in a synthesized `answer` is grounded against the evidence
+the answer was composed from (the same page excerpts, takes and graph lines,
+no refetch). An exact match stays; a normalized or near match is replaced with
+the evidence's own words; a quote found in no evidence loses its quotation
+marks and gains `[unverified]`, and the response warns `QUOTE_NOT_IN_EVIDENCE`.
+When the answer contained quotes, the response adds `answer_raw` (as written),
+`quote_check: { grounded, repaired, unverified }` and `unverified_quotes:
+[{ text, reason }]`. Present `answer`, not `answer_raw`, to the user.
+
 #### synthesize compose status (additive)
 
 Every response additionally carries four ADDITIVE-FOREVER fields (optional;
