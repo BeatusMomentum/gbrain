@@ -236,9 +236,15 @@ function dirtyRefusal(sourceId: string, overlap: string[], refreshId?: string): 
   return refusal('refresh_dirty', `Uncommitted or untracked paths overlap the incoming upstream changes: ${named}. Nothing changed.`,
     `Commit or discard those paths (check gbrain sources writer status ${sourceId} --json for pending git effects first), then retry gbrain sources refresh ${sourceId}.`, refreshId);
 }
+/**
+ * Recovery no live execution will finish. A recovery record under an unexpired
+ * running claim is an in-flight publication; the drain step waits for it.
+ */
 async function worktreeRecoveryPending(engine: BrainEngine, worktreeId: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL)
-    OR EXISTS (SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL)
+  const [row] = await engine.executeRaw<{ pending: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
+      AND NOT (state='running' AND claim_expires_at > now()))
+    OR EXISTS (SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
+      AND NOT (state='running' AND claim_expires_at > now()))
     OR EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS pending`, [worktreeId]);
   return row?.pending === true;
 }

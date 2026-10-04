@@ -37,6 +37,7 @@ import { extractorFactsRepair } from './extractor-facts.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { loopFactsRepair } from './loop-facts.ts';
 import { orphanChildrenRepair } from './orphan-children.ts';
+import { failedWritesRepair } from './failed-writes.ts';
 import { attributionBackfillRepair } from './attribution-backfill.ts';
 import { plannerStatsRepair } from './planner-stats.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
@@ -146,6 +147,14 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'Delete rows of page child tables (chunks, versions, tags, takes, raw data, timeline, links) whose page no longer exists, and clear dangling '
       + 'links.origin_page_id and files.page_id references (#5216, #4738). The preview also probes every page body and reports torn TOAST rows '
       + '(SQLSTATE XX000) as torn_pages without changing them. Bookkeeping only; no journal admission. Brain-wide; runs only when named.',
+  },
+  'failed-writes': {
+    handler: failedWritesRepair, embeds: 'effect', checks: [], explicit_only: true,
+    summary: 'Resubmit caller writes (put_page, add_timeline_entry, remember) that the managed writer guard refused before v0.60.38.0 (#5983), from the '
+      + 'intent their failed receipt retains until receipt compaction. A write is kept when a later request with the same intent committed (already_written) '
+      + 'or is pending (duplicate), or a later write or delete of the page committed (superseded). Writes gbrain itself produced (sync and file imports, '
+      + 'reconcile, relink, maintenance) are counted with the command that produces them again. Preview-bound: --apply --expect <hash> replays exactly '
+      + 'the previewed set under new request ids, after re-checking each write\'s original authority; the failed receipts stay as history.',
   },
   'planner-stats': {
     handler: plannerStatsRepair, embeds: 'none', checks: ['planner_stats_stale'],
