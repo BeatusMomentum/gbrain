@@ -226,22 +226,25 @@ function dirtyRefusal(sourceId: string, overlap: string[], refreshId?: string): 
  * after the receipt commits (coordinator `completeWrite`, then
  * `clearResolvedRecovery`). So a request or effect record is in flight, and left
  * to the drain step, while it is under an unexpired running claim or while the
- * worktree lock is held; only a record no live process can finish refuses.
+ * worktree lock is held; only a record still present while this probe holds
+ * that lock (no live process can finish it) refuses.
  * Topology recovery always refuses.
  */
 async function worktreeRecoveryPending(engine: BrainEngine, binding: WorktreeBinding): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ publication: boolean; topology: boolean }>(`SELECT
+  const probe = async () => (await engine.executeRaw<{ publication: boolean; topology: boolean }>(`SELECT
     EXISTS (SELECT 1 FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
       AND NOT (state='running' AND claim_expires_at > now()))
     OR EXISTS (SELECT 1 FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
       AND NOT (state='running' AND claim_expires_at > now())) AS publication,
-    EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS topology`, [binding.worktree_id]);
-  if (row?.topology === true) return true;
-  if (row?.publication !== true || !binding.coordination_path) return row?.publication === true;
-  const probe = await tryAcquireNativeLock(binding.coordination_path);
-  if (!probe) return false;
-  await probe.release();
-  return true;
+    EXISTS (SELECT 1 FROM persistence_topology_changes WHERE recovery IS NOT NULL AND recovery->>'worktreeId'=$1::text) AS topology`, [binding.worktree_id]))[0];
+  const first = await probe();
+  if (first?.topology === true) return true;
+  if (first?.publication !== true || !binding.coordination_path) return first?.publication === true;
+  const lock = await tryAcquireNativeLock(binding.coordination_path);
+  if (!lock) return false;
+  // Holding the lock, no publisher is mid-flight: a record that is still here has no live owner.
+  try { const held = await probe(); return held?.publication === true || held?.topology === true; }
+  finally { await lock.release(); }
 }
 /** Never wait on a sync: an unexhausted cursor names its own resume command. */
 async function assertNoUnfinishedSync(engine: BrainEngine, members: string[]): Promise<void> {
