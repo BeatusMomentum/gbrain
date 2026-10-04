@@ -208,6 +208,8 @@ or a physical projection that leaves attribution untouched):
 
 <!-- write-attribution-covered:start -->
 - `src/commands/migrate-engine.ts` (5): engine copy keeps the source rows' attribution values verbatim.
+- `src/commands/sync/holds.ts` (1): a full sync's move of a held rename (`updateSlug` and its `source_path`) runs in one `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
+- `src/commands/sync/renames.ts` (1): the legacy sync rename (`updateSlug`) runs in `maintenanceTransaction`; managed sources publish renames through the sync request preparer.
 - `src/core/chronicle/publish.ts` (3): Life Chronicle event generations: maintenance requests on managed brains; the unmanaged event write, retirement soft delete and retired stamp run in `maintenanceTransaction`.
 - `src/core/cycle/extract-takes.ts` (2): coordinated per page on managed brains; the unmanaged batch upsert runs in `maintenanceTransaction`.
 - `src/core/embed-facts.ts` (1): embedding columns only (physical projection).
@@ -216,6 +218,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/facts/withdrawal.ts` (1): runs inside the `forget` request's coordinated write.
 - `src/core/import-file.ts` (11): direct markdown, code and image imports, the moved-file rename (`updateSlug`) and the #3694 legacy-hash re-stamp run in `maintenanceTransaction`; managed imports go through the page request preparer.
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
+- `src/core/page-state/rename-alias.ts` (2): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and every caller is attributed.
 - `src/core/page-state/versions.ts` (1): `createVersion` itself; the caller's scope supplies the actor.
 - `src/core/persistence/atom-maintenance.ts` (1): request preparer.
 - `src/core/persistence/canonical-projections.ts` (7): fence projection inside the request's publication.
@@ -245,8 +248,6 @@ these write with `NULL` attribution):
 - `src/commands/extract-conversation-facts.ts` (3): the conversation fact index calls the engine directly through `writeDerivedFacts`.
 - `src/commands/extract-timeline-db.ts` (2): `gbrain extract timeline --source db` batch insert.
 - `src/commands/extract.ts` (4): `gbrain extract` timeline walks (file, incremental, stale) and the per-entry fallback.
-- `src/commands/sync/holds.ts` (1): legacy full sync moves a held rename's page once its file screens clean (`updateSlug`).
-- `src/commands/sync/renames.ts` (1): legacy sync rename (`updateSlug`).
 - `src/core/calibration/undo-wave.ts` (1): calibration wave undo of take resolutions.
 - `src/core/company-brain/profile.ts` (1): company-brain sync soft deletes.
 - `src/core/cycle/dream-provenance.ts` (1): dream provenance frontmatter stamp.
@@ -269,7 +270,6 @@ these write with `NULL` attribution):
 - `src/core/minions/handlers/ingest-capture.ts` (1): capture ingest soft delete.
 - `src/core/ops/extraction.ts` (2): extraction review promote (frontmatter) and reject (soft delete).
 - `src/core/output/writer.ts` (4): synthesize-phase BrainWriter pages and timeline.
-- `src/core/page-state/rename-alias.ts` (2): fact slug rewrite on rename.
 - `src/core/repair/captured-facts.ts` (1): unmanaged captured-facts expiry.
 - `src/core/repair/extractor-facts.ts` (1): extractor-facts repair update.
 - `src/core/schema-pack/page-to-alias.ts` (1): page-to-alias conversion soft delete.
