@@ -38,6 +38,7 @@ import { operations, operationsByName, opAllowedForBoundClient } from '../core/o
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { dispatchToolCall, requestLogStatusForResult } from './dispatch.ts';
+import { GBRAIN_CLIENT_HEADER, resolveResultRowsMode, resultRowsForRequest } from './result-rows.ts';
 import { parseStrictParamsMode } from './validate-params.ts';
 import { filterOpsForSurface, clampSurface, type McpSurface } from './surface.ts';
 import { disabledOpsForPublishGates } from './publish-gates.ts';
@@ -538,6 +539,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           // WP4 (D2): this transport has no per-client rows, so its surface
           // IS the ceiling request_tools bounds catalog + persist by.
           surfaceCeiling: surface,
+          resultRows: resultRowsForRequest(req.headers.get(GBRAIN_CLIENT_HEADER), await resolveResultRowsMode(engine, fileConfig)), // C1; row shape only, never authority
         });
         // Same status taxonomy as the OAuth transport (denied_after_list /
         // success_with_warnings feed the amendment-33 metric + E4 usage).

@@ -27,6 +27,8 @@ import { anySignal } from './abort-check.ts';
 import type { GBrainConfig } from './config.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
 import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from './persistence/types.ts';
+import { GBRAIN_CLIENT_HEADER, GBRAIN_THIN_CLIENT_NAME } from '../mcp/result-rows.ts';
+import { VERSION } from '../version.ts';
 
 interface CachedToken {
   access_token: string;
@@ -293,6 +295,9 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
     requestInit: {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
+        // Hosts serve full search/query rows to gbrain's own CLI (renderers,
+        // --explain). A row-shape hint only, never an authority claim.
+        [GBRAIN_CLIENT_HEADER]: `${GBRAIN_THIN_CLIENT_NAME}/${VERSION}`,
       },
     },
     fetch: (input, init) => fetch(input, {
@@ -301,7 +306,7 @@ async function buildClient(mcpUrl: string, accessToken: string, signal?: AbortSi
     }),
   });
   const client = new Client(
-    { name: 'gbrain-remote-cli', version: '1' },
+    { name: GBRAIN_THIN_CLIENT_NAME, version: '1' },
     { capabilities: {} },
   );
   try {
