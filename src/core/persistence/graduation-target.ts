@@ -314,6 +314,7 @@ export async function crossCheckRoutes(main: BrainEngine, ddl: BrainEngine, runI
   const refuse = (detail: string) => {
     const error = targetDdlUnreachableError({ host: 'the main connection', ddlHost: 'the DDL connection' });
     error.detail = `Run ${runId}: ${detail}`;
+    error.why = `Run ${runId}: ${detail}. ${error.why ?? ''}`.trim();
     return error;
   };
   let seen: boolean;
