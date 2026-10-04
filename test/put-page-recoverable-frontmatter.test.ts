@@ -87,20 +87,21 @@ describe('put_page with recoverable frontmatter', () => {
     expect(strict.data).toMatchObject({ title: 'Re: payments roundup', author, source: '"Quoted" trailing' });
   });
 
-  test('frontmatter that needs guessing is refused with a typed code, its key and line, and no raw value', async () => {
+  test('frontmatter that needs guessing is refused remotely with a typed code and its line, never a key name or raw value', async () => {
     const result = await put('notes/guess', '---\ntitle: alice-example first line\nalice-example second line\ntype: note\n---\n\nBody.\n');
     expect(result.response.isError).toBe(true);
     const text = JSON.stringify(result.payload);
     expect(text).not.toContain('alice-example');
-    expect(result.payload).toMatchObject({ error: 'invalid_params', code: 'invalid_frontmatter', reason: 'needs_interpretation', detail: 'key title, line 2' });
-    expect(result.payload.suggestion).toContain('frontmatter line 2 (key "title")');
+    expect(result.payload).toMatchObject({ error: 'invalid_params', code: 'invalid_frontmatter', reason: 'needs_interpretation', detail: 'line 2' });
+    expect(result.payload.suggestion).toContain('frontmatter line 2:');
+    expect(result.payload.message).not.toContain('"title"');
     expect(await engine.readPageSnapshot('notes/guess', { sourceId: 'default' })).toBeNull();
   });
 
   test('a protected key that would be read as a broader value is refused', async () => {
     const result = await put('notes/private', '---\ntitle: "Hello\nvisibility: private\nsummary: x"\n---\n\nBody.\n');
     expect(result.response.isError).toBe(true);
-    expect(result.payload).toMatchObject({ code: 'invalid_frontmatter', reason: 'ambiguous_protected_key', detail: 'key visibility, line 3' });
+    expect(result.payload).toMatchObject({ code: 'invalid_frontmatter', reason: 'ambiguous_protected_key', detail: 'line 3' });
     expect(await engine.readPageSnapshot('notes/private', { sourceId: 'default' })).toBeNull();
   });
 });

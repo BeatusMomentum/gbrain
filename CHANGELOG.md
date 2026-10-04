@@ -93,7 +93,7 @@ Now the sync **holds** that one file and moves on. Everything else imports. The 
 
 #### Prevention
 
-- gbrain's own frontmatter writers serialize every value safely. `put_page`, `capture` and `gbrain import` share the sync screen: frontmatter gbrain reads by quoting is accepted, anything sync would hold refuses with the same code. The pre-commit hook validates staged content in one `gbrain frontmatter validate --staged` process and prints the fix and restage step.
+- gbrain's own frontmatter writers serialize every value safely. `put_page`, `capture` and `gbrain import` share the sync screen: frontmatter gbrain reads by quoting is accepted, anything sync would hold refuses with the same code. A remote caller's refusal names the line but not the key, since key names can be private. The pre-commit hook validates staged content in one `gbrain frontmatter validate --staged` process and prints the fix and restage step.
 - New `sync.holds`, `sync.hold_cap`, `sync.hold_escalate_count`, `sync.hold_escalate_pct` and `sync.parser_regression` config keys.
 
 #### Docs

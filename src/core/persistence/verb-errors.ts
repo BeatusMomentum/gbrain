@@ -2,7 +2,7 @@ import { verbError, OperationError } from '../ops/contract.ts';
 import { isTerminalWriteState, isWriteErrorCode, type WriteErrorCode, type WriteReceipt } from './types.ts';
 import { pendingWriteHint } from './health.ts';
 import { UNBOUND_COLLISION_MESSAGE, UNBOUND_PUBLICATION_MESSAGE } from './unbound-source.ts';
-import { frontmatterHoldMessageWithoutKeys, isFrontmatterHoldMessage } from '../markdown.ts';
+import { isFrontmatterHoldMessage } from '../markdown.ts';
 
 const FRONTMATTER_SLUG_CONFLICT = /^The frontmatter slug "[^"\n]{1,300}" in [^/"\n][^"\n]{0,1000} conflicts with its path, which expects slug "[^"\n]{1,300}"\. Remove `slug:` or make it match the path\.$/;
 
@@ -83,7 +83,7 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     suggestion: 'Read the current page and review the intended change before submitting a corrected write.' };
   if (code === 'invalid_params' && message && FRONTMATTER_SLUG_CONFLICT.test(message)) return { reason: code, message,
     suggestion: 'Correct the frontmatter in the file and commit the change.' };
-  if (code === 'invalid_params' && isFrontmatterHoldMessage(message)) return { reason: code, message: frontmatterHoldMessageWithoutKeys(message!),
+  if (code === 'invalid_params' && isFrontmatterHoldMessage(message)) return { reason: code, message: message!,
     suggestion: 'Correct the named frontmatter line in the file (one line per key, the whole value quoted) and commit the change.' };
   return { reason: isWriteErrorCode(code) ? code : 'storage_error', message: 'The write did not commit. Inspect its durable request on the source host.',
     suggestion: 'Resolve the reported write failure before starting a corrected attempt.' };
