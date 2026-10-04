@@ -205,6 +205,43 @@ test('a chained rename carries the held identity, and a changed old page keeps t
   expect((await engine.getPage('notes/x', { sourceId: s.id }))?.id).toBe(x.id);
 }), 240_000);
 
+test('the hold write and the cursor step past it commit together: a crash between them persists neither', () => each(async engine => {
+  const s = await source(engine, { 'notes/a.md': note('A'), 'notes/broken.md': FOLDED, 'notes/c.md': note('C') });
+  const cursor = async () => (await engine.executeRaw<{ header: { runId: string; index: number; counts: { held?: number } } }>(
+    "SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [s.id]))[0]?.header;
+  const target = engine as unknown as { transaction: (this: unknown, fn: (tx: BrainEngine) => Promise<unknown>) => Promise<unknown> };
+  const inherited = Object.getPrototypeOf(engine).transaction as typeof target.transaction;
+  let injected = 0;
+  target.transaction = function (fn) {
+    return inherited.call(this, (tx: BrainEngine) => fn(new Proxy(tx, { get(t, prop) {
+      if (prop === 'executeRaw') {
+        return async (sql: string, params?: unknown[]) => {
+          const rows = await t.executeRaw(sql, params);
+          if (params?.[0] === GIT_HOLD_OP && /^\s*INSERT/.test(sql)) { injected++; throw new Error('injected crash after the hold write'); }
+          return rows;
+        };
+      }
+      const value = Reflect.get(t, prop, t);
+      return typeof value === 'function' ? value.bind(t) : value;
+    } }) as BrainEngine));
+  };
+  try { await s.sync().catch(error => error); }
+  finally { delete (target as Partial<typeof target>).transaction; }
+  expect(injected).toBe(1);
+  expect(await s.holdRows()).toEqual([]);
+  const stopped = await cursor();
+  const [manifest] = await engine.executeRaw<{ entries: Array<{ path: string }> }>("SELECT completed_keys AS entries FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [stopped!.runId]);
+  expect(manifest!.entries[stopped!.index]!.path).toBe('notes/broken.md');
+  expect(stopped!.counts.held ?? 0).toBe(0);
+  expect(await s.lastCommit()).toBeNull();
+
+  // Without the crash the same cursor resumes: the hold and the step past it land together.
+  const resumed = await s.sync();
+  expect(resumed).toMatchObject({ status: 'first_sync', held_count: 1 });
+  expect((await s.holds()).map(hold => hold.path)).toEqual(['notes/broken.md']);
+  expect(await engine.getPage('notes/c', { sourceId: s.id })).not.toBeNull();
+}), 180_000);
+
 test('a cursor blocked by a pre-upgrade failed receipt converts in place: held when still broken, imported when now readable', () => each(async engine => {
   await engine.setConfig('sync.holds', 'fail');
   const s = await source(engine, { 'notes/broken.md': FOLDED, 'notes/roundup.md': AUTHOR, 'notes/ok.md': note('Ok') });
