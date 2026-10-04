@@ -96,6 +96,8 @@ export interface InventoryEntry {
   lossKind: LossKind;
   /** The only differences verify tolerates between source snapshot and target. */
   transforms: readonly ColumnTransform[];
+  /** Columns the per-column copy contract tolerates differing between source and target (name -> reason). */
+  columnAllowlist?: Readonly<Record<string, string>>;
   /** SQL predicate selecting the rows that belong to the copy; rows outside it stay engine-local on both sides (copy and digest). */
   rowFilter?: string;
   reason: string;
@@ -134,6 +136,39 @@ export interface TargetRoutes {
   ddl: string;
   /** Name of the env var the URL came from when --url-env was used. */
   urlEnv?: string;
+}
+
+export interface EmbeddingColumn {
+  relation: string;
+  column: string;
+  /** format_type rendering, e.g. "vector(1536)" or "halfvec(1024)". */
+  type: string;
+  dims: number | null;
+}
+
+export interface TargetProbe {
+  reachable: boolean;
+  auth: boolean;
+  /** Redacted; never carries the URL or password. */
+  error?: { code: string; message: string };
+  ddl: { reachable: boolean; auth: boolean; error?: { code: string; message: string } };
+  serverVersion: string | null;
+  serverVersionNum: number | null;
+  vector: { installed: string | null; available: string | null; halfvec: boolean };
+  createPrivilege: { database: boolean; schema: boolean };
+  /** BEGIN; SET LOCAL session_replication_role = replica; ROLLBACK succeeded. */
+  replicaRole: boolean;
+  /** Every existing public table is owned by a role the current user can act as. */
+  ownsTables: boolean;
+  triggerBypass: TriggerBypass | null;
+  /** A gbrain schema exists (the config table is present). */
+  gbrainSchema: boolean;
+  /** No public tables, or a gbrain schema holding only the initSchema seed rows. */
+  empty: boolean;
+  nonEmptyTables: readonly string[];
+  embeddingColumns: readonly EmbeddingColumn[];
+  /** Other sessions on the target database (informational). */
+  otherSessions: number;
 }
 
 export interface SourceIdentity {
@@ -231,7 +266,7 @@ export interface Tombstone {
 export interface GraduationBlocker {
   kind: 'request' | 'topology_recovery' | 'writer_admin_lock' | 'effect_recovery' | 'foreign_host_binding'
     | 'writer_held' | 'env_override' | 'embedding_dimension' | 'unclassified_relation' | 'target_not_empty'
-    | 'target_unsupported' | 'unsupported_platform' | 'source_doctor';
+    | 'target_unsupported' | 'unsupported_platform' | 'source_doctor' | 'dangling_reference';
   id: string;
   detail: string;
   /** Exact command or MCP call that clears it, with real values filled in. */
