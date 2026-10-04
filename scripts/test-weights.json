@@ -693,6 +693,7 @@
   "test/eval-gate.test.ts": 1565,
   "test/eval-longmemeval-brain-recycle.test.ts": 2986,
   "test/eval-longmemeval-cli-smoke.test.ts": 2595,
+  "test/eval-longmemeval-e2e.slow.test.ts": 8741,
   "test/eval-longmemeval-gateway-routing.test.ts": 7680,
   "test/eval-longmemeval-judge.slow.test.ts": 3490,
   "test/eval-longmemeval-mixedcase.slow.test.ts": 10824,

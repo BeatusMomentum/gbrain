@@ -81,10 +81,11 @@ CHECKS=(
   # No-op placeholder assertions (expect(true).toBe(true) and friends) in
   # test/**/*.test.ts; TypeScript AST scan, ~3s over the full corpus.
   "check:test-placeholders"
-  # Chronicle eval: $0, deterministic, exit-0-only-on-perfect (6 gold tasks).
-  # Boots its own PGLite — budget ≤60s under a saturated pool; if it breaches
-  # ~100s under contention, move it into the serial-tests CI job instead.
-  "check:eval-chronicle"
+  # check:eval-chronicle deliberately NOT here (GBRA-47 E7), same reason as
+  # the canary below: test/eval-chronicle.test.ts calls the identical
+  # runChronicleEval in the unit matrix with the same exact 6/6 gate, and a
+  # mutation of getLastSeen fails both owners. The package script remains
+  # for on-demand runs.
   # check:eval-canary deliberately NOT here: test/eval-canary.test.ts spawns
   # the identical scripts/run-eval-canary.ts in the unit matrix, and in CI the
   # verify job and the matrix always run together (same workflow, same cache

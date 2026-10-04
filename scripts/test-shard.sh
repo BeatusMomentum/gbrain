@@ -64,21 +64,13 @@ receipts_init unit
 # header comment. Local run-unit-shard.sh excludes slow files (different
 # policy by design).
 #
-# Two test files are pulled out of the matrix and into their own dedicated
-# CI jobs (see .github/workflows/test.yml):
-#   - eval-longmemeval-e2e.slow.test.ts (~200s after TODO #1 engine sharing)
-#     → job: slow-eval-longmemeval
-#   - entity-resolve-perf.slow.test.ts (~159s, single non-subdivisible
-#     perf test)
-#     → job: slow-entity-resolve-perf
-#
-# Removing both heavy atoms from matrix-eligible files keeps the per-shard
-# total bounded. With 8 matrix shards the per-shard total is ~344s.
-# Dedicated jobs run in parallel so total CI wallclock = max(matrix ~4.5min,
-# slow-eval ~3.3min, slow-entity-resolve-perf ~2.6min, slow-brainbench ~1.5min)
-# ≈ 4.5min. eval-brainbench-e2e was the matrix's heaviest atom (98s mined —
-# 10% of the whole corpus weight) and capped shard-count scaling; it now rides
-# its own job like the other two outliers.
+# Heavy atoms ride dedicated CI jobs (see .github/workflows/test.yml) so no
+# single file dominates a shard: entity-resolve-perf.slow.test.ts (~159s,
+# non-subdivisible) and entity-card-perf → job slow-entity-resolve-perf;
+# eval-brainbench-e2e (98s mined, 10% of the corpus weight) → job
+# slow-brainbench-e2e. eval-longmemeval-e2e.slow.test.ts is back in the matrix
+# (GBRA-47 E6): engine sharing cut it from ~200s to ~8s, under the ~40s
+# keep-in-matrix bar.
 # export-scale.slow.test.ts (571s at its 100,001-page master scale) rides the
 # slow-entity-resolve-perf job, which sets GBRAIN_TEST_EXPORT_SCALE_PAGES per
 # event. reconcile-crash.slow.test.ts (244s) is not duplicated here: the
@@ -92,7 +84,6 @@ receipts_init unit
 # docs/TESTING.md "CI vs local: intentionally divergent file sets").
 ALL_FILES=$(find test evals -name '*.test.ts' \
   -not -name '*.serial.test.ts' \
-  -not -name 'eval-longmemeval-e2e.slow.test.ts' \
   -not -name 'entity-resolve-perf.slow.test.ts' \
   -not -name 'entity-card-perf.slow.test.ts' \
   -not -name 'eval-brainbench-e2e.slow.test.ts' \
