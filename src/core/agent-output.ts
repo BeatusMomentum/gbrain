@@ -353,6 +353,19 @@ export interface EnvelopeParts {
   retryable?: boolean;
 }
 
+/** Replace each occurrence of `bare` that is a whole command (not followed by a word, path or more flags). */
+function replaceWholeCommand(text: string, bare: string, step: string): string {
+  let out = '';
+  let from = 0;
+  for (let at = text.indexOf(bare); at >= 0; at = text.indexOf(bare, at + bare.length)) {
+    const rest = text.slice(at + bare.length);
+    if (/^[\w/-]/.test(rest) || /^\s+-/.test(rest)) continue;
+    out += text.slice(from, at) + step;
+    from = at + bare.length;
+  }
+  return from === 0 ? text : out + text.slice(from);
+}
+
 function appendFixToSuggestion(suggestion: string, fix: RenderedAction | undefined, unpinned?: readonly string[]): string {
   if (!fix) return suggestion;
   const step = renderedStep(fix);
@@ -360,8 +373,8 @@ function appendFixToSuggestion(suggestion: string, fix: RenderedAction | undefin
   // Prose that already quotes the fix before its A1 routing pin quotes the pinned command instead (never both).
   const bare = unpinned?.length && !fix.mcp ? shellQuote(unpinned) : undefined;
   if (bare && bare !== step) {
-    const quoted = new RegExp(`${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w/-]|\\s+-)`, 'g');
-    if (quoted.test(suggestion)) return suggestion.replace(quoted, () => step);
+    const replaced = replaceWholeCommand(suggestion, bare, step);
+    if (replaced !== suggestion) return replaced;
   }
   const prose = suggestion.trim();
   return prose ? `${prose.replace(/[.\s]*$/, '.')} Next: ${step}` : `Next: ${step}`;

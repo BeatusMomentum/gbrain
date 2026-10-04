@@ -245,6 +245,7 @@ function renderTranscript(t: Transcript, i: number): string {
 }
 
 function replaceRegion(text: string, region: string, inner: string): string {
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- `region` is a constant region name defined in this build script, never input
   const begin = new RegExp(`(<!-- BEGIN GENERATED ${region}[^>]*-->\\n)[\\s\\S]*?(<!-- END GENERATED ${region} -->)`);
   if (!begin.test(text)) throw new Error(`region ${region} not found`);
   return text.replace(begin, (_m, a: string, b: string) => `${a}${inner}${b}`);

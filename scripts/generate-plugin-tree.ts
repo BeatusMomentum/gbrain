@@ -185,6 +185,7 @@ function copySkill(slug: string, destSkillsDir: string): void {
   cpSync(join(ROOT, 'skills', slug), join(destSkillsDir, slug), { recursive: true });
   const gaps = starterGaps(slug);
   if (gaps.length === 0) return;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator; slug comes from this repository's own plugin definition
   const skillMd = join(destSkillsDir, slug, 'SKILL.md');
   writeFileSync(skillMd, readFileSync(skillMd, 'utf8').replace(/\n*$/, '\n') + surfaceNote(gaps));
 }
@@ -283,6 +284,7 @@ function emitVariant(variantsDir: string, personaName: string, def: PersonaDef, 
   mkdirSync(join(root, 'skills'), { recursive: true });
 
   const slugs = Object.keys(def.skills).sort();
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- build-time generator over this repository's own plugin definition
   for (const slug of slugs) copySkill(slug, join(root, 'skills'));
   // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
   copySharedDeps(join(root, 'skills'));

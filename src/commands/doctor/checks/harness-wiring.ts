@@ -81,13 +81,13 @@ function claudeRegistration(name: string): HarnessRegistration | null {
 /** `[mcp_servers.<name>]` from Codex's config.toml: the `command`/`args`/`url`/`env` keys only. */
 export function parseCodexRegistration(text: string, name: string, source: string): HarnessRegistration | null {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const header = new RegExp(`^\\[mcp_servers\\.(?:${name}|"${name}")\\]\\s*$`);
-  const start = lines.findIndex((l) => header.test(l.trim()));
+  const headers = new Set([`[mcp_servers.${name}]`, `[mcp_servers."${name}"]`]);
+  const start = lines.findIndex((l) => headers.has(l.trim()));
   if (start < 0) return null;
   const body: string[] = [];
   for (let i = start + 1; i < lines.length && !lines[i].trim().startsWith('['); i++) body.push(lines[i].trim());
   const value = (key: string): string | undefined => {
-    const line = body.find((l) => new RegExp(`^${key}\\s*=`).test(l));
+    const line = body.find((l) => l.startsWith(key) && l.slice(key.length).trimStart().startsWith('='));
     return line?.slice(line.indexOf('=') + 1).trim();
   };
   const parse = (raw: string | undefined): unknown => {

@@ -1090,7 +1090,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
           let fileHint = '';
           try {
             if (typeof prevValue === 'string' && prevValue && existsSync(prevValue)) {
-              fileHint = ` If '${prevValue}' is a file you meant to ingest, use: gbrain capture --file ${prevValue} --slug <slug>`;
+              fileHint = ` If '${prevValue}' is a file you meant to ingest, use: gbrain capture --file ${prevValue} --slug <slug>`; // nosemgrep: javascript.express.security.injection.raw-html-format.raw-html-format -- stderr text, never HTML
             }
           } catch { /* best-effort hint */ }
           process.stderr.write(
