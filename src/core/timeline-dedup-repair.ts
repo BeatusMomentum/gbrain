@@ -18,7 +18,6 @@
 
 import type { BrainEngine } from './engine.ts';
 import { parseTimelineEntries, findTimelineSourceDelimiter } from './link-extraction.ts';
-import { maintenanceTransaction } from './persistence/attribution.ts';
 
 const INDEX_NAME = 'idx_timeline_dedup';
 // #3737: the dedup tuple keys md5(summary) — the raw summary overflowed the
@@ -237,56 +236,54 @@ export async function repairLegacyTimelineSourceRows(
         list.push({ source: c.source ?? '', summary: c.summary });
         byDate.set(c.date, list);
       }
-      await maintenanceTransaction(engine, async tx => {
-        const legacyRows = await tx.executeRaw<{
-          id: number; date: string; summary: string;
-        }>(
-          `SELECT id, to_char(date, 'YYYY-MM-DD') AS date, summary
-             FROM timeline_entries WHERE page_id = $1 AND source = ''
-            ORDER BY id`,
-          [page.id],
-        );
-        for (const row of legacyRows) {
-          const candidates = byDate.get(row.date) ?? [];
-          let target: { source: string; summary: string } | null = null;
-          // 1. Verbatim: the new parser emits the same summary under a real
-          //    source label (dash bullets → 'markdown', citations → label).
-          target = candidates.find(c => c.source !== '' && c.summary === row.summary) ?? null;
-          // 2. Split: the legacy summary is the UNSPLIT `Source — Summary`
-          //    text of a pipe bullet; the shared delimiter finder must yield
-          //    exactly the candidate's (source, summary) pair.
-          if (!target) {
-            const at = findTimelineSourceDelimiter(row.summary);
-            if (at >= 0) {
-              const pre = row.summary.slice(0, at).trim();
-              const post = row.summary.slice(at + 1).trim();
-              target = candidates.find(c => c.source === pre && c.summary === post) ?? null;
-            }
+      const legacyRows = await engine.executeRaw<{
+        id: number; date: string; summary: string;
+      }>(
+        `SELECT id, to_char(date, 'YYYY-MM-DD') AS date, summary
+           FROM timeline_entries WHERE page_id = $1 AND source = ''
+          ORDER BY id`,
+        [page.id],
+      );
+      for (const row of legacyRows) {
+        const candidates = byDate.get(row.date) ?? [];
+        let target: { source: string; summary: string } | null = null;
+        // 1. Verbatim: the new parser emits the same summary under a real
+        //    source label (dash bullets → 'markdown', citations → label).
+        target = candidates.find(c => c.source !== '' && c.summary === row.summary) ?? null;
+        // 2. Split: the legacy summary is the UNSPLIT `Source — Summary`
+        //    text of a pipe bullet; the shared delimiter finder must yield
+        //    exactly the candidate's (source, summary) pair.
+        if (!target) {
+          const at = findTimelineSourceDelimiter(row.summary);
+          if (at >= 0) {
+            const pre = row.summary.slice(0, at).trim();
+            const post = row.summary.slice(at + 1).trim();
+            target = candidates.find(c => c.source === pre && c.summary === post) ?? null;
           }
-          if (!target) { result.rowsSkipped++; continue; }
-          // A new-shape duplicate may already exist (re-extract ran before this
-          // repair): drop the legacy row instead of colliding with the unique
-          // (page_id, date, md5(summary), source) index on UPDATE.
-          const del = await tx.executeRaw<{ id: number }>(
-            `DELETE FROM timeline_entries t
-              WHERE t.id = $1
-                AND EXISTS (
-                  SELECT 1 FROM timeline_entries x
-                   WHERE x.page_id = t.page_id AND x.date = t.date
-                     AND md5(x.summary) = md5($2) AND x.source = $3 AND x.id <> t.id
-                )
-              RETURNING t.id`,
-            [row.id, target.summary, target.source],
-          );
-          if (del.length > 0) { result.rowsDeleted++; continue; }
-          await tx.executeRaw(
-            `UPDATE timeline_entries SET source = $2, summary = $3
-              WHERE id = $1 AND source = ''`,
-            [row.id, target.source, target.summary],
-          );
-          result.rowsRewritten++;
         }
-      });
+        if (!target) { result.rowsSkipped++; continue; }
+        // A new-shape duplicate may already exist (re-extract ran before this
+        // repair): drop the legacy row instead of colliding with the unique
+        // (page_id, date, md5(summary), source) index on UPDATE.
+        const del = await engine.executeRaw<{ id: number }>(
+          `DELETE FROM timeline_entries t
+            WHERE t.id = $1
+              AND EXISTS (
+                SELECT 1 FROM timeline_entries x
+                 WHERE x.page_id = t.page_id AND x.date = t.date
+                   AND md5(x.summary) = md5($2) AND x.source = $3 AND x.id <> t.id
+              )
+            RETURNING t.id`,
+          [row.id, target.summary, target.source],
+        );
+        if (del.length > 0) { result.rowsDeleted++; continue; }
+        await engine.executeRaw(
+          `UPDATE timeline_entries SET source = $2, summary = $3
+            WHERE id = $1 AND source = ''`,
+          [row.id, target.source, target.summary],
+        );
+        result.rowsRewritten++;
+      }
     }
   }
   return result;

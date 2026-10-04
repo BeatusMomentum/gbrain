@@ -1,16 +1,14 @@
 /**
  * Foundations 2 (Lane C) timeline attribution on an unmanaged brain: the DB
- * timeline extraction batches, the maintenance sweep's timeline batch, the
- * timeline write-through and the legacy timeline source repair write inside
- * maintenanceTransaction, so their rows (and the page revision the
- * write-through advances) name the local maintenance principal. A legacy row
- * the repair rewrites keeps its creator and moves its last writer.
+ * timeline extraction batches, the maintenance sweep's timeline batch and the
+ * timeline write-through write inside maintenanceTransaction, so their rows
+ * (and the page revision the write-through advances) name the local
+ * maintenance principal.
  *
  * Protects the timeline extraction writer family in
  * docs/architecture/system-of-record.md. Fails if extract-timeline-db.ts,
- * sweep.ts, timeline-write-through.ts or timeline-dedup-repair.ts writes
- * outside maintenanceTransaction, Runs on
- * PGLite, and on Postgres (direct and transaction-mode PgBouncer) through
+ * sweep.ts or timeline-write-through.ts writes outside maintenanceTransaction.
+ * Runs on PGLite, and on Postgres (direct and transaction-mode PgBouncer) through
  * test/e2e/write-attribution-postgres.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -22,14 +20,13 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { extractTimelineFromDB } from '../src/commands/extract-timeline-db.ts';
 import { runMaintenanceSweep } from '../src/core/sweep.ts';
 import { writeTimelineEntryThrough } from '../src/core/timeline-write-through.ts';
-import { repairLegacyTimelineSourceRows } from '../src/core/timeline-dedup-repair.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { writePageThrough, _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { configureGateway } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
-import { CREATOR_ACTOR, asCreator, revisionActor, rowActors, unmanagedBrain, type UnmanagedBrain } from './helpers/unmanaged-attribution.ts';
+import { asCreator, revisionActor, rowActors, unmanagedBrain, type UnmanagedBrain } from './helpers/unmanaged-attribution.ts';
 
 const engines: BrainEngine[] = [];
 const scratch = mkdtempSync(join(tmpdir(), 'gbrain-write-attribution-timeline-'));
@@ -105,24 +102,6 @@ describe('timeline attribution on an unmanaged brain', () => {
       expect(readFileSync(written.path!, 'utf8')).toContain('Signed the example contract');
       expect(await revisionActor(engine, brain.sourceId, slug)).toEqual(brain.maintenance);
       expect((await timelineActors(brain, slug)).map(({ created, last }) => ({ created, last }))).toEqual([both(brain.maintenance)]);
-    }
-  }, 120_000);
-
-  test('the legacy timeline source repair keeps the creator of a row it rewrites and moves its last writer', async () => {
-    for (const engine of engines) {
-      const brain = await unmanagedBrain(engine);
-      const slug = 'people/charlie-example';
-      const stored = await asCreator(engine, tx => tx.putPage(slug, { type: 'person', title: 'Charlie',
-        compiled_truth: 'A person.\n\n## Timeline\n\n- **2026-03-04** | Visited acme-example' }, { sourceId: brain.sourceId }));
-      await engine.executeRaw('DELETE FROM timeline_entries WHERE page_id=$1', [stored.id]);
-      await asCreator(engine, tx => tx.executeRaw(`INSERT INTO timeline_entries (page_id, date, source, summary, detail)
-        VALUES ($1, '2026-03-04', '', 'Visited acme-example', '')`, [stored.id]));
-
-      const result = await repairLegacyTimelineSourceRows(engine);
-
-      expect(result.rowsRewritten).toBeGreaterThanOrEqual(1);
-      expect((await timelineActors(brain, slug)).map(({ created, last }) => ({ created, last })))
-        .toEqual([{ created: CREATOR_ACTOR, last: brain.maintenance }]);
     }
   }, 120_000);
 });

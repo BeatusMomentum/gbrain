@@ -275,7 +275,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/sweep.ts` (1): the maintenance sweep's bounded timeline batch runs in `maintenanceTransaction`.
 - `src/core/takes-write.ts` (7): the takes file helpers' DB mirror (add, append, update, supersede, resolve and its self-heal) runs in `maintenanceTransaction`; managed brains publish through the takes request preparer.
 - `src/core/think/index.ts` (1): the saved `think` result page runs in `maintenanceTransaction`.
-- `src/core/timeline-dedup-repair.ts` (1): the legacy timeline source repair rewrites each page's rows in one `maintenanceTransaction`.
+- `src/core/timeline-dedup-repair.ts` (1): runs only from schema migration v139, before migration v193 adds the attribution columns, so it has no actor to record.
 - `src/core/timeline-write-through.ts` (2): the timeline write-through's page row splice and entry insert run in one `maintenanceTransaction`.
 <!-- write-attribution-covered:end -->
 
