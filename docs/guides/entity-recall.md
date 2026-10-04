@@ -6,7 +6,9 @@ Example"), by a frontmatter alias, or by a code the page declares (`Account
 code: ACMX`). The `entity` card then lists those pages grouped by type, newest
 first, with a short preview, and `get_backlinks` pages through the rest. An
 agent briefing on an account sees all of its tickets, meetings and mail
-instead of whichever few a search ranks first.
+instead of whichever few a search ranks first. The MCP initialize
+instructions tell agents to start such a brief with `entity` and walk
+`referenced_by` (or `get_backlinks`, where it is served) by type.
 
 **Say to your agent:** *"brief me on the Acme Example account"* —
 *"list every open ticket for ACMX"* — *"why isn't this meeting linked to Acme?"*

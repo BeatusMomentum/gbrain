@@ -84,6 +84,7 @@ Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `cov
 - **Schema**: migration v201 adds `page_aliases.origin`, `case_sensitive` and `alias_text` (unique key widened to include `origin`) and the `page_mention_state`, `mention_gazetteer_entries` and `mention_index_status` tables. No existing row is rewritten.
 - **Config**: `mentions.auto_link` (default on), `mentions.entity_types`, `mentions.ignore`.
 - **Faster private-page filtering for remote callers** (`src/core/search/private-visibility.ts`): the declared-lineage check runs only for pages that carry `derived_from`, so remote reads no longer probe the source's private pages once per candidate row. Results are unchanged.
+- **Server instructions**: wherever `entity` is served, the initialize instructions say: for a brief on an account, person or company, call `entity`, then walk `referenced_by` (or `get_backlinks`, where served) by type. The sentence replaces "several names" guidance on those surfaces; the full contract is 4,607 characters (ceiling 4,628).
 - **Tool descriptions**: `entity` and `get_backlinks` describe the new fields within the unchanged schema ceilings; `query` and `search` descriptions are shorter to pay for it.
 
 ### For contributors
