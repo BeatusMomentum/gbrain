@@ -370,8 +370,21 @@ export function parseDeltas(text: string): { rows: DeltaRow[]; errors: string[] 
   return { rows, errors };
 }
 
-const globMatch = (pattern: string, value: string) =>
-  new RegExp(`^${pattern.split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(value);
+function globMatch(pattern: string, value: string): boolean {
+  const parts = pattern.split('*');
+  if (parts.length === 1) return pattern === value;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (!value.startsWith(first) || value.length < first.length + last.length || !value.endsWith(last)) return false;
+  let at = first.length;
+  const end = value.length - last.length;
+  for (const part of parts.slice(1, -1)) {
+    const found = value.indexOf(part, at);
+    if (found === -1 || found + part.length > end) return false;
+    at = found + part.length;
+  }
+  return true;
+}
 
 function rowMatches(row: DeltaRow, id: Identity): boolean {
   return row.kind !== 'job' && row.lane === id.lane && row.file === id.file
