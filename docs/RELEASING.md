@@ -19,10 +19,9 @@ Two equivalent paths:
   than PR CI's four-file Tier 1 job; closer to what nightly Tier 1 catches. Spins
   up + tears down postgres automatically via `docker-compose.ci.yml`. Override
   the host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
-- `bun run ci:local:diff` runs only the E2E files matched by the diff selector
-  (`scripts/select-e2e.ts`), falling back to ALL E2E files on unmapped src/
-  paths or schema/skills/package.json changes. Fast iteration during a focused
-  branch.
+- `bun run ci:local:diff` checks a doc-only diff in seconds (gitleaks plus
+  `scripts/ci-doc-checks.sh`) and runs the full gate for any other diff: E2E
+  narrowing is retired (see docs/TESTING.md "E2E selection").
 - `bun run ci:ubicloud` (and `ci:ubicloud:diff`) runs the same lanes across ten
   ephemeral Ubicloud VMs in about five minutes instead of one Docker host. Needs
   `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`; see "Ubicloud fan-out" in
