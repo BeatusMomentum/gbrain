@@ -89,7 +89,7 @@ async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   }
   try {
     const { checkManagedSyncBacklog } = await import('./managed-sync-backlog.ts');
-    const check = engine ? await checkManagedSyncBacklog(engine, orphanRatioSourceId ? [orphanRatioSourceId] : undefined) : null;
+    const check = await checkManagedSyncBacklog(engine, orphanRatioSourceId ? [orphanRatioSourceId] : undefined);
     if (check) checks.push(check);
   } catch { /* managed backlog is informational; doctor's other checks report persistence health */ }
 
@@ -116,7 +116,7 @@ async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
 
 export const stubGuardEntry: DoctorEntry = {
   name: 'stub_guard_24h',
-  emits: ['stub_guard_24h', 'sync_failures', 'slug_fallback_audit'],
+  emits: ['stub_guard_24h', 'sync_failures', 'managed_sync_backlog', 'slug_fallback_audit'],
   run: runStubGuard,
 };
 

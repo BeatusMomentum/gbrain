@@ -134,6 +134,10 @@
         "name": "sync_failures"
       },
       {
+        "category": "brain",
+        "name": "managed_sync_backlog"
+      },
+      {
         "category": "meta",
         "name": "slug_fallback_audit"
       },

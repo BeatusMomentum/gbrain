@@ -1074,6 +1074,7 @@
           "private _connectionStyle",
           "private _disconnectPromise",
           "private _factsEmbeddingCastSuffix",
+          "private _heldPageKeys",
           "private _ownsModuleSingleton",
           "private _pageTransaction",
           "private _reconnecting",

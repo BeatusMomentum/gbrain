@@ -60,6 +60,7 @@ export interface SyncIntent extends Record<string, unknown> {
  */
 const sharedValidations = new WeakMap<object, Map<string, Promise<{ run_id: string; request_id: string | null; group: string[] | null } | null>>>();
 function sharedSyncValidation(tx: BrainEngine, key: string, run: () => Promise<{ run_id: string; request_id: string | null; group: string[] | null } | null>) {
+  if ((tx as { _pageTransaction?: boolean })._pageTransaction !== true) return run();
   let byKey = sharedValidations.get(tx);
   if (!byKey) { byKey = new Map(); sharedValidations.set(tx, byKey); }
   let shared = byKey.get(key);

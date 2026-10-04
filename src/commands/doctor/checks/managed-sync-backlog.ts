@@ -5,7 +5,8 @@ import { formatManagedSyncBacklog, readManagedSyncBacklog } from '../../../core/
 const IDLE_MS = 60 * 60_000;
 
 /** #5984: unfinished managed sync cursors, their remaining entries and ETA; warns when one has not advanced for an hour. */
-export async function checkManagedSyncBacklog(engine: BrainEngine, sourceIds?: string[]): Promise<Check | null> {
+export async function checkManagedSyncBacklog(engine: BrainEngine | null, sourceIds?: string[]): Promise<Check | null> {
+  if (!engine) return null;
   const backlog = await readManagedSyncBacklog(engine, sourceIds);
   if (!backlog.length) return null;
   const idle = backlog.filter(b => !b.last_progress_at || Date.now() - Date.parse(b.last_progress_at) > IDLE_MS);
