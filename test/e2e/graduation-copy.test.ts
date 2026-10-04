@@ -194,12 +194,12 @@ describe(`graduation copy of a ${PAGES}-page history brain`, () => {
     const runId = randomUUID();
     try {
       await installTestFence(target, runId);
-      expect(target.executeRaw("UPDATE config SET value = value WHERE key = 'version'")).rejects.toThrow(/graduation_in_progress/);
+      await expect(target.executeRaw("UPDATE config SET value = value WHERE key = 'version'")).rejects.toThrow(/graduation_in_progress/);
       const entries = await graduateInto(target, 'disable_trigger', runId, 'disable_trigger');
       await assertEqualCopy(target, entries);
       const fences = await target.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'gbrain_graduation_fence' AND tgenabled = 'A'`);
       expect(Number(fences[0]!.n)).toBeGreaterThan(90);
-      expect(target.executeRaw("DELETE FROM pages WHERE false")).rejects.toThrow(/graduation_in_progress/);
+      await expect(target.executeRaw("DELETE FROM pages WHERE false")).rejects.toThrow(/graduation_in_progress/);
     } finally { await target.disconnect(); }
   }, 900_000);
 });
