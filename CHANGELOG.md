@@ -30,14 +30,14 @@ The three runtime fixes are folded from GBRA-40 Foundations 2 Lane F, along with
 
 | Pull-request CI (`test.yml` + `e2e.yml`) | Before | Now |
 | --- | --- | --- |
-| Time to green | 1010-1067 s | 933 s (required checks green at 905 s) |
-| Ubicloud vCPU-minutes per run | 899-940 | 754 |
+| Time to green | 1010-1067 s | 696-874 s (median 743 s) |
+| Ubicloud vCPU-minutes per run | 899-940 | 739-755 |
 | Critical path | Selected E2E | a unit shard (Test) |
-| Selected E2E shard max / mean | 904 / 721 s (4 workers) | 452 / 382 s (8 workers) |
-| Unit shard max / mean | 762 / 542 s | 767 / 535 s (before the weight re-mine below) |
+| Selected E2E shard max / mean | 904 / 721 s (4 workers) | 365-451 / 323-345 s (8 workers) |
+| Unit shard max / mean | 762 / 542 s | 614-732 / 544-567 s |
 | Tests that ran in no lane | 55 PostgreSQL arms and 12 dead opt-in gates (the compile smoke among them) | 0 (one allowlisted arm with a TODO) |
 
-Before: the three baseline runs of the master tree on 2026-10-04 (`docs/test-audit/2026-10-04/baseline.md`). Now: run Test 37235275086 + E2E 37235274833 of this branch.
+Before: the three baseline runs of the master tree on 2026-10-04. Now: the three acceptance runs of this branch on the re-mined weights. Both sets of run ids are in `docs/test-audit/2026-10-04/baseline.md`, and every run executes the baseline's test identities or declares the change in `expected-deltas.tsv`.
 
 ### Things to watch
 

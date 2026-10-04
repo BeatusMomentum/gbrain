@@ -38,3 +38,15 @@ secrets are unset; expected-deltas.tsv declares that lane's skip until they are 
 
 Acceptance compares the wave head against run C with the same command, after the
 baseline is re-taken on a new merge-base whenever the collector is rebased.
+
+## Acceptance
+
+Three full pull-request runs of the finished wave (weights re-mined, backend
+matrix in two shards), same measurement. The identity comparison against run C
+passes for each: every dropped identity is declared in expected-deltas.tsv.
+
+| Run | Commit | Test run | E2E run | PR time to green | Ubicloud vCPU-min | Unit shard max / mean | Selected E2E shard max / mean |
+|---|---|---|---|---:|---:|---:|---:|
+| 1 | ce1921e21 | 37237153118 | 37237152915 | 874 s | 739 | 732 / 567 s | 365 / 323 s |
+| 2 | b332a88aa | 37238586428 | 37238586232 | 696 s | 740 | 614 / 544 s | 373 / 345 s |
+| 3 | 0bfbac34d | 37239440492 | 37239440211 | 743 s | 755 | 680 / 558 s | 451 / 331 s |
