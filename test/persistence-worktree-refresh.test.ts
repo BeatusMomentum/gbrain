@@ -24,6 +24,8 @@ import { operations } from '../src/core/operations.ts';
 import { runSourcesRefresh } from '../src/commands/sources-refresh.ts';
 import { claimCoalescedGitEffects, claimPersistenceEffect } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
+import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
+import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
@@ -287,6 +289,32 @@ test('13b. a publication in flight (recovery under a live claim) is drained, not
   } finally {
     await f.engine.executeRaw(`UPDATE persistence_requests SET state='committed', recovery=NULL, claim_expires_at=NULL WHERE id=$1::uuid`, [request.id]);
   }
+}), 120_000);
+
+test('13c. a committed write whose publisher still holds the worktree lock (recovery not yet cleared) is drained, not refused', () => each(async f => {
+  // The coordinator commits the receipt (completeWrite) and only then clears the request's recovery record
+  // (clearResolvedRecovery), holding the worktree native lock throughout. A refresh whose precheck lands in
+  // that window used to refuse refresh_recovery_required; on loaded CI this flaked cases 8 and 13.
+  const target = f.push('alpha/two.md', page('Alpha two', 'Upstream.'));
+  await f.put(f.alpha, 'notes/seed', page('Seed', 'Has a worktree request.'));
+  const [request] = await f.engine.executeRaw<{ id: string }>(
+    'SELECT id::text FROM persistence_requests WHERE source_id=$1 AND worktree_id IS NOT NULL ORDER BY sequence DESC LIMIT 1', [f.alpha]);
+  const binding = (await getWorktreeBinding(f.engine, f.alpha))!;
+  const committedWithRecovery = () => f.engine.executeRaw(
+    `UPDATE persistence_requests SET recovery='{"version":1}'::jsonb, claim_expires_at=NULL WHERE id=$1::uuid AND state='committed'`, [request.id]);
+  const clear = () => f.engine.executeRaw('UPDATE persistence_requests SET recovery=NULL WHERE id=$1::uuid', [request.id]);
+  try {
+    // No live owner: the same record left by a crashed publisher is still refused.
+    await committedWithRecovery();
+    await refusedWith(refreshWorktree(f.engine, f.alpha, { waitDrainMs: 300 }), 'refresh_recovery_required');
+    // Live owner: the publisher holds the worktree lock until it clears the record.
+    const lock = (await tryAcquireNativeLock(binding.coordination_path!))!;
+    expect(lock).not.toBeNull();
+    const publisherFinishes = new Promise<void>(resolve => setTimeout(() => { void clear().then(() => lock.release()).then(resolve); }, 400));
+    const result = await refreshWorktree(f.engine, f.alpha, { waitDrainMs: 10_000 });
+    await publisherFinishes;
+    expect(result).toMatchObject({ status: 'completed', target_head: target });
+  } finally { await clear(); }
 }), 120_000);
 
 test('admission completes a syncing refresh whose members all reached the target, and refuses while one lags', () => each(async f => {
