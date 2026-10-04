@@ -493,7 +493,11 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/chronicle/**": [
     "test/e2e/ontology-merge-parity.test.ts",
     "test/e2e/chronicle-event-projection-parity.test.ts",
+    "test/e2e/chronicle-surfaces-postgres.test.ts",
   ],
+  // #5876: doctor auto_chronicle + the chronicle advisor read the ledger rollups.
+  "src/commands/doctor/checks/auto-chronicle.ts": ["test/e2e/chronicle-surfaces-postgres.test.ts"],
+  "src/core/advisor/collect-chronicle.ts": ["test/e2e/chronicle-surfaces-postgres.test.ts"],
   "src/core/ops/chronicle.ts": [
     "test/e2e/ontology-merge-parity.test.ts",
     "test/e2e/chronicle-event-projection-parity.test.ts",

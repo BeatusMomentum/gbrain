@@ -1106,10 +1106,98 @@
         {
           "category": "brain",
           "details": {
-            "enabled": false
+            "auto_calls_24h": 0,
+            "chat_available": false,
+            "daily_limit": 200,
+            "docs": "docs/guides/life-chronicle.md",
+            "enabled": true,
+            "job_budget_usd": 0.25,
+            "last_7d": {
+              "extracted": 0,
+              "failed": 0,
+              "failedReasons": {},
+              "reasons": {},
+              "skipped": 0
+            },
+            "ledger_available": false,
+            "pending": 0,
+            "principals_24h": [],
+            "readiness": "missing",
+            "run_now": [
+              "gbrain",
+              "dream",
+              "--phase",
+              "chronicle"
+            ],
+            "severity": "info",
+            "source": "default",
+            "spend_7d": {
+              "incompleteRecords": 0,
+              "knownUsd": 0,
+              "unpricedCalls": 0
+            }
           },
-          "message": "auto_chronicle is off.",
+          "message": "auto_chronicle is on (default). The chronicle ledger is not created yet; run `gbrain apply-migrations --yes --no-autopilot-install`. No chat provider is configured, so nothing will be extracted until one is.",
           "name": "auto_chronicle",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "message": "chronicle.* settings are valid.",
+          "name": "chronicle_config_invalid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ask_user": true,
+            "code": "auto_chronicle_default_on",
+            "decisions": [
+              {
+                "argv": [
+                  "gbrain",
+                  "config",
+                  "set",
+                  "auto_chronicle",
+                  "true"
+                ],
+                "id": "keep",
+                "label": "Keep automatic extraction on"
+              },
+              {
+                "argv": [
+                  "gbrain",
+                  "config",
+                  "set",
+                  "auto_chronicle",
+                  "false"
+                ],
+                "id": "opt_out",
+                "label": "Turn automatic extraction off"
+              }
+            ],
+            "default": "keep",
+            "docs": "docs/guides/life-chronicle.md",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "auto_chronicle",
+                "true"
+              ],
+              "consent": [
+                "paid",
+                "egress"
+              ],
+              "requires_exclusive": false,
+              "why": "Keeping the default records that the user accepted the per-page cost; the alternative is the opt-out."
+            },
+            "severity": "info"
+          },
+          "message": "Automatic event extraction is on by default and the user has not confirmed it yet. Each eligible new or changed meeting, conversation or calendar page gets one paid chat call (cap $0.25 per page; at most 200 calls per day, so at most $50.00 per day for a priced model; an unpriced model has no cap), and page text goes to the configured chat provider. Relay this to the user, then run `gbrain config set auto_chronicle true` to keep it or `gbrain config set auto_chronicle false` to opt out.",
+          "name": "auto_chronicle_default_on",
           "status": "ok"
         },
         {
