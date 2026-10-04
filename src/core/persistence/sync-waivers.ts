@@ -74,6 +74,17 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
   });
 }
 
+/** #5984: whether `waiveNoopEntry` would waive this frozen entry now (read-only; the bulk group stops before such an entry). */
+export async function wouldWaiveEntry(engine: BrainEngine, cursor: WaiverCursor, pending: WaiverEntry, config: GBrainConfig): Promise<boolean> {
+  if (!noopWaiversEnabled() || pending.pageId === null) return false;
+  const intent = pending.intent;
+  if (intent.kind === 'managed_sync_delete') {
+    if (intent.unownedDeletion || intent.renameFrom || intent.rawHash !== null || typeof intent.path !== 'string' || typeof intent.sourcePath !== 'string') return false;
+    return softDeletedAt(await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true }), pending);
+  }
+  return (await unchangedSyncImport(engine, cursor, pending, config)) !== null;
+}
+
 function softDeletedAt(snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, pending: WaiverEntry): boolean {
   return snapshot?.page.id === pending.pageId && snapshot.page.deleted_at != null && snapshot.revision === pending.intent.expected_revision;
 }

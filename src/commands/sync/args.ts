@@ -71,6 +71,12 @@ Options:
   --no-pull            Skip 'git pull' before the sync. Required on managed
                        brains: 'gbrain sources refresh <id>' moves the
                        checkout, and sync catches the index up to it.
+  --no-bulk            Managed Postgres sync: publish one page per transaction
+                       instead of bulk groups (each page keeps its own write
+                       request either way). Persist with
+                       'gbrain config set sync.bulk false' or
+                       GBRAIN_SYNC_BULK=0; tune with sync.bulk_size and
+                       sync.bulk_max_txn_ms.
   --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
                        normally delegates the run to the serve process over
                        its IPC socket (the lock owner does the work; embeds
@@ -135,6 +141,7 @@ export function parseSyncFlags(args: string[]) {
   const dryRun = args.includes('--dry-run');
   const full = args.includes('--full');
   const noPull = args.includes('--no-pull');
+  const noBulk = args.includes('--no-bulk');
   let noEmbed = resolveNoEmbed(args, loadConfig());
   const noExtract = args.includes('--no-extract'); // v0.42.7 #1696
   const skipFailed = args.includes('--skip-failed');
@@ -193,7 +200,7 @@ export function parseSyncFlags(args: string[]) {
     console.error(`--max-age cannot be combined with --force-break-lock (force skips all guards).`);
     process.exit(1);
   }
-  return { repoPath, watch, interval, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, explicitProcessing, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
+  return { repoPath, watch, interval, dryRun, full, noPull, noBulk, noEmbed, noExtract, skipFailed, retryFailed, resetCheckpoint, noSchemaPack, explicitProcessing, includeGitignored, workingTree, syncAll, missingPathMode, jsonOut, yesFlag, breakLock, forceBreakLock, maxAgeSeconds };
 }
 
 export type SyncFlags = ReturnType<typeof parseSyncFlags>;

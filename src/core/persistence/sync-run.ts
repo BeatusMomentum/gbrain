@@ -27,6 +27,8 @@ import { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } from './checkpoi
 import { isTerminalWriteState, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import type { WriteRequest } from './model.ts';
 import { assertManagedSyncAllowed } from './worktree-refresh.ts';
+import type { GBrainConfig } from '../config.ts';
+import { admitGroup, freezeFollowers, groupableIntent, nextGroupSize, type BulkSettings } from './sync-group.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -52,7 +54,9 @@ interface Cursor extends SyncDiscovery { runId: string; index: number; authority
     /** DX-A7: entries advanced without an admission because their publication would change nothing. */
     waived?: { imports: number; deletes: number } };
   /** #5984: the active drain window (reset when a new drain starts), so a backlog ETA never counts downtime. */
-  progress?: CursorProgress; }
+  progress?: CursorProgress;
+  /** #5984 bulk: the frozen head (also `pending`) and the members admitted with it, in manifest order. */
+  group?: Pending[]; }
 export interface CursorProgress { startedAt: number; startIndex: number; lastAt: number; lastIndex: number }
 /** #5984: the cursor's progress after advancing to `index`, in the drain window that started at `drainStartedAt`. */
 function stampProgress(prior: CursorProgress | undefined, fromIndex: number, index: number, drainStartedAt: number): CursorProgress {
@@ -119,7 +123,7 @@ function waivedCursor(cursor: Cursor, waived: NoopWaiver): Cursor {
   const prior = cursor.counts.waived ?? { imports: 0, deletes: 0 };
   const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts,
     waived: { imports: prior.imports + (waived.kind === 'import' ? 1 : 0), deletes: prior.deletes + (waived.kind === 'delete' ? 1 : 0) } } };
-  delete next.pending;
+  delete next.pending; delete next.group;
   if (waived.kernel.includes('contextual_mode')) next.counts.skippedContextualMode = (next.counts.skippedContextualMode ?? 0) + 1;
   if (waived.kernel.includes('canonical_file_differs')) next.counts.skippedCanonicalBytes = (next.counts.skippedCanonicalBytes ?? 0) + 1;
   return next;
@@ -294,6 +298,68 @@ async function sameContentAtOrigin(engine: BrainEngine, cursor: Cursor, entry: C
   }
 }
 
+/** Counts a committed page into the cursor, as the single path does. */
+function countCommitted(counts: Cursor['counts'], pending: Pending, outcome: WriteRequest['outcome']): void {
+  if (outcome?.noop !== true) {
+    if (pending.intent.kind === 'managed_sync_delete') counts.deleted++;
+    else if (pending.intent.renameFrom) counts.renamed = (counts.renamed ?? 0) + 1;
+    else if (pending.pageId === null) counts.added++; else counts.modified++;
+  }
+  counts.chunks += Number(outcome?.chunks ?? 0);
+}
+interface BulkPass { settings: BulkSettings; perMemberMs: number | null }
+/**
+ * #5984 bulk: admits the cursor's group, waits for it and advances over the
+ * committed prefix. A terminal failure leaves that member as the single
+ * pending entry, so the single path records and reports it.
+ */
+async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk: BulkPass, config: GBrainConfig, wait: { waitMs: number; signal?: AbortSignal },
+  drainStartedAt: number, onProgress: SyncOpts['onProgress']): Promise<{ cursor: Cursor } | { result: SyncResult }> {
+  const signal = wait.signal;
+  const members = cursor.group!;
+  const principal = cursor.authority.writer.principal;
+  let rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
+    [principal.kind, principal.id, members.map(member => member.requestId)]);
+  if (rows.length < members.length) {
+    const admitted = await admitGroup(engine, members, cursor, async tx => {
+      const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
+      return held?.request_id === members[0]!.requestId;
+    });
+    if (!admitted) return { cursor: await currentCursor(engine, key, cursor) };
+    rows = admitted;
+  }
+  const admitted = performance.now();
+  onProgress?.({ phase: 'managed_sync.group', bankedFiles: cursor.index, total: cursor.entries.length, group: members.length });
+  await validateSyncAuthority(engine, cursor.authority, members[0]!.slug);
+  assertSyncDispatchActive();
+  const last = rows.find(row => row.request_id === members.at(-1)!.requestId)!;
+  const waited = await awaitWrite(engine, last, config, wait);
+  assertSyncDispatchActive();
+  const states = new Map((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[])', [rows.map(row => row.id)])).map(row => [row.request_id, row]));
+  const next: Cursor = { ...cursor, counts: { ...cursor.counts } };
+  let committed = 0;
+  for (const member of members) {
+    const row = states.get(member.requestId);
+    if (row?.state !== 'committed') break;
+    countCommitted(next.counts, member, row.outcome);
+    committed++;
+  }
+  if (committed === members.length) bulk.perMemberMs = (performance.now() - admitted) / members.length;
+  next.index = cursor.index + committed;
+  if (committed) next.progress = stampProgress(cursor.progress, cursor.index, next.index, drainStartedAt);
+  const stuck = members[committed];
+  const stuckRow = stuck ? states.get(stuck.requestId) : undefined;
+  if (!stuck) { delete next.pending; delete next.group; }
+  else { next.pending = stuck; if (stuckRow && isTerminalWriteState(stuckRow.state)) delete next.group; else next.group = members.slice(committed); }
+  const saved = committed || next.group?.length !== members.length ? await saveCursor(engine, key, cursor, next) : cursor;
+  for (let index = cursor.index + 1; index <= saved.index && index <= next.index; index++) onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: index, total: cursor.entries.length });
+  if (stuck && stuckRow && !isTerminalWriteState(stuckRow.state) && saved.index === next.index) {
+    return { result: { ...result(saved, 'partial', signal?.aborted ? 'timeout' : 'writer_pending'), ...(cursor.authority.writer.remote ? {} : {
+      managedWrite: writeDiagnostic(saved, stuck, stuckRow), writeWait: writeWaitOf(last.request_id === stuckRow.request_id ? waited : { kind: 'pending', row: stuckRow }) }) } };
+  }
+  return { cursor: saved };
+}
+
 /** One immutable page is admitted at a time; foreground writes can never sit behind a whole scan. */
 export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
   await assertManagedSyncActive(engine);
@@ -440,6 +506,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     let batchStart = performance.now(), batchPages = 0, foregroundWaitStart = 0, foregroundBaseline = 0;
     let creditedPages = 0, creditStarted = 0;
     const sliceStarted = performance.now(), sliceFirstIndex = cursor.index, drainStartedAt = opts.drainStartedAt ?? Date.now();
+    const bulk: BulkPass = { settings: opts.bulk && !company ? opts.bulk : { enabled: false, reason: null, size: 1, maxTxnMs: 0 }, perMemberMs: null };
     opts.onProgress?.({ phase: 'managed_sync.start', bankedFiles: cursor.index, total: cursor.entries.length });
     while (!cursor.done) {
       assertActive();
@@ -483,6 +550,21 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         assertActive();
         // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
         if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
+        continue;
+      }
+      if (bulk.settings.enabled && !prior && !cursor.group && !pending.rebound && groupableIntent(pending.intent)) {
+        const head: Cursor = cursor;
+        const followers = await freezeFollowers(engine, head, config, nextGroupSize(bulk.settings, bulk.perMemberMs) - 1,
+          index => freezeEntry(engine, { ...head, index }, key, assertActive, frozenRun));
+        // Members name their group (the head's request ID), so a consumer can claim them together.
+        const members = [pending, ...followers].map(member => ({ ...member, intent: { ...member.intent, group: pending.requestId } }));
+        if (followers.length) cursor = await saveCursor(engine, key, head, { ...head, pending: members[0], group: members }, false, assertActive);
+      }
+      if (cursor.group?.[0]?.requestId === pending.requestId && cursor.pending?.requestId === pending.requestId) {
+        const step = await groupStep(engine, cursor, key, bulk, config, opts.drainStartedAt ? { waitMs: 30_000, signal } : { waitMs: 5000 }, drainStartedAt, opts.onProgress);
+        if ('result' in step) return step.result;
+        cursor = step.cursor;
+        assertActive();
         continue;
       }
       const admitting = cursor;
@@ -536,13 +618,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         return withLinks(cursor, result(cursor, cursor.from === null ? 'first_sync' : 'synced'));
       }
       // The frozen manifest is shared; only the cursor header changes per page.
-      const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }; delete next.pending;
-      if (done.outcome?.noop !== true) {
-        if (pending.intent.kind === 'managed_sync_delete') next.counts.deleted++;
-        else if (pending.intent.renameFrom) next.counts.renamed = (next.counts.renamed ?? 0) + 1;
-        else if (pending.pageId === null) next.counts.added++; else next.counts.modified++;
-      }
-      next.counts.chunks += Number(done.outcome?.chunks ?? 0);
+      const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }; delete next.pending; delete next.group;
+      countCommitted(next.counts, pending, done.outcome);
       cursor = await saveCursor(engine, key, cursor, next);
       opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length });
       // F4b: PGLite plans the rest of a large sync against fresh statistics (spec Addendum A item 2).

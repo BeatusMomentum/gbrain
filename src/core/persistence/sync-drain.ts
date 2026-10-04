@@ -47,6 +47,8 @@ export interface DrainReport {
   eta_seconds: number | null;
   retry_after_ms?: number;
   stall?: DrainStall;
+  /** DX-A5: whether pages were published in bulk groups, and why not when they were not. */
+  bulk?: { enabled: boolean; reason: string | null; groups: number; grouped_pages: number; largest_group: number };
 }
 
 const TERMINAL_STATUSES = new Set(['synced', 'first_sync', 'up_to_date', 'dry_run']);
@@ -140,6 +142,8 @@ export interface DrainInput {
   probe?: StallProbe;
   /** Throttled progress lines on stderr (CLI). */
   announce?: boolean;
+  /** Publication mode for the report and the start line. */
+  bulk?: { enabled: boolean; reason: string | null };
   /** Test seams: the no-progress window, the pause after a pending write and the transient backoff base. */
   stallMs?: number;
   pauseMs?: number;
@@ -152,7 +156,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const coop = cooperativeDeadline();
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
   let passes = 0, attempt = 0, readFailures = 0, refreshWaitedMs = 0, written = 0, waived = 0, index = 0, total: number | null = null;
-  let announcedStart = false, lastLine = 0;
+  let announcedStart = false, lastLine = 0, groups = 0, groupedPages = 0, largestGroup = 0;
   let stall: { key: string; since: number; passes: number } | null = null;
   const remaining = () => total === null ? null : Math.max(0, total - index);
   const onProgress: NonNullable<SyncOpts['onProgress']> = event => {
@@ -161,8 +165,10 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     if (typeof event.bankedFiles === 'number') index = event.bankedFiles;
     if (event.phase === 'managed_sync.start' && input.announce && !announcedStart) {
       announcedStart = true;
-      serr(`[sync] managed catch-up: ${total ?? '?'} entries frozen, ${remaining() ?? '?'} remaining; one write request per page.`);
+      serr(`[sync] managed catch-up: ${total ?? '?'} entries frozen, ${remaining() ?? '?'} remaining; `
+        + (input.bulk?.enabled ? 'publishing in bulk groups (each page keeps its own request).' : `one write request per page${input.bulk?.reason ? ` (bulk off: ${input.bulk.reason})` : ''}.`));
     }
+    if (event.phase === 'managed_sync.group' && typeof event.group === 'number') { groups++; groupedPages += event.group; largestGroup = Math.max(largestGroup, event.group); }
     if (event.phase !== 'managed_sync.page_committed') return;
     if (event.waived) waived++; else written++;
     noteForwardProgress();
@@ -178,7 +184,8 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     const left = outcome === 'synced' ? 0 : remaining();
     if (stopReason === 'deadline' && continues(result)) result = { ...result, reason: 'timeout' };
     return { ...result, drain: { outcome, ...(stopReason ? { stop_reason: stopReason } : {}), passes, processed: written + waived, written, waived,
-      remaining: left, ...drainEstimate(left, written + waived, Date.now() - startedAt), ...extra } };
+      remaining: left, ...drainEstimate(left, written + waived, Date.now() - startedAt),
+      ...(input.bulk ? { bulk: { ...input.bulk, groups, grouped_pages: groupedPages, largest_group: largestGroup } } : {}), ...extra } };
   };
   try {
     for (;;) {
@@ -198,6 +205,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
         if (TERMINAL_STATUSES.has(result.status)) return finish(result, 'synced');
         if (result.status === 'blocked_by_failures') return finish(result, 'blocked', 'blocked_by_failures');
         if (result.managedWrite && result.managedWrite.write_error !== 'write_pending') return finish(result, 'blocked', 'blocked_by_failures');
+        if (result.status === 'partial' && (result.reason === 'timeout' || signal?.aborted)) return finish(result, 'resumable', 'deadline');
         const outcome = syncOutcome({ ...result, drain: undefined });
         return finish(result, outcome, outcome === 'resumable' ? 'deadline' : undefined);
       }
@@ -271,9 +279,11 @@ export function engineStallProbe(engine: BrainEngine): StallProbe {
 /** The managed-sync drain over one engine; the CLI's managed path. */
 export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, announce: boolean): Promise<SyncResult> {
   const { performManagedSync } = await import('./sync-run.ts');
+  const { resolveBulkSettings } = await import('./sync-group.ts');
   const drainStartedAt = opts.drainStartedAt ?? Date.now();
-  return runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce,
-    pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt }) });
+  const bulk = await resolveBulkSettings(engine, opts.noBulk);
+  return runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce, bulk: { enabled: bulk.enabled, reason: bulk.reason },
+    pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk } : {}) }) });
 }
 
 export interface DrainNext {
