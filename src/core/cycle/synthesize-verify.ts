@@ -210,6 +210,7 @@ export function normalizeForGrounding(s: string): { norm: string; map: number[] 
 function foldForGrounding(s: string, withMap: boolean): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
+  const skip = linkSyntaxMask(s);
   let pendingSpace = false;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
@@ -219,6 +220,7 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
   for (const cp of s) {
     const i = idx;
     idx += cp.length;
+    if (skip?.has(i)) continue;
     let ch = cp;
     if (/\s/.test(ch)) {
       pendingSpace = out.length > 0;
@@ -244,6 +246,30 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
   }
   const norm = out.join('');
   return withMap ? { norm, map } : norm;
+}
+
+const MD_LINK = /\[([^\[\]\n]{1,300})\]\([^()\s]{1,500}\)/g;
+
+/** Code-unit offsets of markdown link syntax (`[` and `](target)`): a quote never carries a link target, so the fold reads `[Ana](people/ana)` as `Ana`. */
+function linkSyntaxMask(s: string): Set<number> | null {
+  if (!s.includes('](')) return null;
+  const skip = new Set<number>();
+  for (const m of s.matchAll(MD_LINK)) {
+    const at = m.index!;
+    skip.add(at);
+    for (let k = at + 1 + m[1]!.length; k < at + m[0].length; k++) skip.add(k);
+  }
+  return skip;
+}
+
+/** A source slice as a reader sees it: link syntax reduced to the link text. */
+function displayText(slice: string): string {
+  return slice.replace(MD_LINK, '$1').replace(/\]\([^()\s]*\)/g, '');
+}
+
+/** A quote's core: the elision marks and closing punctuation writers put at a quotation's edges ("the deal," / "…edge cases o…"). */
+function quoteCore(inner: string): string {
+  return inner.replace(/^(?:\s|\.\.\.|…)+/u, '').replace(/(?:\s|[.,;:!?]|…)+$/u, '');
 }
 
 /**
@@ -567,6 +593,19 @@ const PUNCT_EDGE = /[.,;:!?]/;
  * in another's mouth.
  */
 export function groundQuote(inner: string, t: GroundedTranscript): GroundResult {
+  const whole = groundQuoteSpan(inner, t, false);
+  if (whole.status !== 'none') return whole;
+  const core = quoteCore(inner);
+  if (core !== inner && core.split(/\s+/).filter(Boolean).length >= 2) {
+    // Punctuation or elision marks at the edges are the writer's, not the source's: the words themselves are grounded.
+    const r = groundQuoteSpan(core, t, false);
+    if (r.status === 'exact' || (r.status === 'normalized' && r.replacement === core)) return { status: 'exact', spans: r.spans };
+    if (r.status !== 'none') return r;
+  }
+  return groundQuoteSpan(inner, t, true);
+}
+
+function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): GroundResult {
   let crossed = false;
 
   // Rung 1: exact substring.
@@ -592,7 +631,7 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   }
   if (normalized.length) {
     const [start, end] = normalized[0];
-    const replacement = t.content.slice(start, end);
+    const replacement = displayText(t.content.slice(start, end));
     if (replacement.length === 0) return { status: 'none', reason: 'not_found' };
     return replacement === inner ? { status: 'exact', spans: normalized } : { status: 'normalized', replacement, spans: normalized };
   }
@@ -602,7 +641,7 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   // overlap; accept a single clear winner ≥ floor, trimmed to the matched
   // tokens. Hard-bounded: total probes, trigrams (stride-sampled), quote size.
   const none: GroundResult = { status: 'none', reason: crossed ? 'crosses_speakers' : 'not_found' };
-  if (q.norm.length > MAX_NEAR_QUOTE_NORM_CHARS) return none;
+  if (!near || q.norm.length > MAX_NEAR_QUOTE_NORM_CHARS) return none;
   const qTokens = q.norm.split(' ').filter(w => w.length > 0);
   if (qTokens.length < 4) return none;
   const qBare = new Set(qTokens.map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(w => w.length > 0));
@@ -666,7 +705,7 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   const innerTrim = inner.trim();
   if (!PUNCT_EDGE.test(innerTrim[0] ?? '')) while (a < b && PUNCT_EDGE.test(t.content[a])) a++;
   if (!PUNCT_EDGE.test(innerTrim[innerTrim.length - 1] ?? '')) while (b > a && PUNCT_EDGE.test(t.content[b - 1])) b--;
-  const replacement = t.content.slice(a, b).trim();
+  const replacement = displayText(t.content.slice(a, b)).trim();
   if (replacement.length === 0) return none;
   if (normForGrounding(replacement).length > Math.ceil(q.norm.length * NEAR_MATCH_MAX_GROWTH)) return none;
   if (crossesTurn(t.turns, a, b)) return { status: 'none', reason: 'crosses_speakers' };

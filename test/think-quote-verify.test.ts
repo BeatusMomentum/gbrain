@@ -53,6 +53,21 @@ describe('groundAnswerQuotes (pure)', () => {
     expect(r.quote_check.grounded + r.quote_check.repaired).toBe(1);
   });
 
+  test('punctuation and elision marks at a quote\'s edges are the writer\'s: the words still ground', () => {
+    const r = groundAnswerQuotes('She called it "move to annual billing," then "…Bob Example asked about seats." and "annual billing in M…".', sources);
+    expect(r.quote_check).toEqual({ grounded: 3, repaired: 0, unverified: 0 });
+    expect(r.answer).toContain('"move to annual billing,"');
+    const fabricated = groundAnswerQuotes('She said "we will move to quarterly billing."', sources);
+    expect(fabricated.quote_check.unverified).toBe(1);
+  });
+
+  test('markdown link syntax in the evidence does not hide the quoted words; repairs carry no link targets', () => {
+    const linked = [groundSource('evidence', '[Elena](people/elena-example) said the [Meridian](companies/meridian-example) deal is moving faster than expected.')];
+    const r = groundAnswerQuotes('Elena: "the Meridian deal is moving faster than expected" and "Elena said the meridian deal".', linked);
+    expect(r.quote_check.unverified).toBe(0);
+    expect(r.answer).not.toContain('](');
+  });
+
   test('quotes-only mode never flags computed numbers; full mode does', () => {
     const body = 'Revenue grew 75 percent across 3 quarters.';
     expect(verifyBody(body, sources, { checks: 'quotes' }).quarantined).toEqual([]);
