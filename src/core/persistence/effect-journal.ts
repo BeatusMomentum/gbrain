@@ -13,6 +13,7 @@ import { loadConfig } from '../config.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
 import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
+import { pageBatchChildRequestIds } from './page-batch-id.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -52,10 +53,26 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
         ON CONFLICT(request_id,kind) DO NOTHING RETURNING id`,
       [row.id, revision ?? null, JSON.stringify(data), row.source_id, row.source_incarnation, row.worktree_id, REMOTE_AUTO_LINKS_KEY]);
       if (queued.length) outcome.auto_links = { ...(outcome.auto_links as Record<string, unknown> | undefined), mention_links: 'queued' };
+      await reconcileFinishedBatch(tx, row);
     }
     // #5876: the Life Chronicle decision is a ledger row, not an effect; the `chronicle` cycle phase executes it.
     await recordChronicleDecision(tx, row, snapshot, outcome);
   }
+}
+
+/**
+ * #6007: when the last unfinished page of a `put_pages` batch publishes, its
+ * earlier pages' links effects may have run before this page existed; re-arm
+ * them once so forward references inside the batch resolve, with no client poll.
+ */
+async function reconcileFinishedBatch(tx: BrainEngine, row: EffectRequest & Partial<Pick<WriteRequest, 'intent' | 'principal_kind' | 'principal_id'>>): Promise<void> {
+  const batch = row.intent?.page_batch as { id?: unknown; size?: unknown } | undefined;
+  if (!batch || typeof batch.id !== 'string' || typeof batch.size !== 'number' || batch.size < 2 || !row.principal_kind || !row.principal_id) return;
+  const siblings = await tx.executeRaw<{ id: string; state: string }>(`SELECT id,state FROM persistence_requests
+    WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[]) AND id<>$4::uuid AND intent->'page_batch'->>'id'=$5`,
+  [row.principal_kind, row.principal_id, pageBatchChildRequestIds(batch.id, batch.size), row.id, batch.id]);
+  if (siblings.some(sibling => !['committed', 'conflict', 'failed', 'cancelled'].includes(sibling.state))) return;
+  await queueLinksReconcile(tx, { sourceId: row.source_id, requestIds: [row.id, ...siblings.filter(sibling => sibling.state === 'committed').map(sibling => sibling.id)] });
 }
 
 /**

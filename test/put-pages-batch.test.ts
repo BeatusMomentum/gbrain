@@ -117,6 +117,24 @@ describe('put_pages', () => {
   });
 });
 
+describe('put_pages links', () => {
+  test('forward references inside a batch become mention links without a status poll', async () => {
+    const batch = randomUUID();
+    const result = await putPages.handler(ctx(), { request_id: batch, pages: [
+      page('notes/fwd-a', 'See [[notes/fwd-b]] for details.'), page('notes/fwd-b', 'Back to [[notes/fwd-a]].')] }) as any;
+    expect(result.state).toBe('committed');
+    const edges = async () => engine.executeRaw<{ edge: string }>(`SELECT f.slug || '>' || t.slug AS edge FROM links l
+      JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id WHERE l.link_source='mcp-remote-mention' ORDER BY 1`);
+    const deadline = Date.now() + 15_000;
+    while ((await edges()).length < 2 && Date.now() < deadline) await Bun.sleep(100);
+    expect((await edges()).map(row => row.edge)).toEqual(['notes/fwd-a>notes/fwd-b', 'notes/fwd-b>notes/fwd-a']);
+    // The last page's publication re-armed every page's links pass once, so an
+    // earlier page whose pass ran before its target existed is linked anyway.
+    const rearmed = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_effects WHERE kind='links' AND data ? 'batch_reconciled'");
+    expect(rearmed[0]!.n).toBe(2);
+  }, 30_000);
+});
+
 describe('put_page wait_ms', () => {
   test('is not part of the write identity: a replay with another wait is not a conflict', async () => {
     const request_id = randomUUID();

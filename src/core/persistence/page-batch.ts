@@ -10,11 +10,13 @@
  * `put_pages` with only `request_id` reads the batch status without resending
  * any content.
  */
-import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { admitWrites, type WriteAdmission } from './journal.ts';
 import { queueLinksReconcile } from './effect-journal.ts';
+import { pageBatchChildRequestId, pageBatchChildRequestIds } from './page-batch-id.ts';
+
+export { pageBatchChildRequestId };
 import { isTerminal, type WriteRequest } from './model.ts';
 import { estimatedRetryAfterMs, waitForWrites, writeResponse } from './service.ts';
 import { initializeLocalPersistence, pageMutationSource, preparePageAdmission, requestPrincipalForContext } from './page-mutations.ts';
@@ -30,18 +32,6 @@ const PREPARE_CONCURRENCY = 4;
 /** Batch admission is one transaction over every page; it gets more than a single write's budget. */
 const BATCH_ADMISSION_BUDGET_MS = 30_000;
 const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty']);
-/** RFC 4122 namespace for put_pages child request ids (fixed forever: changing it re-admits replays). */
-const CHILD_NAMESPACE = Buffer.from('a7f4c2d0600742b8b1e95d3c8f0a6007', 'hex');
-
-/** UUIDv5(namespace, "put_pages:v1:<batch>:<index>"). */
-export function pageBatchChildRequestId(batchId: string, index: number): string {
-  const hash = createHash('sha1').update(CHILD_NAMESPACE).update(`put_pages:v1:${batchId.toLowerCase()}:${index}`).digest();
-  hash[6] = (hash[6]! & 0x0f) | 0x50;
-  hash[8] = (hash[8]! & 0x3f) | 0x80;
-  const hex = hash.subarray(0, 16).toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 interface BatchPage { slug: string; content: string; expected_revision?: unknown; allow_empty?: unknown }
 interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null }
 interface BatchMarker { id: string; index: number; size: number }
@@ -82,7 +72,7 @@ function markerOf(row: WriteRequest): BatchMarker | null {
 
 async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteRequest[]> {
   const principal = await requestPrincipalForContext(ctx);
-  const ids = Array.from({ length: PAGE_BATCH_MAX_PAGES }, (_, index) => pageBatchChildRequestId(batchId, index));
+  const ids = pageBatchChildRequestIds(batchId, PAGE_BATCH_MAX_PAGES);
   const rows = await ctx.engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
     WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])`, [principal.kind, principal.id, ids]);
   return rows.filter(row => markerOf(row)?.id === batchId).sort((a, b) => markerOf(a)!.index - markerOf(b)!.index);
