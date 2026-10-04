@@ -147,9 +147,10 @@ export interface ImportResult {
    * in its malformed summary and keeps them OUT of failedFiles / the failure
    * ledger so they can never gate bookmark advancement. 'slug_collision' =
    * another live file already owns this slug (see importFromContent); the
-   * skip repeats until one file is renamed.
+   * skip repeats until one file is renamed. #5988: a content refusal carries
+   * its hold code (with `refusal`); sync holds it, other callers fail it.
    */
-  skip_reason?: 'malformed_path' | 'slug_collision';
+  skip_reason?: 'malformed_path' | 'slug_collision' | ContentRefusal['code'];
   /**
    * Advisory (schema.type_warnings): the page's explicit frontmatter `type:`
    * is an alias of a canonical pack type or undeclared in the pack. The type
@@ -162,12 +163,15 @@ export interface ImportResult {
   embedding_deferred?: boolean;
   /** #5988: the typed content refusal behind `error`, for callers that refuse with its code. */
   refusal?: ContentRefusal;
+  /** #5988: the file imported only after quoting unreadable frontmatter values, or carries a `#`-comment value. */
+  frontmatter_recovery?: { quoted: boolean; comment_value: boolean };
 }
 
 export { MAX_FILE_SIZE };
 
-/** #5988: the frontmatter hold text for a validated parse (location only), or null when it imports. */
-const invalidYamlFrontmatterError = (parsed: ParsedMarkdown): string | null => classifyImportHold(parsed)?.message ?? null;
+/** #5988: the slug-conflict hold text: the path and its derived slug, never the declared frontmatter value. */
+export const slugConflictHoldMessage = (relativePath: string, expectedSlug: string): string =>
+  `The frontmatter slug of ${relativePath} does not match its path-derived slug "${expectedSlug}". Remove the frontmatter "slug:" line or move the file.`;
 
 /**
  * #4588: refresh `pages.source_path` on the import SKIP path. A row whose slug
@@ -320,7 +324,7 @@ export async function importFromContent(
   // so the network path behaves identically to the file path.
   const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}) });
   if (screen.status === 'refused') {
-    return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal };
+    return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import');
@@ -1118,7 +1122,8 @@ export async function importFromFile(
 
   const stat = statSync(filePath);
   if (stat.size > MAX_FILE_SIZE) {
-    return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
+    return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)`,
+      refusal: { code: 'file_too_large', message: `File too large (${stat.size} bytes, max ${MAX_FILE_SIZE}).` }, skip_reason: 'file_too_large' };
   }
 
   let content = readSourceFileSync(filePath, 'utf-8').replace(/^\uFEFF/, ''); // #4798: a BOM is encoding noise, not content
@@ -1153,15 +1158,12 @@ export async function importFromFile(
   }
 
   const preInferenceParsed = parseMarkdown(content, relativePath, { validate: true });
-  const preInferenceFrontmatterError = invalidYamlFrontmatterError(preInferenceParsed);
-  if (preInferenceFrontmatterError) {
-    return {
-      slug: slugifyPath(relativePath),
-      status: 'skipped',
-      chunks: 0,
-      error: preInferenceFrontmatterError,
-    };
+  const preInferenceHold = classifyImportHold(preInferenceParsed);
+  if (preInferenceHold) {
+    return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: 'invalid_frontmatter' };
   }
+  const recovery = { quoted: !!preInferenceParsed.errors?.some(e => e.code === 'YAML_PARSE' && e.recoverable),
+    comment_value: !!preInferenceParsed.warnings?.some(w => w.code === 'FRONTMATTER_COMMENT_VALUE') };
 
   // v0.22.8 — Frontmatter inference: if the file has no frontmatter and
   // inference is enabled, synthesize it from the filesystem path + content.
@@ -1181,7 +1183,7 @@ export async function importFromFile(
     validate: true,
     ...(opts.activePack ? { activePack: opts.activePack } : {}),
   });
-  const frontmatterError = invalidYamlFrontmatterError(parsed);
+  const frontmatterHold = classifyImportHold(parsed);
 
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
   // the path-derived slug, so a mismatch here means the frontmatter is trying
@@ -1200,14 +1202,7 @@ export async function importFromFile(
   let fallbackReason: 'path slugified empty' | 'normalization-equivalent identity restore' =
     'path slugified empty';
 
-  if (frontmatterError) {
-    return {
-      slug: expectedSlug,
-      status: 'skipped',
-      chunks: 0,
-      error: frontmatterError,
-    };
-  }
+  if (frontmatterHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: frontmatterHold.message, refusal: frontmatterHold, skip_reason: 'invalid_frontmatter' };
 
   if (expectedSlug === '') {
     if (parsed.slug && parsed.slug.length > 0) {
@@ -1252,6 +1247,7 @@ export async function importFromFile(
         error:
           `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
           `(from ${relativePath}). Remove the frontmatter "slug:" line or move the file.`,
+        refusal: { code: 'frontmatter_slug_conflict', key: 'slug', message: slugConflictHoldMessage(relativePath, expectedSlug) }, skip_reason: 'frontmatter_slug_conflict',
       };
     }
   }
@@ -1268,7 +1264,7 @@ export async function importFromFile(
   // precedence in computeEffectiveDate. e.g. `daily/2024-03-15.md` →
   // filename `2024-03-15`.
   const fileBasename = basename(relativePath, '.md');
-  return importFromContent(engine, resolvedSlug, content, {
+  const imported = await importFromContent(engine, resolvedSlug, content, {
     ...opts,
     filename: fileBasename,
     sourcePath: relativePath,
@@ -1279,6 +1275,7 @@ export async function importFromFile(
     // deliberate clear, so it passes putPage's empty-overwrite guard.
     allowEmptyOverwrite: true,
   });
+  return imported.status === 'imported' && (recovery.quoted || recovery.comment_value) ? { ...imported, frontmatter_recovery: recovery } : imported;
 }
 
 /**
@@ -1324,7 +1321,7 @@ export async function importCodeFile(
 
   const byteLength = Buffer.byteLength(content, 'utf-8');
   if (byteLength > MAX_FILE_SIZE) {
-    return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)` };
+    return { slug, status: 'skipped', chunks: 0, error: `Code file too large (${byteLength} bytes)`, refusal: { code: 'file_too_large', message: `Code file too large (${byteLength} bytes)` }, skip_reason: 'file_too_large' };
   }
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER the
