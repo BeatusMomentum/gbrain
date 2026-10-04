@@ -83,7 +83,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Fix wave 5: managed writeSingleFact keeps an absent entity's fallback slug (attribute_fallback).
   // #5888 capture-lane dedup + hot-memory collapse, managed coordinator arm on Postgres.
   "src/core/facts/capture-dedup.ts": ["test/e2e/capture-dedup-postgres.test.ts"],
-  "src/core/facts/single-prepare.ts": ["test/e2e/capture-dedup-postgres.test.ts"],
+  "src/core/facts/single-prepare.ts": ["test/e2e/capture-dedup-postgres.test.ts", "test/e2e/p8-memory-writes-postgres.test.ts"],
+  // P8: review accept claims and remember.replaces refusals under the target row lock on Postgres.
+  "src/core/facts/proposal-review.ts": ["test/e2e/p8-memory-writes-postgres.test.ts"],
   "src/core/facts/write-single.ts": ["test/e2e/managed-write-single-attribution-postgres.test.ts", "test/e2e/managed-facts-writers.test.ts", "test/e2e/fix-wave-5-integration.test.ts"],
   "src/core/facts/managed-fact-write.ts": ["test/e2e/managed-write-single-attribution-postgres.test.ts", "test/e2e/managed-facts-writers.test.ts"],
   // Fix wave 5 (#5409): read-only mirror sources.
@@ -109,7 +111,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/export.ts": ["test/e2e/export-snapshot-postgres.test.ts", "test/e2e/memory-safety-wave-postgres.test.ts"],
   "src/core/export-*.ts": ["test/e2e/export-snapshot-postgres.test.ts", "test/e2e/memory-safety-wave-postgres.test.ts"],
   // System One decide storage, egress page query and decide_health on Postgres/PgBouncer.
-  "src/core/ai/decide/**": ["test/e2e/decide-store-postgres.test.ts"],
+  "src/core/ai/decide/**": ["test/e2e/decide-store-postgres.test.ts", "test/e2e/p8-memory-writes-postgres.test.ts"],
   // #5836 facts relink: write-target routing (file, page body, unbound refusal, managed) on Postgres.
   "src/core/facts/relink*.ts": ["test/e2e/facts-relink-routing.test.ts"],
   "src/core/persistence/fact-write-target.ts": ["test/e2e/facts-relink-routing.test.ts"],

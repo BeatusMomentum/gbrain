@@ -41,7 +41,7 @@ import { validateMountId } from './brain-registry.ts';
 import { agentProcessMarker } from './interaction.ts';
 import { resolveGbrainBin } from './gbrain-bin.ts';
 import { resolveWritebackConfigFromFile } from './facts/writeback-config.ts';
-import { newInstallServeSurface } from '../mcp/surface.ts';
+import { newInstallServeSurface } from '../mcp/new-install-surface.ts';
 
 export type ReadinessState = 'ok' | 'disabled_by_choice' | 'not_applicable' | 'missing' | 'degraded' | 'unknown';
 export type CapabilityId =

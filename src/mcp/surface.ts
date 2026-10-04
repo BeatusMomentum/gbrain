@@ -36,6 +36,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-allowlist.ts';
+export { NEW_INSTALL_ADVERTISED_SURFACE, newInstallAdvertisedSurface, newInstallServeSurface } from './new-install-surface.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 
@@ -286,12 +287,6 @@ export async function resolveDefaultClientSurface(
   return isMcpSurface(fileVal) ? fileVal : null;
 }
 
-/**
- * The surface fresh installs list to agents (`gbrain init` writes it to
- * `mcp.advertised_surface`). The held-out agent benchmark chooses between
- * 'verbs' and 'starter'; until it does, fresh installs list everything.
- */
-export const NEW_INSTALL_ADVERTISED_SURFACE: McpSurface = 'full';
 
 /**
  * `mcp.advertised_surface`: which tools `tools/list` shows. The callable set
@@ -343,20 +338,6 @@ export function stdioToolListing(advertised: () => Promise<McpSurface | null>, c
   };
 }
 
-/**
- * The `serve --surface` a readiness/quickstart registration writes. Once the
- * benchmark picks an advertised surface, registrations call everything
- * (`full`) and init's advertised surface narrows the list; until then they
- * keep the seven verbs.
- */
-export function newInstallServeSurface(): McpSurface {
-  return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? 'verbs' : 'full';
-}
-
-/** What a fresh `gbrain init` writes into `mcp`: the advertised surface, unless it is 'full'. */
-export function newInstallAdvertisedSurface(): { advertised_surface?: 'verbs' | 'starter' } {
-  return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? {} : { advertised_surface: NEW_INSTALL_ADVERTISED_SURFACE };
-}
 
 /**
  * D2 CEILING resolution — the per-request effective surface on the OAuth
