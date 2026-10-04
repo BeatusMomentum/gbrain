@@ -2444,6 +2444,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
     }
   }
 
+  if (command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args)
+    && await (await import('./commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))) return null;
   if (command === 'reindex-code') {
     if (await (await import('./commands/reindex-code-delegate.ts')).maybeDelegateReindexCode(loadConfig(), args)) return null;
   }

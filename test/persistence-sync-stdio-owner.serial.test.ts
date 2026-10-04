@@ -187,6 +187,25 @@ test('a delegated sync past its progress-aware deadline keeps going while the ow
   expect(JSON.parse(page.out).compiled_truth).toContain('Bulk delegated observation 299');
 },180000);
 
+// gbrain sources refresh needs the writer lock the resident owner holds; it runs inside the owner over the persistence socket.
+test('sources refresh delegates to the resident owner, fast-forwards the checkout and syncs the new page',async()=>{
+  const remote=join(home,'origin.git'),pusher=join(home,'pusher');
+  const g=(cwd:string,...args:string[])=>execFileSync('git',['-C',cwd,'-c','user.name=Example','-c','user.email=example@example.invalid',...args],{stdio:'pipe'}).toString().trim();
+  execFileSync('git',['init','-q','--bare',remote]);
+  const branch=g(root,'rev-parse','--abbrev-ref','HEAD');
+  g(root,'remote','add','origin',remote);g(root,'push','-q','-u','origin',branch);
+  execFileSync('git',['clone','-q',remote,pusher],{stdio:'ignore'});
+  writeFileSync(join(pusher,'upstream-note.md'),'A zebracorn observation pushed upstream for the resident owner.\n');
+  g(pusher,'add','.');g(pusher,'commit','-qm','upstream note');g(pusher,'push','-q','origin',`HEAD:${branch}`);
+  const target=g(pusher,'rev-parse','HEAD');
+  const refreshed=await cli(['sources','refresh','workspace','--json'],home,{},120000);
+  expect({code:refreshed.code,err:refreshed.err.slice(-2000)}).toMatchObject({code:0});
+  expect(JSON.parse(refreshed.out)).toMatchObject({status:'completed',target_head:target});
+  expect(inspectLockHolder(databasePath).pid).toBe(owner!.pid);
+  const page=await cli(['call','get_page',JSON.stringify({slug:'upstream-note',source_id:'workspace'})]);
+  expect(JSON.parse(page.out).compiled_truth).toContain('zebracorn');
+},150000);
+
 test('strict sync parsing retains filtering options and rejects runtime authority fields',async()=>{
   await withEnv(env,async()=>{
     expect((await parsePersistenceSyncArgs(['--source','workspace','--no-pull','--working-tree','--exclude','draft/**','--include-hidden','.notes/**','--no-hard-deadline'],home)).options)
