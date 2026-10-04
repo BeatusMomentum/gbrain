@@ -6,6 +6,13 @@
       "calibration_profiles.calibration_profiles_pkey": "p PRIMARY KEY (id)",
       "calibration_profiles.calibration_profiles_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "chat_usage_log.chat_usage_log_pkey": "p PRIMARY KEY (id)",
+      "chronicle_judge_reservations.chronicle_judge_reservations_pkey": "p PRIMARY KEY (id)",
+      "chronicle_page_state.chronicle_page_state_attempts_check": "c CHECK ((attempts >= 0))",
+      "chronicle_page_state.chronicle_page_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "chronicle_page_state.chronicle_page_state_pkey": "p PRIMARY KEY (source_id, page_id, content_hash, extractor_version)",
+      "chronicle_page_state.chronicle_page_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "chronicle_page_state.chronicle_page_state_state_check": "c CHECK ((state = ANY (ARRAY['pending'::text, 'skipped'::text, 'extracted'::text, 'failed'::text])))",
+      "chronicle_page_state.chronicle_page_state_trigger_check": "c CHECK ((trigger = ANY (ARRAY['auto'::text, 'backfill'::text])))",
       "code_edges_chunk.code_edges_chunk_from_chunk_id_fkey": "f FOREIGN KEY (from_chunk_id) REFERENCES content_chunks(id) ON DELETE CASCADE",
       "code_edges_chunk.code_edges_chunk_pkey": "p PRIMARY KEY (id)",
       "code_edges_chunk.code_edges_chunk_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
@@ -267,6 +274,12 @@
       "chat_usage_log": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "chronicle_judge_reservations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "chronicle_page_state": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "code_edges_chunk": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -510,6 +523,11 @@
       "calibration_profiles_pkey": "CREATE UNIQUE INDEX calibration_profiles_pkey ON public.calibration_profiles USING btree (id)",
       "calibration_profiles_published_idx": "CREATE INDEX calibration_profiles_published_idx ON public.calibration_profiles USING btree (source_id, published, holder) WHERE (published = true)",
       "chat_usage_log_pkey": "CREATE UNIQUE INDEX chat_usage_log_pkey ON public.chat_usage_log USING btree (id)",
+      "chronicle_judge_reservations_at_idx": "CREATE INDEX chronicle_judge_reservations_at_idx ON public.chronicle_judge_reservations USING btree (reserved_at)",
+      "chronicle_judge_reservations_pkey": "CREATE UNIQUE INDEX chronicle_judge_reservations_pkey ON public.chronicle_judge_reservations USING btree (id)",
+      "chronicle_page_state_page_idx": "CREATE INDEX chronicle_page_state_page_idx ON public.chronicle_page_state USING btree (page_id)",
+      "chronicle_page_state_pkey": "CREATE UNIQUE INDEX chronicle_page_state_pkey ON public.chronicle_page_state USING btree (source_id, page_id, content_hash, extractor_version)",
+      "chronicle_page_state_work_idx": "CREATE INDEX chronicle_page_state_work_idx ON public.chronicle_page_state USING btree (source_id, state, next_attempt_at)",
       "code_edges_chunk_pkey": "CREATE UNIQUE INDEX code_edges_chunk_pkey ON public.code_edges_chunk USING btree (id)",
       "code_edges_chunk_unique": "CREATE UNIQUE INDEX code_edges_chunk_unique ON public.code_edges_chunk USING btree (from_chunk_id, to_chunk_id, edge_type)",
       "code_edges_symbol_pkey": "CREATE UNIQUE INDEX code_edges_symbol_pkey ON public.code_edges_symbol USING btree (id)",
@@ -743,6 +761,7 @@
     "sequences": {
       "calibration_profiles_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=calibration_profiles.id",
       "chat_usage_log_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=chat_usage_log.id",
+      "chronicle_judge_reservations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=chronicle_judge_reservations.id",
       "code_edges_chunk_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=code_edges_chunk.id",
       "code_edges_symbol_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=code_edges_symbol.id",
       "content_chunks_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=content_chunks.id",
@@ -828,6 +847,41 @@
           "8 cache_read_tokens integer/int4 NOT NULL DEFAULT 0",
           "9 cache_write_tokens integer/int4 NOT NULL DEFAULT 0",
           "10 cost_usd double precision/float8 NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "chronicle_judge_reservations": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('chronicle_judge_reservations_id_seq'::regclass)",
+          "2 reserved_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "3 source_id text/text NOT NULL",
+          "4 page_id integer/int4 NOT NULL",
+          "5 content_hash text/text NOT NULL"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "chronicle_page_state": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 page_id integer/int4 NOT NULL",
+          "3 content_hash text/text NOT NULL",
+          "4 extractor_version integer/int4 NOT NULL",
+          "5 slug text/text NOT NULL",
+          "6 state text/text NOT NULL",
+          "7 reason text/text NULL",
+          "8 trigger text/text NOT NULL",
+          "9 principal_kind text/text NULL",
+          "10 principal_id text/text NULL",
+          "11 request_id uuid/uuid NULL",
+          "12 no_extract boolean/bool NOT NULL DEFAULT false",
+          "13 attempts integer/int4 NOT NULL DEFAULT 0",
+          "14 next_attempt_at timestamp with time zone/timestamptz NULL",
+          "15 cost_usd numeric/numeric NULL",
+          "16 unpriced boolean/bool NOT NULL DEFAULT false",
+          "17 event_slugs ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
+          "18 event_hashes ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
+          "19 decided_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "20 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

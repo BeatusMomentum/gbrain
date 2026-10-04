@@ -599,6 +599,14 @@
       },
       {
         "category": "brain",
+        "name": "chronicle_config_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "auto_chronicle_default_on"
+      },
+      {
+        "category": "brain",
         "name": "fact_take_vectors"
       },
       {

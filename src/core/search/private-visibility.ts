@@ -93,7 +93,22 @@ function derivedOriginPrivateSql(p: string): string {
         AND derived_input_link.link_type = 'synthesized_from'
         AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private'
           OR ${privateOrigin('derived_input', 'derived_input_origin')}))
+    WHEN ${p}.type = 'event' AND ${p}.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN ${chronicleOriginNotVisibleSql(p)}
     ELSE false END)`;
+}
+
+/**
+ * #5876 (C4a/E7) — a Life Chronicle event is private whenever the meeting,
+ * conversation or calendar page it was extracted from (`event.depth`, same
+ * source) is private by its own field or its declared lineage, and fails
+ * closed when that origin is missing (renamed or purged). Covers events
+ * written before the rule existed, at read time.
+ */
+function chronicleOriginNotVisibleSql(p: string): string {
+  return `NOT EXISTS (SELECT 1 FROM pages chronicle_origin WHERE chronicle_origin.source_id = ${p}.source_id
+      AND chronicle_origin.slug = ${p}.frontmatter->'event'->>'depth'
+      AND ${privateSnapshotFilterFragment('chronicle_origin')}
+      AND NOT ${declaredLineagePrivateSql('chronicle_origin')})`;
 }
 
 export type Visibility = 'private' | 'world';

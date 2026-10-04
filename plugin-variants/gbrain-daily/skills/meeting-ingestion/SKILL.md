@@ -275,6 +275,14 @@ carries an explicit reason; a bare `- None.` is a dodge, not an answer.
 Quotes are VERBATIM. Write what was said the way it was said — a paraphrase in
 a blockquote is a fabricated quote.
 
+Timeline events (`life/events/`) are extracted from the saved meeting page in
+the background (Life Chronicle, on by default; one paid chat call per page).
+Check the write receipt: `chronicle_backstop.pending: "next_cycle"` means the
+next cycle extracts it (`gbrain dream --phase chronicle` runs it now, paid), and
+`chronicle_backstop.skipped` names the reason and its fix. Never hand-write
+`life/events/` pages; edit the meeting page and extraction updates its events.
+See `docs/guides/life-chronicle.md`.
+
 ### Phase 6: Claim verification + consistency check (gate for every entity write)
 
 Recorder summaries inject false facts: speech-to-text garbles proper nouns,

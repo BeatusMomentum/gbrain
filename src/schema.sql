@@ -1792,6 +1792,42 @@ CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx
   ON extract_atoms_page_state (source_incarnation, content_hash, page_id) WHERE tombstoned;
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_page_idx ON extract_atoms_page_state (page_id);
+-- #5876 (migration chronicle_page_state): Life Chronicle ledger, the durable
+-- record of each page content's automatic-extraction decision and outcome.
+CREATE TABLE IF NOT EXISTS chronicle_page_state (
+  source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  content_hash TEXT NOT NULL,
+  extractor_version INTEGER NOT NULL,
+  slug TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','skipped','extracted','failed')),
+  reason TEXT,
+  trigger TEXT NOT NULL CHECK (trigger IN ('auto','backfill')),
+  principal_kind TEXT,
+  principal_id TEXT,
+  request_id UUID,
+  no_extract BOOLEAN NOT NULL DEFAULT false,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at TIMESTAMPTZ,
+  cost_usd NUMERIC,
+  unpriced BOOLEAN NOT NULL DEFAULT false,
+  event_slugs TEXT[] NOT NULL DEFAULT '{}',
+  event_hashes TEXT[] NOT NULL DEFAULT '{}',
+  decided_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, page_id, content_hash, extractor_version)
+);
+CREATE INDEX IF NOT EXISTS chronicle_page_state_work_idx
+  ON chronicle_page_state (source_id, state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS chronicle_page_state_page_idx ON chronicle_page_state (page_id);
+CREATE TABLE IF NOT EXISTS chronicle_judge_reservations (
+  id BIGSERIAL PRIMARY KEY,
+  reserved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_id TEXT NOT NULL,
+  page_id INTEGER NOT NULL,
+  content_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chronicle_judge_reservations_at_idx ON chronicle_judge_reservations (reserved_at);
 -- Durable record that a transcript was synthesized; survives minion_jobs pruning.
 CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
   source_id TEXT NOT NULL,

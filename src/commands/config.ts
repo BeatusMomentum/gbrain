@@ -280,20 +280,56 @@ export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
 /**
  * System One: decide.* keys validate at set time (enums, numeric ranges), and a
  * decide.slots.* write prints the requested-versus-effective mode line after it
- * persists (best-effort).
+ * persists (best-effort). #5876: auto_chronicle and chronicle.* gate paid
+ * extraction, so they validate here too, and an explicit auto_chronicle set
+ * records the operator's answer to the default-on change.
  */
-async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value: string): Promise<void> {
+async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value: string, force = false): Promise<void> {
   if (key.startsWith('decide.')) {
     const { validateDecideConfigValue } = await import('../core/ai/decide/config.ts');
     const err = validateDecideConfigValue(key, value);
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
+  if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
   await engine.setConfig(key, value);
+  if (key === 'auto_chronicle') await acknowledgeAutoChronicle(engine, value);
   if (!key.startsWith('decide.slots.')) return;
   try {
     const { printEffectiveModeLines } = await import('./decide.ts');
     await printEffectiveModeLines(engine, key.split('.')[2]);
   } catch { /* the value already persisted */ }
+}
+
+const AUTO_CHRONICLE_UNSET_NOTE = '\nauto_chronicle now uses its default, which is ON: eligible new or changed meeting, conversation and calendar pages each get one paid extraction call.' +
+  '\nTo turn automatic extraction off, run: gbrain config set auto_chronicle false';
+
+/** #5876: refuse unknown chronicle.* leaves (unless forced) and out-of-range values; nothing is written. */
+async function refuseInvalidChronicleValue(key: string, value: string, force: boolean): Promise<void> {
+  const { validateChronicleConfigValue, CHRONICLE_CONFIG_KEYS } = await import('../core/chronicle/config.ts');
+  if (key.startsWith('chronicle.') && !CHRONICLE_CONFIG_KEYS.includes(key) && !force) {
+    const { suggestNearest } = await import('../core/levenshtein.ts');
+    const suggestion = suggestNearest(key, [...CHRONICLE_CONFIG_KEYS], 3);
+    console.error(`[config] Unknown config key "${key}".${suggestion ? ` Did you mean "${suggestion}"?` : ''}`);
+    console.error(`[config] chronicle keys: ${CHRONICLE_CONFIG_KEYS.join(', ')}. Nothing was written.`);
+    process.exit(1);
+  }
+  const err = validateChronicleConfigValue(key, value);
+  if (err) { console.error(`[config] ${err}`); process.exit(1); }
+}
+
+/**
+ * #5876: an explicit `config set auto_chronicle` answers the default-on change, which clears the
+ * durable doctor/advisor `auto_chronicle_default_on` notice. Best-effort: the value already persisted.
+ */
+async function acknowledgeAutoChronicle(engine: BrainEngine, value: string): Promise<void> {
+  const { CHRONICLE_ACK_KEY, autoChronicleSetting } = await import('../core/chronicle/config.ts');
+  try { await engine.setConfig(CHRONICLE_ACK_KEY, new Date().toISOString()); } catch { /* the notice stays; harmless */ }
+  if (autoChronicleSetting(value) === 'on') {
+    console.log('Automatic event extraction is on: each eligible new or changed meeting, conversation or calendar page gets one paid chat call, bounded by chronicle.job_budget_usd per page and chronicle.auto_daily_limit per day.');
+    console.log('To turn it off: gbrain config set auto_chronicle false');
+  } else {
+    console.log('Automatic event extraction is off. To extract history on request (paid; ask the user first): gbrain chronicle-backfill --dry-run');
+  }
 }
 
 /** #5232: the CLI write wait is file-plane so the engine-free CLI reads it before choosing a transport. */
@@ -676,7 +712,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
     const n = await engine.unsetConfig(key);
     if (n > 0) {
-      console.log(`Unset ${key}`);
+      console.log(`Unset ${key}${key === 'auto_chronicle' ? AUTO_CHRONICLE_UNSET_NOTE : ''}`);
       if (key === 'facts.default_visibility') await restampVisibilityPosture(null);
     } else {
       console.error(`Config key not found: ${key}`);
@@ -1187,7 +1223,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
-    await setConfigWithDecideHooks(engine, key, value);
+    await setConfigWithDecideHooks(engine, key, value, forceFlag);
     // v0.36.x #892: redact sensitive values in confirmation output. API
     // keys / tokens / passwords are commonly set from terminals with
     // scrollback; echoing the raw value to stderr leaks the secret.

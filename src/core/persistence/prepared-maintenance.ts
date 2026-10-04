@@ -122,8 +122,11 @@ async function submitMaintenance(engine: BrainEngine, authority: MaintenanceAuth
     return writeResponse(wait.observe(await waitForWrite(engine, prior, loadConfig() ?? { engine: engine.kind }, wait.ms())));
   }
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: authority.writer.sourceId, includeDeleted: true });
-  if (snapshot?.page.deleted_at) throw opError('page_not_found', 'Maintenance cannot restore a deleted page.',
-    `Page ${slug} in '${authority.writer.sourceId}' was deleted after maintenance read it, and maintenance never recreates deleted pages; nothing was submitted. Run maintenance again to plan from the current pages.`);
+  // #5876: only a Life Chronicle event its extractor retired may be restored by a later generation.
+  if (snapshot?.page.deleted_at && !(intent.restore_retired === true && snapshot.page.frontmatter?.retired_by === 'life-chronicle')) {
+    throw opError('page_not_found', 'Maintenance cannot restore a deleted page.',
+      `Page ${slug} in '${authority.writer.sourceId}' was deleted after maintenance read it, and maintenance never recreates deleted pages; nothing was submitted. Run maintenance again to plan from the current pages.`);
+  }
   if ((snapshot?.revision ?? null) !== intent.expected_revision) throw opError('revision_conflict', 'The maintenance target changed before admission.',
     `Page ${slug} in '${authority.writer.sourceId}' changed after maintenance read it; nothing was submitted. Run maintenance again so it works from the current revision.`);
   const row = await admitWrite(engine, { principal: authority.writer.principal, requestId, operation: 'submit_job',
@@ -355,6 +358,9 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
   if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence') return prepareFactFenceAdoption(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_phantom_merge') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomMerge(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_phantom_delete') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomDelete(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_chronicle_event' || row.intent?.kind === 'managed_maintenance_chronicle_retire') {
+    return (await import('../chronicle/publish.ts')).prepareChronicleMutation(engine, row, config);
+  }
   if (row.intent?.kind === 'managed_maintenance_retire_stale_atoms') return (await import('../repair/stale-atoms.ts')).prepareStaleAtomRetirement(engine, row, config);
   if (row.intent?.kind !== 'managed_maintenance_consolidate') throw opError('invalid_params', 'Unsupported maintenance request.',
     `Request ${row.request_id} for ${row.slug} in ${row.source_id} carries a maintenance kind this gbrain version does not publish (likely queued by a newer release); nothing changed. Upgrade gbrain on the brain host, and read the receipt before submitting anything new.`,

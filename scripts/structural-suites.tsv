@@ -60,6 +60,7 @@ test/check-bootstrap-guards.test.ts	verify + workflow wiring	4	readFileSync
 test/check-update.test.ts	check-update CLI	3	source-surface-helper
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	3	readFileSync
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
+test/chronicle-upgrade-notice-5876.test.ts	opt-out wording guard	1	exec-scan
 test/chunkers/symbol-resolver.test.ts	symbol-resolver source hygiene	1	readFileSync
 test/ci-local-empty-mounts.test.ts	(file-level)	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — CLI too old for the provider flags	2	readFileSync

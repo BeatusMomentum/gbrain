@@ -305,6 +305,18 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Validating the managed-sync checkpoint timed out. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### chronicle_skipped
+
+<a id="chronicle_skipped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Automatic event extraction (auto_chronicle) skipped or failed this page; `reason` says why and `fix`, when present, is the next step. | A capability this request needs is not configured or not reachable on this brain. | Read the receipt or doctor `auto_chronicle` check: its `why` explains the reason and its `fix`, when present, is the next step (paid fixes need the user's agreement). | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `no_chat_provider`.
+
+More: [docs/guides/life-chronicle.md#skip-and-failure-codes](../../docs/guides/life-chronicle.md#skip-and-failure-codes)
+
 ### claim_already_used
 
 <a id="claim_already_used"></a>
