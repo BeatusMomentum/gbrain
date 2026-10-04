@@ -1,0 +1,140 @@
+# Temporal edges: relationships with dates
+
+GBrain records when a relationship between two pages started and ended, and
+graph reads return what is true today unless you ask for history. "Who works at
+acme-example?" lists current employees; former employees stay one parameter
+away.
+
+**Say to your agent:**
+- *"Who works at acme-example now?"*
+- *"Where did alice-example work in 2022?"*
+- *"Show me former employees of acme-example."*
+- *"Mark that alice-example left acme-example on 2025-03-01."*
+
+## What carries a date
+
+Relationship types fall into three groups:
+
+| Group | Types | Behavior |
+|---|---|---|
+| State | `works_at`, `advises`, `yc_partner` | starts and can end; may have several stints (left and rejoined) |
+| Event | `founded`, `invested_in`, `led_round`, `attended`, `discussed_in`, `cited` | happened on a date and stays true; hidden in as-of reads before that date |
+| Reference | `mentions`, `source`, `owes_to`, `awaiting_reply_from`, untyped links, … | no temporal state; always returned |
+
+Open-loop edges (`owes_to`, `awaiting_reply_from`) keep their own lifecycle in
+open loops.
+
+## How dates get recorded (no model calls)
+
+Every write re-reads the page and records dated evidence for the relationships
+the page states:
+
+- **Timeline lines with a cue.** `- **2025-03-01** | linkedin — Left [Acme](../companies/acme-example) to join [Widget](../companies/widget-co)`
+  ends `works_at acme-example` and starts `works_at widget-co` on that date. Cues are
+  relation-specific: leaving a job does not end an advisory role. A cue only dates a
+  relationship the page already states; it never creates one.
+- **The explicit line grammar**, inside a dated timeline entry. It names the relation
+  and the target, so it works on its own, even after the old sentence is deleted:
+  ```
+  - **2025-03-01** | me — Ended works_at [[companies/acme-example]]
+  - **2021-04-01** | me — Started advises [[companies/widget-co]]
+  ```
+- **Frontmatter `since` / `until`** on relationship objects:
+  `company: [{ name: Acme, since: 2021-04, until: 2024-02-15 }]` (partial dates
+  normalize to the first day of the month or year).
+- **Past-tense prose.** "previously at", "former CTO of", "used to work at" mark the
+  page's assertion as past. With no dated end, the relationship reads as ended at an
+  unknown date. On one page, a present-tense mention wins ("previously at Acme, now
+  runs Acme's EU team" stays live).
+- **Manual edges:** `add_link` accepts `valid_from` and `valid_until` (YYYY-MM-DD).
+  Re-run `add_link` with `valid_until` to record that a relationship ended.
+
+Dated evidence beats undated evidence from any page: a closure on a person's timeline
+ends the relationship even if the company page still lists them under `key_people`.
+
+## Reading
+
+| Parameter | Meaning |
+|---|---|
+| (none) | relationships true today (UTC) |
+| `status: "all"` | every relationship, each with `status`, `stints`, `recorded_at`, `retired_at` |
+| `status: "ended"` | former relationships only (`get_links`) |
+| `as_of: "2022-06-30"` | what was true on that day |
+| `during: "2022"` | true at any point in a period (`2022`, `2022-03`, `2021..2023-06`) |
+
+`get_links` takes all of them plus `link_type`; `get_backlinks` and `traverse_graph`
+take `status` (`live`, `all`) and `as_of`. When a default read leaves relationships
+out, the response carries a `former_relationships_hidden` notice with the exact call
+that shows them, and `gbrain.temporal` response metadata with the count.
+
+Recipe for "where did alice-example work in 2022":
+
+```
+get_links { slug: "people/alice-example", link_type: "works_at", during: "2022" }
+```
+
+Statuses in history reads:
+
+| Status | Meaning |
+|---|---|
+| `live` | true at the reference date |
+| `ended` | ended on a recorded date at or before the reference date |
+| `ended_unknown_date` | stated as over, with no end date (excluded from as-of answers) |
+| `not_started` | starts after the reference date |
+| `disputed` | one page says it is current, another says it is over, no dates; returned live today and excluded from as-of answers |
+| `event` | an event that has happened |
+| `reference` | a plain reference with no temporal state |
+
+The relational search arm follows the question's tense: "who works at" reads live
+relationships, "who worked at" / "used to" reads history, "former employees of" reads
+ended ones. Entity cards and `context_pack` keep every edge with its status and add a
+relationship note, for example
+`now: works_at widget-co (since 2025-03-01); ended: works_at acme-example (2025-03-01); summary may be stale: it still names acme-example`.
+
+## The nightly relationship check
+
+The dream cycle's `edge_contradictions` phase looks at subjects with two or more live
+relationships of the same state type (two current employers). A chat model judges only
+whether they can both hold now; date arithmetic decides which one ended and when: the
+relationship that started earlier ends on the date the other started. Relationships
+without a dated start are never closed; the proposal asks for a date instead.
+
+| Setting | Default |
+|---|---|
+| `dream.edge_contradictions.mode` | `propose` with a chat model; `apply` only for models that passed the held-out certification; `off` without a chat model |
+| `models.dream.edge_contradictions` | utility tier |
+| `dream.edge_contradictions.max_subjects` | 200 per cycle |
+| `dream.edge_contradictions.max_usd` | $1.00 per cycle |
+
+Proposals:
+
+```
+gbrain edge-proposals list            # open proposals and undated pairs
+gbrain edge-proposals accept 12       # writes the closure line, re-derives the page
+gbrain edge-proposals reject 12
+gbrain edge-proposals undo 12         # removes the line it wrote
+gbrain edge-proposals undo --all-applied
+gbrain edge-proposals date 14 2024-05-01   # record when the newer relationship started
+```
+
+An applied proposal is one timeline line on the subject page:
+
+```
+- **2024-05-01** | gbrain-dream (inferred) — Ended works_at [[companies/acme-example]] (superseded by works_at companies/widget-co)
+```
+
+Delete the line to reopen the relationship; the check records that and does not
+propose it again until the evidence changes.
+
+## Turning it off
+
+- `gbrain config set graph.edge_validity off`: graph reads return every edge, as
+  before. Dated evidence keeps being recorded, so turning it back on loses nothing.
+- `gbrain config set dream.edge_contradictions.mode off`: no relationship checks.
+  Lines it already wrote stay until `gbrain edge-proposals undo --all-applied`.
+
+## Health
+
+`gbrain doctor --only edge_validity` reports relationships by status, relationships
+whose state lags their evidence (the extract cycle sweeps them), pages that still
+state a relationship their own timeline ended, and open proposals.
