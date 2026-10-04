@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "decision_id": "p5-dev-2026-10-04",
+  "plan": "P5",
+  "title": "P5 dev comparison",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "/workspace/gbrain@b32fdb9d19898044a95ed400e832377fc3d038ed",
+    "config": {}
+  },
+  "baseline": {
+    "gbrain": "/workspace/gbrain@6622a119e40ea09a7719233046aca24741863ed2",
+    "config": {}
+  },
+  "sources": [
+    {
+      "id": "type-accuracy",
+      "kind": "category",
+      "category": "type-accuracy",
+      "script": "eval/runner/type-accuracy.ts",
+      "args": [],
+      "paid": false,
+      "comparisons": [
+        {
+          "id": "type-match",
+          "metric": "anyTypeMatch",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.01,
+          "cluster_by": "probe_id"
+        }
+      ],
+      "rows_path": "data.rows",
+      "id_field": "probe_id"
+    },
+    {
+      "id": "n4-entity-resolution",
+      "kind": "category",
+      "category": "n4-entity-resolution",
+      "script": "eval/runner/n4-entity-resolution.ts",
+      "args": [
+        "--seed",
+        "1"
+      ],
+      "paid": false,
+      "comparisons": [
+        {
+          "id": "n4-recall",
+          "metric": "recall",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.01,
+          "cluster_by": "family"
+        }
+      ],
+      "rows_path": "data.rows",
+      "id_field": "id"
+    },
+    {
+      "id": "lme-s-dev",
+      "kind": "memory-qa",
+      "benchmark": "lme-s",
+      "split": "dev",
+      "embed": "real",
+      "limit": null,
+      "search_pins": {
+        "search.mode": "balanced",
+        "search.reranker.enabled": "false",
+        "search.autocut": "false"
+      },
+      "top_k": 10,
+      "id_field": "id",
+      "exclude_when": [
+        "abstention=true"
+      ],
+      "min_clusters": 10,
+      "comparisons": [
+        {
+          "id": "recall-all-5",
+          "metric": "recall_all_at_5",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.01,
+          "cluster_by": "conversation",
+          "description": "guardrail: strict recall does not drop by more than one point"
+        },
+        {
+          "id": "ndcg-10",
+          "metric": "ndcg_at_10",
+          "gate": "exploratory",
+          "direction": "higher",
+          "cluster_by": "conversation"
+        },
+        {
+          "id": "latency",
+          "metric": "latency_ms",
+          "gate": "exploratory",
+          "direction": "lower",
+          "cluster_by": "conversation"
+        }
+      ],
+      "estimate_usd": 24
+    }
+  ],
+  "alpha": 0.05,
+  "seed": 42,
+  "draws": 10000,
+  "budget_usd": 24,
+  "created_at": "2026-10-04T19:18:26.123Z",
+  "notes": "Human-typable fact/link line grammar, wanted pages, duplicate nudge: typed-edge accuracy and entity resolution; LME-S as a guardrail."
+}
