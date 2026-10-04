@@ -94,6 +94,10 @@ export interface SyncResult {
    * everything," the exact misdiagnosis in the #1794 recurrence report.
    */
   bankedFiles?: number;
+  /** #5984: the managed drain's verdict and the next step for the agent (see sync-drain.ts). */
+  drain?: import('../core/persistence/sync-drain.ts').DrainReport;
+  /** #5984: managed cursor position (`index` of `total` manifest entries) and its active drain window. */
+  managedCursor?: { index: number; total: number; progress?: import('../core/persistence/sync-run.ts').CursorProgress };
   /** Fix wave 4: connector items held after repeated item-scoped failures (not blocking freshness). */
   connectorHolds?: { held: number; newly_held: number; retry_command: string; status_command: string };
 }
@@ -301,7 +305,16 @@ export interface SyncOpts {
    * `sync_status` IPC polls read. Absent for direct CLI runs (stderr
    * breadcrumbs already cover that surface).
    */
-  onProgress?: (p: { phase: string; bankedFiles?: number }) => void;
+  onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean }) => void;
+  /**
+   * #5984: managed sync only. Re-enter the single-pass managed sync until the
+   * cursor is done, the caller's signal/deadline stops it, or it is blocked
+   * (src/core/persistence/sync-drain.ts). Set by the CLI; jobs and library
+   * callers keep the single-pass contract.
+   */
+  drain?: boolean;
+  /** #5984: wall-clock ms the current drain started; managed cursors measure their rate from it. */
+  drainStartedAt?: number;
 }
 
 // The git-plumbing cluster (git(), discoverGitRoot, createSyncBaselineCommit,

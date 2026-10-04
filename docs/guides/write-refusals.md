@@ -146,6 +146,26 @@ that already reached the verified upstream commit moves on to syncing.
 reports `worktree_refresh_stuck` for a refresh active longer than 15 minutes,
 with the resume command.
 
+## Managed sync drain stops
+
+`gbrain sync` on a managed brain keeps going until the source's cursor is done
+(see [catching up a large backlog](live-sync.md#catching-up-a-large-backlog-on-managed-postgres)).
+When it stops early, the run ends in one outcome: `resumable` (exit 0, safe to
+rerun the same command) or `blocked` (exit 1, needs a fix first). `--json`
+carries `outcome`, `drain.stop_reason` and `next: { command, safe_to_loop,
+retry_after_ms, eta_seconds, rate_pages_per_min, why, docs }`. Run
+`next.command`; loop on it only when `next.safe_to_loop` is true.
+
+**Say to your agent:** *"Catch up my managed brain's sync backlog and tell me how long it will take."*
+
+| Stop reason | Code | Outcome | What it means | Recovery |
+| --- | --- | --- | --- | --- |
+| <a id="drain-stopped-at-its-deadline"></a>`deadline` | `writer_pending` | `resumable` | `--timeout`, `--hard-deadline`, Ctrl-C or the run deadline stopped the drain. Accepted page writes keep their request IDs and the cursor is intact. | Rerun `next.command` (the same options). It resumes where the last run stopped. |
+| <a id="drain-stalled"></a>`drain_stalled` | `drain_stalled` | `blocked` | The awaited page write and the oldest unfinished write on its checkout did not change for 30 s across several passes, and nothing on this host can claim it. `drain.stall` names the request, its state, `blocked_reason` and whether this host owns the checkout. | `gbrain sources writer status <source>`. When this host is not the owner, make sure the owner (`gbrain serve`) is running. Then rerun `next.command`. |
+| <a id="drain-database-contention"></a>`database_contention` | `database_contention` | error | Three consecutive passes hit database contention, a statement timeout or a dropped connection. The drain retries these with backoff before giving up. | Rerun the same command. If it repeats, check the database or pooler (`gbrain engine status --probe`). |
+| <a id="drain-writer-blocked"></a>`recovery_required`, `owner_unavailable`, `unexpected_file_bytes`, `unexpected_staging_bytes` | `recovery_required` | `blocked` | The checkout's writer needs intervention before more pages can publish: interrupted publication recovery, no live owner, or unexpected bytes in the file or staging area. | `gbrain sources writer status <source>` and the fix it prints. Unexpected bytes are the user's edits; ask before discarding them. Then rerun `next.command`. |
+| <a id="drain-blocked-by-a-failed-page"></a>`blocked_by_failures` | `blocked_by_failures` | `blocked` | A page write failed terminally. `managed_write` and `failures` name the page and cause. Rerunning without a fix returns the same failure. | Fix the cause, then run `next.command` (it adds `--retry-failed`). Ask the user before skipping content. |
+
 ## Unbound sources on Postgres
 
 A source with a checkout path (`local_path`, or `sync.repo_path` for the

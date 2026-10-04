@@ -87,6 +87,11 @@ async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   } catch {
     checks.push({ name: 'sync_failures', status: 'warn', message: 'Durable sync failure state could not be read; health is unknown.' });
   }
+  try {
+    const { checkManagedSyncBacklog } = await import('./managed-sync-backlog.ts');
+    const check = engine ? await checkManagedSyncBacklog(engine, orphanRatioSourceId ? [orphanRatioSourceId] : undefined) : null;
+    if (check) checks.push(check);
+  } catch { /* managed backlog is informational; doctor's other checks report persistence health */ }
 
   // 3d. Slug-fallback audit (v0.32.7 CJK wave, codex C7). Informational
   // count of pages where importFromFile fell back to a frontmatter slug

@@ -48,7 +48,16 @@ interface Cursor extends SyncDiscovery { runId: string; index: number; authority
   processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions; overtaken?: true;
   counts: { added: number; modified: number; deleted: number; chunks: number; renamed?: number;
     /** #5751: unchanged working-tree files skipped only because a no-op publication could never resolve their admit reason. */
-    skippedContextualMode?: number; skippedCanonicalBytes?: number }; }
+    skippedContextualMode?: number; skippedCanonicalBytes?: number };
+  /** #5984: the active drain window (reset when a new drain starts), so a backlog ETA never counts downtime. */
+  progress?: CursorProgress; }
+export interface CursorProgress { startedAt: number; startIndex: number; lastAt: number; lastIndex: number }
+/** #5984: the cursor's progress after advancing to `index`, in the drain window that started at `drainStartedAt`. */
+function stampProgress(prior: CursorProgress | undefined, fromIndex: number, index: number, drainStartedAt: number): CursorProgress {
+  const now = Date.now();
+  return prior && prior.startedAt === drainStartedAt ? { ...prior, lastAt: now, lastIndex: index }
+    : { startedAt: drainStartedAt, startIndex: fromIndex, lastAt: now, lastIndex: index };
+}
 const OP = 'managed-sync';
 type CursorHeader = Omit<Cursor, 'entries' | 'companyPlan'> & { total: number };
 const header = ({ entries, companyPlan: _plan, ...value }: Cursor): CursorHeader => ({ ...value, total: entries.length });
@@ -120,7 +129,9 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
     ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}),
-    filesImported: cursor.index, bankedFiles: cursor.index, ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
+    filesImported: cursor.index, bankedFiles: cursor.index,
+    managedCursor: { index: cursor.index, total: 'total' in cursor ? cursor.total : cursor.entries.length, ...(cursor.progress ? { progress: cursor.progress } : {}) },
+    ...(cursor.uncommitted ? { uncommitted: cursor.uncommitted } : {}), ...(reason ? { reason } : {}),
     ...(cursor.counts.skippedContextualMode || cursor.counts.skippedCanonicalBytes ? { legacySkips: {
       contextualMode: cursor.counts.skippedContextualMode ?? 0, canonicalBytes: cursor.counts.skippedCanonicalBytes ?? 0 } } : {}) };
 }
@@ -395,7 +406,8 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
     const analyzeEvery = await importAnalyzeEveryPages(engine);
     let batchStart = performance.now(), batchPages = 0, foregroundWaitStart = 0, foregroundBaseline = 0;
     let creditedPages = 0, creditStarted = 0;
-    const sliceStarted = performance.now(), sliceFirstIndex = cursor.index;
+    const sliceStarted = performance.now(), sliceFirstIndex = cursor.index, drainStartedAt = opts.drainStartedAt ?? Date.now();
+    opts.onProgress?.({ phase: 'managed_sync.start', bankedFiles: cursor.index, total: cursor.entries.length });
     while (!cursor.done) {
       assertActive();
       if (!cursor.pending) {
@@ -431,11 +443,11 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       // #5470: a frozen import whose publication would change nothing advances the cursor without an admission.
       const waived = prior ? null : await unchangedSyncImport(engine, cursor, pending, config);
       if (waived) {
-        const skipped: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete skipped.pending;
+        const skipped: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }; delete skipped.pending;
         if (waived.includes('contextual_mode')) skipped.counts.skippedContextualMode = (skipped.counts.skippedContextualMode ?? 0) + 1;
         if (waived.includes('canonical_file_differs')) skipped.counts.skippedCanonicalBytes = (skipped.counts.skippedCanonicalBytes ?? 0) + 1;
         cursor = await saveCursor(engine, key, cursor, skipped);
-        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+        opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length, waived: true });
         assertActive();
         // A skipped entry still counts toward the caller's slice, so a sliced run yields at the same positions.
         if (slice && (cursor.index - sliceFirstIndex >= slice.maxPages || performance.now() - sliceStarted >= slice.maxMs)) return result(cursor, 'partial', 'writer_yield');
@@ -485,7 +497,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
         return withLinks(cursor, result(cursor, cursor.from === null ? 'first_sync' : 'synced'));
       }
       // The frozen manifest is shared; only the cursor header changes per page.
-      const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts } }; delete next.pending;
+      const next: Cursor = { ...cursor, index: cursor.index + 1, counts: { ...cursor.counts }, progress: stampProgress(cursor.progress, cursor.index, cursor.index + 1, drainStartedAt) }; delete next.pending;
       if (done.outcome?.noop !== true) {
         if (pending.intent.kind === 'managed_sync_delete') next.counts.deleted++;
         else if (pending.intent.renameFrom) next.counts.renamed = (next.counts.renamed ?? 0) + 1;
@@ -493,7 +505,7 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       }
       next.counts.chunks += Number(done.outcome?.chunks ?? 0);
       cursor = await saveCursor(engine, key, cursor, next);
-      opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index });
+      opts.onProgress?.({ phase: 'managed_sync.page_committed', bankedFiles: cursor.index, total: cursor.entries.length });
       // F4b: PGLite plans the rest of a large sync against fresh statistics (spec Addendum A item 2).
       if (analyzeEvery > 0 && cursor.index % analyzeEvery === 0) await maybeRefreshPlannerStats(engine, 'managed_sync', { throttle: false }).catch(() => undefined);
       assertActive();

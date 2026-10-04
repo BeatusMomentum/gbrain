@@ -68,7 +68,9 @@ Options:
                        checkpoint; unchanged pages are not admitted again.
   --watch              Re-sync continuously on an interval.
   --interval N         Watch-mode interval in seconds (default 60).
-  --no-pull            Skip 'git pull' before the sync (useful for tests).
+  --no-pull            Skip 'git pull' before the sync. Required on managed
+                       brains: 'gbrain sources refresh <id>' moves the
+                       checkout, and sync catches the index up to it.
   --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
                        normally delegates the run to the serve process over
                        its IPC socket (the lock owner does the work; embeds
@@ -106,6 +108,16 @@ Options:
                        parses cleanly.
                        Exit codes: 0 = all sources ok or skipped,
                        1 = any error, 2 = cost-prompt-not-confirmed.
+                       Managed syncs add outcome (synced | resumable |
+                       blocked), drain and next {command, safe_to_loop,
+                       eta_seconds, why}.
+  --timeout <dur>      Stop the sync after <dur> (per source with --all).
+                       A managed sync drains its whole backlog in one run
+                       until it is done, blocked, or this budget ends;
+                       progress never extends it. A stopped managed drain
+                       is 'resumable' (exit 0): rerun the same command.
+                       See docs/guides/live-sync.md (catching up a large
+                       backlog on managed Postgres).
   --yes                Accept any interactive prompts (CI / non-TTY).
 
 See also:
