@@ -3,8 +3,9 @@
  * columns. `source_grant` names the source state explicitly; NULL means the
  * row still uses the `permissions` JSONB shape: migration v201 converts every
  * such active row, and one an older binary adds converts on its next HTTP
- * read (`resolveTokenGrant`), grant write, or `auth rescope --migrate-legacy`. No foreign key on `source_id`: the client
- * FK is ON DELETE RESTRICT, and tokens must not start blocking source removal.
+ * read (`resolveTokenGrant`), grant write, or `auth rescope --migrate-legacy`.
+ * No foreign key on `source_id`: the client FK is ON DELETE RESTRICT, and
+ * tokens must not start blocking source removal.
  *
  * Migration-only, like `permissions` (v038): the schema blob's access_tokens
  * has neither, so fresh installs and upgrades both add the columns in the same
