@@ -28,7 +28,7 @@ describe('chronicle_backstop receipt', () => {
       skipped: 'history', stage: 'decision',
       why: "The page's own date is more than 30 days old (chronicle.auto_recent_days); history is extracted only on request.",
       fix: {
-        argv: ['gbrain', 'chronicle-backfill', '--source', 'work', '--since', '2026-10-04', '--limit', '50'],
+        argv: ['gbrain', 'chronicle-backfill', '--source', 'work', '--since', '2026-10-04', '--limit', '50', '--yes'],
         preview_argv: ['gbrain', 'chronicle-backfill', '--source', 'work', '--since', '2026-10-04', '--limit', '50', '--dry-run'],
         consent: ['paid'], actor: 'agent', requires_exclusive: false,
         why: 'Preview with the dry run, then backfill these pages if the user agrees to one paid chat call per page.',

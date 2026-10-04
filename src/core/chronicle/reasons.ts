@@ -43,10 +43,13 @@ interface ChronicleReason {
   fix?: (ctx: ChronicleReasonContext) => ChronicleAction;
 }
 
-/** The backfill pointer every surface emits. Swap here when backfill gains a consent flag. */
+/**
+ * The backfill pointer every surface emits. The paid form carries `--yes` (chronicle-backfill's
+ * consent flag): it is the command to run after the user agrees, never before.
+ */
 export function chronicleBackfillArgv(opts: { sourceId?: string; since: string; limit?: number; dryRun: boolean }): string[] {
   return ['gbrain', 'chronicle-backfill', ...(opts.sourceId ? ['--source', opts.sourceId] : []),
-    '--since', opts.since, '--limit', String(opts.limit ?? 50), ...(opts.dryRun ? ['--dry-run'] : [])];
+    '--since', opts.since, '--limit', String(opts.limit ?? 50), opts.dryRun ? '--dry-run' : '--yes'];
 }
 
 /** The run-now pointer: the chronicle phase in the foreground (paid). */

@@ -114,7 +114,7 @@ first and agree to the cost:
 
 ```bash
 gbrain chronicle-backfill --since 2026-09-01 --limit 50 --dry-run
-gbrain chronicle-backfill --since 2026-09-01 --limit 50
+gbrain chronicle-backfill --since 2026-09-01 --limit 50 --yes
 ```
 
 `--since` filters on the page's last update, not its own date. Re-running is
@@ -131,14 +131,14 @@ brackets are filled in with real values on each surface.
 |---|---|---|---|---|---|
 | `auto_chronicle_off` | decision | Automatic event extraction is off on this brain by choice (`gbrain config set auto_chronicle false`). | — | — | — |
 | `auto_chronicle_invalid` | decision | auto_chronicle holds a value that is neither true nor false, so it reads as off. | `gbrain config set auto_chronicle true` | agent | paid |
-| `slug_bound_client` | decision | The writer is confined (slug-bound, delegated or namespace-restricted), so its writes never trigger extraction into life/events/. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
-| `operation_bound_client` | decision | The writer's grant lists operations without extract_facts, the permission that covers derived extraction. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
-| `no_extract` | decision | The sync ran with extraction turned off (--no-extract, or a remote sync, which never extracts). | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
-| `history` | decision | The page's own date is more than 30 days old (chronicle.auto_recent_days); history is extracted only on request. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `slug_bound_client` | decision | The writer is confined (slug-bound, delegated or namespace-restricted), so its writes never trigger extraction into life/events/. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
+| `operation_bound_client` | decision | The writer's grant lists operations without extract_facts, the permission that covers derived extraction. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | host_admin | paid |
+| `no_extract` | decision | The sync ran with extraction turned off (--no-extract, or a remote sync, which never extracts). | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `history` | decision | The page's own date is more than 30 days old (chronicle.auto_recent_days); history is extracted only on request. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
 | `not_yet_happened` | decision | The calendar event has not ended yet; it is picked up automatically after its end time, with no edit needed. | — | — | — |
 | `too_short` | decision | The page body is under 80 characters, too short to hold events. | — | — | — |
 | `dream_generated` | decision | Dream-generated pages are never mined for events. | — | — | — |
-| `no_write_decision` | discovery | This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
+| `no_write_decision` | discovery | This revision has no recorded write decision (written by an older binary or before this release activated), so only a trusted backfill extracts it. | `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --yes` (preview: `gbrain chronicle-backfill --source <source> --since <YYYY-MM-DD> --limit 50 --dry-run`) | agent | paid |
 | `not_chronicle_shaped` | decision | The page is no longer a meeting, conversation or calendar page, so the events extracted from it were retired. | — | — | — |
 | `superseded` | execution | A newer revision replaced this content before extraction ran; the newer revision carries its own decision. | — | — | — |
 | `daily_limit` | execution | The automatic daily limit (chronicle.auto_daily_limit = 200 calls per rolling 24 hours) is used up; pending pages wait for a free slot. | `gbrain config set chronicle.auto_daily_limit 400` | agent | paid |
