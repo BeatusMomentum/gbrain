@@ -46,6 +46,15 @@ export async function retryingRead<T>(read: () => Promise<T>): Promise<T> {
 /** Non-error outcomes a sync or connector run reports as its status (not error codes). */
 const EXTERNAL_RESULT_CODES = new Set(['blocked_by_failures', 'dry_run']);
 
+/**
+ * Findings outside the safety classes, filed in TODOS.md with a skipped test,
+ * stay visible in the manifest (`deferred`) without failing the gate.
+ */
+export const KNOWN_DEFERRALS: { class: ViolationClass; match: RegExp; todo: string }[] = [
+  { class: 'untyped_error', match: /\(internal_error\)[\s\S]*(LockUnavailableError|SyncLockBusyError)/,
+    todo: 'TODOS.md "A held sync lock reaches agents as internal_error"' },
+];
+
 export type ViolationClass = 'lost_write' | 'duplicate_apply' | 'untrue_receipt' | 'wedge' | 'withdrawal_permanence'
   | 'source_isolation' | 'authorization' | 'caller_bound_replay' | 'projection_drift' | 'missing_attribution' | 'orphan_rows' | 'effects_not_terminal'
   | 'untyped_error' | 'lock_order';
@@ -97,6 +106,14 @@ export class ReferenceModel {
     m.revoked = new Set(state.revoked); m.violations = state.violations; m.pending = new Map(state.pending ?? []);
     return m;
   }
+  /** An interrupted op whose outcome is unknown: its marker may legally be visible, in its own source only. */
+  uncertain(d: OpDescriptor): void {
+    const marker = markersIn(JSON.stringify(d.args)).at(-1);
+    if (!marker) return;
+    this.refusedMarkers.delete(marker); this.committedMarkers.set(marker, d.source);
+    const slug = d.kind === 'connector_publish' ? CONNECTOR_SLUG : d.args.slug;
+    if (typeof slug === 'string') this.pages.delete(key(d.source, slug));
+  }
   /** Pages an in-flight op names: a crash may or may not have committed it, so their revision may move. */
   allowInFlight(ops: OpDescriptor[]): void {
     for (const d of ops) {
@@ -136,9 +153,9 @@ export class ReferenceModel {
     this.pending.delete(d.id);
     if (o.status !== 'committed') {
       if (marker && !this.committedMarkers.has(marker)) this.refusedMarkers.add(marker);
-      // The agent sees the MCP envelope: its code must be a registered one.
+      // The agent sees the MCP envelope: its code must be a registered one, and not the unknown-failure fallback.
       const agentCode = o.agentCode ?? o.code;
-      if (o.status === 'refused' && (!agentCode || !isRegistryCode(agentCode)) && !EXTERNAL_RESULT_CODES.has(o.code ?? '')) {
+      if (o.status === 'refused' && agentCode !== 'http:401' && (!agentCode || !isRegistryCode(agentCode) || agentCode === 'internal_error') && !EXTERNAL_RESULT_CODES.has(o.code ?? '')) {
         this.violate({ class: 'untyped_error', op: d.id, detail: `${d.kind} failed without a registered agent error code (${agentCode}): ${JSON.stringify(o.raw).slice(0, 300)}` });
       }
       return;

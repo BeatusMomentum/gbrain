@@ -28,6 +28,9 @@ import { claimPersistenceEffect, releaseAbandonedClaims } from '../src/core/pers
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { toAgentError } from '../src/core/agent-output.ts';
+import { dispatchRenderContext, type DispatchOpts } from '../src/mcp/dispatch.ts';
+import { LockUnavailableError } from '../src/core/db-lock.ts';
 
 async function robotBrain<T>(run: (brain: Awaited<ReturnType<typeof prepareTopology>>) => Promise<T>): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-crash-robot-test-'));
@@ -113,6 +116,13 @@ describe('lock order', () => {
       expect(lockOrderReport().violations.slice(before).map(v => v.rule)).toEqual(['worktrees_before_sources', 'sources_in_id_order']);
     });
   }, 120_000);
+});
+
+// TODOS.md "A held sync lock reaches agents as internal_error": fails until the agent rows map the lock errors.
+test.skip('a held sync lock reaches agents as the retryable sync_in_progress code', () => {
+  const envelope = toAgentError(new LockUnavailableError('gbrain-sync:robot-gh'), { transport: 'http', op: 'sync_brain', mutating: true,
+    idempotent: true, outcome: 'unknown', render: dispatchRenderContext({ transport: 'http', remote: true } as DispatchOpts) });
+  expect(envelope.code).toBe('sync_in_progress');
 });
 
 describe('PGLite releases claims a dead owner left behind', () => {

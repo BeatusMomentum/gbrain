@@ -273,6 +273,12 @@ function receiptOf(value: Record<string, unknown> | undefined): OpObservation['r
     source_id: r.source_id as string | undefined };
 }
 
+/** The code of the agent-contract envelope an MCP caller receives for this failure. */
+function agentEnvelopeCode(error: unknown, op: string): string {
+  return toAgentError(error, { transport: 'http', op, mutating: true, idempotent: true, outcome: 'unknown',
+    render: dispatchRenderContext({ transport: 'http', remote: true } as DispatchOpts) }).code;
+}
+
 /** Run one descriptor through its real handler and record what the caller observed. */
 export async function executeOp(world: World, d: OpDescriptor): Promise<OpObservation> {
   const base = { id: d.id, kind: d.kind, actor: d.actor, source: d.source, requestId: d.requestId };
@@ -295,7 +301,8 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
         ...(['synced', 'first_sync', 'up_to_date', 'partial'].includes(status) ? {} : { code: status }), values: {}, raw: jsonSafe({ status, reason: result.reason }) };
     } catch (error) {
       const e = error as { code?: string; message?: string };
-      observation = { ...base, status: 'refused', code: e.code ?? 'uncoded_error', values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
+      observation = { ...base, status: 'refused', code: e.code ?? 'uncoded_error', agentCode: agentEnvelopeCode(error, 'sync_brain'),
+        values: {}, raw: { code: e.code, name: (error as Error).name, message: e.message?.slice(0, 400) } };
     }
     world.observations.set(d.id, observation);
     return observation;
@@ -325,9 +332,9 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
     const receipt = receiptOf(e.writeRequest);
     // A memory verb reports an accepted, unfinished write as `unavailable` carrying its pending receipt.
     const pending = e.code === 'write_pending' || (receipt !== undefined && !['committed', 'failed', 'conflict', 'cancelled'].includes(receipt.state));
-    const envelope = toAgentError(error, { transport: 'http', op, mutating: true, idempotent: true, outcome: 'unknown',
-      render: dispatchRenderContext({ transport: 'http', remote: true } as DispatchOpts) });
-    observation = { ...base, status: pending ? 'pending' : 'refused', code: e.code ?? 'uncoded_error', agentCode: envelope.code,
+    // A token the verifier rejects never reaches an operation: the HTTP transport answers 401 invalid_token.
+    const agentCode = e.name === 'InvalidTokenError' ? 'http:401' : agentEnvelopeCode(error, op);
+    observation = { ...base, status: pending ? 'pending' : 'refused', code: e.code ?? 'uncoded_error', agentCode,
       receipt, values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
   }
   const slug = typeof params.slug === 'string' ? params.slug : typeof params.entity === 'string' ? params.entity : null;

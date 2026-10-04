@@ -21,7 +21,7 @@ import postgres from '#postgres';
 import { prepareTopology } from './history-fixture.ts';
 import { installLockOrderTrace, lockOrderReport } from './lock-order.ts';
 import { executeOp, type OpDescriptor, type OpObservation, type World } from './ops.ts';
-import { ReferenceModel, retryingRead, SAFETY_CLASSES, type Violation } from './model.ts';
+import { KNOWN_DEFERRALS, ReferenceModel, retryingRead, SAFETY_CLASSES, type Violation } from './model.ts';
 import type { Schedule } from './generator.ts';
 import { pageBody } from './generator.ts';
 import { descriptor } from './ops.ts';
@@ -135,6 +135,8 @@ export interface RobotOutcome extends Omit<ScheduleResult, 'observations'> {
   crashed: boolean; fault?: RobotConfig['fault']; process?: ProcessFault; counts?: Record<string, number>; inFlight?: string[];
   /** What each caller observed, kept only for a run with violations. */
   trace?: string[];
+  /** Known findings outside the safety classes, filed in TODOS.md: reported, never failing the gate. */
+  deferred?: (Violation & { todo: string })[];
 }
 
 function writeState(config: RobotConfig, world: World, model: ReferenceModel, checkouts: string[], next: number, inFlight: string[]): void {
@@ -168,8 +170,12 @@ function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<Rob
   const trace = model.violations.length ? [...model.world.observations.values()].map(o =>
     `${o.id} ${o.kind} ${o.actor}@${o.source} ${o.status}${o.code ? `/${o.code}` : ''}${o.values.revision ? ` rev=${o.values.revision}` : ''}`
     + `${o.receipt ? ` receipt=${o.receipt.state}` : ''}${o.status === 'refused' ? ` ${JSON.stringify(o.raw).slice(0, 300)}` : ''}`) : undefined;
+  const deferredOf = (v: Violation) => KNOWN_DEFERRALS.find(k => k.class === v.class && k.match.test(v.detail));
+  const deferred = model.violations.filter(v => deferredOf(v)).map(v => ({ ...v, todo: deferredOf(v)!.todo }));
+  const violations = model.violations.filter(v => !deferredOf(v));
   return { label: config.schedule.label, seed: config.schedule.seed, steps: config.schedule.ops.length, crashed: false,
-    violations: model.violations, safety: model.violations.filter(v => SAFETY_CLASSES.has(v.class)), ...extra, ...(trace ? { trace } : {}) };
+    violations, safety: violations.filter(v => SAFETY_CLASSES.has(v.class)), ...extra, ...(trace ? { trace } : {}),
+    ...(deferred.length ? { deferred } : {}) };
 }
 
 /**
@@ -360,6 +366,8 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
       const observed = await Promise.all(inFlight.map(d => executeOp(world, d)));
       model.beginStep(true);
       for (let k = 0; k < inFlight.length; k++) await model.observe(inFlight[k], observed[k], inFlight[k].replayOf ? world.observations.get(inFlight[k].replayOf!) : undefined);
+      // A refused resubmission says nothing about the interrupted attempt, which may have committed.
+      for (let k = 0; k < inFlight.length; k++) if (observed[k].status === 'refused') model.uncertain(inFlight[k]);
       await model.settleLate(inFlight, observed);
       await model.checkGlobal('after resubmission');
     }

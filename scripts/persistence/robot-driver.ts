@@ -35,6 +35,7 @@ export function leaseBoundSeam(point: FaultPoint): boolean { return point.starts
 export interface RobotRun {
   schedule: string; seed: number; length: number; fault?: { point: FaultPoint; nth: number }; process?: ProcessFault;
   ops?: string[]; crashed: boolean; violations: RobotOutcome['violations']; duration_ms: number; trace?: string[];
+  deferred?: RobotOutcome['deferred'];
 }
 export interface RobotOptions {
   engine: 'pglite' | 'postgres'; seed: number; seconds: number; scratch: string; home: string;
@@ -95,15 +96,15 @@ export async function runRobotPhase(o: RobotOptions) {
       const reached = await Promise.race([child.event('fault', 600_000).then(e => ({ fault: e })), child.event('done', 600_000).then(e => ({ done: e }))]);
       if ('done' in reached) {
         const result = reached.done.result as RobotOutcome;
-        return { ...base, crashed: false, violations: result.violations, trace: result.trace, duration_ms: performance.now() - at };
+        return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
       }
       await child.kill();
       const recovered = o.spawn(path, o.home, 'robot', ['recover'], environment); o.track(recovered);
       const result = (await recovered.done()).result as RobotOutcome;
-      return { ...base, crashed: true, violations: result.violations, trace: result.trace, duration_ms: performance.now() - at };
+      return { ...base, crashed: true, violations: result.violations, deferred: result.deferred, trace: result.trace, duration_ms: performance.now() - at };
     }
     const result = (await child.done()).result as RobotOutcome;
-    return { ...base, crashed: false, violations: result.violations, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
+    return { ...base, crashed: false, violations: result.violations, deferred: result.deferred, trace: result.trace, counts: result.counts, duration_ms: performance.now() - at };
   }
   const record = (run: RobotRun) => {
     runs.push(run);
@@ -174,7 +175,8 @@ function summarize(runs: RobotRun[], started: number, o: RobotOptions) {
     crash_runs: crashRuns.length, crashed_runs: crashRuns.filter(r => r.crashed).length,
     sequences_x_crash_points: crashRuns.length, distinct_crash_points: [...points].sort(),
     process_faults: runs.filter(r => r.process).map(r => ({ fault: r.process, violations: r.violations.length })),
-    violations, failing_runs: runs.filter(r => r.violations.length), runs,
+    violations, deferred: runs.flatMap(r => (r.deferred ?? []).map(v => ({ ...v, schedule: r.schedule, seed: r.seed, fault: r.fault }))),
+    failing_runs: runs.filter(r => r.violations.length), runs,
   };
 }
 
