@@ -27,6 +27,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { ALL_PHASES, runCycle, type CycleOpts, type CyclePhase, type PhaseResult } from '../src/core/cycle.ts';
 import { MANAGED_PHASE_TABLE } from '../src/core/cycle/phase-table.ts';
 import { runPhaseGradeTakes } from '../src/core/cycle/grade-takes.ts';
+import { runChronicleBackfill } from '../src/core/chronicle/backfill.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -269,6 +270,20 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect(slug).toBeDefined();
       expect(await committed(engine, 'default', slug!)).not.toHaveLength(0);
       expect((await engine.getPage(slug!, { sourceId: 'default' }))?.compiled_truth).toContain('DRIFTED — notes/drift-example');
+    },
+  },
+  chronicle: {
+    seed: async ({ engine, sourceId }) => {
+      await put(engine, sourceId, 'meetings/chronicle-example', page('meeting', 'Weekly sync',
+        `${'Alice and Bob reviewed the launch plan and agreed on the next steps. '.repeat(3)}`, `date: ${daysAgo(1)}\n`));
+      await runChronicleBackfill(engine, { sourceId, yes: true });
+    },
+    reply: () => JSON.stringify([{ when: daysAgo(1), who: ['people/alice-example'], what: 'Alice agreed to ship the beta', kind: 'commitment' }]),
+    assert: async ({ engine, sourceId, result }) => {
+      expect(result.details).toMatchObject({ judged: 1, extracted: 1, events_written: 1 });
+      const [event] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND type='event'", [sourceId]);
+      expect(await committed(engine, sourceId, event.slug)).not.toHaveLength(0);
+      expect(await engine.executeRaw("SELECT state FROM chronicle_page_state WHERE source_id=$1", [sourceId])).toEqual([{ state: 'extracted' }]);
     },
   },
   conversation_facts_backfill: {

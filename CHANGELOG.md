@@ -10,6 +10,112 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.45.0] - 2026-10-04
+
+**Meeting notes, conversations and past calendar events turn into timeline events on their own again. Each page costs one paid chat call, capped at $0.25 per page and 200 calls a day. Turn it off with `gbrain config set auto_chronicle false`.**
+
+When you save a meeting, conversation or calendar page, gbrain reads it once with your chat model and writes what happened (the meeting, decisions, commitments) as timeline events, so `gbrain day 2026-09-28` can answer "what happened that day". The `auto_chronicle` setting promised this, but since v0.51 nothing read it, so new pages were never swept and only a manual backfill extracted events.
+
+This is now on by default, under the rule that new features ship on with a documented opt-out. **The default flipped without a measured live quality lift:** nobody has yet compared an agent with these events against one without them. The run below measures whether extraction is accurate and what it costs, not whether it makes answers better.
+
+### What it costs, and the limits
+
+| Limit | Default | Setting |
+| --- | --- | --- |
+| Per page | one chat call, capped at $0.25 | `chronicle.job_budget_usd` |
+| Per rolling 24 hours | 200 automatic calls | `chronicle.auto_daily_limit` |
+| Worst case | 200 x $0.25 = $50 a day | per-call cap times call count, not a daily budget |
+| Which pages | dated within the last 30 days | `chronicle.auto_recent_days` |
+| When | after the page stays unchanged for 3 minutes; invites only after they end | `chronicle.auto_settle_seconds` |
+
+On the measured run below a page cost about $0.003 with the default chat model. If gbrain has no price for your chat model, the per-page cap cannot apply: calls still run, warn, and stay limited by the daily count. A cap you set yourself refuses an unpriced model and tells the agent how to register the price. Pages already in the brain are not swept on upgrade.
+
+### How to use it
+
+```bash
+gbrain config set auto_chronicle false   # opt out (unsetting the key means on)
+gbrain config set auto_chronicle true    # keep it; clears the doctor/advisor notice
+gbrain dream --phase chronicle           # run pending pages now (paid); autopilot runs them otherwise
+gbrain chronicle-backfill --since 2026-09-01 --limit 50 --dry-run   # history: count + estimated cost
+gbrain chronicle-backfill --since 2026-09-01 --limit 50 --yes       # only after the user agrees
+```
+
+`chronicle-backfill` now needs `--yes` to spend money; `--dry-run` shows the candidates, the estimated cost and why other pages are skipped.
+
+### Privacy
+
+Page text goes to your configured chat provider. Events from a private page are private: remote callers cannot see them in search, `get_page` or the `day`/`since`/`on-this-day` reads, and an event whose source page was renamed or purged is hidden from them too. Diary pages and dream output are never mined. Writers confined to a slug prefix or a delegated grant never trigger paid extraction.
+
+### Measured on a labeled fixture (two runs, default chat model `anthropic:claude-sonnet-4-6`)
+
+31 pages: 24 that should be extracted (16 meetings including one private, 6 conversations, 2 past calendar invites), 6 that must not be (a note, a person page, a diary entry, a dream summary, a too-short meeting, a concept page) and 1 future invite. 53 hand-labeled expected events.
+
+| | Run 1 | Run 2 |
+| --- | --- | --- |
+| Pages judged (one call each) | 24 | 24 |
+| Controls or future invite judged | 0 | 0 |
+| Events written | 54 | 52 |
+| Expected events found (recall) | 46/53 (87%) | 45/53 (85%) |
+| Wrong or not-yet-happened events | 4 (17% of judged pages) | 4 (17%) |
+| Duplicated events | 1 | 1 |
+| Recorded spend | $0.068 | $0.068 |
+| Wall time (writes + extraction) | 57 s | 56 s |
+
+The four wrong events per run come from two patterns: a planned future date mentioned in a past meeting written as an event (an offsite and a leave start date), and a launch plan in a chat written as if it happened. Both private-page events were stored private. Recall is lowest on short conversations (75-83%) and highest on meetings (87%). The deterministic `gbrain eval chronicle` scores 6/6 on both master and this release.
+
+### Things to watch
+
+- Every write receipt for a meeting, conversation or calendar page carries `chronicle_backstop`: `{ "pending": "next_cycle" }` or `{ "skipped": "<code>", "why": ..., "fix": ... }`. `docs/guides/life-chronicle.md` lists every code and its fix.
+- `gbrain doctor` (`auto_chronicle`) reports on/off, the last 24 hours against the daily limit, 7-day extracted/failed/skipped counts and spend, pending pages and which writers caused the calls. It also says when no chat provider is configured, in which case nothing runs.
+- Restart every `gbrain serve`, autopilot and worker after upgrading.
+
+Thanks to @andreineacsu for the design input on #5876 (where to hook extraction, and whether agent writes should trigger it).
+
+## To take advantage of v0.60.45.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+   Schema migration v199 adds the `chronicle_page_state` ledger and the `chronicle_judge_reservations` table.
+2. **Your agent reads `skills/migrations/v0.60.45.0.md` the next time you interact with it.** It relays the cost, asks whether to keep the feature, and records the answer with `gbrain config set auto_chronicle true|false`.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor --json | grep -A3 '"auto_chronicle"'
+   gbrain chronicle-backfill --limit 5 --dry-run
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Automatic extraction (#5876)
+- Every coordinated page publication that imports a page (`put_page`, `capture`, `edit_page`, `restore_page`, `revert_version`, managed sync and connector imports) records one `chronicle_page_state` row for the published content inside the publication transaction (`recordChronicleDecision`, `src/core/chronicle/ledger.ts`) and returns `chronicle_backstop` on the receipt. Ordinary notes get neither. `--no-extract` syncs, confined writers and grants without `extract_facts` skip with a reason.
+- New global `chronicle` cycle phase (`src/core/cycle/chronicle.ts`) executes settled rows round-robin across sources (at most 50 judged pages and a wall-time bound per run), so PGLite brains run extraction without a worker. Unmanaged brains are scanned directly; managed pages written before this release activated (`chronicle.activated_at`) are left to backfill (`no_write_decision`).
+- Each judge call runs in a `chronicle:auto` or `chronicle:backfill` BudgetTracker scope with the per-page cap and a post-call cap check, reusing the extract-atoms cost gate. The rolling daily limit is a reservation taken right before each automatic call (retries count), shared by every executor; backfill is exempt but bounded by its `--limit`.
+- Judge failures are failures: a provider error, truncation, unparseable output or a refusal is recorded as `judge_chat_error` / `judge_truncated` / `judge_parse_failed` / `judge_refused` (failed rows retry with backoff), never as `no_events`. A missing provider records `judge_llm_unavailable`.
+- Re-extraction retires the previous generation's automatic events (`retired_by: life-chronicle`) only after a complete new generation; events an operator edited or deleted are never touched.
+- Event pages carry the depth page's visibility; `search/private-visibility.ts` hides events whose `event.depth` origin is private or missing from remote callers.
+- `chronicle_extract` jobs queued by older releases drain through the same executor. The old `runChronicleBackstop` hook is removed.
+
+#### Settings and surfaces
+- `auto_chronicle` reads on when unset; `true/false/1/0/yes/no/on/off` are accepted, and any other word reads as off with doctor `auto_chronicle_invalid`. `gbrain config set` validates `chronicle.job_budget_usd` (0.01-10), `chronicle.auto_daily_limit` (1-10000), `chronicle.auto_recent_days` (1-3650), `chronicle.auto_settle_seconds` (0-86400) and `chronicle.judge_max_tokens` (1-128000) and refuses unknown `chronicle.*` keys.
+- One reason table, `src/core/chronicle/reasons.ts` (`CHRONICLE_REASONS`: stage, meaning and a fix Action with argv, preview argv, consent and actor); receipts, doctor, advisor, the guide's table and tests render from it. `auto_chronicle_off` has no fix: it is off by choice.
+- Doctor `auto_chronicle` replaces the wave-8 "has no effect" warning with a real health signal; new `chronicle_config_invalid` check; doctor and the advisor show `auto_chronicle_default_on` (ask the user) until `config set auto_chronicle` answers it. A one-shot post-upgrade notice says the same.
+- `gbrain chronicle-backfill`: `--yes` required for paid runs, `--dry-run` reports `estimated_usd` and skip reasons, one global `--limit` across types and sources, `--dated-since` filters on the page's own date, `--recent` applies the automatic window, and the rescue prefixes (`meetings/`, `conversations/`, `cal/`, `calendar/`) are scanned regardless of type. The ledger, not job idempotency keys, records what was extracted, so `gbrain jobs prune` never causes a second payment.
+- New guide `docs/guides/life-chronicle.md`; `troubleshooting.md#auto_chronicle-has-no-effect` now points to it; `skills/meeting-ingestion/SKILL.md` tells the agent to check the receipt and never hand-write `life/events/`.
+
+#### Schema
+- Migration v199 `chronicle_page_state` (keyed by source, page, content hash and extractor version) and `chronicle_judge_reservations`.
+
+#### Tests
+- `test/chronicle-auto-{decision,phase,unmanaged}.test.ts`, `test/chronicle-event-privacy.test.ts`, `test/chronicle-backfill.test.ts`, `test/chronicle-reasons-5876.test.ts`, `test/chronicle-config-5876.test.ts`, `test/chronicle-upgrade-notice-5876.test.ts`, `test/auto-chronicle-surfaces-5876.test.ts`, with Postgres arms in `test/e2e/chronicle-*-postgres.test.ts`.
+
 ## [0.60.44.0] - 2026-10-03
 
 **Your agent pays less for every gbrain call: search results, tool results and the tool list are all smaller, and search skips work it does not need.**
