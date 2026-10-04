@@ -3,8 +3,9 @@
  * Warns when core is over its brain-wide budget (owner git edits may push it
  * there), when a stored core/pressure setting is out of range (the readers
  * fall back to the default), when the delivery sensitivity policy withholds a
- * core page, when remote edits wait for review, and when core pages exist but
- * no session-start delivered them in the last week.
+ * core page, when remote edits wait for review, when a compiled file carries
+ * an old or no-longer-wanted core revision, and when core pages exist but no
+ * session-start delivered them in the last week.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
@@ -15,6 +16,8 @@ import {
 } from '../../../core/core-memory.ts';
 import { PRESSURE_CONFIG_KEYS, validatePressureConfigValue } from '../../../core/context/pressure.ts';
 import { readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
+import { compiledCoreRevision, readCompiledCoreRecords } from '../../../core/context/compiled-core.ts';
+import { existsSync, readFileSync } from 'node:fs';
 
 const DELIVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -29,11 +32,22 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
     const problem = validateCoreConfigValue(key, value) ?? validatePressureConfigValue(key, value);
     if (problem) badConfig.push(`${key}=${value} is ignored (${problem})`);
   }
+  // Compiled files carrying core (compile-context --include-core, codex-global): stale or leftover copies.
+  const compiled: string[] = [];
+  for (const rec of readCompiledCoreRecords()) {
+    if (!existsSync(rec.path)) continue;
+    const onDisk = compiledCoreRevision(readFileSync(rec.path, 'utf8'));
+    if (!onDisk) continue;
+    const current = (await loadCoreBlock(engine, { sessionSourceId: rec.source_id, excludePrivate: true, notices: [], settings })).revision;
+    if (!settings.enabled || usage.pages.length === 0) compiled.push(`${rec.path} still carries core memory that is now ${settings.enabled ? 'empty' : 'disabled'}; remove it with ${rec.command} --remove-core`);
+    else if (onDisk !== current) compiled.push(`${rec.path} carries an older core revision; refresh it with ${rec.command}`);
+  }
   if (usage.pages.length === 0) {
+    const issues = [...badConfig, ...compiled];
     return {
-      status: badConfig.length ? 'warn' : 'ok',
-      message: badConfig.length ? `No core pages. ${badConfig.join('; ')}.` : 'No core pages. Start one with gbrain core init, then fill it in with the user.',
-      details: { pages: 0, chars_used: 0, chars_limit: settings.maxChars, enabled: settings.enabled, bad_config: badConfig, docs: CORE_DOCS },
+      status: issues.length ? 'warn' : 'ok',
+      message: issues.length ? `No core pages. ${issues.join('; ')}.` : 'No core pages. Start one with gbrain core init, then fill it in with the user.',
+      details: { pages: 0, chars_used: 0, chars_limit: settings.maxChars, enabled: settings.enabled, bad_config: badConfig, compiled, docs: CORE_DOCS },
     };
   }
   const block = await loadCoreBlock(engine, { excludePrivate: true, settings });
@@ -42,7 +56,7 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
   const over = usage.chars - settings.maxChars;
   const largest = [...usage.pages].sort((a, b) => b.chars - a.chars)[0]!;
   if (over > 0) problems.push(`core is ${usage.chars} chars, over the ${settings.maxChars}-char budget by ${over}, so sessions get a truncated block; shorten the largest page (${largest.source_id}:${largest.slug}, ${largest.chars} chars) or raise memory.core.max_chars`);
-  problems.push(...badConfig);
+  problems.push(...badConfig, ...compiled);
   if (withheld.length) problems.push(`${withheld.length} core page(s) withheld from delivery for sensitive content: ${withheld.map(w => `${w.source_id}:${w.slug}`).join(', ')}`);
   if (notices.length) problems.push(`${notices.length} remote edit(s) to core pages await the user's review (gbrain core diff, then gbrain core ack)`);
   let delivered: boolean | null = null;
@@ -58,7 +72,7 @@ export async function coreMemoryCheck(engine: BrainEngine): Promise<Omit<Check, 
   }
   const details = {
     enabled: settings.enabled, pages: usage.pages.length, chars_used: usage.chars, chars_limit: settings.maxChars, remote_edit: settings.remoteEdit,
-    revision: block.revision, withheld, pending_notices: notices.length, delivered_last_7d: delivered, bad_config: badConfig, docs: CORE_DOCS,
+    revision: block.revision, withheld, pending_notices: notices.length, delivered_last_7d: delivered, bad_config: badConfig, compiled, docs: CORE_DOCS,
   };
   if (!problems.length) {
     return { status: 'ok', message: `Core memory ${settings.enabled ? 'on' : 'off'}: ${usage.pages.length} page(s), ${usage.chars}/${settings.maxChars} chars.`, details };
