@@ -472,6 +472,7 @@ export class PersistenceConsumer {
       this.preparing.delete(row.id);
       preparationActive = false;
       const done = await publishMutation(this.engine, row, prepared, this.hostId);
+      if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', done.error_message ?? undefined);
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
@@ -484,7 +485,9 @@ export class PersistenceConsumer {
       }
       const current = await getWriteRequestById(this.engine, row.id);
       if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
-        return isTerminal(await finishUnpublishedFailure(this.engine, current, error));
+        const done = await finishUnpublishedFailure(this.engine, current, error, preparationActive ? 'preparation' : 'publication');
+        if (done.state === 'failed') this.log(preparationActive ? 'preparation' : 'publication', done.error_code ?? 'storage_error', done.error_message ?? undefined);
+        return isTerminal(done);
       }
       throw error;
     } finally {

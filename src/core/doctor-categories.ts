@@ -220,6 +220,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'orphan_clones',
   'persistence_capacity',
   'worktree_refresh_stuck',
+  'managed_guard_schema_drift',
+  'publication_refusals',
   'persistence_request_growth',
   'persistence_request_indexes',
   'stale_embedding_effects',

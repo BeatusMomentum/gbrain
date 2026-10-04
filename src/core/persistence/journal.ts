@@ -10,6 +10,7 @@ import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetenti
 import { retryWriteAdmission } from './admission-retry.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { writerStamp } from './writer-versions.ts';
+import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { ACTIVE_REFRESH_STATES_SQL, refreshFenceClear } from './worktree-refresh-schema.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -319,7 +320,7 @@ export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, re
 
 /** In the SAME transaction as page publication. Counters are always before request locks. */
 export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
-  outcome: Record<string, unknown>, error?: { code: string; message: string }): Promise<WriteRequest> {
+  outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown }): Promise<WriteRequest> {
   // Every acknowledged terminal state survives a crash, including cancellation
   // and pre-publication failures that do not enter the file coordinator.
   await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
@@ -336,15 +337,16 @@ export async function completeWrite(tx: SqlEngine, row: WriteRequest, state: 'co
     { fix: requestInspectFix(row) });
   const [effects] = await tx.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0)::text AS bytes
     FROM persistence_effects WHERE request_id=$1::uuid`,[row.id]);
-  if (jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + Number(effects.bytes) > Number(current.terminal_reservation)) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
+  if (jsonBytes(outcome) + jsonBytes(current.authority) + 1024 + Buffer.byteLength(error?.message ?? '') + (error?.detail ? jsonBytes(error.detail) : 0) + Number(effects.bytes) > Number(current.terminal_reservation)) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
   // Only publication stamps the consumer; failures, cancellations and conflicts leave it unset.
   const stamp = writerStamp();
   const [done] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state=$2,outcome=$3::text::jsonb,
-    error_code=$4,error_message=$5,completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
+    error_code=$4,error_message=$5,error_detail=COALESCE($8::text::jsonb,error_detail),completed_at=now(),updated_at=now(),claim_expires_at=NULL,blocked_reason=NULL,
     consumer_version=CASE WHEN $2='committed' THEN $6 ELSE consumer_version END,
     consumer_host_id=CASE WHEN $2='committed' THEN $7::uuid ELSE consumer_host_id END,
     published_at=CASE WHEN $2='committed' THEN now() ELSE published_at END
-    WHERE id=$1::uuid RETURNING *`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId]);
+    WHERE id=$1::uuid RETURNING *`, [row.id, state, JSON.stringify(outcome), error?.code ?? null, error?.message ?? null, stamp.version, stamp.hostId,
+      error?.detail ? JSON.stringify(error.detail) : null]);
   await tx.executeRaw(`UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$2
     WHERE key=ANY($1::text[])`, [['brain', principalKey(requestPrincipal(row))], Number(current.intent_bytes)]);
   // Recovery bytes remain reserved until physical cleanup has been verified.
@@ -366,10 +368,12 @@ export async function clearResolvedRecovery(engine: BrainEngine, id: string): Pr
     await tx.executeRaw('UPDATE persistence_requests SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL WHERE id=$1::uuid', [id]);
   });
 }
-export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string}): Promise<void> {
+export async function markRecovering(engine: SqlEngine, row: WriteRequest, reason: string, failure?: {code:string;message:string;detail?:unknown}): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_requests SET state='recovering',blocked_reason=$3,updated_at=now(),
-    error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5)
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null]);
+    error_code=COALESCE(error_code,$4),error_message=COALESCE(error_message,$5),
+    error_detail=CASE WHEN error_code IS NULL THEN $6::text::jsonb ELSE error_detail END
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state IN ('running','recovering') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
+  [row.id, row.execution_token, reason, failure?.code ?? null, failure?.message ?? null, failure?.detail ? JSON.stringify(failure.detail) : null]);
 }
 /**
  * PGLite has no autovacuum. The resident owner reclaims queue churn and keeps
@@ -404,7 +408,7 @@ export async function compactWriteReceipts(engine: BrainEngine, retentionDays?: 
     if(unfinished.length) return 0;
     const [effects]=await tx.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0)::text AS bytes
       FROM persistence_effects WHERE request_id=$1::uuid`,[row.id]);
-    const retained=Math.min(Number(current.terminal_reservation),jsonBytes(current.authority)+jsonBytes(current.outcome??{})+Number(effects.bytes)+1024);
+    const retained=Math.min(Number(current.terminal_reservation),jsonBytes(current.authority)+jsonBytes(current.outcome??{})+(current.error_detail?jsonBytes(current.error_detail):0)+Number(effects.bytes)+1024);
     await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2 WHERE id=$1::uuid',[row.id,retained]);
     for(const key of keys) await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes-$2 WHERE key=$1',[key,Number(current.terminal_reservation)-retained]);
     return 1;
@@ -418,6 +422,7 @@ export function receiptFor(row: WriteRequest, facts?: WriteHealthFacts, now = Da
     request_id: row.request_id, state: row.state,
     ...writeHealth(row, facts, now),
     ...(row.error_code ? { write_error: row.error_code } : {}),
+    ...(row.error_detail ? { write_error_detail: publicFailureDetail(row.error_detail) } : {}),
     ...(row.blocked_reason ? { blocked_reason: row.blocked_reason } : {}),
     ...(row.compacted ? { compacted: true } : {}),
     created_at: new Date(row.created_at).toISOString(), updated_at: new Date(row.updated_at).toISOString(),

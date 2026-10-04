@@ -22,6 +22,7 @@ import { mergeReconcile, reconcileCanonical, type ReconcileDecision } from './re
 import { stabilizeSafetyAssessments } from './reconcile-safety.ts';
 import { assertReconcilePins, readReconcileState, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { verifyReconcileBackup } from './reconcile-backup.ts';
+import { assertAutoDecisions } from './reconcile-additive.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
@@ -88,6 +89,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   }
   const state = await readReconcileState(engine, row.source_id, row.slug, artifact.preconditions.assessment_at);
   assertReconcilePins(artifact.preconditions, state.pins);
+  assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
   const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
   if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('canonical policy result changed');
   const content = serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);

@@ -24,9 +24,11 @@ export const RECONCILE_HELP = `Usage:
   gbrain sources reconcile <source> <slug> --brain <id> [--preview] [--out <new-file>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --preview --from <preview-file>
     --decisions <decisions-file> --out <new-file> [--json]
+  gbrain sources reconcile <source> <slug> --brain <id> --preview --auto-additive [--accept-suggested]
+    --out <new-file> [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --apply <resolved-preview-file>
     --request-id <uuid> [--json]
-  gbrain sources reconcile <source> --brain <id> --audit [--limit <1-100>] [--after <slug>] [--json]
+  gbrain sources reconcile <source> --brain <id> --audit [--classify] [--limit <1-100>] [--after <slug>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --backups [--limit <1-100>] [--after <request-uuid>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --remove-backup <exact-reference> [--json]
 
@@ -46,7 +48,15 @@ and .result locally before applying; stdout contains only a summary.
 Use the same request ID and arguments after a lost response or pending receipt.
 After a terminal conflict, make a new preview and use a new request ID.
 Retry any originally blocked memory write separately, with its own new ID.
-Audit is bounded and read-only; its cursor is not a sync checkpoint.
+--auto-additive decides only structurally additive drift: an appended contacts
+list (every stored entry kept in order), an advanced activity date (updated,
+last_*, *_last_used) and fields present on one side only. Inserted body or
+timeline lines are suggested, not decided, because an added line can still
+contradict an old one; read them in the private preview, then rerun with
+--accept-suggested. Anything else (changed or removed text, policy, privacy,
+title, type, tags, fences) keeps the preview unready for a person to decide.
+Audit is bounded and read-only; its cursor is not a sync checkpoint. --classify
+adds each drifted page's structural classification and counts, never values.
 Backups persist until explicitly removed. Removal deletes that private history,
 not the page or immutable receipt, and refuses nonterminal/recovering requests.`;
 
@@ -63,7 +73,7 @@ export interface ReconcileCliArgs {
 export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   const flags = new Map<string, string | true>();
   const positional: string[] = [];
-  const boolean = new Set(['--preview', '--audit', '--backups', '--json']);
+  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify']);
   const values = new Set(['--brain', '--out', '--from', '--decisions', '--apply', '--request-id', '--limit', '--after', '--remove-backup']);
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
@@ -114,8 +124,16 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
     'Add --from with the preview file the decisions resolve, and --out with a new file for the resolved preview.');
   if (!audit && !flags.has('--backups') && (flags.has('--limit') || flags.has('--after'))) throw opError('invalid_params', '--limit and --after are only valid with --audit or --backups.',
     'Drop --limit and --after, or use them with --audit (source only) or --backups (one page).');
-  if (audit && ['--preview', '--out', '--from', '--decisions'].some(flag => flags.has(flag))) throw opError('invalid_params', 'Audit cannot create or resolve a page preview.',
-    'Run the audit without --preview, --out, --from or --decisions, then preview a page it lists in a separate command.');
+  if (audit && ['--preview', '--out', '--from', '--decisions', '--auto-additive', '--accept-suggested'].some(flag => flags.has(flag))) throw opError('invalid_params', 'Audit cannot create or resolve a page preview.',
+    'Run the audit without --preview, --out, --from, --decisions, --auto-additive or --accept-suggested, then preview a page it lists in a separate command.');
+  if (flags.has('--classify') && !audit) throw opError('invalid_params', '--classify is only valid with --audit.',
+    'Add --audit (with --source), or drop --classify.');
+  if ((applying || backups) && (flags.has('--auto-additive') || flags.has('--accept-suggested'))) throw opError('invalid_params', '--auto-additive and --accept-suggested only shape a preview.',
+    'Use --auto-additive (and --accept-suggested) with --preview, then apply the written preview with --from.');
+  if (flags.has('--accept-suggested') && !flags.has('--auto-additive')) throw opError('invalid_params', '--accept-suggested requires --auto-additive.',
+    'Add --auto-additive, or drop --accept-suggested.');
+  if (flags.has('--auto-additive') && flags.has('--decisions')) throw opError('invalid_params', '--auto-additive computes its own decisions; omit --decisions.',
+    'Drop --decisions, or drop --auto-additive and resolve the preview with --decisions.');
   if (backups && ['--preview', '--out', '--from', '--decisions', '--apply', '--audit'].some(flag => flags.has(flag)) || flags.has('--backups') && flags.has('--remove-backup')) {
     throw opError('invalid_params', 'Backup administration cannot be combined with preview, apply, audit, or another backup action.',
       'Run --backups (list) or --remove-backup (delete one reference) on its own, with only --brain, --limit, --after and --json.');
@@ -132,6 +150,9 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
       'Pass --after exactly as the previous backup listing returned its cursor (a request UUID), or omit it to start from the newest backup.');
   }
   if (applying) params.request_id = flags.get('--request-id');
+  if (flags.has('--auto-additive')) params.auto_additive = true;
+  if (flags.has('--accept-suggested')) params.accept_suggested = true;
+  if (flags.has('--classify')) params.classify = true;
   if (flags.has('--limit')) {
     const limit = Number(flags.get('--limit'));
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw opError('invalid_params', 'Audit limit must be an integer from 1 to 100.',

@@ -12,20 +12,25 @@ import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter, verif
 import { getWorktreeBinding } from './ownership.ts';
 import { prepareFileTarget } from './page-prepare.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
+import { readReconcileState } from './reconcile-state.ts';
+import { reconcileCanonical } from './reconcile-merge.ts';
+import { classifyDrift } from './reconcile-additive.ts';
 
 export interface ReconcileAuditReport extends Record<string, unknown> {
   source_id: string;
   inspected: number;
   drifted: number;
   errors: number;
-  findings: Array<{ slug: string; reason: string; suggestion: string }>;
+  findings: Array<{ slug: string; reason: string; suggestion: string; classification?: string;
+    drift_paths?: Array<{ path: string; class: string; reason: string }>; file_modified_after_database?: boolean }>;
+  classified?: Record<string, number>;
   next_after: string | null;
   complete: boolean;
   snapshot_only: true;
 }
 
 export async function auditCanonicalSource(engine: BrainEngine, sourceId: string,
-  options: { limit?: number; after?: string } = {}): Promise<ReconcileAuditReport> {
+  options: { limit?: number; after?: string; classify?: boolean } = {}): Promise<ReconcileAuditReport> {
   const limit = options.limit ?? 25;
   if (!isValidSourceId(sourceId) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw opError('invalid_params', 'Audit requires an explicit source and a limit from 1 to 100.',
@@ -53,7 +58,8 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
     FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND page_kind='markdown' AND slug>$2
     ORDER BY slug LIMIT $3`, [sourceId, options.after ?? '', limit + 1]);
   const report: ReconcileAuditReport = { source_id: sourceId, inspected: 0, drifted: 0, errors: 0, findings: [],
-    next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true };
+    next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true,
+    ...(options.classify ? { classified: { structurally_additive: 0, additive_with_suggestions: 0, review_required: 0, formatting_only: 0, error: 0 } } : {}) };
   const mode = await scannerSlugRootMode(engine, sourceId, root);
   for (const candidate of rows.slice(0, limit)) {
     report.inspected++;
@@ -82,19 +88,41 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
       const reason = error instanceof OperationError ? error.code : 'storage_error';
       if (reason === 'source_changed') report.drifted++;
       else report.errors++;
-      report.findings.push({ slug: candidate.slug, reason,
+      const finding: ReconcileAuditReport['findings'][number] = { slug: candidate.slug, reason,
         suggestion: reason === 'source_changed'
           ? 'Preview this exact page with sources reconcile before attempting another write.'
-          : 'Inspect this page on the canonical host; no repair was attempted.' });
+          : 'Inspect this page on the canonical host; no repair was attempted.' };
+      if (options.classify && reason === 'source_changed') Object.assign(finding, await classifyFinding(engine, sourceId, candidate.slug, report.classified!));
+      report.findings.push(finding);
     }
   }
   return report;
 }
 
+/** #5974: read-only structural classification of one drifted page; reports paths and rule outcomes, never values. */
+async function classifyFinding(engine: BrainEngine, sourceId: string, slug: string, counts: Record<string, number>) {
+  try {
+    const state = await readReconcileState(engine, sourceId, slug);
+    const classification = classifyDrift(state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags));
+    const verdict = classification.verdict === 'no_drift' ? 'formatting_only' : classification.verdict;
+    counts[verdict]++;
+    const updated = Date.parse(String(state.snapshot.page.updated_at ?? ''));
+    const suggestion = verdict === 'formatting_only' ? `Only formatting differs. Preview with gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview; the result is the database content.`
+      : verdict === 'review_required' ? `Not structurally additive. Preview gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview --out <new file> and ask the user before deciding the review paths.`
+      : `Preview gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview --auto-additive --out <new file>${verdict === 'additive_with_suggestions' ? ', read the inserted lines, then add --accept-suggested' : ''}; apply it with a new request ID.`;
+    return { classification: verdict, suggestion, drift_paths: classification.paths.map(({ path, class: kind, reason }) => ({ path, class: kind, reason })),
+      ...(Number.isFinite(updated) ? { file_modified_after_database: statSync(state.path).mtimeMs > updated } : {}) };
+  } catch {
+    counts.error++;
+    return { classification: 'error' };
+  }
+}
+
 export async function runReconcileAudit(engine: BrainEngine, params: Record<string, unknown>): Promise<ReconcileAuditReport> {
-  if (Object.keys(params).some(key => !['source_id', 'limit', 'after'].includes(key)) || !isValidSourceId(params.source_id)) {
-    throw opError('invalid_params', 'Audit accepts only source_id, limit, and after.',
-      'Pass a registered source_id, and optionally limit (1 to 100) and after (the previous next_after slug), with no other fields.');
+  if (Object.keys(params).some(key => !['source_id', 'limit', 'after', 'classify'].includes(key)) || !isValidSourceId(params.source_id)
+    || params.classify !== undefined && typeof params.classify !== 'boolean') {
+    throw opError('invalid_params', 'Audit accepts only source_id, limit, after, and classify.',
+      'Pass a registered source_id, and optionally limit (1 to 100), after (the previous next_after slug) and classify (true or false), with no other fields.');
   }
   const writer = currentVerifiedLocalWriter() ?? await verifyLocalWriter(engine, await readLocalWriter(engine, 'cli'));
   if (writer.remote || writer.principal.kind !== 'local_cli' || writer.grant.slugPrefixes !== null) {
@@ -111,7 +139,8 @@ export async function runReconcileAudit(engine: BrainEngine, params: Record<stri
     { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   await submissionAuthority({ engine, remote: false, sourceId: params.source_id } as OperationContext,
     'put_page', params.source_id, source.incarnation, '__reconciliation_audit__');
-  const report = await auditCanonicalSource(engine, params.source_id, { limit: params.limit as number | undefined, after: params.after as string | undefined });
+  const report = await auditCanonicalSource(engine, params.source_id, { limit: params.limit as number | undefined, after: params.after as string | undefined,
+    classify: params.classify === true });
   await submissionAuthority({ engine, remote: false, sourceId: params.source_id } as OperationContext,
     'put_page', params.source_id, source.incarnation, '__reconciliation_audit__');
   return report;

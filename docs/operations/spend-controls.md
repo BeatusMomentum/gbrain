@@ -36,7 +36,7 @@ number you typed on the command line.
 
 ## Consent and caps for paid commands (agent operator contract v1)
 
-Since v0.60.40.0 every command that spends money asks for authorization the
+Since v0.60.41.0 every command that spends money asks for authorization the
 same way ([protocol](../protocol/AGENT_OPERATOR_v1.md#consent-and-preapproval)).
 Without a terminal and without authorization, nothing runs: the command exits
 3 with a `confirmation_required` payload whose `user_message` the agent relays
