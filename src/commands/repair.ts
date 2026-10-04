@@ -116,7 +116,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   if (used.has('--yes') && parsed.kind !== 'frontmatter') throw new OperationError('invalid_params', '`--yes` is not accepted by gbrain repair; pass --apply to write.');
   const frontmatterOnly = [...used].find(flag => flag !== '--yes');
   if (frontmatterOnly && parsed.kind !== 'frontmatter') throw new OperationError('invalid_params', `${frontmatterOnly} applies only to gbrain repair frontmatter.`,
-    'Preview it by name: gbrain repair frontmatter --source <id>');
+    `Preview it by name: gbrain repair frontmatter${parsed.source ? ` --source ${parsed.source}` : ''}`);
   const bound = parsed.expect !== undefined ? '--expect' : parsed.includeAmbiguous ? '--include-ambiguous' : undefined;
   if (bound && !EXPLICIT_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind)) {
     throw new OperationError('invalid_params', `${bound} applies only to an explicit-only kind named on the command line (${explicitKinds}).`,

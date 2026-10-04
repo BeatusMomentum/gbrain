@@ -20,7 +20,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
-import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
+import { readGitSourceHolds, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { confinedRepairTarget, submitManagedFileRepair } from '../src/core/persistence/file-repair.ts';
 import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.ts';
@@ -35,6 +35,8 @@ import { withEnv } from './helpers/with-env.ts';
 const backends = testBackends();
 const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-frontmatter-'));
 const engines: BrainEngine[] = [];
+/** A brain whose persistence was never activated: legacy (unmanaged) writes. */
+let legacyEngine: PGLiteEngine;
 let closePostgres: (() => Promise<void>) | undefined;
 const env = { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined };
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -53,10 +55,12 @@ const longBroken = `---\ntitle: alice-example first line\nalice-example second l
 beforeAll(async () => {
   if (backends.includes('pglite')) { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); engines.push(engine); }
   if (backends.includes('postgres')) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engines.push(pg.engine); closePostgres = pg.close; }
+  legacyEngine = new PGLiteEngine(); await legacyEngine.connect({}); await legacyEngine.initSchema();
 }, 120_000);
 
 afterAll(async () => {
   await withEnv(env, async () => { for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); } });
+  await legacyEngine.disconnect();
   await closePostgres?.(); rmSync(home, { recursive: true, force: true });
 });
 
@@ -348,27 +352,34 @@ test('database side: a page whose body begins with its own frontmatter block is 
 }), 180_000);
 
 test('legacy brain: the apply backs the file up, writes it, imports it, clears its hold and prints the commit step', async () => {
-  const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
-  try {
-    await withEnv(env, async () => {
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
-      const id = 'legacy-fm', root = join(home, id);
-      mkdirSync(join(root, 'notes'), { recursive: true });
-      writeFileSync(join(root, 'notes', 'roundup.md'), QUOTABLE);
-      await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
-      const s = fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content));
-      const preview = await s.run();
-      expect(details(preview).counts.safe).toBe(1);
-      const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
-      const applied = await s.run({ apply: true, expect: hash });
-      const detail = applied.outcome_items![0]!.detail!;
-      expect(detail).toMatchObject({ path: 'notes/roundup.md', written: true, imported: 'imported', committed: 'commit_step' });
-      expect(String(detail.commit_step)).toContain(`git -C ${root} add -- notes/roundup.md`);
-      expect(readFileSync(String(detail.backup), 'utf8')).toBe(QUOTABLE);
-      expect(s.read('notes/roundup.md')).toContain('author: "alice-example');
-      expect((await engine.getPage('notes/roundup', { sourceId: id }))?.frontmatter.author).toBe('alice-example (citing acme-example) (original: https://example.invalid/a)');
-    });
-  } finally { await engine.disconnect(); }
+  const engine = legacyEngine;
+  await withEnv(env, async () => {
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    const id = 'legacy-fm', root = join(home, id);
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    writeFileSync(join(root, 'notes', 'roundup.md'), QUOTABLE);
+    writeFileSync(join(root, 'notes', 'post.md'), folded(4));
+    await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [id]);
+    // The hold legacy sync records for the folded file.
+    await writeGitHold(engine, { source_id: id, incarnation, path: 'notes/post.md', source_path: 'notes/post.md', slug: 'notes/post', page_id: null,
+      code: 'invalid_frontmatter', message: 'Invalid YAML frontmatter: key "title" at line 2 continues on unquoted lines.', upstream_version: sha256(folded(4)),
+      observed_at: new Date().toISOString(), run_id: 'legacy-fixture', mode: 'legacy', meta: { reason: 'needs_interpretation', key: 'title', line: 2, recovery_version: 1 } });
+    const s = fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content));
+    const preview = await s.run({ includeAmbiguous: true });
+    expect(details(preview).counts).toMatchObject({ safe: 1, interpretive: 1 });
+    const hash = preview.apply_command.split('--expect ')[1]!.split(' ')[0]!;
+    const applied = await s.run({ apply: true, expect: hash, includeAmbiguous: true });
+    expect(applied.outcome_items!.find(o => o.detail?.path === 'notes/post.md')!.detail).toMatchObject({ written: true, hold_cleared: true });
+    expect(await s.holds()).toEqual([]);
+    expect((await engine.getPage('notes/post', { sourceId: id }))?.title).toBe('alice-example post 4\nsecond line of post 4');
+    const detail = applied.outcome_items!.find(o => o.detail?.path === 'notes/roundup.md')!.detail!;
+    expect(detail).toMatchObject({ path: 'notes/roundup.md', written: true, imported: 'imported', committed: 'commit_step' });
+    expect(String(detail.commit_step)).toContain(`git -C ${root} add -- notes/roundup.md`);
+    expect(readFileSync(String(detail.backup), 'utf8')).toBe(QUOTABLE);
+    expect(s.read('notes/roundup.md')).toContain('author: "alice-example');
+    expect((await engine.getPage('notes/roundup', { sourceId: id }))?.frontmatter.author).toBe('alice-example (citing acme-example) (original: https://example.invalid/a)');
+  });
 }, 120_000);
 
 test('the CLI apply asks for destructive consent: without --yes a non-interactive run exits 3 and writes nothing', () => each(async engine => {

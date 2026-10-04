@@ -251,10 +251,15 @@ async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord |
   const abs = join(src.root, path);
   const review = (code: string, text: string, extra: Partial<NeedsReview> = {}): Analysis => ({ review: { source_id: src.sourceId, path, code, resolution: text, ...extra } });
   if (!existsSync(abs)) return hold ? review(hold.code, `${path} is gone; the next gbrain sync --source ${src.sourceId} --no-pull clears its hold.`) : null;
-  if (lstatSync(abs).isSymbolicLink()) return hold ? review(hold.code, `${path} is a symlink; gbrain never writes through one. Replace it with the real file, then preview again.`) : null;
+  try { confinedRepairTarget(src.root, path, src.sourceId); } catch (error) {
+    if (!(error instanceof OperationError)) throw error;
+    return hold ? review(hold.code, `${path} is a symlink, sits under one, or resolves outside the source root; gbrain never writes through one. Replace it with the real file, then preview again.`) : null;
+  }
   const size = lstatSync(abs).size;
   if (size > MAX_FILE_SIZE) return review('file_too_large', resolution({ code: 'file_too_large' }, path));
-  const content = readFileSync(abs, 'utf8');
+  const bytes = readFileSync(abs);
+  const content = bytes.toString('utf8');
+  if (!Buffer.from(content, 'utf8').equals(bytes)) return review(hold?.code ?? 'invalid_frontmatter', `${path} is not valid UTF-8, so gbrain will not rewrite it; re-save it as UTF-8, then preview again.`);
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
   const slugCtx: SlugContext = { expectedSlug: resolveSlugForPath(sourcePath), slugExempt: declared => page?.source_path === sourcePath && declared === page.slug };

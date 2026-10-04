@@ -8,8 +8,8 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-Seven explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
-`captured-facts`, `loop-facts`, `orphan-children` and `failed-writes`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
+Eight explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
+`captured-facts`, `loop-facts`, `orphan-children`, `failed-writes` and `frontmatter`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
@@ -100,8 +100,11 @@ gives each a fresh row number); it never deletes or rewrites a page.
 | `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each kind). Rerun the same command to continue. |
 | `--no-embed` | `safe-chunks` and `contextual-mode`: skip the embedding provider. Run `gbrain embed --stale` later. `timeline` and `visibility` pages are re-embedded by their publication either way. |
 | `--all` | Run every automatic kind in order. Explicit-only kinds are listed with their preview command, never run. |
-| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `extractor-facts`, `captured-facts`, `loop-facts` and `failed-writes`. |
-| `--include-ambiguous` | `extractor-facts` and `captured-facts` only: widen the hashed set to `ambiguous` facts. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts) and [Captured facts](#captured-facts). |
+| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `extractor-facts`, `captured-facts`, `loop-facts`, `failed-writes` and `frontmatter`. |
+| `--include-ambiguous` | `extractor-facts` and `captured-facts`: widen the hashed set to `ambiguous` facts. `frontmatter`: add interpretive file changes. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts), [Captured facts](#captured-facts) and [Frontmatter](#frontmatter). |
+| `--only <path>`, `--skip <path>` | `frontmatter` only: select source-relative files (repeatable). The hash covers the selection, so pass the same flags to the apply. |
+| `--diff` | `frontmatter` only: print every per-file diff instead of one sample per class (`--json` always carries all of them). |
+| `--yes` | `frontmatter --apply` only: the user agreed to the previewed file changes (destructive consent). Without it a terminal asks, and a run without a terminal exits 3 with the consent payload. |
 | `--json` | Print `{ scope, mode, results[], paid_kinds }`, one result per kind with `paid`, `affected`, `sample`, `residuals`, `cost`, `capacity`, `resumed_from`, `applied`, `skipped`, `complete`, `stopped` and `apply_command`, plus `explicit_kinds[]` when the run skipped explicit-only kinds. |
 
 The command exits 1 when a run stops early (capacity, a pending write, or a
@@ -566,6 +569,58 @@ apply never writes it twice (`pending_elsewhere` when another writer holds that
 request). Attribution names the local owner's writer for that lane. A replay the
 brain refuses reports `refused` with the code. The failed receipts stay as
 history.
+
+<a id="frontmatter"></a>
+### Frontmatter
+
+A file whose YAML frontmatter gbrain cannot read without guessing is held by
+sync instead of blocking it (#5988), and some files import only after gbrain
+quotes an unquoted value. `gbrain repair frontmatter` fixes those files on
+disk and imports them. It also finds pages an older import stored wrong: a
+body that begins with its own frontmatter block, or a title derived from the
+slug although the file names one. It is explicit-only and preview-bound.
+
+**Say to your agent:** *"Some files in my notes source are held. Show me what
+gbrain would change in each one, then fix the safe ones."* The agent runs
+`gbrain repair frontmatter --source <id>` and, after you agree, the printed
+apply command.
+
+```bash
+gbrain repair frontmatter --source <id>                          # pass 1: safe changes, one sample diff per class
+gbrain repair frontmatter --source <id> --apply --expect <hash> --yes
+gbrain repair frontmatter --source <id> --include-ambiguous --diff   # pass 2: every interpretation, per file
+gbrain repair frontmatter --source <id> --include-ambiguous --only notes/a.md --apply --expect <hash> --yes
+```
+
+Each file gets one minimal line change in one class:
+
+| Class | Changes | Default |
+| --- | --- | --- |
+| `safe` | Quote a value exactly as gbrain already reads it, strip NUL bytes, swap the outer quotes of a nested quoted value. Every parsed value stays the same. | Included. |
+| `interpretive` | Fold unquoted continuation lines into the value above, keep the later of a duplicated key, quote an unclosed `[`/`{` or a `#`-leading title, insert a missing closing `---`, remove a `slug:` line that names another page, re-import a page from its file, re-bind a held rename to the old page's current revision. | Only with `--include-ambiguous`. |
+| `needs_review` | No rule fixes it (mis-indented YAML, a protected key such as `visibility`, an import that would keep page data the file does not carry, a file over 5 MB). | Never written. The preview names the exact manual fix. |
+
+Two passes: when interpretive candidates exist, the safe preview's
+`next_actions` carry both the safe apply and the `--include-ambiguous` preview.
+Review each interpretation in the full diff, then approve all of them or only
+some with `--only`/`--skip`; a file left out stays held and unchanged.
+
+Every change must leave a file that parses strictly and earns no hold. The
+hash binds the selected files, their exact before and after bytes, and the
+page each import would store (bound to the page revision). The apply derives
+each change again from the file as it is: a file, proposal or page that
+changed since the preview reports `changed_since_preview` and is not written.
+The apply refuses while an unfinished managed sync still names a selected file
+(`sync_in_progress`; finish it with `gbrain sync --source <id> --no-pull`).
+
+On a managed brain each file is one coordinated write (`managed_file_repair`):
+the exact approved bytes, the import, and the hold clear commit together, and
+the file is committed through the Git effect like any page write. On a legacy
+brain the apply backs each file up under `~/.gbrain/backups/frontmatter/`,
+writes it, imports it, clears its hold and prints the `git add`/`git commit`
+step. Per-file outcomes report `written`, `imported`, `hold_cleared` and
+`committed`. Repair stays explicit-only: `gbrain repair --all` and
+`gbrain doctor --remediate` never run it.
 
 ## Resume
 
