@@ -15,7 +15,7 @@
  * (the nested-marker case resolves).
  * Why new: test/persistence-physical-root.test.ts covers ownership claims over
  * stable trees; nothing raced the walk. The 20k-file CLI case in
- * test/large-brain-ceilings.serial.test.ts hit the race only by chance.
+ * test/large-brain-ceilings.test.ts hit the race only by chance.
  * Seam: none. The race is injected by wrapping node:fs (restored after each
  * test), the same listing-then-descent window git's gc opens.
  */

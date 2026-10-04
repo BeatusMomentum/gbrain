@@ -22,7 +22,7 @@
  *
  * Spawn-level on purpose: the defect is in what reaches the process's stdout,
  * which an in-process call of runImport cannot observe. Brain setup mirrors
- * test/reindex-frontmatter-pglite-spawn.serial.test.ts — PGLite via a written
+ * test/reindex-frontmatter-pglite-spawn.test.ts — PGLite via a written
  * config.json plus `init --migrate-only`, so no embedding provider is needed.
  * Serial because it spawns subprocesses and writes a tmpdir.
  */

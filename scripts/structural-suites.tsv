@@ -144,7 +144,7 @@ test/eval-brainbench-e2e.slow.test.ts	--llm availability gate	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	privacy guard violation branches (negative path)	1	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
 test/eval-brainbench-e2e.slow.test.ts	run-all once-per-sweep semantics (decision 16)	1	exec-scan
-test/eval-capture-db-plane.serial.test.ts	eval.capture set on the DB plane reaches the runtime gate (#1475)	9	source-surface-helper
+test/eval-capture-db-plane.test.ts	eval.capture set on the DB plane reaches the runtime gate (#1475)	9	source-surface-helper
 test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routing can’t regress silently)	2	readFileSync,source-surface-helper
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	source-surface-helper
 test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
@@ -294,9 +294,9 @@ test/shared-skills-init.serial.test.ts	real combined brain initialization	4	read
 test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
 test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync
-test/shared-skills-setup.serial.test.ts	packaged default skills	2	readFileSync
-test/shared-skills-setup.serial.test.ts	staged skill migration	7	readFileSync
-test/shared-skills-writer-boundary.serial.test.ts	(file-level)	7	readFileSync
+test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
+test/shared-skills-setup.test.ts	staged skill migration	7	readFileSync
+test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync

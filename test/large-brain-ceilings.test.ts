@@ -11,7 +11,7 @@
  * Fails when: the sync watchdog goes back to a plain wall-clock kill (the
  * child exits 143 after the 1 s deadline with files missing), or the managed
  * manifest grows with the file count again (`request_too_large`).
- * Why new: test/process-watchdog.serial.test.ts drives the watchdog through a
+ * Why new: test/process-watchdog-harness.test.ts drives the watchdog through a
  * harness and test/persistence-large-manifest.test.ts calls the lifecycle
  * function directly; neither runs the real CLI commands the operator runs.
  * Seam: none. Deadlines are shortened through the documented env knob, not by

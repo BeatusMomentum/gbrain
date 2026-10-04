@@ -136,7 +136,7 @@ jobs:
         run: |
           : "${DATABASE_URL:?Data-safety tests require the explicit test database}"
           bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts
-          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts
+          bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.test.ts
           bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts
           bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts
       - name: Require canonical reconciliation through direct and pooled PostgreSQL

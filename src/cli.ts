@@ -114,7 +114,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
  * answerable with no brain configured.
  *
  * Membership is behaviour, not taste: each entry is pinned by
- * test/cli-help-without-brain.serial.test.ts, which runs the CLI with an empty
+ * test/cli-help-without-brain.test.ts, which runs the CLI with an empty
  * GBRAIN_HOME and requires exit 0 plus real help output.
  */
 const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: never, args: string[]) => unknown>)> = {
@@ -1384,7 +1384,7 @@ const SELECTED_CONFIG_BY_ENGINE = new WeakMap<BrainEngine, GBrainConfig>();
 const MOUNT_ENGINES = new WeakSet<BrainEngine>();
 
 /**
- * @internal Exported for test/eval-capture-db-plane.serial.test.ts.
+ * @internal Exported for test/eval-capture-db-plane.test.ts.
  *
  * Publishing the merge is the whole point of the map — if the `set` in
  * connectEngine is ever dropped, makeContext silently falls back to
