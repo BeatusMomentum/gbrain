@@ -17,7 +17,8 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// Fixture root for scripts/guard-self-test.sh: argv[2] or GBRAIN_GUARD_ROOT.
+const ROOT = process.argv[2] ?? process.env.GBRAIN_GUARD_ROOT ?? new URL('..', import.meta.url).pathname;
 
 /** Reviewed: preparers that publish without the core guard, and why that is safe. */
 const EXEMPT = {

@@ -1,5 +1,18 @@
 # TODOS
 
+## Always-loaded core memory follow-ups (filed 2026-10-04)
+
+Context: `docs/guides/core-memory.md`, `docs/architecture/key-files/core-memory.md`.
+
+- [ ] **P2 — Codex hook lane for core.** **What:** deliver core through a Codex SessionStart hook instead of the static `$CODEX_HOME/AGENTS.md` block. **Why:** the static block goes stale until `compile-context --target codex-global` reruns. **Fix:** register the session-start hook for Codex in `bootstrap harness` (hooks.json plus the trust hash) once the hook path is verified on the current Codex release. **Effort:** M.
+- [ ] **P2 — Hermes memory-provider plugin.** **What:** a provider whose `system_prompt_block()` returns the core block and whose `on_pre_compress` saves with `remember` + `items`. **Why:** `.hermes.md` is static and Hermes has no pre-compaction save. **Effort:** M.
+- [ ] **P2 — Compiled-file auto-refresh.** **What:** refresh the files recorded in `~/.gbrain/compiled-core.json` when the core revision changes. **Why:** doctor names stale copies but nothing refreshes them. **Effort:** S.
+- [ ] **P3 — Agent-proposed core edits.** **What:** let an agent propose adding or removing a core page as a pending item the owner approves. **Why:** marking is owner-only today; the agent can only tell the user the command. **Effort:** M.
+- [ ] **P3 — PostToolUse pressure lane.** **What:** run the pressure check after tool calls too. **Why:** a long tool-heavy turn can cross the threshold and compact before the next prompt. **Effort:** S.
+- [ ] **P2 — Writer-version fence for core.** **What:** refuse `gbrain core add` while an older gbrain writer that lacks the core guard is still registered on the brain. **Why:** an old serve publishes remote edits to core pages without the budget or owner-only checks. **Fix:** record a `core_guard_v1` capability per writer registration and check it in `core add` and the `core_memory` doctor check. **Effort:** M.
+- [ ] **P3 — Per-turn context drops core slugs.** **What:** the per-turn context (hook `turn_context`, OpenClaw reflex) still volunteers core pages that are already in the session. **Fix:** pass the core slugs as already-delivered. **Effort:** S.
+- [ ] **P3 — Pressure notice record-after-write.** **What:** the once-per-segment state is written before the hook's stdout lands; a deadline-expired turn loses that segment's notice. **Fix:** commit the state after the write, like the session-start deferred records. **Effort:** S.
+
 ## Held files follow-ups (filed 2026-10-04, follow-up from v0.60.47.0)
 
 Context: `docs/guides/repair.md#held-files`, `docs/guides/write-refusals.md#held-files-and-content-refusals`.

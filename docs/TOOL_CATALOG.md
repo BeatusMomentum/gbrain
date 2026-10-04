@@ -138,12 +138,12 @@ Every non-localOnly operation on the MCP surface: 137 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `context_pack` | MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
+| `context_pack` | MEMORY VERB (v1): the always-loaded core block plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
 | `delta` | MEMORY VERB (v1): what changed since a time (pages, facts, thread events), zero LLM. | read | yes |  |
 | `entity` | MEMORY VERB (v1): one known person/company/project card, zero LLM. | read | yes |  |
 | `forget` | MEMORY VERB (v1): expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
 | `recall` | MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
-| `remember` | MEMORY VERB (v1): save one fact; provenance required. | write | yes |  |
+| `remember` | MEMORY VERB (v1): save one fact (or up to 20 with items); provenance required. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls, costs money] MEMORY VERB (v1): answer a broad question across pages with citations. | read | yes |  |
 
 ## ontology
