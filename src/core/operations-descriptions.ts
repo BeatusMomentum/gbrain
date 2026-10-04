@@ -49,7 +49,7 @@ export const LIST_PAGES_DESCRIPTION =
   "List pages with filters. For 'what's recent / what did I touch this week' use sort=updated_desc. Default 50 rows (remote max 100); a full page may be truncated: continue with updated_after + updated_after_slug from the last row.";
 
 export const QUERY_DESCRIPTION =
-  "Ranked hybrid search with multi-query expansion, for concept / synonym / landscape questions: expansion recovers synonym-phrased matches. Still top-K; return_unit returns whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no expansion LLM call). Personal questions: get_recent_salience, find_anomalies, get_recent_transcripts. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). fields: \"full\" adds diagnostics.";
+  "Ranked hybrid search with multi-query expansion, for concept / synonym / landscape questions: expansion recovers synonym-phrased matches. Still top-K; return_unit returns whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no expansion LLM call). Personal questions: get_recent_salience, find_anomalies; raw transcripts: `gbrain transcripts recent` on the brain host. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key, else keyword-only; expansion needs a chat-model key. fields: \"full\" adds diagnostics.";
 
 export const SEARCH_DESCRIPTION =
   "Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. Results are NOT proof of coverage: concepts or landscape, use `query`; exhaustive lists, list_pages. return_unit returns whole sections or conversations. Personal questions: get_recent_salience; saved facts: recall. fields: \"full\" adds diagnostics.";
@@ -71,7 +71,7 @@ export const FIND_CONTRADICTIONS_DESCRIPTION =
   "`gbrain eval suspected-contradictions` for that.";
 
 export const FIND_TRAJECTORY_DESCRIPTION =
-  "v0.35.4 — return the chronological claim trajectory for an entity (typed " +
+  "Return the chronological claim trajectory for an entity (typed " +
   "metric values over time, plus auto-detected regressions and narrative drift). " +
   "Use this when the user asks 'how has Acme's MRR trended', 'show me what " +
   "alice-example said about runway over time', 'is this founder consistent', " +
@@ -100,7 +100,7 @@ export const FIND_TRAJECTORY_DESCRIPTION =
 export const CODE_CALLERS_DESCRIPTION =
   "BEFORE editing any function, run code_callers with the symbol name to find " +
   "every caller (the people who'd be affected by your change). Returns direct " +
-  "callers from the v0.20+ tree-sitter call graph. Use during plan-mode to size " +
+  "callers from the tree-sitter call graph. Use during plan-mode to size " +
   "the change. Defaults to source-scoped; for multi-source brains pass source_id " +
   "or all_sources=true. " +
   "Returns: `{symbol, count, callers: [{from_symbol_qualified, to_symbol_qualified, edge_type, resolved}]}`. " +

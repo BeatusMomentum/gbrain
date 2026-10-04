@@ -60,6 +60,7 @@ const PROVENANCE_MAX = 500;
 
 const remember: Operation = {
   name: 'remember',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.',
   params: {
@@ -149,7 +150,13 @@ const remember: Operation = {
 
     const { submitRememberMutation } = await import('./persistence/memory-mutations.ts');
     const { runMemoryWrite } = await import('./persistence/verb-errors.ts');
-    return runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    const result = await runMemoryWrite(() => submitRememberMutation(ctx, { ...p, fact, provenance, kind, visibility }));
+    // F8: the explanation the CLI formatter prints, as a model-visible notice.
+    if ((result as { degraded_dedup?: boolean } | null)?.degraded_dedup) {
+      const { degradedDedupNotice } = await import('./interop-notices.ts');
+      ctx.emitNotice?.(degradedDedupNotice(ctx.config));
+    }
+    return result;
   },
   cliHints: { name: 'remember', positional: ['fact'] },
 };
@@ -158,6 +165,8 @@ const remember: Operation = {
 
 const entity: Operation = {
   name: 'entity',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: 'MEMORY VERB (v1): one known person/company/project card, zero LLM. A miss returns found:false with near matches and create_safety, so you do not duplicate a page. Facts: recall.',
   params: {
@@ -208,6 +217,8 @@ const SYNTHESIS_FAILURE_CODES: Record<string, string> = {
 
 const synthesize: Operation = {
   name: 'synthesize',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: '[EXPENSIVE / SLOW: LLM calls, costs money] MEMORY VERB (v1): answer a broad question across pages with citations. For lookups use recall or entity.',
   params: {
@@ -253,12 +264,16 @@ const synthesize: Operation = {
     // unconfigured key routed to the extractive fallback would be masked on
     // every call and never get fixed.
     if (result.warnings.includes('NO_ANTHROPIC_API_KEY')) {
-      throw verbError(
+      // F9: a key enables paid calls, so the fix asks; the key never rides a command line.
+      const { chatKeyFix } = await import('./interop-notices.ts');
+      const e = verbError(
         'unavailable',
         'synthesize needs an LLM and none is configured.',
-        'Set an API key (e.g. `gbrain config set anthropic_api_key sk-...` or ANTHROPIC_API_KEY) and retry. recall and entity work without one.',
+        'Ask the user whether to add a chat-model API key (Anthropic or OpenAI; each synthesized answer is a paid call). Meanwhile recall and entity work without one: answer from their results.',
         'chat gateway unconfigured (NO_ANTHROPIC_API_KEY)',
       );
+      e.fix = chatKeyFix();
+      throw e;
     }
 
     // Best-effort cost block [E5/m3]: actual tokens when the gateway reported
@@ -324,6 +339,7 @@ const synthesize: Operation = {
 
 const forget: Operation = {
   name: 'forget',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description: 'MEMORY VERB (v1): expire a remembered fact by its fact_id (never a page slug). Idempotent; the audit trail is kept.',
   params: {

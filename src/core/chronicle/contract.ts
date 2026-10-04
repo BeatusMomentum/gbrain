@@ -19,7 +19,8 @@
  *      trigger='backfill' (exempt from the daily limit and recency rule);
  *      the same phase executes them.
  */
-import { CHRONICLE_RUN_NOW_ARGV, type ChronicleAction, type ChronicleReasonCode } from './reasons.ts';
+import { CHRONICLE_RUN_NOW_ARGV, type ChronicleReasonCode } from './reasons.ts';
+import type { Action } from '../agent-output.ts';
 
 /** Bump to re-extract every page once (the ledger key includes it). */
 export const CHRONICLE_EXTRACTOR_VERSION = 1;
@@ -103,5 +104,5 @@ export interface ChronicleRunDetails {
   per_source: Record<string, { candidates: number; judged: number }>;
   next_command?: string;
   /** The reason table's fix when the phase could not run (no chat provider). */
-  fix?: ChronicleAction;
+  fix?: Action;
 }

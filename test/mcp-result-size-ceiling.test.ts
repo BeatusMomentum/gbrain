@@ -9,7 +9,7 @@
  * The fixture has no embedding key; the first test proves the keyword
  * fallback ran, so the bytes are deterministic. The measured text is every
  * content block an agent sees: content[0] plus the notice blocks (saved
- * facts, other names).
+ * facts, other names); the keyless degraded_recall notice has its own bound.
  *
  * Re-pin procedure (when a change grows the result on purpose): run
  * `PRINT_RESULT_SIZES=1 bun test test/mcp-result-size-ceiling.test.ts`,
@@ -26,6 +26,14 @@ import { withEnv } from './helpers/with-env.ts';
 
 /** ceil(measured x 1.05) on the fixture below. */
 const CEILINGS = { search: 2540, query: 2540 };
+/**
+ * The keyless fixture also gets the operator contract's degraded_recall
+ * notice (F3) on every HTTP call. It is bounded on its own so the ceilings
+ * above keep pinning rows and evidence blocks at their cost-wave size; a
+ * keyed brain (Cat 40) never sees it. 629 measured at v0.60.46.0, x 1.05.
+ */
+const DEGRADED_NOTICE_MAX_CHARS = 661;
+const isDegradedNotice = (text: string) => text.startsWith('[gbrain notice degraded_recall ');
 
 const PAGES: Array<[string, string, string]> = [
   ['crm/numbat-labs', 'CRM record: Numbat Labs', 'Account record. Account code: NULA. Segment: mid-market. Renewal owner: the platform team. Billing contact: Old Person.'],
@@ -55,7 +63,10 @@ async function visible(name: 'search' | 'query'): Promise<{ res: ToolResult; tex
   const args = name === 'query' ? { query: 'Numbat Labs billing contact renewal', expand: false } : { query: 'Numbat Labs billing contact renewal' };
   const res = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name, args, { remote: true, transport: 'http', sourceId: 'default' }));
   expect(res.isError).not.toBe(true);
-  return { res, text: res.content.map(c => c.text).join('\n') };
+  const degraded = res.content.filter(c => isDegradedNotice(c.text));
+  expect(degraded.length).toBe(1);
+  expect(degraded[0].text.length).toBeLessThanOrEqual(DEGRADED_NOTICE_MAX_CHARS);
+  return { res, text: res.content.filter(c => !isDegradedNotice(c.text)).map(c => c.text).join('\n') };
 }
 
 describe('canonical remote result size', () => {
@@ -87,7 +98,7 @@ describe('canonical remote result size', () => {
       const full = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name,
         { query: 'Numbat Labs billing contact renewal', ...(name === 'query' ? { expand: false } : {}), fields: 'full' },
         { remote: true, transport: 'http', sourceId: 'default' }));
-      expect(full.content.map(c => c.text).join('\n').length).toBeGreaterThan(CEILINGS[name]);
+      expect(full.content.filter(c => !isDegradedNotice(c.text)).map(c => c.text).join('\n').length).toBeGreaterThan(CEILINGS[name]);
     });
   }
 });

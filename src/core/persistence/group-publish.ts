@@ -61,7 +61,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       await declarePersistenceProtocol(tx);
       await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
       const live = await guardOwnership(tx, head, hostId);
-      if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.');
+      if (String(live?.owner_epoch) !== String(binding.owner_epoch)) throw new OperationError('owner_unavailable', 'Owner epoch changed before publication.', 'Inspect the source owner with gbrain sources writer status; do not claim or transfer the source to push this write.');
       await tx.lockPageKeys(rows.flatMap((row, i) => [{ sourceId: row.source_id, slug: row.slug }, ...(prepared[i]!.additionalPageKeys ?? [])]));
       const outcomes: Record<string, unknown>[] = [];
       // One coordinated write for the group; each member is the attributed actor of what it writes.
@@ -70,9 +70,9 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
           const row = rows[i]!, member = prepared[i]!;
           await authorizeStoredRequest(tx, row, true);
           const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-          if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.');
+          if ((snapshot?.page.id ?? null) !== row.page_id) throw new OperationError('page_identity_changed', 'The accepted page was deleted or recreated.', 'Read the page again and submit a new intent with a new request_id.');
           await assertUnboundPublication(tx, row, snapshot?.page.source_path);
-          if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.');
+          if ((snapshot?.revision ?? null) !== member.observedRevision) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
           await member.validate?.(tx);
           await setMemberAttribution(tx, requestAttribution(row));
           const outcome = await member.apply(tx);
@@ -90,7 +90,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
       const done: WriteRequest[] = [];
       for (let i = 0; i < rows.length; i++) {
         const locked = byId.get(rows[i]!.id);
-        if (!locked || locked.execution_token !== rows[i]!.execution_token || locked.state !== 'running') throw new OperationError('write_claim_lost', 'Execution claim changed before publication.');
+        if (!locked || locked.execution_token !== rows[i]!.execution_token || locked.state !== 'running') throw new OperationError('write_claim_lost', 'Execution claim changed before publication.', 'Another worker holds the request; inspect it rather than resubmitting.');
         done.push(await completeWrite(tx, locked, 'committed', outcomes[i]!, undefined, locked));
       }
       return done;

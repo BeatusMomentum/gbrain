@@ -35,8 +35,9 @@ import { probeProjectionReadiness } from '../search/projection-readiness.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
-import { OperationError } from './contract.ts';
+import { opError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
+import { invalidParam, paramUse } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   federatedSearchScope,
@@ -463,7 +464,7 @@ async function buildRetrievalResponseMeta(
  * → both engines' keyword/title/vector legs) has existed since v0.33
  * (whoknows); this just exposes it on the public search/query ops.
  */
-function normalizeTypesParam(raw: unknown): string[] | undefined {
+function normalizeTypesParam(ctx: OperationContext, tool: 'search' | 'query', raw: unknown): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   // #5390: a structurally empty array, an empty string or a whitespace-only
   // string is treated as absent, not as a request for an impossible filter.
@@ -475,18 +476,14 @@ function normalizeTypesParam(raw: unknown): string[] | undefined {
     : typeof raw === 'string'
       ? raw.split(',')
       : null;
+  const example = ctx.remote === false ? 'person,company' : ['person', 'company'];
   if (arr === null || arr.some((t) => typeof t !== 'string')) {
-    throw new OperationError(
-      'invalid_params',
-      '`types` must be an array of page-type strings (CLI: --types person,company).',
-    );
+    throw invalidParam(ctx, tool, 'types', `\`types\` must be an array of page-type strings (e.g. ${paramUse(ctx, 'types', example)}).`, { example });
   }
   const types = [...new Set((arr as string[]).map((t) => t.trim()).filter(Boolean))];
   if (types.length === 0) {
-    throw new OperationError(
-      'invalid_params',
-      '`types` was provided but contained no usable page-type strings (CLI: --types person,company).',
-    );
+    throw invalidParam(ctx, tool, 'types',
+      `\`types\` was provided but contained no usable page-type strings (e.g. ${paramUse(ctx, 'types', example)}).`, { example });
   }
   return types;
 }
@@ -523,6 +520,7 @@ async function resolveSnippetCap(ctx: OperationContext, p: Record<string, unknow
 
 const search: Operation = {
   name: 'search',
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: SEARCH_DESCRIPTION,
   params: {
@@ -555,7 +553,7 @@ const search: Operation = {
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
     // #3985: validated multi-type filter, threaded into both branches below.
-    let types = normalizeTypesParam(p.types);
+    let types = normalizeTypesParam(ctx, 'search', p.types);
     // #3800: snippet cap (param > subagent config default > full text).
     const snippetCap = await resolveSnippetCap(ctx, p);
     const plan = await evidencePlanFor(ctx, p, snippetCap, 'search');
@@ -577,7 +575,7 @@ const search: Operation = {
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
     // mode → loud reject; remote + mode set → silently ignored (uses config).
-    const perCallMode = resolvePerCallMode(ctx, p.mode);
+    const perCallMode = resolvePerCallMode(ctx, p.mode, 'search');
 
     // T4/D17 — escape hatch: keyword-only when the operator opts out of the
     // hybrid `search` contract (privacy/cost: no query text to an embedding
@@ -648,6 +646,7 @@ const search: Operation = {
 
 const query: Operation = {
   name: 'query',
+  idempotent: true,
   outputRedaction: 'retrieval',
   description: QUERY_DESCRIPTION,
   params: {
@@ -716,7 +715,7 @@ const query: Operation = {
     const queryText = p.query as string | undefined;
     // #3985: validated multi-type filter (text path; the image-similarity
     // branch below also honors it — searchVector filters types at SQL level).
-    let types = normalizeTypesParam(p.types);
+    let types = normalizeTypesParam(ctx, 'query', p.types);
     // #3800: snippet cap (param > subagent config default > full text).
     const snippetCap = await resolveSnippetCap(ctx, p);
     const plan = await evidencePlanFor(ctx, p, snippetCap, 'query');
@@ -742,9 +741,8 @@ const query: Operation = {
     // searchVector branch and the text hybrid path below).
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
-    // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
-    // text-only); embeds the image via embedMultimodal and runs a direct
-    // vector search against the embedding_image column.
+    // Image-similarity branch: bypasses the text-only hybridSearch, embeds the
+    // image via embedMultimodal and searches the embedding_image column.
     if (imageData) {
       const dates = resolveSearchDateBounds({
         since: typeof p.since === 'string' ? p.since : undefined,
@@ -795,10 +793,12 @@ const query: Operation = {
     if (!queryText) {
       // WP3: typed envelope — a caller mistake must classify as invalid_params
       // over MCP, not the internal_error a plain throw produced.
-      throw new OperationError(
+      throw opError(
         'invalid_params',
         'query requires either `query` (text) or `image` (base64 bytes).',
-        'Pass `query` with your search text (e.g. {"query": "acme-example roadmap"}), or `image` with base64 image bytes.',
+        ctx.remote === false
+          ? `Pass the search text as the positional argument (e.g. gbrain query "acme-example roadmap"), or ${paramUse(ctx, 'image', 'photo.png')}.`
+          : 'Pass `query` with your search text (e.g. {"query": "acme-example roadmap"}), or `image` with base64 image bytes.',
       );
     }
 
@@ -1053,6 +1053,7 @@ const query: Operation = {
  */
 const assemble_evidence: Operation = {
   name: 'assemble_evidence',
+  idempotent: true,
   outputRedaction: 'retrieval',
   description:
     'Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): ' +
@@ -1072,8 +1073,8 @@ const assemble_evidence: Operation = {
     if (!Array.isArray(hits) || hits.some(h => typeof h !== 'object' || h === null
       || typeof (h as Record<string, unknown>).source_id !== 'string' || typeof (h as Record<string, unknown>).slug !== 'string'
       || !Number.isInteger((h as Record<string, unknown>).chunk_id))) {
-      throw new OperationError('invalid_params', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
-        'Example: {"hits": [{"source_id": "default", "slug": "chat/session-0412", "chunk_id": 8812}], "return_unit": "page"}');
+      throw opError('invalid_params', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
+        'Pass the source_id, slug and chunk_id of each search hit. Example: {"hits": [{"source_id": "default", "slug": "chat/session-0412", "chunk_id": 8812}], "return_unit": "page"}');
     }
     const scope = federatedSearchScope(ctx);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
@@ -1102,6 +1103,8 @@ const assemble_evidence: Operation = {
 
 const search_stats: Operation = {
   name: 'search_stats',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Search observability over a window: cache hit rate, intent/mode mix, budget drops, ' +
@@ -1143,6 +1146,7 @@ const search_stats: Operation = {
 
 const search_modes: Operation = {
   name: 'search_modes',
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with ' +
@@ -1166,6 +1170,8 @@ const search_modes: Operation = {
 
 const search_tune: Operation = {
   name: 'search_tune',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Read-only tuning recommendations derived from the last 7 days of search telemetry: ' +
@@ -1185,6 +1191,8 @@ const search_tune: Operation = {
 
 const cache_stats: Operation = {
   name: 'cache_stats',
+  mutating: false,
+  idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
     'Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) ' +

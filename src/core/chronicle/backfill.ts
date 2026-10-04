@@ -152,6 +152,6 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
   result.message = result.queued === 0
     ? `Nothing queued: ${result.eligible} eligible page(s), ${result.already_done} already extracted or queued.`
     : `Queued ${result.queued} page(s). ${cost}. They run in the next cycle (at most 50 per run); to run now: ${RUN_NOW_COMMAND}` +
-      (result.limit_reached ? `. More pages remain: rerun gbrain chronicle-backfill ${flags} --yes after these finish.` : '.');
+      (result.limit_reached ? `. More pages remain; each batch is paid, so ask the user before the next one (preview: gbrain chronicle-backfill ${flags} --dry-run).` : '.');
   return result;
 }

@@ -318,7 +318,7 @@ export function drainNext(result: SyncResult, resumeCommand: string, sourceId: s
   if (d?.stop_reason === 'database_contention') {
     const wait = result.writeWait?.status === 'read_failed' ? result.writeWait : null;
     return { command: resumeCommand, safe_to_loop: false, retry_after_ms: 0, ...estimate,
-      why: `The drain could not read its write's state from the database${wait ? ` (${wait.reason}: ${wait.remediation})` : ''}. The accepted write keeps its request ID. Fix database access, then rerun.`,
+      why: `The drain could not read its write's state from the database${wait ? ` (${wait.reason}: ${wait.why})` : ''}. The accepted write keeps its request ID. Fix database access, then rerun.`,
       ...(docs ? { docs } : {}) };
   }
   const writerBlocked = d?.stop_reason && d.stop_reason !== 'blocked_by_failures' && d.stop_reason !== 'deadline';
