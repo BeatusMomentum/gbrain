@@ -64,7 +64,8 @@ Options:
 Any other option is refused. There is no --max-usd here: to cap paid embedding
 work, preview gbrain doctor --remediation-plan --json and, after the user agrees, run
 gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>.
-With no kind, previews every kind. Run it on the brain host.`;
+With no kind, previews every kind. Run it on the brain host.
+Held files (two-pass frontmatter repair with real output): docs/guides/repair.md#held-files.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--diff', '--yes']);
 const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip']);

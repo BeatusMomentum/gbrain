@@ -1936,7 +1936,10 @@ Subcommands:
   restore <id> [--no-federate]      Un-archive a soft-deleted source.
   status [<id>] [--json]            v0.40.3.0 — read-only per-source dashboard:
                                     last sync, staleness, page count,
-                                    embedding coverage, unacked failures, held files.
+                                    embedding coverage, unacked failures, held files
+                                    (each Git hold with its code, line, key and
+                                    next command; recent blocked-cursor conversions).
+                                    <id> filters to that source.
                                     --json emits {schema_version:1, ...} on
                                     stdout for monitoring pipelines.
   archived [--json]                 List soft-deleted sources and their expiry.
@@ -1979,6 +1982,8 @@ Subcommands:
                                     default_source_local_path check.
   retry-held <id> [--dry-run] [--json]
                                     Re-attempt a connector source's held items, or re-screen a Git source's held files, on its next sync.
+                                    Runs nothing now. Most Git holds re-screen by themselves (file changed or
+                                    deleted, newer gbrain); fix the files with gbrain repair frontmatter --source <id>.
   set-path <id> --clear             Clear a connector source's (google, github)
                                     stale local_path; takes no path.
   webhook <set|show|rotate|clear> <id> [options]

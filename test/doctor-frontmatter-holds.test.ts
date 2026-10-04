@@ -19,7 +19,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
+import { gitHoldDocs, readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
+import { CODES } from '../src/core/error-registry.ts';
 import type { SyncOpts } from '../src/commands/sync.ts';
 import { gitHeldFilesCheck } from '../src/commands/doctor/checks/git-holds.ts';
 import { frontmatterRepairableCheck, frontmatterRepairableFromReport } from '../src/commands/doctor/checks/frontmatter-repairable.ts';
@@ -96,6 +97,19 @@ test('the frontmatter kind owns both findings and both are host-only repair find
     expect(repairForCheck(id)).toMatchObject({ kind: 'frontmatter', explicit_only: true });
   }
   expect(WAVE_CHECKS.find(s => s.id === 'frontmatter_hook')).toMatchObject({ resolution: 'operator' });
+});
+
+test('every docs anchor a hold can name exists in write-refusals.md', () => {
+  const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'write-refusals.md'), 'utf8');
+  const anchors: string[] = [];
+  for (const code of ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'rename_held', 'parser_regression'] as const) {
+    anchors.push(gitHoldDocs(code));
+    for (const reason of (CODES[code] as { reasons?: readonly string[] }).reasons ?? []) anchors.push(gitHoldDocs(code, reason as never));
+  }
+  expect(anchors).toContain('docs/guides/write-refusals.md#invalid_frontmatter-ambiguous_protected_key');
+  for (const anchor of [...anchors, 'docs/guides/write-refusals.md#sync_parser_regression', 'docs/guides/write-refusals.md#changed_since_preview']) {
+    expect(guide).toContain(`<a id="${anchor.split('#')[1]}"></a>`);
+  }
 });
 
 test('a clean brain has no held, repairable or hook finding', () => each(async engine => {

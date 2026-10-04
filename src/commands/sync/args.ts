@@ -18,6 +18,15 @@ export function printSyncHelp(): void {
 
 Sync the brain repo's text content into the engine, then embed.
 
+A file whose content refuses deterministically (frontmatter gbrain cannot
+read without guessing, a conflicting frontmatter slug, over-size, or a
+content_sanity reject) is held: the rest of the source imports, the
+checkpoint advances, and each hold prints its code, line, key and next
+command. Inspect holds with 'gbrain sources status <id>'; preview the fix
+with 'gbrain repair frontmatter --source <id>'. A source a file blocked
+before this release recovers on its next sync ('--no-pull' on a managed
+brain). 'gbrain config set sync.holds fail' restores fail-closed blocking.
+
 Options:
   --no-embed           Skip the embed step. Use this when the embed
                        provider is misconfigured or you want to defer
@@ -62,10 +71,16 @@ Options:
                        Caution: imports untracked files as-is — unignored
                        scratch files and secrets included; review 'git status'
                        before enabling, especially as persisted config.
-  --dry-run            Show what would be synced without writing.
-  --skip-failed        Acknowledge previously-recorded sync failures so
-                       the bookmark can advance past unparseable files.
+  --dry-run            Show what would be synced without writing; lists
+                       every file the content screen would hold (would_hold)
+                       and screen errors separately (screen_skipped).
+  --skip-failed        Legacy sync only: acknowledge previously-recorded
+                       sync failures so the bookmark can advance. Held files
+                       never need it; managed sync refuses it.
   --retry-failed       Re-attempt previously-failed files; clear on success.
+                       Not needed for held files, which re-screen on the next
+                       sync when they change (or with 'gbrain sources
+                       retry-held <id>').
   --reset-checkpoint   Connector source only: re-walk its window once from an empty
                        checkpoint; unchanged pages are not admitted again.
   --watch              Re-sync continuously on an interval.
@@ -113,6 +128,9 @@ Options:
 See also:
   gbrain embed --stale    Re-embed all stale chunks (post --no-embed).
   gbrain doctor           Diagnose dim mismatches and other sync issues.
+  gbrain sources status <id>              Held files with their next command.
+  gbrain repair frontmatter --source <id> Preview the fix for held files.
+  docs/guides/repair.md#held-files        Walkthrough.
 `);
 }
 
