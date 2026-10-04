@@ -14,9 +14,9 @@
  * sentence that happens to contain a link never invents a relation type.
  *
  * Guards keep transcripts, task lists and citations out: a category is one
- * token that starts with a letter (so `[00:00:11]`, `[2024-01-01]`,
- * `[Source: x]`, `[^1]` and `[ ]` never match), `[x]`/`[X]` task markers and a
- * small stoplist are refused, and lines inside code, blockquotes, HTML
+ * token of letters, `_` and `-` (so `[00:00:11]`, `[2024-01-01]`, `[Source: x]`,
+ * `[^1]`, `[ ]` and ids like `[D4]` never match), all-caps markers like
+ * `[TODO]`, `[x]`/`[X]` task markers and a small stoplist are refused, and lines inside code, blockquotes, HTML
  * comments, the Facts/Takes fences and machine-written sections (Timeline,
  * See also, Related, Sources, ...) are never read.
  *
@@ -78,7 +78,8 @@ export interface LineGrammarResult {
 }
 
 const FACT_KINDS = new Set(['event', 'preference', 'commitment', 'belief', 'fact', 'idea']);
-const CATEGORY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+// Letters, `_` and `-` only: digits mark ids and codes (`[D4]`, `[ENG-1]`, `[Q3]`), not categories.
+const CATEGORY_RE = /^[A-Za-z][A-Za-z_-]{0,31}$/;
 const TYPE_TOKEN_RE = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 const CATEGORY_STOPLIST = new Set(['x', 'todo', 'done', 'wip']);
 const TYPE_STOPLIST = new Set(['see', 'also', 'cf', 'via', 'and', 'or', 'with', 'from', 're', 'by', 'to', 'per', 'and/or']);
@@ -229,7 +230,8 @@ function parseFactContent(content: string, note: (reason: GrammarReason, message
   if (!m) return null;
   const category = m[1].trim();
   if (!CATEGORY_RE.test(category)) return null;
-  if (CATEGORY_STOPLIST.has(category.toLowerCase())) return null;
+  // An all-caps token is a marker or acronym (`[TODO]`, `[WIP]`, `[NB]`), not a category.
+  if (CATEGORY_STOPLIST.has(category.toLowerCase()) || (category.length > 1 && category === category.toUpperCase()) || /^[A-Z]{2,}[-_]/.test(category)) return null;
   let rest = m[2].trim();
   let effective: EffectiveRange | null = null;
   const q = parseEffectiveQualifier(rest);

@@ -50,6 +50,10 @@ describe('fact lines', () => {
       '- [two words] not a category',
       '- [todo] call bob',
       '- [WIP] draft',
+      '- [D4] decision id',
+      '- [ENG-1] review finding',
+      '- [Q3] quarter',
+      '- [NOTE] marker',
     ]) expect(facts(line)).toEqual([]);
   });
 
