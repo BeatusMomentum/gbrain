@@ -47,9 +47,9 @@ const get_ingest_log: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'List recent ingestion events (what was imported, from where, which pages changed). Use when checking whether a source was already ingested. Needs read scope.',
+  description: 'Recent ingestion log entries. Use when checking what was already imported.',
   params: {
-    limit: { type: 'number', description: 'Max entries (default 20)' },
+    limit: { type: 'number', description: 'Default 20.' },
   },
   handler: async (ctx, p) => {
     // Source-scope the log for remote callers (scalar grant → single-element

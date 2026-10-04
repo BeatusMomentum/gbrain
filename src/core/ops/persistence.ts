@@ -128,14 +128,14 @@ function requiredRequestId(value: unknown): string {
   return id;
 }
 
-const requestParam = { type: 'string' as const, required: true, description: 'The original request UUID. Only this principal’s currently authorized requests are accessible.' };
+const requestParam = { type: 'string' as const, required: true, description: 'The UUID you sent with the write.' };
 
 export const persistenceOperations: Operation[] = [
   {
     name: 'get_write_request',
     idempotent: true,
     outputRedaction: 'no_stored_text',
-    description: 'Read your durable write receipt by request_id. Requires write scope and this operation in the current grant. Foreign, missing, and no-longer-accessible requests return the same not_found error; private journal input and recovery bytes are never returned.',
+    description: 'Read the receipt of your write by request_id (after write_pending or a lost reply).',
     params: { request_id: requestParam },
     scope: 'write', mutating: false, area: 'pages',
     cliHints: { name: 'write-request', positional: ['request_id'] },
@@ -152,11 +152,11 @@ export const persistenceOperations: Operation[] = [
     name: 'list_write_requests',
     idempotent: true,
     outputRedaction: 'no_stored_text',
-    description: 'List your currently authorized write receipts in one source, newest first. Useful when an acknowledgment was lost. Results and pagination exclude other principals and inaccessible targets; no private payloads or cross-principal queue counts are exposed.',
+    description: 'List your write receipts in one source, newest first. Use when a request_id was lost.',
     params: {
-      source_id: { type: 'string', description: 'Source to inspect. Defaults to the caller’s resolved source.' },
-      limit: { type: 'number', default: 25, description: 'Number of visible receipts, 1–100. Default 25.' },
-      before: { type: 'string', description: 'Opaque next cursor from the previous response.' },
+      source_id: { type: 'string', description: 'Default: yours.' },
+      limit: { type: 'number', default: 25, description: '1-100 (default 25).' },
+      before: { type: 'string', description: 'next cursor from the previous page.' },
     },
     scope: 'write', mutating: false, area: 'pages',
     cliHints: { name: 'write-requests' },
@@ -185,7 +185,7 @@ export const persistenceOperations: Operation[] = [
     name: 'cancel_write_request',
     idempotent: true,
     outputRedaction: 'no_stored_text',
-    description: 'Cancel your accepted write before publication starts. Returns the actual receipt: running/recovering or already-terminal requests may remain unchanged. Cancellation cannot undo published bytes or a committed fact withdrawal.',
+    description: 'Cancel your accepted write before it publishes. Returns the actual receipt.',
     params: { request_id: requestParam },
     scope: 'write', mutating: true, area: 'pages',
     cliHints: { name: 'cancel-write-request', positional: ['request_id'] },

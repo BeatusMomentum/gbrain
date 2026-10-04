@@ -11,18 +11,18 @@ const edit_page: Operation = {
   name: 'edit_page',
   idempotent: true,
   outputRedaction: { exempt: "the diff is the caller's own authorized view of the page it just edited (the get_page boundary), secret-redacted when created because the receipt retains it" },
-  description: 'Change part of an existing page without resending it: prefer this over put_page for small changes to large pages. Read get_page with include_content:true and pass its revision as expected_revision. Each edit replaces old_text with new_text; edits apply in order, each to the text the previous edit produced, and each old_text must match exactly once in that content. Protected takes and facts sections never match (use the takes_* operations or remember/forget). All edits publish together or none do, through the same receipts, fences and write-through as put_page. Returns the new revision and a unified diff of your view (at most 8 KB). Refusals name the edit: edit_no_match, edit_ambiguous_match (with match_count), edit_protected_span, edit_invalid; a stale revision returns revision_conflict with current_revision. Retain request_id and repeat identical arguments after a pending receipt.',
+  description: 'Change part of a page: prefer this over put_page for small changes. expected_revision is the revision from get_page include_content:true. Each old_text must match exactly once; edits apply in order, all or none. Stale revision: revision_conflict.',
   params: {
-    slug: { type: 'string', required: true, description: 'Slug of the existing page to edit.' },
-    expected_revision: { type: 'string', required: true, description: 'The `revision` from get_page include_content:true. The edit is refused if the page changed since.' },
+    slug: { type: 'string', description: 'Page slug.', required: true },
+    expected_revision: { type: 'string', required: true, description: 'revision from get_page include_content:true.' },
     edits: {
       type: 'array', required: true,
-      description: `1 to ${EDIT_PAGE_MAX_EDITS} replacements, applied in order and all or nothing.`,
+      description: `1 to ${EDIT_PAGE_MAX_EDITS} {old_text, new_text} replacements.`,
       items: {
         type: 'object',
         properties: {
-          old_text: { type: 'string', required: true, description: 'Exact existing text (including whitespace) to replace; must occur exactly once in the current content.' },
-          new_text: { type: 'string', required: true, description: 'Replacement text; empty deletes old_text.' },
+          old_text: { type: 'string', required: true, description: 'Exact text to replace (must occur once).' },
+          new_text: { type: 'string', required: true, description: 'Replacement; empty deletes.' },
         },
       },
     },

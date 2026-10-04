@@ -33,14 +33,7 @@ const whoami: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description:
-    'Introspect the calling identity. Returns one of three transport shapes: ' +
-    '{transport: "oauth", client_id, client_name, scopes, expires_at, source_id, federated_read}, ' +
-    '{transport: "legacy", token_name, scopes, expires_at: null}, or ' +
-    '{transport: "local", scopes: []}, or {transport: "stdio", scopes: []} ' +
-    'for the auth-less stdio MCP pipe. Throws unknown_transport when the ' +
-    'context is ambiguous (remote=true without auth and no transport marker) ' +
-    '(fail-closed). Every shape also carries `readiness` (the setup gaps of this install, each with its fix); stdio scopes are the grant of the verified registration.',
+  description: 'Your identity: transport, scopes and, over OAuth, client, source_id and federated_read.',
   params: {},
   scope: 'read',
   handler: async (ctx) => {

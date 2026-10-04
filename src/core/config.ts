@@ -551,6 +551,8 @@ export interface GBrainConfig {
      * over this file slot. Always bounded by the server ceiling (D2).
      */
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
+    /** Search/query row shape for remote MCP callers: 'lean' (default) | 'full'. Dual-plane, DB > file. */
+    result_rows?: 'lean' | 'full';
   };
 }
 
@@ -1532,6 +1534,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // WP3 — unknown tool-call argument posture ('warn' default | 'reject').
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',
+  'mcp.result_rows', // C1 row shape, read dual-plane by src/mcp/result-rows.ts
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)

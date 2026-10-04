@@ -118,11 +118,7 @@ const request_tools: Operation = {
   name: 'request_tools',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description:
-    'Discover this brain\'s tool catalog and optionally unlock a wider tool surface for your client. ' +
-    'No arguments → the catalog visible to YOUR credentials, grouped by area (tool names + one-line summaries). ' +
-    '{tools: ["name", ...]} → full read-only schemas for the visible subset of those names (unknown/hidden names are silently omitted). ' +
-    '{surface: "verbs"|"starter"|"full"} → persist that tool surface for this client (bounded by the server ceiling; denied when an operator pinned the surface; ~5 changes/hour), then re-issue tools/list to see the new catalog.',
+  description: 'More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} persists a wider surface for your OAuth client.',
   area: 'discovery',
   // FOV-4: callable by read OR agent scope — discovery for every token class.
   agentCallable: true,
@@ -130,12 +126,12 @@ const request_tools: Operation = {
     tools: {
       type: 'array',
       items: { type: 'string', description: 'A tool name from the catalog.' },
-      description: 'Fetch full read-only tool schemas for these names. Names outside your visible surface are silently omitted (D5).',
+      description: 'Tool names to fetch schemas for.',
     },
     surface: {
       type: 'string',
       enum: ['verbs', 'starter', 'full'],
-      description: 'Persist this tool surface for your client. Must not exceed the server ceiling; ignored surfaces stay available via no-arg discovery. Takes effect on your next tools/list.',
+      description: 'Surface to persist for your client.',
     },
   },
   scope: 'read',

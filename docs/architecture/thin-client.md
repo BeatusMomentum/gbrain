@@ -35,6 +35,14 @@ connectors) request exactly the hinted scope and never step up after an
 Discovery excludes `agent`, which DCR cannot grant, while explicit DCR requests
 for delegation remain rejected.
 
+**Result rows:** the thin client sends `X-Gbrain-Client: gbrain-remote-cli/<version>`
+on every request, so hosts serve it full `search`/`query` rows (renderers and
+`--explain` read the ranking diagnostics) while other remote callers get lean
+rows. It never sends `fields`, so `mcp.strict_params=reject` hosts of any
+version accept its calls. The header is unverified and selects a row shape
+only; CLIs that predate it get lean rows unless the host sets
+`mcp.result_rows: full`.
+
 Keep general-purpose thin-client OAuth rows at `full` (or NULL). Native MCP
 configurations can deliberately use starter/verbs to expose fewer tools. Stdio
 serves the server-resolved surface directly, without a client row; per-client
