@@ -72,13 +72,14 @@ const speakerObjectRegex = new RegExp(
 /**
  * Bold labels that open meeting-note metadata lines (`**Date:** …`), never a
  * speaker turn. bold-name-no-time rejects a label that is exactly one of
- * these (case-insensitive).
+ * these (case-insensitive). Labels that double as speaker roles in interview
+ * and panel transcripts (Host, Guest, Facilitator) are deliberately absent.
  */
 export const METADATA_LABELS: readonly string[] = [
-  'attendees?', 'participants?', 'present', 'absent', 'invitees?', 'guests?',
+  'attendees?', 'participants?', 'present', 'absent', 'invitees?',
   'date', 'time', 'when', 'where', 'location', 'venue', 'duration',
   'summary', 'agenda', 'notes?', 'subject', 'title', 'topics?', 'purpose',
-  'organi[sz]er', 'host', 'facilitator', 'recording', 'transcript', 'meeting',
+  'organi[sz]er', 'recording', 'transcript', 'meeting',
   'action items?', 'next steps?', 'decisions?', 'key points?', 'takeaways?', 'outcomes?',
   'status', 'owner', 'tags?', 'links?', 'source', 'type', 'context', 'background',
 ];

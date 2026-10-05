@@ -84,6 +84,17 @@ describe('parser', () => {
     expect(r.messages.map((m) => m.speaker)).toEqual(['Alice Example', 'Bob Example', 'Alice Example']);
   });
 
+  test('speaker-role labels (Host, Guest, Facilitator) stay speakers', () => {
+    const interview = [
+      '**Host:** Welcome to the show.', '**Guest:** Thanks for having me.',
+      '**Host:** What are you building?', '**Guest:** A planning tool for small teams.',
+      '**Facilitator:** One last question.', '**Guest:** Happy to answer.',
+    ].join('\n');
+    const r = parseConversation(interview, { fallbackDate: '2026-09-01' });
+    expect(r.messages.map((m) => m.speaker)).toEqual(['Host', 'Guest', 'Host', 'Guest', 'Facilitator', 'Guest']);
+    expect(looksLikeMeetingNotes(interview)).toBe(false);
+  });
+
   test('looksLikeMeetingNotes recognizes metadata labels and attendee sections only', () => {
     expect(looksLikeMeetingNotes(PROSE_MEETING)).toBe(true);
     expect(looksLikeMeetingNotes('# Event\n\n## Attendees\n\n- alice@example.com')).toBe(true);
