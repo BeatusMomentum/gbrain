@@ -5731,6 +5731,7 @@
           "default?: unknown",
           "description?: string | undefined",
           "enum?: string[] | undefined",
+          "fullSurfaceOnly?: boolean | undefined",
           "items?: ParamDef | undefined",
           "properties?: Record<string, ParamDef> | undefined",
           "required?: boolean | undefined",

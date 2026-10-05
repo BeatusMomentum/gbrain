@@ -12,7 +12,8 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { operationsByName, type AuthInfo, type OperationContext } from '../src/core/operations.ts';
+import { operations, operationsByName, type AuthInfo, type OperationContext } from '../src/core/operations.ts';
+import { filterOpsForSurface } from '../src/mcp/surface.ts';
 import { dispatchToolCall, type DispatchOpts } from '../src/mcp/dispatch.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import { buildRelationalArm } from '../src/core/search/relational-recall.ts';
@@ -104,6 +105,13 @@ describe('traverse_graph hops', () => {
     const later = await runLocal({ slug: 'people/alice-example', hops: [HOPS[0], { link_type: 'advises', toward: 'subject' }] }, notices);
     expect(later.diagnostics).toMatchObject({ status: 'empty_hop', empty_hop: 2 });
     expect(notices.pop()).toMatchObject({ fix: { mcp: { tool: 'traverse_graph', arguments: { hops: [HOPS[0]] } } } });
+  });
+
+  test('hops is advertised on the full surface only; the starter list stays inside its budget', () => {
+    const on = (surface: 'full' | 'starter') => filterOpsForSurface(operations, surface).find(o => o.name === 'traverse_graph')!.params;
+    expect(on('full')).toHaveProperty('hops');
+    expect(on('starter')).not.toHaveProperty('hops');
+    expect(on('starter')).toHaveProperty('depth');
   });
 
   test('without hops the op keeps its existing shape', async () => {

@@ -519,6 +519,7 @@ const traverse_graph: Operation = {
       type: 'array',
       description: '≤3 typed hops, e.g. [{"link_type":"founded","toward":"subject"}]; toward: object|subject.',
       items: { type: 'object', properties: { link_type: { type: 'string' }, toward: { type: 'string' } } },
+      fullSurfaceOnly: true,
     },
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
