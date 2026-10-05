@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.54.0] - 2026-10-04
+## [0.60.59.0] - 2026-10-05
 
 **An agent connected to a remote brain can now save a stack of long pages in under a minute, and gbrain tells it how.**
 
@@ -28,7 +28,7 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 | SQL statements on one page's publish path | 135 | 107 |
 | Backlinks between the pages you just wrote | about 30 manual `add_link` calls | built automatically after the commit |
 
-## To take advantage of v0.60.54.0
+## To take advantage of v0.60.59.0
 
 `gbrain upgrade` should do this automatically. Remote agents pick up the new instructions the next time they connect.
 
@@ -66,6 +66,99 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 ### For contributors
 - New e2e coverage: Postgres statement budgets per write phase, two-connection page-guard tests, grouped `put_page` publication (happy path and per-member failure), and the remote links effect on both engines.
 - The initialize-instructions and served-schema budgets grew for the write guidance; a new test pins the prompt-critical lines inside the first 2,048 characters.
+## [0.60.57.0] - 2026-10-05
+
+**gbrain now knows when a relationship was true: a person who left a company stops showing up as working there, "where did Alice work in 2022" answers from dated evidence, and a nightly check closes jobs that cannot both still hold.**
+
+Before this release every typed link was forever. A timeline line saying someone left Acme changed nothing, so "who works at Acme" kept listing former employees and an entity card kept calling them CTO. Now each relationship carries dated stints built from the notes themselves, with no model call on the write path: timeline lines ("Left [Acme] to join [Widget]"), an explicit `Ended works_at [[companies/acme]]` line, frontmatter `since`/`until`, and `add_link` dates. Graph reads return what is true today, and history is one parameter away. On held-out data written by someone other than the implementer, current-employer precision went from 0.38 to 0.94 with no loss of recall and no false closures.
+
+### The numbers that matter
+
+Held-out runs by the evaluation custodian on a phrasing set the implementation never saw (seeds 11, 13, 17):
+
+| What we measured | Before | Now |
+| --- | --- | --- |
+| "Who works at C now": precision of the people returned | 0.376 | 0.943 |
+| Employer on a given date (as-of exact) | 0.208 | 0.678 |
+| Employers during a year (set-F1) | 0.455 | 0.653 |
+| Stale summary flagged in `context_pack` | 0 | 0.364 |
+| Current-employer recall | 0.616 | 0.612 (non-inferior) |
+| Traps: advisor roles, investments and alumni meetings at a former employer | n/a | 115 of 115 left alone |
+| Same notes written in a different order give the same state | n/a | 240 of 240 |
+| Nightly check in apply mode: wrong closures, 5 models × 3 runs | n/a | 0 |
+
+### How to use it
+
+```bash
+gbrain doctor --only edge_validity --json            # relationship state, lag, open proposals
+gbrain edge-proposals list --status all              # what the nightly check proposed or applied
+gbrain edge-proposals undo <id>                      # remove a closure line it wrote
+gbrain config set dream.edge_contradictions.mode propose   # review closures before anything is written
+gbrain config set graph.edge_validity off            # every edge, as before
+```
+
+MCP: `get_links { slug, link_type: "works_at", as_of: "2022-06-30" }`, `get_links { slug, during: "2022" }`, `get_backlinks { slug, status: "all" }`, `add_link { from, to, link_type, valid_until }`.
+
+### Things to watch
+
+- Graph reads (`get_links`, `get_backlinks`, `traverse_graph`, the relational search arm) now hide relationships that ended. A response that hid any carries a `former_relationships_hidden` notice with the exact call that shows them.
+- The nightly `edge_contradictions` phase makes one small chat call per changed subject (cap $1.00 per cycle, 200 subjects). With a certified model (the default `claude-haiku-4-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`, `gpt-6.1-sol`) it writes each closure as an undoable "(inferred) Ended …" timeline line; other models only propose.
+- Closures from the nightly check are often dated late: with only "joined" lines, a gap between jobs closes the earlier job on the next start date. An explicit end line or a "left" line dates it exactly.
+- Recall is capped by link typing, not by dates: a line such as "Signed on with [X] as CTO" is not typed `works_at` yet, so there is no relationship to date.
+- `traverse_graph` walks live relationships; read history with `get_links` or `get_backlinks`.
+
+## To take advantage of v0.60.57.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.60.57.0.md` the next time you interact with it.** Migration v204 adds the relationship tables; existing pages re-extract over the next dream cycles (no model calls), which records the dated evidence already in their timelines. `gbrain post-upgrade` prints a one-time notice that asks the user to keep live-by-default reads and the nightly check.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor --only edge_validity --json
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+#### Relationship state
+
+- Migration v204: `link_transitions` (dated start/end evidence with its producer), `link_relationships` (stints per relationship and read scope, `recorded_at`, `retired_at`), `link_edge_proposals`, `links.assertion_tense` and a graph generation sequence. Engine graduation carries all three tables; `gbrain migrate-engine` copies manual transitions.
+- Relations are state (`works_at`, `advises`, `yc_partner`: can end, can rejoin) or event (`founded`, `invested_in`, `led_round`, `attended`, `discussed_in`, `cited`: happened on a date). Schema packs declare their own with `link_types[].temporal: state | event`; lint rule `link_types_temporal` flags `mentions` (error), a redeclared built-in and a mismatched inverse.
+- Evidence is derived on every write with no model call (`src/core/link-temporal-evidence.ts`). A cue moves a relationship only when it is about that relationship: investing, meeting and event lines and qualified references ("[X]'s round", "[X] alumni") move nothing; event relations never close; a dated start stays open until a dated end. "Moved from [A] to [B]" and "Left [A] for [B]" end A and start B. Frontmatter `since`/`until` work with partial dates and rejoins.
+- The extract cycle phase sweeps relationships whose state is missing or older than their evidence.
+
+#### Reads
+
+- `get_links` takes `status` (`live`, `ended`, `all`), `as_of`, `during` and `link_type`; `get_backlinks` takes `status` and `as_of`. Default reads keep the existing row shape; history reads add `status`, `stints`, `recorded_at` and `retired_at`. `graph.edge_validity off` restores every edge.
+- `entity` and `context_pack` keep every edge with `status`, `since` and `until` and add a `relationship_note` ("now: works_at widget-co (since 2025-03-01); ended: works_at acme-example (2025-03-01); summary may be stale"). The same note reaches ambient turn context and compiled context.
+- The relational search arm follows the question's tense: "who works at" reads live relationships, "who worked at" reads history.
+- `add_link` takes `valid_from` and `valid_until`.
+
+#### Nightly relationship check
+
+- Dream phase `edge_contradictions`: a chat model judges only whether two live relationships of one subject can both hold; date arithmetic decides which ended and when, and undated pairs ask for a date instead. Modes `apply` (certified models), `propose` (other models) and `off`; settings `dream.edge_contradictions.{mode,max_subjects,max_usd}` and `models.dream.edge_contradictions`.
+- `gbrain edge-proposals list|show|accept|reject|undo|date`. Deleting an applied line by hand reopens the relationship and is remembered.
+- Doctor check `edge_validity` and a one-time post-upgrade [AGENT] notice.
+
+#### Entity resolution
+
+- The phantom-redirect tier gains a type guard and a name-entropy gate, so short or common names stop merging across types.
+
+#### Evaluation
+
+- Records in `docs/eval/decisions/` (`p1-dev-2026-10-04`, `p1-dev-2026-10-04-r2`, `p1-e2-2026-10-05`): development verdicts, the preregistrations and the held-out results. A first held-out run failed on traps and recall because the cue rules had overfit the development wording; the conservative rules above passed on a fresh held-out set.
+
 ## [0.60.53.0] - 2026-10-04
 
 **gbrain now crash-tests its own write path on every pull request, notes on a PGLite brain turn into facts without anyone running a command, and new dashboard API keys stop handing out admin access by default.**
