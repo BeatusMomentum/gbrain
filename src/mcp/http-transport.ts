@@ -52,7 +52,8 @@ import { degradedLastError, isEngineDegraded } from '../core/degraded-marker.ts'
 import { classifyPgAccessError } from '../core/pg-access-classify.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
-import { authSourcesFromGrant, grantFromTokenRow } from '../core/grants/model.ts';
+import { authSourcesFromGrant } from '../core/grants/model.ts';
+import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 export { parseLegacyTokenScope } from '../core/legacy-token-scope.ts';
 
 const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
@@ -211,10 +212,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   // config plane — this transport builds its tool list once, so a
   // `mcp.strict_params` flip needs a restart here (deliberate; the OAuth
   // serve-http path re-reads dual-plane per request). Dispatch-side
-  // enforcement still resolves per call.
+  // enforcement still resolves per call. mcp.advertised_surface (file plane) narrows the tool list only.
   const fileConfig = loadConfig();
   const strictParams = parseStrictParamsMode(fileConfig?.mcp?.strict_params) === 'reject';
-  // mcp.advertised_surface (file plane, read once like strict_params) narrows the list only; dispatch keeps surfacedOps.
   const tools = buildToolDefs(advertisedOps(surfacedOps, surface, await resolveAdvertisedSurface(null, fileConfig)), { strictParams });
 
   /**
@@ -272,10 +272,11 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           WHERE id IN (SELECT id FROM access_tokens WHERE id = ${rowId}
             AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds') FOR UPDATE SKIP LOCKED)`
         .catch(() => { /* fire-and-forget */ });
-      // F3: one grant shape (grants/model.ts) shared with the OAuth provider
-      // behind `serve --http`, so the two transports cannot drift. Takes
-      // holders fail safe to ['world']; #1336 honors the stored source grant.
-      const grant = grantFromTokenRow(row);
+      // One grant shape (grants/model.ts) shared with the OAuth provider
+      // behind `serve --http`, so the two transports cannot drift; a row still
+      // on the legacy shape is converted on this read. Takes holders fail safe
+      // to ['world']; #1336 honors the stored source grant.
+      const grant = await resolveTokenGrant(sql, row);
       const allowList = grant.takesHolders ?? ['world'];
       const { sourceId, allowedSources, hasSourceGrant } = authSourcesFromGrant(grant);
       const auth: AuthInfo = {
