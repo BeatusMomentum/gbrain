@@ -1445,6 +1445,7 @@ async function runPhaseExtractFacts(
     const { runExtractFacts } = await import('./cycle/extract-facts.ts');
     const result = await runExtractFacts(engine, {
       slugs: changedSlugs,
+      drain: {},
       dryRun,
       sourceId,
       brainDir: brainDir ?? undefined,
