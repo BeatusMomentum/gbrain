@@ -92,10 +92,6 @@ export function formatResultExplain(
     anyBoost = true;
     lines.push(`   + feedback ×${fmt(result.feedback_boost)} (use-attributed ratings)`);
   }
-  if (result.triplet !== undefined) {
-    anyBoost = true;
-    lines.push(`   • triplet worst=${fmt(result.triplet.worst)} over ${result.triplet.parts.length} edge(s)`);
-  }
   if (result.reranker_delta !== undefined && result.reranker_delta !== 0) {
     anyBoost = true;
     const arrow = result.reranker_delta > 0 ? '↑' : '↓';

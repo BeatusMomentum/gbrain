@@ -52,7 +52,6 @@ export async function runFeedback(engine: BrainEngine, args: string[]): Promise<
   const [settings, status] = await Promise.all([loadFeedbackSettings(engine), feedbackStatus(engine)]);
   const report = {
     settings,
-    triplet_importance: settings.enabled && settings.influence > 0 ? 'active' : 'neutral (feedback off)',
     ...status,
     dropped_events_this_process: droppedFeedbackEvents(),
     stage_errors_this_process: feedbackStageErrors(),
@@ -66,7 +65,6 @@ export async function runFeedback(engine: BrainEngine, args: string[]): Promise<
     `Answers recorded (last ${settings.eventRetentionDays} days): ${status.events}`,
     `Ratings: ${status.ratings_explicit} explicit, ${status.ratings_cited} from citations${status.last_rating_at ? ` (last ${status.last_rating_at.toISOString()})` : ''}`,
     `Learned weights: ${status.weights_total} (${status.weights_off_neutral} away from neutral)`,
-    `Triplet importance: ${report.triplet_importance}`,
   ];
   if (status.top_client_share_7d !== null && status.top_client_share_7d > 0.8 && status.ratings_explicit > 10) {
     lines.push(`Warning: one client made ${Math.round(status.top_client_share_7d * 100)}% of ratings in the last 7 days. If that is not expected, run \`gbrain feedback reset\` and review that client's write grant.`);

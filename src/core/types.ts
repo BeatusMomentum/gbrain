@@ -952,8 +952,6 @@ export interface SearchResult {
   feedback_boost?: number;
   /** The page's content_hash when this result was retrieved (stamped while retrieval feedback is enabled). */
   content_hash?: string | null;
-  /** Relational-arm triplet score and its parts (src/core/search/triplet-score.ts); lower is better. */
-  triplet?: { worst: number; parts: Array<{ edge: string; from: number; edge_distance: number; to: number; total: number }> };
   /** Multiplier applied by applySalienceBoost. */
   salience_boost?: number;
   /** Multiplier applied by applyRecencyBoost. */
@@ -1544,8 +1542,6 @@ export interface RelationalFanoutOpts extends PageReadPolicy {
   sourceIds?: string[];
   /** Hard cap on returned candidate nodes. Default 50. */
   limit?: number;
-  /** Allow up to 400 candidates (triplet scoring re-ranks the wider set). */
-  wide?: boolean;
 }
 
 // Timeline

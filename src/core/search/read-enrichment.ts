@@ -18,7 +18,7 @@ export async function readRelationalFanout(query: ReadQuery, seeds: string[], op
   if (!seeds?.length) return [];
   const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
   const direction = opts?.direction ?? 'both';
-  const limit = Math.min(Math.max(1, opts?.limit ?? 50), opts?.wide ? 400 : 200);
+  const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
   const params: unknown[] = [seeds, depth, limit];
   const policy = hasReadPolicy(opts) ? opts : undefined;
   const seed = pageReadFilter('p', policy, params, !!policy);

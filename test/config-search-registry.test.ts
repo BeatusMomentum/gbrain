@@ -28,8 +28,6 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.intent_patterns',                  // search/query-intent.ts
   'search.source_boosts',                    // search/mode.ts snapshot + ops/search.ts
   'search.alias_token_hop',                  // search/mode.ts snapshot
-  'search.triplet_scoring',                  // search/triplet-score.ts
-  'search.triplet_penalty',                  // search/triplet-score.ts
   'search.adaptive_return',                  // return-policy.ts via loadConfigWithEngine
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',

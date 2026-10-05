@@ -45,7 +45,7 @@ import {
 } from './query-cache.ts';
 import { resolveHybridRequest } from './hybrid/request.ts';
 import { prepareSemanticCache, resolveCacheSearchMode, semanticCacheSkipped, serveSemanticCacheHit } from './hybrid/cache-stages.ts';
-import { buildPostFusionOpts, buildRelationalList, resolveModalityAndQueries, runLexicalArms, runVectorArms, scoreRelationalArm } from './hybrid/arms.ts';
+import { buildPostFusionOpts, buildRelationalList, resolveModalityAndQueries, runLexicalArms, runVectorArms } from './hybrid/arms.ts';
 import { searchVectorFallback, searchWithoutEmbeddings } from './hybrid/keyword-only.ts';
 import { expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
 
@@ -1105,14 +1105,12 @@ export async function hybridSearch(
   // vector-arm query embedding without the gateway, so provider
   // availability is irrelevant — skip the keyword-only short-circuit.
   if (opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && !isAvailable('embedding', providerProbe) && !willTryMultimodal)) {
-    await scoreRelationalArm(req, relationalList, null);
     return searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe);
   }
 
   const { effectiveModality, unifiedRouting, queries } = await resolveModalityAndQueries(req);
   const { vectorArms, queryEmbedding, imageQueryEmbedding, unifiedDone } =
     await runVectorArms(req, { effectiveModality, unifiedRouting, queries, multimodalProviderProbe });
-  await scoreRelationalArm(req, relationalList, vectorArms.length === 0 ? null : queryEmbedding);
   if (vectorArms.length === 0) {
     return searchVectorFallback(req, lexical, relationalList, postFusionOpts);
   }

@@ -1195,8 +1195,7 @@
           "seedRefs?: { source_id: string; slug: string; }[] | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
-          "takesHoldersAllowList?: string[] | undefined",
-          "wide?: boolean | undefined"
+          "takesHoldersAllowList?: string[] | undefined"
         ],
         "name": "RelationalFanoutOpts"
       },
@@ -1364,7 +1363,6 @@
           "thread_id?: string | undefined",
           "title: string",
           "title_match_boost?: number | undefined",
-          "triplet?: { worst: number; parts: Array<{ edge: string; from: number; edge_distance: number; to: number; total: number; }>; } | undefined",
           "type: string",
           "unverified?: boolean | undefined"
         ],
@@ -8085,8 +8083,7 @@
           "seedRefs?: { source_id: string; slug: string; }[] | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
-          "takesHoldersAllowList?: string[] | undefined",
-          "wide?: boolean | undefined"
+          "takesHoldersAllowList?: string[] | undefined"
         ],
         "name": "RelationalFanoutOpts"
       },
@@ -8254,7 +8251,6 @@
           "thread_id?: string | undefined",
           "title: string",
           "title_match_boost?: number | undefined",
-          "triplet?: { worst: number; parts: Array<{ edge: string; from: number; edge_distance: number; to: number; total: number; }>; } | undefined",
           "type: string",
           "unverified?: boolean | undefined"
         ],

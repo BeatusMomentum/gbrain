@@ -77,7 +77,7 @@ gbrain config set feedback.learn false     # keep learned weights, stop learning
 
 | Key | Default | Meaning |
 |---|---|---|
-| `feedback.enabled` | true | Recording, ratings, `answer_id` and the ranking effect. Off also makes relational triplet scoring treat every weight as neutral. |
+| `feedback.enabled` | true | Recording, ratings, `answer_id` and the ranking effect. |
 | `feedback.learn` | true | Write new learning. Off keeps applying learned weights. |
 | `feedback.influence` | 0.1 | λ: the ranking multiplier stays within `[1 - λ, 1 + λ]` (max 0.5). |
 | `feedback.implicit` | true | Learn from `think`/`synthesize` citations for the brain owner. |
