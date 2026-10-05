@@ -149,6 +149,30 @@ for (const kind of testBackends()) {
       expect(rescoped.after.tokenTtlSeconds).toBe(NINETY_DAYS);
     }, 60_000);
 
+    test('a token issued after waiting on the client lock expires within the maximum of its own created_at', async () => {
+      const { clientId, clientSecret } = await machineClient('ttl-lock-wait-example');
+      await storeTtl(clientId, TEN_YEARS);
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let lockTaken!: () => void;
+      const taken = new Promise<void>(resolve => { lockTaken = resolve; });
+      const holder = engine.transaction(async tx => {
+        await tx.executeRaw('SELECT 1 FROM oauth_clients WHERE client_id = $1 FOR UPDATE', [clientId]);
+        lockTaken();
+        await held;
+      });
+      await taken;
+      const issued = provider.exchangeClientCredentials(clientId, clientSecret!, 'read');
+      await new Promise(resolve => setTimeout(resolve, 1_100));
+      release();
+      await holder;
+      await issued;
+      const rows = await engine.executeRaw<{ over: string }>(
+        `SELECT count(*) AS over FROM oauth_tokens WHERE client_id = $1 AND token_type = 'access'
+           AND expires_at > FLOOR(EXTRACT(EPOCH FROM created_at))::bigint + $2`, [clientId, NINETY_DAYS]);
+      expect(Number(rows[0]!.over)).toBe(0);
+    }, 60_000);
+
     test('issuance racing the upgrade never leaves a token past the maximum', async () => {
       const { clientId, clientSecret } = await machineClient('ttl-race-example');
       await storeTtl(clientId, TEN_YEARS);
