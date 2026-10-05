@@ -11,7 +11,7 @@ it. Sealed runs are executed by the custodian only; the custodian pins the delta
 |---|---|---|---|
 | Validity ranges on typed relation lines stored as dated edge transitions (producer `inline`, `src/core/link-effective.ts`) | `line_grammar.effective_ranges` | on | off (ships off) |
 | Wanted rows recorded on the remote `put_page` write path (link-effect hook) | added with the hook; ships off | on | off |
-| Temporal-evidence lexicon: an advisory, board or investor role ("Took an advisory role with [X]") is not an employment start (`NOT_EMPLOYMENT_ROLE` guard on `EMPLOYMENT.start` in `src/core/link-temporal-evidence.ts`) | none (evidence derivation) | kept | reverted before landing |
+| Temporal-evidence lexicon: an advisory, board or investor role ("Took an advisory role with [X]", "Became an advisor at [X]") is not an employment start (`NOT_EMPLOYMENT_ROLE` guard on the `took … role` and `became … at/of` alternatives of `EMPLOYMENT.start` in `src/core/link-temporal-evidence.ts`) | none (evidence derivation) | kept | reverted before landing |
 | Link typing changes made when the edge-validity schema merged: the verb is read at the link's own position in the window; links joined only by commas or conjunctions share the verb before the first; a `mentions` edge to a target the page also links with a typed edge is dropped | none (extraction behavior) | kept | reverted to the frozen build's typing before landing |
 
 ## Hypotheses, metrics and bars
@@ -33,8 +33,8 @@ relationship accuracy. Bars: noninferior at tolerance 0.01 on both.
 
 **H10, temporal-evidence lexicon.** The edge-validity plan's temporal-edges held-out set C (custodian mode), run as a
 noninferiority guard on every gate that plan preregistered, plus the retrieval-feedback plan's E5 wrong-closure probe
-(pages with one long employment stint and a later dated "Took an advisory role with [X]" line on a page that also
-asserts works_at to X). Arms: the delta build vs the same build with the guard removed. Bars: 0 wrong closures on the
+(pages with one long employment stint and a later dated "Took an advisory role with [X]" or "Became an advisor at
+[X]" line on a page that also asserts works_at to X). Arms: the delta build vs the same build with the guard removed. Bars: 0 wrong closures on the
 E5 probe (exact); every edge-validity gate noninferior at tolerance 0.01. Run by the custodian (P0).
 
 Guardrails: LongMemEval-S `recall_all@5` noninferior (tolerance 0.01); N4 resolver no new wrong merge (exact).

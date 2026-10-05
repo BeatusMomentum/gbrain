@@ -46,6 +46,15 @@ describe('dated timeline cues', () => {
       .toEqual(['acme-example:works_at:start:2015-01-05:timeline']);
   });
 
+  test('becoming an advisor or board member is not an employment start; becoming CTO is', () => {
+    const rows = [row('companies/acme-example', 'works_at'), row('companies/acme-example', 'advises')];
+    const works = (timeline: string) => brief(derive('Alice works at [Acme](companies/acme-example).', timeline, rows).transitions).filter(t => t.includes(':works_at:'));
+    expect(works('- **2023-09-01** | linkedin — Became an advisor at [Acme](companies/acme-example)')).toEqual([]);
+    expect(works('- **2023-09-01** | note — became a senior advisor at [Acme](companies/acme-example)')).toEqual([]);
+    expect(works('- **2023-09-01** | note — became a board member of [Acme](companies/acme-example)')).toEqual([]);
+    expect(works('- **2023-09-01** | linkedin — Became CTO at [Acme](companies/acme-example)')).toEqual(['acme-example:works_at:start:2023-09-01:timeline']);
+  });
+
   test('taking an ordinary role is still an employment start', () => {
     const ev = derive('', '- **2024-06-01** | note — took the CTO role at [Acme](companies/acme-example)', [row('companies/acme-example', 'works_at')]);
     expect(brief(ev.transitions)).toEqual(['acme-example:works_at:start:2024-06-01:timeline']);
