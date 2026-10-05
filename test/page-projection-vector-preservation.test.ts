@@ -137,9 +137,57 @@ for (const kind of backends) {
       expect(await canonicalState(neighborId)).toEqual(canonical);
     });
 
+    for (const oldMode of ['title', 'per_chunk_synopsis']) {
+      test(`legacy ${oldMode} vectors are cleared atomically when the stored mode becomes none`, async () => {
+        const page = await seed();
+        await engine.updatePageContextualRetrievalState(slug, sourceId, oldMode, 'legacy-generation');
+        await engine.executeRaw(`UPDATE content_chunks SET embedded_text_hash=md5(chunk_text),
+          embedding_input_hash=NULL WHERE page_id=$1`, [page.page.id]);
+        expect((await storedChunks()).map(c => c.embedding)).toEqual([vectorText, vectorText]);
+        await engine.updatePageContextualRetrievalState(slug, sourceId, 'none', null);
+        expect((await storedChunks()).map(c => [c.embedding, c.embedded_at, c.embedded_text_hash])).toEqual([
+          [null, null, null], [null, null, null],
+        ]);
+        const prepared = (await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true }))!;
+        await installPageProjection(engine, prepared, (await preparePageProjection(prepared)).chunks, preserve);
+        expect((await storedChunks()).map(c => c.embedding)).toEqual([null, null]);
+      });
+    }
+
+    test('an embed_skip page retains its vector when metadata switches to none', async () => {
+      const page = await seed();
+      await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', 'legacy-generation');
+      await engine.executeRaw(`UPDATE pages SET frontmatter='{"embed_skip":true}'::jsonb WHERE id=$1`, [page.page.id]);
+      await engine.updatePageContextualRetrievalState(slug, sourceId, 'none', null);
+      expect((await storedChunks()).map(c => c.embedding)).toEqual([vectorText, vectorText]);
+    });
+
+    test('the mode switch clears only the selected source and active vector column', async () => {
+      const page = await seed();
+      await seed(neighborId);
+      const neighbor = await storedChunks(neighborId);
+      await engine.executeRaw('ALTER TABLE content_chunks ADD COLUMN embedding_projection_test vector(3)');
+      try {
+        await engine.setConfig('embedding_columns', JSON.stringify({
+          embedding_projection_test: { provider: 'openai:fixture', dimensions: 3, type: 'vector' },
+        }));
+        await engine.setConfig('search_embedding_column', 'embedding_projection_test');
+        await engine.executeRaw(`UPDATE content_chunks SET embedding_projection_test='[0.375,-0.25,0]'::vector(3)
+          WHERE page_id=$1`, [page.page.id]);
+        await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', 'legacy-generation');
+        await engine.updatePageContextualRetrievalState(slug, sourceId, 'none', null);
+        expect((await storedChunks()).map(c => c.embedding_projection_test)).toEqual([null, null]);
+        expect((await storedChunks(neighborId)).map(c => c.embedding)).toEqual(neighbor.map(c => c.embedding));
+      } finally {
+        await engine.unsetConfig('search_embedding_column');
+        await engine.unsetConfig('embedding_columns');
+        await engine.executeRaw('ALTER TABLE content_chunks DROP COLUMN embedding_projection_test');
+      }
+    });
+
     for (const state of [
       { name: 'NULL hash', hash: null, model: 'current', context: null, keep: true },
-      { name: 'current hash', hash: 'current', model: 'current', context: 'none', keep: true },
+      { name: 'current hash', hash: 'current', model: 'current', context: 'none', keep: false },
       { name: 'stale hash', hash: 'stale', model: 'current', context: null, keep: false },
       { name: 'empty hash', hash: '', model: 'current', context: null, keep: false },
       { name: 'malformed hash', hash: "'); DROP TABLE pages; --", model: 'current', context: null, keep: false },
