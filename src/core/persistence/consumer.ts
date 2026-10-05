@@ -9,7 +9,7 @@ import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { cancelOrphanedWindowGroup } from './sync-window.ts';
-import { laneOf, laneRoots } from './sync-lanes.ts';
+import { laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
@@ -384,7 +384,9 @@ export class PersistenceConsumer {
   private laneTaskCount(): number { let count = 0; for (const n of this.laneTasks.values()) count += n; return count; }
   private startLaneTask(row: WriteRequest, key: string): void {
     this.laneTasks.set(key, (this.laneTasks.get(key) ?? 0) + 1);
-    this.track(row, () => { const n = (this.laneTasks.get(key) ?? 1) - 1; if (n > 0) this.laneTasks.set(key, n); else this.laneTasks.delete(key); }, key);
+    const state = laneOf(row);
+    const release = state ? laneTask(state) : () => undefined;
+    this.track(row, () => { release(); const n = (this.laneTasks.get(key) ?? 1) - 1; if (n > 0) this.laneTasks.set(key, n); else this.laneTasks.delete(key); }, key);
   }
   private track(row: WriteRequest, done: () => void, key: string): void {
     let progressed = false;

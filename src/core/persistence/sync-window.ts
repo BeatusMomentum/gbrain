@@ -67,6 +67,23 @@ export async function cancelWindow(engine: BrainEngine, window: Array<Array<{ re
   await cancelRows(engine, rows);
 }
 
+/**
+ * #5984 lanes: after a drain's lane tasks settled, cancels its lane run's still-queued rows, in manifest order,
+ * whose predecessor ended without committing (a lane that saw its predecessor go back to the queue releases its
+ * group, which the window cancellation had skipped while it was claimed). The consumer's FIFO claim cancels the
+ * same rows later (`cancelOrphanedWindowGroup`); this settles them before the drain reports.
+ */
+export async function cancelOrphanedLaneRows(engine: BrainEngine, run: string): Promise<void> {
+  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE state='queued' AND intent->>'lane'=$1 ORDER BY sequence`, [run]);
+  for (const row of rows) {
+    const after = windowPredecessor(row);
+    if (!after) continue;
+    const [prior] = await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
+      [row.principal_kind, row.principal_id, after]);
+    if (prior && ['failed', 'conflict', 'cancelled'].includes(prior.state)) await cancelRows(engine, [row]);
+  }
+}
+
 /** Cancels unpublished rows (queued, or claimed with the given token) with the window reason. */
 export async function cancelRows(engine: BrainEngine, rows: WriteRequest[]): Promise<WriteRequest[]> {
   const settled: WriteRequest[] = [];

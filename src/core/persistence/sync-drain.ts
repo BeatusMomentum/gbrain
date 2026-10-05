@@ -300,7 +300,13 @@ export async function drainManagedSync(engine: BrainEngine, opts: SyncOpts, anno
     return await runDrain({ signal: opts.signal, onProgress: opts.onProgress, probe: engineStallProbe(engine), announce,
       bulk: { enabled: bulk.enabled, reason: bulk.reason, lanes: bulk.lanes ?? 1, lanesReason: bulk.lanesReason ?? null },
       pass: (signal, onProgress) => performManagedSync(engine, { ...opts, signal, onProgress, drainStartedAt, ...(bulk.enabled ? { bulk: { ...bulk, laneRun } } : {}) }) });
-  } finally { if (laneRun) closeLaneRun(laneRun); }
+  } finally {
+    if (laneRun) {
+      await closeLaneRun(laneRun);
+      const { cancelOrphanedLaneRows } = await import('./sync-window.ts');
+      await cancelOrphanedLaneRows(engine, laneRun).catch(() => undefined);
+    }
+  }
 }
 
 export interface DrainNext {

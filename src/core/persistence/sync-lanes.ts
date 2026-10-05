@@ -24,16 +24,32 @@ export interface LanePolicy { run: string; asked: number; effective: number; ste
   overlapped: number;
   /** Lane groups that did not commit as a group (cancelled, released for the FIFO head, or published singly). */
   fallbacks: number }
-export interface LaneState extends LanePolicy { coordinationPath: string | null; claimed: Set<string>; begun: Set<string> }
+export interface LaneState extends LanePolicy { coordinationPath: string | null; claimed: Set<string>; begun: Set<string>;
+  /** Lane tasks this process runs for the run, from the head's claim until the task settles; `closing` stops new claims. */
+  tasks: number; closing: boolean }
 const policies = new Map<string, LaneState>();
 
 /** The drain's lane policy for a worktree; replaces any earlier one. */
 export function openLanes(worktreeId: string, run: string, lanes: number, coordinationPath: string | null): void {
-  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, fallbacks: 0, coordinationPath, claimed: new Set(), begun: new Set() });
+  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, fallbacks: 0, coordinationPath, claimed: new Set(), begun: new Set(), tasks: 0, closing: false });
 }
-/** Ends a drain's lane run on every worktree it opened; its unclaimed groups go back to the FIFO claim. */
-export function closeLaneRun(run: string): void {
-  for (const [worktreeId, state] of policies) if (state.run === run) policies.delete(worktreeId);
+/**
+ * Ends a drain's lane run on every worktree it opened: no new lane claims, then waits (up to `maxMs`) for the
+ * lane tasks already running to settle, so a drain never reports while one of its groups is still publishing
+ * or aborting. Its unclaimed groups go back to the FIFO claim.
+ */
+export async function closeLaneRun(run: string, maxMs = 90_000): Promise<void> {
+  const open = [...policies].filter(([, state]) => state.run === run);
+  for (const [, state] of open) state.closing = true;
+  const started = Date.now();
+  while (open.some(([, state]) => state.tasks > 0) && Date.now() - started < maxMs) await sleep(20);
+  for (const [worktreeId, state] of open) if (policies.get(worktreeId) === state) policies.delete(worktreeId);
+}
+/** Counts a lane task from its head's claim until it settles; returns the release. */
+export function laneTask(state: LaneState): () => void {
+  state.tasks++;
+  let released = false;
+  return () => { if (!released) { released = true; state.tasks--; } };
 }
 export function lanePolicy(worktreeId: string): LanePolicy | null {
   const state = policies.get(worktreeId);
@@ -42,7 +58,7 @@ export function lanePolicy(worktreeId: string): LanePolicy | null {
 /** The open lane runs and how many lanes each may run now (0 while the worktree's lease drains for an exclusive writer). */
 export function laneRoots(): Array<{ worktreeId: string; run: string; capacity: number }> {
   return [...policies].map(([worktreeId, state]) => ({ worktreeId, run: state.run,
-    capacity: state.coordinationPath && leaseDraining(state.coordinationPath) ? 0 : state.effective }));
+    capacity: state.closing || (state.coordinationPath && leaseDraining(state.coordinationPath)) ? 0 : state.effective }));
 }
 /** The lane run a request belongs to, when its worktree's lane policy is open in this process. */
 export function laneOf(row: Pick<WriteRequest, 'worktree_id' | 'intent'>): LaneState | null {
