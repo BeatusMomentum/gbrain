@@ -123,6 +123,15 @@ describe('writes commit with zero generative model calls', () => {
     expect(hits.map(h => h.slug)).toEqual(expect.arrayContaining(['meetings/roadmap-local', 'meetings/roadmap-remote']));
   });
 
+  test('put_pages (remote batch)', async () => {
+    COVERED.add('put_pages');
+    await call('put_pages', { request_id: '7d3c2b1a-0f9e-4d8c-a7b6-5e4d3c2b1a09', pages: [
+      { slug: 'meetings/batch-one', content: `---\ntype: meeting\ntitle: Batch one\n---\n${BODY}` },
+      { slug: 'meetings/batch-two', content: `---\ntype: meeting\ntitle: Batch two\n---\n${BODY}` },
+    ] }, true);
+    expectNoGenerative('put_pages');
+  });
+
   test('capture and edit_page', async () => {
     COVERED.add('capture'); COVERED.add('edit_page');
     await call('capture', { slug: 'notes/captured', content: `Captured thought about pricing tiers. ${BODY}` });

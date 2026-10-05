@@ -9,6 +9,7 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 | Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6% | FAIL | `think.quote_verify` and `dream.quote_verify` off by default (opt-in) |
 | Semantic withdrawal review (section 3) | precision LB ≥ 0.90, end-to-end recall ≥ 0.60, zero proposals on corrected values, N5 unchanged | pending (paraphrase sourcing amended 2026-10-05) | — | `review_withdraw` off |
 | Advertised tool surface (section 7) | pooled success ≥ control − 3 pts, no leak rise, hidden-tool family ≥ control − 5 pts | pending | — | new installs advertise `full` |
+| HTTP graph freshness (report-only) | remote `put_page`: timeline row at commit; mention links after the `links` effect; typed edges only after extract | as stated, on PGLite (`test/remote-graph-freshness.test.ts`) | REPORT | no switch |
 | Duplicate review kinds (section 4) | per kind, as section 3 | not run until P1/P5 enqueue candidates | — | off |
 
 ## Quote grounding
@@ -25,3 +26,25 @@ Follow-up: the over-flagging. The dev runs measured 1.3% after the edge-punctuat
 held-out set flags 4.7%, so supported quotes still fail on forms the dev questions did not contain. The next step
 is to read the held-out wrongly-flagged spans with the custodian (without tuning on the sealed questions) and
 re-run on a fresh held-out set.
+
+## HTTP graph freshness (report-only)
+
+Measured on master with #6025 (remote bulk writes and mention links) merged in. A remote OAuth `put_page` with a
+dated timeline bullet and `[[people/alice-example]] … works at [[companies/acme-example]]`:
+
+| Stage | What is queryable | Time from submit (PGLite, local run) |
+|---|---|---|
+| Commit | the page and its dated `timeline_entries` row; no links | 206 ms |
+| `links` effect drained | `mentions` edges to the two visible same-source pages; no typed edge | 259 ms |
+| `extract` phase | typed `works_at` edges added beside the mentions | 390 ms |
+
+With `mcp.remote_auto_links=false` no mention pass is queued. Times are one local run on a small PGLite brain and
+include no worker scheduling delay; on a served brain the mention links wait for the effect worker and typed edges
+for the next extract (dream cycle or `gbrain extract`). #6025's own contract tests cover confinement, revoked
+clients, restarts, superseded revisions and reconcile on PGLite and Postgres.
+
+Lock order: #6025's effects take the brain row before the source row (`guardEffectSource`). P8's write paths take
+no brain or source row lock (the `remember.replaces` target-fact lock lives inside the publication transaction,
+the review queue row commits inside the withdrawal transaction, and attribution is async context only), so there
+is no inverted order. The P8 Postgres E2E and #6025's links-effect E2E pass together on direct Postgres and through
+transaction-mode PgBouncer.
