@@ -272,6 +272,7 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
     targetModel: opts.targetModel,
     judgeModel: opts.judgeModel,
     maxCostUsd: opts.maxCostUsd,
+    maxCostSource: opts.maxCostSource ?? 'user',
     heldOutSize: heldOutTasks.length,
     interactive: process.stderr.isTTY === true,
     reflectMaxTokens: reflectCap.maxTokens,
@@ -284,7 +285,16 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
       trainSize: split.train.length, selSize: split.sel.length, testSize: split.test.length,
       optimizerModel: opts.optimizerModel, targetModel: opts.targetModel, judgeModel: opts.judgeModel,
       maxCostUsd: opts.maxCostUsd,
+      maxCostSource: opts.maxCostSource ?? 'user',
     }) + '\n');
+  }
+  if (preflightResult.abort_code === 'no_pricing') {
+    throw errorFor({
+      class: 'BudgetExhausted',
+      code: 'no_pricing',
+      message: preflightResult.abort_reason ?? 'no pricing for a model under the cost cap',
+      hint: 'No model call was made. Register the rate with the command above and retry, or pass --max-usd off to run uncapped.',
+    });
   }
   if (!preflightResult.proceed) {
     throw errorFor({
@@ -525,7 +535,7 @@ async function runOptimizationLoop(
   // hard BudgetExhausted(no_pricing) abort to the legacy warn-once path, so
   // unpriced model ids (openrouter:*, litellm:*) can run at the user's own risk.
   const tracker = new BudgetTracker({
-    ...(opts.maxCostUsd > 0 ? { maxCostUsd: opts.maxCostUsd } : {}),
+    ...(opts.maxCostUsd > 0 ? { maxCostUsd: opts.maxCostUsd, capSource: opts.maxCostSource ?? 'user' } : {}),
     ...(resolved.pricingOverrides ? { pricingOverrides: resolved.pricingOverrides } : {}),
     label: `skillopt:${skillName}`,
   });
