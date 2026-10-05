@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198595,
-    "stdoutSha256": "7d2b43ea2fc64cd07907cc2fd1ecb1fae4812fe23091cd76629a7512ff57de98",
+    "stdoutBytes": 198857,
+    "stdoutSha256": "ef37ddc34736248fba6d360976da8f8217d1a9674eaca8d44fd29243cc76377e",
     "toolNames": [
       "remember",
       "entity",
@@ -172,9 +172,10 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string",
+          "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
+          "items": "array?",
           "kind": "string?",
           "provenance": "string",
           "request_id": "string?",
@@ -204,6 +205,13 @@
             "infer_entity": {
               "description": "Default true.",
               "type": "boolean"
+            },
+            "items": {
+              "description": "Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]",
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
             },
             "kind": {
               "description": "Default fact.",
@@ -242,7 +250,6 @@
             }
           },
           "required": [
-            "fact",
             "provenance"
           ],
           "type": "object"
@@ -5217,14 +5224,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): core memory plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string",
+          "entities": "string?",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5237,7 +5244,7 @@
               "type": "number"
             },
             "entities": {
-              "description": "Comma-separated names or slugs (max 8).",
+              "description": "Comma-separated names or slugs (max 8); omit for core only.",
               "type": "string"
             },
             "include_private": {
@@ -5253,9 +5260,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "entities"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "read"
