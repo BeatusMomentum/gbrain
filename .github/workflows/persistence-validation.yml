@@ -256,6 +256,7 @@ jobs:
                 test/managed-sweep-corpus-windows.test.ts
                 test/managed-sync-bulk.test.ts
                 test/managed-sync-chunker-version.test.ts
+                test/managed-sync-group-completion.test.ts
                 test/persistence-diagnostics.test.ts
                 test/persistence-git-subdir-origin.test.ts
                 test/persistence-history-fixture.test.ts
