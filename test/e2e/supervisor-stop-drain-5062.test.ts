@@ -266,14 +266,21 @@ setInterval(() => {}, 1000);
     }, 60_000);
 
     test('a queue lock row still held by the exited supervisor', async () => {
-      const { code, payload } = await runFake('lock', async (pid, queueName) => {
-        await getEngine().executeRaw(
-          `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
-           VALUES ($1, $2, $3, now(), now() + interval '5 minutes', now())`,
-          [`gbrain-supervisor:${queueName}`, pid, hostname()]);
-      });
-      expect(code).toBe(1);
-      expect(payload.reason).toBe('lock_still_held');
+      let lockId = '';
+      try {
+        const { code, payload } = await runFake('lock', async (pid, queueName) => {
+          lockId = `gbrain-supervisor:${queueName}`;
+          await getEngine().executeRaw(
+            `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+             VALUES ($1, $2, $3, now(), now() + interval '5 minutes', now())`,
+            [lockId, pid, hostname()]);
+        });
+        expect(code).toBe(1);
+        expect(payload.reason).toBe('lock_still_held');
+      } finally {
+        // The fake lock row would otherwise outlive this file and fail the next E2E file that counts gbrain_cycle_locks.
+        if (lockId) await getEngine().executeRaw('DELETE FROM gbrain_cycle_locks WHERE id = $1', [lockId]);
+      }
     }, 60_000);
   });
 });
