@@ -162,6 +162,22 @@ for (const kind of backends) {
       expect((await storedChunks()).map(c => c.embedding)).toEqual([vectorText, vectorText]);
     });
 
+    test('a newly verified none-mode vector survives an unchanged projection rebuild', async () => {
+      await seed();
+      await engine.updatePageContextualRetrievalState(slug, sourceId, 'none', null);
+      const pending = (await readProjectionSnapshot(engine, slug, sourceId, { allowUnsealed: true }))!;
+      await installPageProjection(engine, pending, (await preparePageProjection(pending)).chunks, preserve);
+      const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;
+      expect(await installPageEmbeddings(engine, prepared, prepared.chunks.map(c => ({
+        ...c, embedding: vector,
+      })))).toBe(true);
+      const before = await storedChunks();
+      expect(before.map(c => c.embedding_input_hash).every(Boolean)).toBe(true);
+      const rebuild = await capture();
+      await installPageProjection(engine, rebuild.prepared, rebuild.chunks, preserve);
+      expect(await storedChunks()).toEqual(before);
+    });
+
     test('the mode switch clears only the selected source and active vector column', async () => {
       const page = await seed();
       await seed(neighborId);
