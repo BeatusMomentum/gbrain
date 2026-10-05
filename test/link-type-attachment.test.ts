@@ -31,3 +31,16 @@ test('a timeline line "Joined [X] as engineer" is works_at on a page whose prose
 test('without a locatable link, plain precedence applies as before', () => {
   expect(inferLinkType('person', 'works at Acme and advises Widget')).toBe('advises');
 });
+
+test('the verb is read at this link, not at an earlier mention of the same target in the window', () => {
+  const body = [
+    'Alice is CTO of [Acme](../companies/acme-example).',
+    '- **2025-03-01** | linkedin — Left [Acme](../companies/acme-example) to join [Widget](../companies/widget-co)',
+    '- **2025-03-02** | note — works at [Widget](../companies/widget-co)',
+  ].join('\n');
+  const at = body.lastIndexOf('[Widget]');
+  const window = body.slice(Math.max(0, at - 120), at + 120).replace(/\s+/g, ' ').trim();
+  const anchor = body.slice(Math.max(0, at - 120), at).replace(/\s+/g, ' ').trimStart().length;
+  expect(inferLinkType('person', window, undefined, 'companies/widget-co', undefined, anchor)).toBe('works_at');
+  expect(inferLinkType('person', window, undefined, 'companies/widget-co')).toBe('mentions');
+});

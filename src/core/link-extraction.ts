@@ -94,10 +94,10 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
 // 2026-10-02: hyphen-run basenames resolve (#5623); 2026-10-05: temporal edges derive dated evidence on extraction.
-// 2026-10-05T04: typed relation lines (core/line-grammar.ts) state their link's type; a per-edge verb that
+// 2026-10-05T03: typed relation lines (core/line-grammar.ts) state their link's type; a per-edge verb that
 // belongs to another link in the window no longer types this one; "joined [X] as <role>" reads as works_at.
 // Re-extract so existing pages pick these up.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-05T04:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-05T03:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -733,7 +733,7 @@ export async function extractPageLinks(
     }
     const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
     const legacy = inferLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug,
-      opts.targetType ? targetType ?? null : undefined);
+      opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined);
     if (pack?.link_types.some(lt => lt.name === legacy && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
     return { linkType: legacy };
   };
@@ -954,6 +954,13 @@ export async function extractPageLinks(
     frontmatterAttendanceComplete = fm.attendanceComplete;
   }
 
+  const result = dedupeCandidates(candidates);
+  return { candidates: result, unresolved: fmUnresolved,
+    attendanceComplete: [...attendancePending].every(index => attendanceResolved.has(index) && !attendanceAmbiguous.has(index))
+      && frontmatterAttendanceComplete };
+}
+
+function dedupeCandidates(candidates: LinkCandidate[]): LinkCandidate[] {
   // Within-page dedup: same (fromSlug, targetSlug, linkType, linkSource)
   // collapses to one entry. First occurrence wins.
   // Issue #972 (codex P2d, decided): a qualified `[[companies/acme]]` (typed
@@ -962,17 +969,19 @@ export async function extractPageLinks(
   // (link_source) and link_type, and the audit trail (which kind of reference
   // created the edge) is worth more than collapsing them. graph-query callers
   // that want a unique target set dedup on to_slug themselves.
+  // A mention of a target this page also links with a typed verb (same link
+  // source) adds nothing: the typed edge already states the relationship.
+  const edgeKey = (c: LinkCandidate) => `${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkSource ?? ''}`;
+  const typed = new Set(candidates.filter(c => c.linkType !== 'mentions').map(edgeKey));
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {
     const key = `${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}\u0000${c.canonicalAttendance ?? false}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key) || (c.linkType === 'mentions' && typed.has(edgeKey(c)))) continue;
     seen.add(key);
     result.push(c);
   }
-  return { candidates: result, unresolved: fmUnresolved,
-    attendanceComplete: [...attendancePending].every(index => attendanceResolved.has(index) && !attendanceAmbiguous.has(index))
-      && frontmatterAttendanceComplete };
+  return result;
 }
 
 export function resolvedLinkCandidate(candidate: LinkCandidate, originSlug: string, originSourceId: string,
@@ -1128,6 +1137,11 @@ export function hasAttendanceEvidence(ranges: ReadonlyArray<readonly [number, nu
  * entire `extract --stale` run (#2011). `ensureWellFormed` replaces any orphaned
  * half with U+FFFD before the slice escapes this function.
  */
+/** Where `idx` lands inside `excerpt(s, idx, width)`: the link's own position, not the first mention of its target. */
+function excerptAnchor(s: string, idx: number, width: number): number {
+  return s.slice(Math.max(0, idx - Math.floor(width / 2)), idx).replace(/\s+/g, ' ').trimStart().length;
+}
+
 function excerpt(s: string, idx: number, width: number): string {
   const half = Math.floor(width / 2);
   const start = Math.max(0, idx - half);
@@ -1243,8 +1257,9 @@ const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
  */
 const LINK_MARK_RE = /\]\(|\]\]|\[\[/;
 const GLOBAL_VERB_RULES = VERB_RULES.map(([re, verb]) => [new RegExp(re.source, `${re.flags.replace('g', '')}g`), verb] as const);
-function attachedVerb(context: string, targetSlug?: string): string | null | undefined {
-  const at = targetSlug ? context.indexOf(targetSlug) : -1;
+function attachedVerb(context: string, targetSlug?: string, anchor?: number): string | null | undefined {
+  const fromAnchor = targetSlug && anchor !== undefined ? context.indexOf(targetSlug, anchor) : -1;
+  const at = fromAnchor >= 0 ? fromAnchor : targetSlug ? context.indexOf(targetSlug) : -1;
   if (at < 0) return undefined;
   const open = context.lastIndexOf('[', at);
   const linkStart = open >= 0 && at - open <= 120 ? (context[open - 1] === '[' ? open - 1 : open) : at;
@@ -1277,7 +1292,7 @@ function attachedVerb(context: string, targetSlug?: string): string | null | und
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
-export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null): string {
+export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number): string {
   if (pageType === 'media') {
     return 'mentions';
   }
@@ -1293,7 +1308,7 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // Per-edge verb rules, precedence founded > invested_in > advises > works_at
   // (then the Chinese rules), over the verbs that belong to this link: in
   // "works at [A] and also advises [B]", A is works_at and B advises.
-  const attached = attachedVerb(context, targetSlug);
+  const attached = attachedVerb(context, targetSlug, anchor);
   if (attached) return attached;
   if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context)) return verb;
   // Page-role prior: only fires for person -> company links. Concept pages

@@ -4573,7 +4573,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-10-05T04:00:00Z\""
+          "\"2026-10-05T03:00:00Z\""
         ]
       },
       {
@@ -4749,7 +4749,7 @@
         "kind": "function",
         "name": "inferLinkType",
         "signature": [
-          "(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null) => string"
+          "(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number) => string"
         ]
       },
       {

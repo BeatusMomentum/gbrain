@@ -17,12 +17,17 @@ const pack = (verbs: string[]): LinkExtractionPack => ({ link_types: verbs.map(n
 
 describe('typed relation lines', () => {
   test('the stated type wins for the link on its line only', async () => {
-    const content = 'Alice mentions [[companies/acme-example]] in passing.\n\n- works_at [[companies/acme-example]] (since 2024)\n- invested_in [[companies/widget-co]]';
+    const content = 'Alice mentions [[companies/beta-example]] in passing.\n\n- works_at [[companies/acme-example]] (since 2024)\n- invested_in [[companies/widget-co]]';
     expect(await types(content)).toEqual([
-      ['companies/acme-example', 'mentions'],
+      ['companies/beta-example', 'mentions'],
       ['companies/acme-example', 'works_at'],
       ['companies/widget-co', 'invested_in'],
     ]);
+  });
+
+  test('a mention of a target the page also links with a typed edge adds no second edge', async () => {
+    const content = 'Alice mentions [[companies/acme-example]] in passing.\n\n- works_at [[companies/acme-example]] (since 2024)';
+    expect(await types(content)).toEqual([['companies/acme-example', 'works_at']]);
   });
 
   test('a sentence line keeps inference', async () => {
