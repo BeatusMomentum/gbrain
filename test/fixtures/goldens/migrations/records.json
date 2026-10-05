@@ -3072,10 +3072,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "core_edit_notices",
+        "name": "delta_per_arm_cursor",
         "sql": {
-          "length": 721,
-          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
+          "length": 449,
+          "sha256": "7ffafdab8ee63691d5fc45ad459540579285f21ad929e022a79100006e2e11e5"
         },
         "sqlFor": "absent",
         "transaction": "absent",
