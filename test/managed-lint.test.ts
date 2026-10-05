@@ -289,13 +289,43 @@ test('a canonical file removed between scan and repair is pending as canonical_f
   });
 }, 60_000);
 
-/** Runs `effect` once, around lint's first revision read of `slug`: before it (the read sees the effect) or after it. */
+test('a listed canonical file removed before its scan read: managed --fix reports canonical_file_missing, report-only reports file_removed_during_scan', async () => {
+  for (const fix of [true, false]) {
+    await fixture(async (engine, sourceId, root) => {
+      await seed(engine, sourceId, BOB, PAGE.replace(/Jane Doe/g, 'Bob Example'));
+      await seed(engine, sourceId);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      const byFile = new Map<string, LintIssue[]>();
+      let scanned = 0;
+      const result = await runLintCore({ target: root, fix, engine, sourceId, onPageIssues: (rel, issues) => byFile.set(rel, issues),
+        onPageScanned: () => { if (scanned++ === 0) unlinkSync(join(root, `${JANE}.md`)); } });
+      expect(result.pages_scanned).toBe(2);
+      if (fix) {
+        expect(result.fix_pending).toBe(1);
+        expect(result.pending_issues).toEqual([expectPendingContract(byFile.get(`${JANE}.md`)?.[0], 'canonical_file_missing')]);
+        expect(await body(engine, sourceId, JANE)).toContain('Of course');
+        expect(await body(engine, sourceId, BOB)).not.toContain('Of course');
+      } else {
+        expect(result.fix_pending).toBe(0);
+        expect(byFile.get(`${JANE}.md`)).toEqual([expect.objectContaining({ rule: 'file-removed-during-scan', code: 'file_removed_during_scan', fixable: false,
+          fix: expect.objectContaining({ argv: ['gbrain', 'lint', root] }) })]);
+      }
+    });
+  }
+}, 60_000);
+
+/**
+ * Runs `effect` once, around lint's first revision read of `slug` (in publishLintFix, after the scan read):
+ * before it (the read sees the effect) or after it. The persistence consumer that lint's preflight starts
+ * reads page snapshots through the same engine (the seeded page's embedding effect), so only lint's own
+ * read counts; a background read must never fire the effect before the scan.
+ */
 function interceptSnapshot(engine: BrainEngine, slug: string, when: 'before' | 'after', effect: () => Promise<void>): () => void {
   const original = engine.readPageSnapshot;
   let fired = false;
   // A transaction handle inherits this property, so the read keeps its own receiver.
   engine.readPageSnapshot = async function (this: BrainEngine, s: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) {
-    if (fired || s !== slug) return original.call(this, s, opts);
+    if (fired || s !== slug || !new Error().stack?.includes('publishLintFix')) return original.call(this, s, opts);
     fired = true;
     if (when === 'before') await effect();
     const snapshot = await original.call(this, s, opts);
