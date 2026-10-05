@@ -81,9 +81,7 @@ export function reservePhysicalRootRecord(root: string, identity: Omit<PhysicalR
 }
 /**
  * Every contender reserves before this scan, so racing ancestor/child claims cannot both succeed.
- * The walk includes `.git` (another brain may reserve a path there). A subdirectory that vanishes
- * or becomes a file mid-walk (git's auto-gc pruning `.git/objects`) holds no reservation and is
- * skipped; errors on the root itself, and every other error such as EACCES, still refuse.
+ * A subdirectory removed while the scan runs (git gc pruning loose objects) holds no reservation.
  */
 export function assertNoPhysicalRootOverlap(root: string): void {
   for (let parent = dirname(root); parent !== root; parent = dirname(parent)) {
@@ -93,8 +91,7 @@ export function assertNoPhysicalRootOverlap(root: string): void {
   if (!existsSync(root)) return;
   const visit = (directory: string) => {
     let entries;
-    try { entries = readdirSync(directory, { withFileTypes: true }); }
-    catch (error) {
+    try { entries = readdirSync(directory, { withFileTypes: true }); } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (directory !== root && (code === 'ENOENT' || code === 'ENOTDIR')) return;
       throw error;

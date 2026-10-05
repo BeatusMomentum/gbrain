@@ -12,7 +12,6 @@
  * Serial: mutates GBRAIN_HOME and the process-global gateway.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { waitFor } from '../helpers/wait-for.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -160,9 +159,14 @@ describe('S2 in think', () => {
     __setDecideTransportForTests(async () => new Response('x', { status: 503 }));
     const failed = await startThinkDecide(engine, { question: 'alpha keyword', remote: false }, 'temporal');
     expect(await failed!.trajectoryIntent('temporal')).toBe('temporal');
-    // The late answer still lands after the test body returns; wait for its
-    // receipt so it cannot leak into the next test's receipt count.
-    await waitFor(async () => (await receipts()).some((r) => r.error_reason === 'late'), { label: 'late intent receipt' });
+    // The late answer lands after the wait; settle it here so its receipt never reaches the next test.
+    let rows: Array<{ outcome: string }> = [];
+    for (const deadline = Date.now() + 5000; Date.now() < deadline; await new Promise((r) => setTimeout(r, 20))) {
+      await flushDecideWrites();
+      rows = await engine.executeRaw<{ outcome: string }>(`SELECT outcome FROM decision_receipts WHERE slot = 'intent' AND call_site = 'think' ORDER BY outcome`);
+      if (rows.length >= 2) break;
+    }
+    expect(rows.map((r) => r.outcome)).toEqual(['error', 'fallback_regex']);
   });
 
   test('all-off: no decide work at all', async () => {

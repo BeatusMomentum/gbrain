@@ -12,19 +12,15 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.56.0] - 2026-10-05
 
-**`gbrain sources add` no longer crashes when Git cleans up mid-registration, big PGLite brains stop freezing in long write and timeline passes, and every test CI claims to run now proves it ran, by name.**
+**Every test CI claims to run now proves it ran, by name; red nightly runs open an issue instead of going unseen; PR CI goes green about 30% sooner on about 20% less compute; and `gbrain eval run-all` stops reporting success for work it skipped.**
 
-This is a test, eval and CI fix wave. For you it fixes three real bugs the test suite had been flaking on. For anyone changing gbrain, CI stops crying wolf: flaky tests are fixed at the root, red nightly runs open an issue instead of going unseen, coverage that never executed now executes, and pull-request CI is faster.
+This is a test, eval and CI fix wave. For you it makes two eval commands honest. For anyone changing gbrain, CI stops crying wolf: flaky tests are fixed at the root, red nightly runs open an issue instead of going unseen, coverage that never executed now executes, and pull-request CI is faster.
 
 ### What changes for you
 
-- **`gbrain sources add` survives `git gc`.** Registering a source walks its directory to check for overlapping brains and measure its size. When Git pruned `.git/objects` during that walk, a vanished subdirectory made the command fail with `internal_error`. Both walks now skip a subdirectory that disappears or turns into a file mid-walk; errors on the root itself and permission errors still stop the command.
-- **PGLite writes outside a transaction take the WAL checkpoint guard.** Raw autocommit writes (bulk vector updates, for one) skipped the guard that `engine.transaction()` already had, so once the write-ahead log crossed its automatic checkpoint trigger, PGLite ran the checkpoint inside the crossing write and spun at 100% CPU. A 64 MB-WAL brain writing 200 MB of autocommit WAL hung before and finishes in about 3 s now. Statement order is unchanged.
-- **`extract timeline --source db` refreshes planner statistics as it goes.** PGLite has no autovacuum, so a timeline walk that grew `timeline_entries` from empty kept planning every read against an empty table and slowed with each row (655 s at 20,000 pages). It now refreshes statistics on the `import.analyze_every_pages` cadence, like import and managed sync. The 20,000-page PGLite scale run finishes import, extract and vectors in about 6 minutes.
 - **`gbrain eval run-all` tells the truth.** A bare run runs only the suites it can run (BrainBench). Naming a suite it does not run (`--suites longmemeval,replay`) exits 1 with `eval_suite_unwired` and the per-suite commands as the fix, and a failed suite exits 1 instead of 0.
 - **`gbrain eval takes-quality` prices every model the canonical pricing table knows.** The private six-model allowlist is gone. An unpriced model warns and runs; under a `--budget-usd` cap it refuses with `no_pricing` and the `gbrain pricing set` command to register its rate.
 
-The three runtime fixes are folded from GBRA-40 Foundations 2 Lane F, along with the scale harness's `find_orphans` known-answer fix. Thank you.
 
 ### What changes for contributors
 
@@ -60,7 +56,7 @@ Before: the three baseline runs of the master tree on 2026-10-04. Now: the three
    ```bash
    gbrain apply-migrations --yes --no-autopilot-install
    ```
-2. **Nothing else to migrate.** There is no schema change; the fixes apply to the next `gbrain sources add`, PGLite write and `extract timeline` run.
+2. **Nothing else to migrate.** There is no schema change.
 3. **Verify:**
    ```bash
    gbrain doctor --json
@@ -71,16 +67,13 @@ Before: the three baseline runs of the master tree on 2026-10-04. Now: the three
 
 #### Fixes
 
-- `gbrain sources add`: the physical-root overlap walk and the directory-size count skip a subdirectory that vanishes or becomes a file mid-walk; root errors and EACCES still throw; `.git` is still walked (`test/physical-root-walk.test.ts`, including a 20,000-file walk in about 0.9 s).
-- PGLite: an autocommit statement that may write WAL issues the checkpoint-guard probe right behind itself and queues a needed `CHECKPOINT` before the caller's next statement.
-- `extract timeline --source db` refreshes stale planner statistics every `import.analyze_every_pages` pages on PGLite.
 - `gbrain eval run-all`: bare runs run wired suites only; `eval_suite_unwired` (exit 1, with `gbrain errors eval_suite_unwired`); a failed suite exits 1.
 - `gbrain eval takes-quality`: canonical pricing for every model, registered overrides first; unpriced models warn and run; `no_pricing` under a user cap.
 - Scale harness: the `find_orphans` known answer reads the op's maximum page and compares with `total_orphans`.
 
 #### Flakes fixed at the root
 
-- The `sources add` race above (B1); a leaked `check-update --refresh-cache` child in the self-upgrade breadcrumb test; facts-queue tests wait on queue counters instead of fixed sleeps; the child-readiness test requires the confirmed timeout message (tini contract documented); a `persistence-deactivate` race where an `await` inside a `.rejects` matcher let Postgres reject before the handler attached and leaked env into later files; the gateway baseline is restored after `gateway-chat.test.ts`, folded from community PR #5907, contributed by @nezovskii. Thank you.
+- `test/physical-root-walk.test.ts` pins the `sources add` walk against a subdirectory vanishing mid-walk, with a two-brain `.git` reservation case (B1); a leaked `check-update --refresh-cache` child in the self-upgrade breadcrumb test; facts-queue tests wait on queue counters instead of fixed sleeps; the child-readiness test requires the confirmed timeout message (tini contract documented); a `persistence-deactivate` race where an `await` inside a `.rejects` matcher let Postgres reject before the handler attached and leaked env into later files; the gateway baseline is restored after `gateway-chat.test.ts`, folded from community PR #5907, contributed by @nezovskii. Thank you.
 - `waitFor` deadlines scale with `GBRAIN_TEST_WAIT_MULTIPLIER` (1 to 4; coverage lanes set 2), capped at 50 s.
 - Verify's fallback watchdog (hosts without `timeout`) no longer leaves orphaned `sleep` processes holding the caller's pipes.
 
@@ -113,6 +106,117 @@ Before: the three baseline runs of the master tree on 2026-10-04. Now: the three
 - `bun run regen:all` regenerates every generated artifact; `check:regen-all` in verify.
 - `docs/TESTING.md` opens with a quick start, drops the test inventories and moves subsystem detail beside its code (120 KB ratchet cap).
 - Removed: unreferenced chunkers and search modules, the forward-reference facade, dead test seams, finished one-off scripts, a broken benchmark, the skillopt judge and reflect evals, a fixture naming a real person, and the exports-count and pagetype-exhaustive guards.
+
+## [0.60.53.0] - 2026-10-04
+
+**gbrain now crash-tests its own write path on every pull request, notes on a PGLite brain turn into facts without anyone running a command, and new dashboard API keys stop handing out admin access by default.**
+
+Three things got measurably better in this release. First, the gate that guards your data now kills gbrain in the middle of real writes, over and over, and checks that nothing was lost, duplicated or leaked into another source afterwards. A full 10-minute run kills it 69 to 75 times on PGLite and 18 times on Postgres behind a connection pooler, at 11 different points in the write path, and finds zero problems. Second, on a PGLite brain served by `gbrain serve`, ten new meeting notes became 49 facts within about 20 minutes with no further command; before, they waited forever. Third, an API key created in the admin dashboard used to get full admin access unless you knew better. Now 0 of 20 do.
+
+### The numbers that matter
+
+| What we measured | Before | Now |
+| --- | --- | --- |
+| Crash runs in one full persistence gate run (600 s budget) | 0 | 69 to 75 on PGLite, 18 on Postgres through PgBouncer, 11 crash points, 0 violations |
+| Past persistence fixes the gate catches when the fix is reverted (12 tried) | 0 | 1 on each engine |
+| Facts from 10 meeting notes on a served PGLite brain, no command run | 0 after 22 min (10 jobs waiting) | 49 facts from all 10 pages at about 20 min, $0.084 |
+| Dashboard-minted API keys with full admin access | 20 of 20 | 0 of 20 |
+| Legacy tokens authorized from the old JSON grant after upgrade | 50 of 50 | 0 of 50 (all 50 still work) |
+| Unattributed writer references in the code | 90 in 40 files | 7 in 3 files |
+| Scale tier enforced gates at 10,000 pages | n/a | 25 of 25 PGLite, 24 of 24 Postgres |
+| Scale tier at 20,000 pages | nightly timed out at 50 min | green on both engines, about 8 min per job |
+| `gbrain extract timeline --source db` at 20,000 PGLite pages | 12.6 min | about 2 min |
+
+Search latency did not regress with the facts drain running beside it (12 pages, real model): `get_page` p95 3.2 to 3.3 ms, `list_pages` 9.1 to 8.8 ms, search 439 to 389 ms.
+
+### How to use it
+
+```bash
+gbrain doctor --only legacy_token_null_scope,facts_drain --json   # full-access keys and the drain's state
+gbrain auth rescope --id <token-id> --scopes read,write           # narrow an old full-access key
+gbrain auth rescope --client <id> --sources none                  # an OAuth client that reads no source
+gbrain auth rescope --client <id> --takes-holders world,brain     # per-client takes holders
+gbrain repair take-supersession                                   # preview; add --apply after review
+gbrain config set facts.extraction_enabled false                  # turn automatic fact extraction off
+```
+
+### Things to watch
+
+- The facts drain is on by default on PGLite and spends real money: one chat call per page, capped at $1 per run and $5 per rolling day (`facts.drain_budget_usd`, `facts.drain_daily_budget_usd`). A brain without a chat key queues the pages and `gbrain doctor` says so.
+- Large-brain ceilings (MCP search latency at 10k and 20k pages, calibrated budgets) are still report-only. The scale tier measures them every night; enforcement stays off until five nightly runs are stable.
+- MCP search on Postgres slows from 78.6 ms at 10k pages to 615 ms at 20k (1,169 ms source-scoped). This is filed, not fixed.
+- Older binaries keep reading tokens through the `permissions` mirror, which is written until 2026-11-04.
+
+## To take advantage of v0.60.53.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.60.53.0.md` the next time you interact with it.** Migration v202 converts every legacy token grant to the grant columns without changing what any token can do, and v203 adds the per-client source and takes-holder columns. Restart every `gbrain serve`, autopilot and worker so the facts drain and the new token reads take effect.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor --only legacy_token_null_scope,legacy_token_grant_shape,facts_drain,revision_backfill --json
+   gbrain stats
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+#### Crash robot in the persistence gate
+
+- The persistence gate runs a crash robot (`scripts/persistence/crash-robot.ts`, `generator.ts`, `model.ts`, `ops.ts`): seeded sequences of real operations across two sources and a connector source (local CLI, an OAuth client and a legacy token as remote agents; page writes, edits, deletes and restores, `remember`/`forget`, takes add and supersede, timeline entries, `sync_brain`, a GitHub connector publish, credential revocation). It SIGKILLs the owner at every crash seam the sequences reach (`src/core/persistence/fault-points.ts`), and runs process faults: a stale `index.lock`, a hung `git commit`, Postgres session drops every 400 ms, and the owner killed right after a `facts-absorb` job commits. A reference model checks for lost or duplicated writes, untrue receipts, withdrawn facts coming back, cross-source writes, request-id replay across principals, takes and facts rows against their page fences, write attribution, orphan rows, wedged queues and lock order.
+- `.github/workflows/persistence-validation.yml` adds a `crash-robot` job per engine with PgBouncer for Postgres: 150 s on pull requests, 600 s on pushes, schedules and manual runs. Failing runs replay with `--replay` and shrink with `--shrink`; accepted shrunk sequences live in `test/fixtures/crash-robot/`.
+- A restarted PGLite owner (for example `gbrain serve` after a crash) resumes the effects and writes its predecessor left claimed instead of waiting out a 2-minute lease that also held back writes to a withdrawn page.
+- `buildHistoryFixture(engine, { pages, seed, sources, worktrees })` (`scripts/persistence/history-fixture.ts`) builds a managed brain with real persistence history at up to 10,000 pages.
+
+#### Facts and chronicle
+
+- Automatic facts drain on PGLite (`src/core/facts/drain.ts`, `drain-scheduler.ts`): `gbrain serve` (stdio and `--http`) and the new `facts_drain` cycle phase run queued `facts-absorb` jobs under per-run and daily spend caps. Jobs without a key are deferred without spending an attempt (minion job deferral); doctor `facts_drain` reports the state. Guide: `docs/guides/facts-drain.md`.
+- The `extract_facts` cycle phase fences facts without a fence row itself (#5299).
+- `gbrain repair take-supersession` rebuilds supersession chains broken on managed brains (#5886).
+- Doctor `revision_backfill` reports pages waiting on the page revision backfill with a resume command that works, and the backfill runs on managed brains (#5216).
+- Life chronicle: two same-day events of one page that share who and what both survive (`src/core/chronicle/event-identity.ts`), and an ended calendar invite becomes a `Scheduled:` meeting event without a model call (`invite-projection.ts`).
+
+#### Keys and grants
+
+- Dashboard API keys mint through `mintLegacyToken` with read and write by default; admin only when the box is checked. The dashboard revokes a key by id, so two keys with the same name no longer revoke each other.
+- Doctor `legacy_token_null_scope` names every existing full-access key with the command that narrows it.
+- Migration v202 (`legacy_token_grant_conversion`) converts every legacy token grant to the unified grant columns; HTTP auth on both transports reads those columns, and a row created later converts on its first read. A malformed `permissions` value now denies every axis on every path.
+- Migration v203 (`oauth_client_grant_axes`) adds `oauth_clients.source_grant` and `oauth_clients.takes_holders`: `gbrain auth rescope --client <id> --sources none` and `--takes-holders a,b|none`.
+
+#### Write attribution
+
+- Imports, legacy sync renames and deletes, timeline extraction, legacy facts and takes helpers, cycle phases, schema-pack conversions and repairs record the local maintenance principal (`maintenanceTransaction`). Changed rows keep their creator and move their last writer. `gbrain extract`, meeting-timeline extraction and enrichment remain unattributed (`docs/architecture/system-of-record.md`).
+- Batch maintenance writers commit one bounded transaction per batch: 10,000 pages of timeline extraction run as 100 transactions of at most 100 rows.
+- `gbrain repair attribution-backfill` on a 10,000-page managed history with 75% of rows reset refilled 6,868 of 7,509 pages, 5,502 of 5,609 versions and 1,501 of 1,501 facts exactly and changed no content; the rest were last changed by `forget`.
+- `gbrain calibration undo-wave` works on Postgres.
+
+#### Scale and operations
+
+- The scale tier asserts the large-brain ceilings through the real CLI at every size: progress-aware sync deadline, loud `embed --stale` budget stop, serve boot window, and a 20,000-file `sources add` at 20k pages and up. Ceiling enforcement stays report-only.
+- The Postgres `find_orphans` known answer reads totals and one maximal page (it read 1 page of 100 against 104 orphans and failed the 20k nightly).
+- PGLite writes made outside a transaction take the WAL checkpoint guard, so large raw writes no longer hang at a 529 MB WAL.
+- `gbrain extract timeline --source db` refreshes PGLite planner statistics on batch boundaries during the walk.
+- `gbrain migrate --to` refusals carry why and a filled fix naming the refusing side; an unknown engine is `invalid_params`; `postgres` is the canonical engine name (`supabase` stays an alias).
+- `gbrain sources refresh` runs inside a resident PGLite owner (`writer_refresh` administration operation); delegated syncs keep the progress-aware deadline; the consumer's idle probe honors the refresh fence.
+- `gbrain sources add` no longer fails with `internal_error` (ENOENT under `.git/objects`) when a background `git gc` prunes the checkout while it is being registered.
+- Search reuses its projection-readiness answer until the brain changes (`GBRAIN_PROJECTION_READINESS_CACHE=0` turns it off).
+- The OpenClaw context-engine heartbeat reports seat write failures with their hints; a pattern page drops a seat its reflections no longer share (#4618).
+
+### For contributors
+
+- Generated files were regenerated, not merged: migration registry, flag registry, schema blobs, llms bundles, goldens.
+- New write-attribution suites `test/write-attribution-<family>.test.ts`; helpers `test/helpers/unmanaged-attribution.ts` and `attribution-history-fixture.ts` (`GBRAIN_TEST_BACKFILL_FIXTURE_PAGES`). A test that overrides an engine method with a copy bound to the base engine deadlocks on PGLite once the writer runs in a transaction; override through the transaction engine instead.
+- `scripts/persistence/would-have-caught.ts` reverts past fixes one at a time and reports which the gate catches.
 
 ## [0.60.52.0] - 2026-10-04
 

@@ -18,7 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractTimelineFromDB } from '../src/commands/extract-timeline-db.ts';
 import { __testing } from '../src/core/planner-stats.ts';
 
-const PAGES = 300;
+const PAGES = 301;
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
@@ -51,7 +51,7 @@ describe('database timeline walk keeps PGLite planner statistics fresh', () => {
     const result = await extractTimelineFromDB(engine, { dryRun: false, jsonMode: true, quiet: true });
 
     expect(result.created).toBe(PAGES * 2);
-    // The check before page 300 sees 299 pages' rows (598), the first count over the max(500, 10%) threshold.
+    // The check after page 300 sees 300 pages' rows (600), the first count over the max(500, 10%) threshold.
     expect(analyzed.filter(a => a.table === 'timeline_entries').map(a => a.rows)).toEqual([(PAGES - 1) * 2]);
     const [{ n }] = await engine.executeRaw<{ n: number }>(
       "SELECT count(*)::int AS n FROM pg_stats WHERE schemaname = 'public' AND tablename = 'timeline_entries'");

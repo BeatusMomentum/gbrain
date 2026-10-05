@@ -28,6 +28,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   calibration_profile: 'global',
   drift: 'global',
   chronicle: 'global',
+  facts_drain: 'global',
   embed: 'global',
   orphans: 'global',
   purge: 'global',
