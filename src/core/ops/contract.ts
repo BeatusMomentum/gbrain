@@ -748,3 +748,13 @@ export interface Operation {
     hidden?: boolean;
   };
 }
+
+/**
+ * An op that declares its own `source` param (timeline-add, ontology-add,
+ * takes add/update/supersede, raw data) takes `--source` as that param, e.g.
+ * provenance. Every CLI route (direct, delegated to a resident serve, thin
+ * client) then leaves it out of source scoping and passes it to the handler.
+ */
+export function opOwnsSource(op: Pick<Operation, 'params'>): boolean {
+  return 'source' in op.params;
+}
