@@ -69,3 +69,21 @@ test('re-enrollment over MCP is detected, refreshed in place and leaves converge
     expect(left.remote_membership_reason).toBe('superseded');
   }, process.env.DATABASE_URL);
 }, 180_000);
+
+// A brain older than the fresh-install grace (here: a PGLite schema snapshot built over an hour ago) gets the
+// one-time `behavior_changes` notice as an extra text block beside the first remote result. The installer
+// parses the result body only, so the notice never reads as a server without the shared-skills protocol.
+test('the one-time behavior_changes notice beside join_brain does not make the install pending', async () => {
+  await withTransportFixture(async f => {
+    await f.seed();
+    await f.engine.executeRaw("UPDATE sources SET created_at=now()-interval '2 hours'");
+    const peer = f.peers.reader;
+    const root = join(f.dir, 'gbrain-home', 'bootstrap', 'shared-skills', 'codex', randomUUID());
+    const credentials: HarnessCredentials = { version: 1, mcp_url: f.url, issuer_url: f.url.replace(/\/mcp$/, ''),
+      client_id: peer.id, access_token: peer.token, shared_skills: { follow: true } };
+    const installed = await installSharedSkillsConnection(credentials, { harness: 'codex', root, name: 'gbrain', nativeSkillsDir: join(f.dir, 'codex-skills') });
+    expect(installed).toMatchObject({ status: 'restart_required' });
+    const [shown] = await f.engine.executeRaw<{ value: string }>("SELECT value FROM config WHERE key='notices.behavior_changes.http'");
+    expect(shown?.value).toContain(peer.id);
+  }, process.env.DATABASE_URL);
+}, 180_000);
