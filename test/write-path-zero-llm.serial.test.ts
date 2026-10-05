@@ -24,6 +24,7 @@ import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import type { MinionHandler } from '../src/core/minions/types.ts';
 import { writeInferenceOf, ZERO_GENERATIVE_BEFORE_COMMIT } from '../src/core/ops/write-inference.ts';
 import { installTripwire, type Tripwire } from './helpers/ai-tripwire.ts';
+import { drainFeedbackQueue, recordAnswer } from '../src/core/feedback/record.ts';
 import { runPhaseEdgeContradictions, applyEdgeProposal, rejectEdgeProposal, undoEdgeProposal } from '../src/core/cycle/edge-contradictions.ts';
 
 let engine: PGLiteEngine;
@@ -178,6 +179,25 @@ describe('writes commit with zero generative model calls', () => {
     const [q] = await engine.executeRaw<{ id: number }>("SELECT id FROM link_edge_proposals ORDER BY id DESC LIMIT 1");
     await rejectEdgeProposal(engine, Number(q!.id));
     expectNoGenerative('edge-proposals reject');
+  });
+
+  test('rate_answer and the answer/citation recording behind it (P3 feedback)', async () => {
+    COVERED.add('rate_answer');
+    await engine.setConfig('feedback.enabled', 'true');
+    try {
+      wire.reset();
+      const ctx = { engine, config: { engine: 'pglite' }, remote: false, dryRun: false, sourceId: 'default',
+        logger: { info: () => {}, warn: () => {}, error: () => {} } } as never;
+      const meta = await recordAnswer(ctx, { op: 'search', pages: [{ slug: 'meetings/roadmap-local', cited: true }] });
+      const answerId = meta?.answer_id;
+      expect(answerId).toMatch(/^ans_/);
+      await drainFeedbackQueue(10_000);
+      await call('rate_answer', { answer_id: answerId, rating: 4 });
+      await drainFeedbackQueue(10_000);
+      expectNoGenerative('search answer recording + rate_answer');
+    } finally {
+      await engine.unsetConfig('feedback.enabled');
+    }
   });
 
   test('CLI import (importFromContent)', async () => {

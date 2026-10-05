@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 199289,
-    "stdoutSha256": "e42b94a985e3bb20f1dd711ff956ec9c8c87b98214cda97575655994af83dc34",
+    "stdoutBytes": 200329,
+    "stdoutSha256": "3dd41f384a3a82a89934f303ca395f17bddf4ff96745cb68b20b3bfb353becad",
     "toolNames": [
       "remember",
       "entity",
@@ -28,6 +28,7 @@
       "search_modes",
       "search_tune",
       "cache_stats",
+      "rate_answer",
       "search_by_image",
       "add_tag",
       "remove_tag",
@@ -177,7 +178,6 @@
           "infer_entity": "boolean?",
           "kind": "string?",
           "provenance": "string",
-          "replaces": "string?",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -219,10 +219,6 @@
             },
             "provenance": {
               "description": "Where the fact came from (max 500 chars).",
-              "type": "string"
-            },
-            "replaces": {
-              "description": "fact_id this fact replaces (same entity).",
               "type": "string"
             },
             "request_id": {
@@ -321,8 +317,7 @@
         "parameters": {
           "id": "string",
           "reason": "string?",
-          "request_id": "string?",
-          "semantic_review": "boolean?"
+          "request_id": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -338,10 +333,6 @@
             "request_id": {
               "description": "UUID; retry with it on timeout.",
               "type": "string"
-            },
-            "semantic_review": {
-              "description": "false: skip overnight rewording review.",
-              "type": "boolean"
             }
           },
           "required": [
@@ -1331,6 +1322,43 @@
           "type": "object"
         },
         "scope": "admin"
+      },
+      {
+        "description": "Rate how useful an answer's retrieved evidence was, so this brain ranks better next time (zero LLM calls). Pass the answer_id from a query/search/think/synthesize/recall response and rating 1-5, or rate single pages with pages: [{ ref: \"source_id:slug\", rating }]. Example: { answer_id: \"ans_01J…\", pages: [{ ref: \"default:people/alice-example\", rating: 1 }] }. Returns a receipt with each weight before/after; it never edits stored facts.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "rate_answer",
+        "parameters": {
+          "answer_id": "string",
+          "pages": "array?",
+          "rating": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "answer_id": {
+              "description": "The ans_… id from the answer you are rating.",
+              "type": "string"
+            },
+            "pages": {
+              "description": "Per-page ratings: [{ ref: \"source_id:slug\", rating: 1-5 }]. Pages only; edges are not touched.",
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "rating": {
+              "description": "Whole-answer rating 1-5 (omit when using pages).",
+              "type": "number"
+            }
+          },
+          "required": [
+            "answer_id"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
       },
       {
         "description": "Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL (SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal indexing (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).",

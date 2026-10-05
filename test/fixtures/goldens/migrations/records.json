@@ -3059,10 +3059,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "decide_review_proposals",
+        "name": "retrieval_feedback",
         "sql": {
-          "length": 1700,
-          "sha256": "8a20d8dac7096056bb53512bcb34316d15d44582b7d9b0f4f6fff3891c9daac3"
+          "length": 2490,
+          "sha256": "d1e3de98a671e85253ee73b0e67ccf297ba16c663832560c20f88788c1c43600"
         },
         "sqlFor": "absent",
         "transaction": "absent",
