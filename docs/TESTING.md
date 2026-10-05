@@ -290,9 +290,22 @@ writes the vectors onto every chunk so the vector arm runs keylessly through
 each with a known-answer check: `get_health`, `list_pages`, local and MCP-path
 `search`, a source-scoped grant search, hybrid `query` with an injected
 vector, `traverse_graph`, `get_backlinks` and `find_orphans`, plus a
-cold-process first query and two concurrent receipt-bearing `put_page`s. It
+cold-process first query and two concurrent receipt-bearing `put_page`s.
+`find_orphans` is checked with one call at the op's maximum page size: its
+rows must hold every fixture island and match `total_orphans`. It
 captures every statement each op sends and replays the reads under
-`EXPLAIN ANALYZE` for the planner check. The report leads with the headline
+`EXPLAIN ANALYZE` for the planner check. With the brain closed, it then runs
+the large-brain operational ceilings through the real CLI
+(`scripts/scale/f4d.ts`), each an enforced data check with its measurement in
+the report's `f4d` section: a `gbrain sync` of a fresh source (1,000 files at 10k and up) past a 1 s
+progress-aware deadline completes (`f4d_sync_deadline`); `gbrain embed
+--stale` against a local stub embedding endpoint stops at its time budget with
+exit 11, the remaining count and the resume command (`f4d_embed_budget_stop`;
+nothing leaves the machine); `gbrain serve` answers initialize and a search
+without hitting its boot deadline (`f4d_serve_boot`); and at 20,000 pages and
+up, `gbrain sources add` registers a 20,000-file checkout on a fresh managed
+brain (`f4d_sources_add_20k`). Each phase logs its start and end, so a run
+stopped by a job timeout shows where it was. The report leads with the headline
 metric, MCP search p50 at the run's size as shipped (no manual ANALYZE).
 
 Exit codes: 0 when every enforced gate passes, or always without `--enforce`;
@@ -313,8 +326,9 @@ nightly runs; a reviewer then sets the repo variable
 `GBRAIN_SCALE_ENFORCE_CEILINGS=1`. The same script picks the nightly sizes.
 Reproduce any report with the command it prints. The fixture's determinism
 is pinned by `test/scripts/scale-fixture.test.ts`, the gate policy by
-`test/scripts/scale-gates.test.ts` and `scale-trend.test.ts`, and a 40-page
-enforced run by `test/scripts/scale-harness.slow.test.ts`.
+`test/scripts/scale-gates.test.ts` and `scale-trend.test.ts`, the
+`find_orphans` known answer by `test/scripts/scale-orphans-verifier.test.ts`,
+and a 40-page enforced run by `test/scripts/scale-harness.slow.test.ts`.
 
 ### Authoring gate
 
@@ -696,7 +710,13 @@ The persistence invariant jobs run the complete `scripts/persistence/validate.ts
 gate (10,000-write soak) on pushes to master and manual dispatches. Pull requests
 run the same schedules and crash boundaries with a 2,500-write soak; the full
 PGLite soak alone takes 15-28 minutes and would otherwise set every PR's wall
-time. `test/scripts/data-safety-native-workflow.test.ts` pins the split.
+time. `test/scripts/data-safety-native-workflow.test.ts` pins the split. The
+crash robot (generated sequences of real operations, SIGKILL at every crash
+seam they reach, process faults, the reference model) runs as its own job
+beside the soak: 150 s on pull requests, 600 s elsewhere, Postgres through a
+transaction-mode PgBouncer. That job also replays the shrunk crash-robot
+regressions (`test/persistence-crash-robot.slow.test.ts`) and the history
+fixture test on both engines; see `scripts/persistence/README.md`.
 
 For platform-only feedback, dispatch
 `gh workflow run test.yml --ref <branch> -f native_only=true`. This explicit manual option uses a separate concurrency
