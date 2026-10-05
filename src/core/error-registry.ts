@@ -125,6 +125,7 @@ export const CODES = {
   embedding_unconfigured: { class: 'host_only', summary: "The selected brain has no verifiable text embedding model and dimensions." },
   embedding_width_mismatch: { class: 'caller', summary: "The embedding model cannot produce the width of the brain's vector column; nothing was changed." },
   engine_graduated: { class: 'caller', summary: "A client opened a PGLite brain that moved to Postgres; its old path holds a tombstone.", docs: 'docs/guides/move-to-postgres.md#graduated-datastore' },
+  eval_suite_unwired: { class: 'caller', summary: "`gbrain eval run-all` was asked for a suite it does not run in-process (longmemeval or replay); nothing ran.", why: "run-all runs only wired suites (brainbench). Recording a skipped run and exiting 0 would read as a completed sweep with no numbers behind it.", suggestion: 'Run each requested suite with its own command (`gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record`, `gbrain eval replay --mode <mode>`), once per mode, or drop it from --suites.' },
   export_limit: { class: 'caller', summary: "This migration is bounded to 5,000 active pages per source; split or use a reviewed bulk export." },
   extraction_failed: { class: 'server', summary: "The accepted atom extraction produced malformed output." },
   extractor_identity_mismatch: { class: 'server', summary: "The approved extractor differs from the installed extractor; this receipt cannot resume or admit another revision." },
