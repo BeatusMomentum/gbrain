@@ -17,9 +17,9 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { descriptor, executeOp, parseDescriptor } from '../scripts/persistence/ops.ts';
+import { descriptor, executeOp, parseDescriptor, SessionDrops } from '../scripts/persistence/ops.ts';
 import { ReferenceModel } from '../scripts/persistence/model.ts';
-import { crossBoundarySequences, randomSchedule } from '../scripts/persistence/generator.ts';
+import { crossBoundarySequences, pageBody, randomSchedule } from '../scripts/persistence/generator.ts';
 import { ROBOT_TOPOLOGY, restrict } from '../scripts/persistence/robot-driver.ts';
 import { shrinkRun } from '../scripts/persistence/shrink.ts';
 import { runSchedule, runSteps } from '../scripts/persistence/crash-robot.ts';
@@ -129,6 +129,59 @@ describe('concurrent connector publish and direct write', () => {
       expect(model.violations.map(v => v.class)).toEqual(['lost_write']);
     });
   }, 120_000);
+});
+
+describe('injected session drops', () => {
+  // CI jobs 111669020132 and 111702893848: a pooler_disconnect drop landed on the robot's own `$current`
+  // revision read, which had no retry, and the worker died with `write CONNECTION_CLOSED 127.0.0.1:55433`.
+  const closed = () => Object.assign(new Error('write CONNECTION_CLOSED 127.0.0.1:55433'), { code: 'CONNECTION_CLOSED' });
+  const dropOnce = (world: { engine: { readPageSnapshot: (...a: never[]) => Promise<unknown> } }) => {
+    const engine = world.engine;
+    const read = engine.readPageSnapshot;
+    let calls = 0;
+    engine.readPageSnapshot = (async (...args: never[]) => {
+      calls++;
+      engine.readPageSnapshot = read;
+      throw closed();
+    }) as never;
+    return () => calls;
+  };
+
+  test('an injected drop on the robot\'s own revision read is retried; a close it did not inject fails the run', async () => {
+    await robotBrain(async ({ world }) => {
+      const source = world.remotes[0].sourceId;
+      const put = await executeOp(world, descriptor('seed', 'put_page', 'local', source, { slug: 'notes/alpha', content: pageBody('notes/alpha', 'mk-seed0') }));
+      expect(put.status).toBe('committed');
+      const edit = (id: string) => descriptor(id, 'put_page', 'local', source,
+        { slug: 'notes/alpha', content: pageBody('notes/alpha', `mk-${id}0`), expected_revision: '$current' });
+
+      const unexpectedCalls = dropOnce(world);
+      await expect(executeOp(world, edit('unexpected'))).rejects.toThrow(/robot had dropped no session before it[\s\S]*validate\.ts --engine=postgres/);
+      expect(unexpectedCalls()).toBe(1);
+      expect(world.submitted?.has('unexpected')).toBe(false);
+
+      world.sessionDrops = new SessionDrops();
+      expect(await world.sessionDrops.inject(async () => 1)).toBe(1);
+      const injectedCalls = dropOnce(world);
+      const seen = await executeOp(world, edit('injected'));
+      expect(injectedCalls()).toBe(1);
+      expect(seen.status).toBe('committed');
+      expect(world.submitted?.get('injected')?.expected_revision).toBe(put.receipt?.revision);
+    });
+  }, 120_000);
+
+  test('a drop round counts once it terminated a session, including a round still in flight', async () => {
+    const drops = new SessionDrops();
+    expect(await drops.injectedBefore()).toBe(false);
+    expect(await drops.inject(async () => 0)).toBe(0);
+    expect(await drops.inject(() => Promise.reject(new Error('admin connection lost')))).toBe(0);
+    expect(await drops.injectedBefore()).toBe(false);
+    let finish!: (killed: number) => void;
+    void drops.inject(() => new Promise<number>(done => { finish = done; }));
+    const asked = drops.injectedBefore();
+    finish(2);
+    expect(await asked).toBe(true);
+  });
 });
 
 describe('lock order', () => {
