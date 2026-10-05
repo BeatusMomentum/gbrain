@@ -9,6 +9,9 @@ on:
   # prepare-e2e classifies the queued change from the compare API (base_sha...
   # head_sha). docs/RELEASING.md#merge-queue.
   merge_group:
+  # Event parity (docs/TESTING.md#event-parity): the concurrency suffix below only
+  # separates a full_corpus dispatch; the schedule-only full-corpus lanes are a
+  # named exception documented at the coverage pipeline.
   schedule:
     - cron: '0 6 * * *'  # Nightly at 6am UTC
   workflow_dispatch:
@@ -150,6 +153,10 @@ jobs:
           CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
           BASE_SHA: ${{ github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        # Named exception (docs/TESTING.md#event-parity): a doc-only pull request
+        # selects no E2E file; every push to master runs the whole corpus (no
+        # PR context, so ci-changed-files.sh fails closed) and the nightly
+        # schedule runs the full-corpus lanes.
         run: |
           if [ "$FULL_CORPUS" = "true" ]; then
             # Full-profile coverage carries the complete E2E corpus separately.
@@ -646,6 +653,10 @@ jobs:
   # job compares against the fullCorpus baseline and uploads the trend
   # artifact. PR runs never pay this cost; the full-profile gate on every job
   # below is load-bearing.
+  # Named exception (docs/TESTING.md#event-parity): the full-corpus coverage
+  # lanes and their e2e-status checks run on the nightly E2E schedule (and an
+  # explicit full_corpus dispatch); pull requests run every E2E file through
+  # Selected E2E instead.
   # ──────────────────────────────────────────────────────────────────────
   coverage-full-unit:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
@@ -687,6 +698,7 @@ jobs:
           overwrite: true
 
   coverage-full-serial:
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
     runs-on: ubicloud-standard-8-ubuntu-2404
     timeout-minutes: 30
@@ -721,6 +733,7 @@ jobs:
           overwrite: true
 
   coverage-full-slow:
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 35
@@ -756,6 +769,7 @@ jobs:
           overwrite: true
 
   coverage-full-e2e:
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus)
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
@@ -859,6 +873,7 @@ jobs:
 
   coverage-full-report:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
+    # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 15
@@ -952,6 +967,8 @@ jobs:
 
   # The stable aggregate includes full-profile execution lanes when requested.
   # Coverage reporting itself remains advisory; failed tests never do.
+  # Named exception (docs/TESTING.md#event-parity): FULL_CORPUS adds the
+  # full-corpus lanes to the aggregate on the nightly schedule only.
   e2e-status:
     needs: [jsonb-parity, tier1, tier1-backend-matrix, tier2, prepare-e2e, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always()

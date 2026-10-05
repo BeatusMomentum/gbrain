@@ -35,6 +35,8 @@ concurrency:
 jobs:
   macos-26:
     name: macOS 26 validation
+    # Named exception (docs/TESTING.md#event-parity): label-gated on pull requests;
+    # the nightly macOS validation schedule and manual dispatch always run it.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'macos-validation')

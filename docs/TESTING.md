@@ -76,20 +76,17 @@ the decision rule is critical path first, vCPU-minutes second.
 `test/scripts/ci-runner-routing.test.ts` pins capacity and platform routing;
 `.github/actionlint.yaml` declares the exact custom runner labels.
 
-### Pull request, master and nightly scope
+### Event parity
 
 Every test file runs on every push to master, on the nightly schedule and on
-manual dispatch. Pull requests and merge-queue runs (`merge_group`, which use
-the PR profile) run a narrower matrix of the same files:
-
-| Lane | Pull request | Push to master, nightly, manual |
-| --- | --- | --- |
-| Security regressions | Linux, macOS and Windows on Bun 1.4.2 | Also Bun 1.4.0 |
-| Persistence read latency, deployment matrix, soak, reconciliation crashes | Bun 1.4.2 | Bun 1.4.0 and 1.4.2 |
-| Persistence soak size | 2,500 writes | 10,000 writes |
-| Native writer locks, native paths changed | Every target on Bun 1.4.2, musl, both Windows probes, OpenClaw | Every target, musl and Windows probe on Bun 1.4.0 and 1.4.2, OpenClaw |
-| Native writer locks, other changes | `linux-x64-glibc / Bun 1.4.2` smoke cell (full native step list) | Same as above |
-| `test/export-scale.slow.test.ts` | 10,001 pages | 100,001 pages |
+manual dispatch, and pull requests and merge-queue runs (`merge_group`) run
+every Bun-version cell too. Each narrower PR behavior (soak and crash-robot
+budgets, native-lock scope, export scale, the PR-only stress gate) is a named
+exception whose comment beside the condition names the scheduled run that
+covers it; `test/scripts/ci-pr-scope.test.ts` fails on an unclassified one.
+The table, the dependency-audit rule and the measured cost of parity are in
+[docs/ci-event-parity.md](ci-event-parity.md). Required checks stay keyed on
+the `test-status` and `e2e-status` aggregators.
 
 The `changes` job classifies a pull request's changed files with
 `scripts/ci-native-scope.sh`: native lock sources, the native toolchain, IPC,
@@ -275,15 +272,29 @@ only where a Postgres lane names it. Those lanes are: a workflow step that
 runs with `DATABASE_URL` and names the file, a `test/e2e/` wrapper that
 imports it (`registerPostgresTests`), a `tests/heavy/` script that names it,
 or a row in `scripts/e2e-backend-matrix.txt`. Unit-lane files with no other
-Postgres owner run in `persistence-validation.yml`'s `unit-postgres-arms` job
-(two shards against a pgvector service, newest Bun on PRs, both supported
-versions elsewhere). Each file runs in its own Bun process, so a failing file
-cannot leak environment or global state into later files, and each failure
-prints an `::error file=…` line with its reproduce command.
-`bun run check:postgres-lanes` (in `verify`) fails on every arm with no lane.
-An arm deliberately left out is an `ALLOWLIST` row in
+Postgres owner are listed in `test/postgres-unit-arms.txt` (one sorted path
+per line), read by `persistence-validation.yml`'s `unit-postgres-arms` job (two
+shards balanced by `scripts/postgres-arm-weights.json`, both Bun versions), the
+[race hunt](#race-hunt) and the lane guard. Each file runs in its own Bun
+process and each failure prints an `::error file=…` line with its reproduce command.
+`bun run check:postgres-lanes` (in `verify`) fails on every arm with no lane
+and on a bad list row. An arm deliberately left out is an `ALLOWLIST` row in
 `scripts/check-postgres-lane-coverage.ts` naming its reason and TODO; a row
 for a file that is laned, has no arm or is gone fails.
+### Stress gate
+
+`stress-changed-tests` (in `test-status`) runs every test file a PR adds or
+modifies, plus importers of changed `test/helpers/` files, 10 times with a
+fresh database per iteration; a failure must be root-caused in that PR. The
+local twin is `bun run test:stress [files…] [--iterations N] [--base <ref>]
+[--postgres]`. Profiles, exemptions and replay: [scripts/stress/README.md](../scripts/stress/README.md).
+
+### Race hunt
+
+The nightly `race-hunt` job (outside `test-status`) runs every file in
+`test/postgres-unit-arms.txt` 10 times against Postgres and fails with one
+`test:stress` reproduce line per failing file ([scripts/stress/README.md](../scripts/stress/README.md#race-hunt)).
+
 ### Scale tier
 
 The gate shape and cadence are defined once, by O-CEO-16 (with O-ENG-16 and
