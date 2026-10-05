@@ -317,6 +317,9 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   embedded_text_hash    TEXT,
   -- #5553 (v171): embedding-input provenance written with the vector.
   embedding_input_hash  TEXT,
+  -- v209: fact-key text carried by this chunk's title-tier embedding input
+  -- (docs/designs/FACT_KEYS.md); changes only together with the vector.
+  fact_keys             TEXT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.19.0: code chunk metadata. Nullable — markdown chunks leave these NULL.
   -- Powers `query --lang`, `code-def <symbol>`, and `code-refs <symbol>`.
@@ -881,6 +884,24 @@ CREATE TABLE IF NOT EXISTS retrieval_weights (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, element_kind, element_key)
 );
+
+-- page_fact_keys (migration v209): occurrence keys, the facts extractor's own
+-- output for one page revision before dedup (docs/designs/FACT_KEYS.md).
+-- Withdrawal discovery joins on (source, fingerprint, visibility, subject).
+CREATE TABLE IF NOT EXISTS page_fact_keys (
+  page_id            INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id          TEXT    NOT NULL,
+  page_revision      TEXT    NOT NULL,
+  ordinal            INTEGER NOT NULL,
+  item_text          TEXT    NOT NULL,
+  item_fingerprint   TEXT    NOT NULL,
+  subject            TEXT    NOT NULL,
+  visibility         TEXT    NOT NULL CHECK (visibility IN ('private','world')),
+  extractor_version  TEXT    NOT NULL,
+  PRIMARY KEY (page_id, page_revision, ordinal)
+);
+CREATE INDEX IF NOT EXISTS page_fact_keys_withdrawal_idx
+  ON page_fact_keys (source_id, item_fingerprint, visibility, subject);
 
 -- session_context_state (v0.45.7 / migration v126 — ambient recall issue #1):
 -- per-session cursor + boundary-tie dedup for the `delta` verb + heartbeat

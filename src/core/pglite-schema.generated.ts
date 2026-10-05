@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   embedded_at           TIMESTAMPTZ,
   embedded_text_hash    TEXT,
   embedding_input_hash  TEXT,
+  fact_keys             TEXT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   language              TEXT,
   symbol_name           TEXT,
@@ -474,6 +475,21 @@ CREATE TABLE IF NOT EXISTS retrieval_weights (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, element_kind, element_key)
 );
+
+CREATE TABLE IF NOT EXISTS page_fact_keys (
+  page_id            INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id          TEXT    NOT NULL,
+  page_revision      TEXT    NOT NULL,
+  ordinal            INTEGER NOT NULL,
+  item_text          TEXT    NOT NULL,
+  item_fingerprint   TEXT    NOT NULL,
+  subject            TEXT    NOT NULL,
+  visibility         TEXT    NOT NULL CHECK (visibility IN ('private','world')),
+  extractor_version  TEXT    NOT NULL,
+  PRIMARY KEY (page_id, page_revision, ordinal)
+);
+CREATE INDEX IF NOT EXISTS page_fact_keys_withdrawal_idx
+  ON page_fact_keys (source_id, item_fingerprint, visibility, subject);
 
 CREATE TABLE IF NOT EXISTS session_context_state (
   source_id           TEXT NOT NULL,

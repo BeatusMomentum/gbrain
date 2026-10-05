@@ -684,6 +684,8 @@ export interface Chunk {
    * (getChunks).
    */
   embedding_is_null?: boolean;
+  /** v209 fact keys: the key text this chunk's title-tier embedding input carries (docs/designs/FACT_KEYS.md). */
+  fact_keys?: string | null;
 }
 
 /**
@@ -769,6 +771,8 @@ export interface ChunkInput {
   embedding?: Float32Array;
   /** #5553: embedding-input provenance (see embedding-input-hash.ts); written only with `embedding`. */
   embedding_input_hash?: string;
+  /** v209: fact-key text in the title-tier embedding input; the stored value changes only with the vector. */
+  fact_keys?: string | null;
   model?: string;
   token_count?: number;
   /**

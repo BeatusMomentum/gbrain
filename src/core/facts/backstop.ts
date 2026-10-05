@@ -136,6 +136,8 @@ export interface FactsBackstopCtx {
   sourceSlug?: string;
   /** #5888: when the source turn happened, for the capture-lane dedup window (default: now). */
   turnAt?: Date;
+  /** v209 fact keys: the page revision this extraction reads (docs/designs/FACT_KEYS.md); null publishes no keys. */
+  factKeys?: import('./fact-keys-publish.ts').FactKeysBinding | null;
 }
 
 /** Discriminated return shape based on FactsBackstopCtx.mode. */
@@ -299,6 +301,8 @@ export async function runFactsBackstop(
       ? { mode: 'queue', enqueued: false, queueDepth: 0, skipped }
       : { mode: 'inline', inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped };
   }
+  const { bindFactKeysSnapshot } = await import('./fact-keys-publish.ts');
+  ctx = { ...ctx, factKeys: await bindFactKeysSnapshot(ctx.engine, ctx.sourceId, parsedPage.slug, parsedPage.compiled_truth).catch(() => null) };
   const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
   if (await managedPersistenceEnabled(ctx.engine)) {
     if (mode !== 'inline') {
@@ -656,6 +660,10 @@ async function runPipelineBodyInner(
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
+  if (ctx.factKeys && input.pageSlug === ctx.factKeys.slug && input.turnText === ctx.factKeys.text) {
+    const { publishExtractedFactKeys } = await import('./fact-keys-publish.ts');
+    await publishExtractedFactKeys(ctx.engine, ctx.factKeys, outcome.facts, visibility, resolveEntitySlugWithSource, abortSignal);
+  }
   // #5888: one exact-duplicate check for the capture lanes, before either writer.
   const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug) : null);

@@ -42,9 +42,11 @@ const SUMMARY_HARD_CAP_CHARS = 300;
 export function buildContextualPrefix(
   title: string | null | undefined,
   synopsis: string | null | undefined,
+  factKeys?: string | null,
 ): string | null {
   const safeTitle = sanitizeTitle(title ?? '');
   const safeSynopsis = sanitizeSynopsis(synopsis ?? '');
+  if (factKeys && !safeSynopsis) return `<context>${safeTitle}\nFacts: ${factKeys}\n</context>\n`;
 
   if (!safeTitle && !safeSynopsis) {
     return null;
@@ -208,12 +210,11 @@ export function wrapChunkTextsForStoredMode(
     | { title?: string | null; contextual_retrieval_mode?: CRMode | null }
     | null
     | undefined,
-  chunks: ReadonlyArray<{ chunk_text: string; chunk_source?: string | null }>,
+  chunks: ReadonlyArray<{ chunk_text: string; chunk_source?: string | null; fact_keys?: string | null }>,
 ): string[] {
   const mode = page?.contextual_retrieval_mode;
   if (mode == null || !modeRequiresWrapper(mode)) {
     return chunks.map((c) => c.chunk_text);
   }
-  const prefix = buildContextualPrefix(page?.title ?? '', null);
-  return chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source));
+  return chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, buildContextualPrefix(page?.title ?? '', null, c.fact_keys), c.chunk_source));
 }

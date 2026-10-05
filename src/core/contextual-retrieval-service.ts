@@ -500,10 +500,9 @@ async function tryBuildPhase1(opts: {
     // the title tier wants slightly more context — but per D2 the
     // balanced default is title-only without summary. Keep it pure for
     // now; the title block alone is what 'balanced' ships.
-    const prefix = buildContextualPrefix(title, null);
     const wrappedTexts = chunks.map((c) =>
       modeRequiresWrapper(attemptMode)
-        ? wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source)
+        ? wrapChunkForEmbedding(c.chunk_text, buildContextualPrefix(title, null, c.fact_keys), c.chunk_source)
         : c.chunk_text,
     );
 

@@ -65,6 +65,15 @@ export async function discoverWithdrawalTargets(engine: BrainEngine, sourceId: s
       AND (k.subject='*' OR f.entity_slug=k.subject)
     JOIN pages p ON p.source_id=f.source_id AND p.slug=COALESCE(f.source_markdown_slug,f.entity_slug)`, [sourceId, keys]);
   for (const row of provenance) affected.add(row.id);
+  // v209 fact keys: pages whose chunk embeddings carry the claim as a key. An
+  // unresolved key subject ('*') matches every subject-scoped withdrawal.
+  const keyedPages = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT fk.page_id AS id
+    FROM jsonb_to_recordset($2::text::jsonb) k(visibility text,fact_hash text,subject text,norm text)
+    JOIN page_fact_keys fk ON fk.source_id=$1 AND fk.visibility=k.visibility
+      AND (fk.item_fingerprint=COALESCE(encode(sha256(convert_to(k.norm,'UTF8')),'hex'),k.fact_hash)
+        OR gbrain_fact_fingerprint_v1(fk.item_text)=k.fact_hash)
+      AND (k.subject='*' OR fk.subject='*' OR fk.subject=k.subject)`, [sourceId, keys]);
+  for (const row of keyedPages) affected.add(Number(row.id));
   if (affected.size > WITHDRAWAL_LIMITS.targets) await refuseAffected(engine, sourceId, affected);
   const match = async (incoming: Array<{ id: number; slug: string; claim: string; visibility: string | null; ambiguous: boolean }>) => {
     if (!incoming.length) return;

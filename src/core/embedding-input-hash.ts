@@ -4,7 +4,7 @@
  * `content_chunks.embedding_input_hash` is written in the same statement as the
  * vector. It digests the vector column, model and dimensions, the wrapping tier
  * the vector was built under, and the exact embedding input: the chunk text for
- * `none` and fenced code, the title prefix plus the chunk text for `title`, and
+ * `none` and fenced code, the title prefix (with the chunk's fact keys, v209) plus the chunk text for `title`, and
  * (because a generated synopsis cannot be recomputed) the page's synopsis
  * corpus generation, the full title the synopsis prompt read, the document-body hash and the chunk text for
  * `per_chunk_synopsis`. A projection rebuild keeps a vector only when the stored
@@ -28,7 +28,7 @@ export interface EmbeddingInputContext {
   bodyHash: string;
 }
 
-type HashedChunk = { chunk_text: string; chunk_source?: string | null };
+type HashedChunk = { chunk_text: string; chunk_source?: string | null; fact_keys?: string | null };
 
 /** The document a synopsis is generated from: every non-image chunk, in order. */
 export function synopsisBodyHash(chunks: ReadonlyArray<HashedChunk>): string {
@@ -48,7 +48,7 @@ export function isContextualMode(mode: string | null | undefined): boolean {
 export function embeddingInputHash(ctx: EmbeddingInputContext, tier: EmbeddingTier, chunk: HashedChunk): string {
   const raw = tier === 'none' || chunk.chunk_source === 'fenced_code';
   const input = raw ? chunk.chunk_text
-    : tier === 'title' ? wrapChunkForEmbedding(chunk.chunk_text, buildContextualPrefix(ctx.title, null), chunk.chunk_source)
+    : tier === 'title' ? wrapChunkForEmbedding(chunk.chunk_text, buildContextualPrefix(ctx.title, null, chunk.fact_keys), chunk.chunk_source)
     : digest([ctx.title, ctx.bodyHash, chunk.chunk_text]);
   return digest(['embedding-input-v1', ctx.column, ctx.model, ctx.dimensions, tier,
     tier === 'per_chunk_synopsis' ? ctx.corpusGeneration : null, sha256(input)]);

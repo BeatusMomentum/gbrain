@@ -49,7 +49,7 @@ import { AbortError } from './abort-check.ts';
 export function carryChunkMetadata(
   loaded: Pick<Partial<Chunk>,
     'modality' | 'language' | 'symbol_name' | 'symbol_type' | 'start_line'
-    | 'end_line' | 'parent_symbol_path' | 'doc_comment' | 'symbol_name_qualified'>,
+    | 'end_line' | 'parent_symbol_path' | 'doc_comment' | 'symbol_name_qualified' | 'fact_keys'>,
   base: ChunkInput,
 ): ChunkInput {
   return {
@@ -63,6 +63,7 @@ export function carryChunkMetadata(
     parent_symbol_path: loaded.parent_symbol_path ?? undefined,
     doc_comment: loaded.doc_comment ?? undefined,
     symbol_name_qualified: loaded.symbol_name_qualified ?? undefined,
+    fact_keys: loaded.fact_keys,
   };
 }
 

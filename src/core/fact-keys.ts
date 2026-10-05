@@ -12,6 +12,8 @@
  * embedding input. The stored `chunk_text` is never changed.
  */
 
+import { buildContextualPrefix, wrapChunkForEmbedding } from './embedding-context.ts';
+
 export type FactKeyAssignment = 'chunk' | 'page';
 
 /** Maximum fact-key characters attached to one chunk. */
@@ -81,7 +83,5 @@ export function assignFactKeys(
  * title-wrapped (or raw, without a title) input unchanged.
  */
 export function factKeyedEmbeddingInput(chunkText: string, title: string | null, factKeys: string | null): string {
-  const safeTitle = (title ?? '').replace(/<\/?context>/gi, '').replace(/\s+/g, ' ').trim().slice(0, 300);
-  if (!factKeys) return safeTitle ? `<context>${safeTitle}\n</context>\n${chunkText}` : chunkText;
-  return `<context>${safeTitle}\nFacts: ${factKeys}\n</context>\n${chunkText}`;
+  return wrapChunkForEmbedding(chunkText, buildContextualPrefix(title, null, factKeys), null);
 }
