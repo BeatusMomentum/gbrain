@@ -57,7 +57,7 @@ preference questions about "this weekend" whose evidence predates it).
 | page keys, published prompt | LME-S | 435/470 | −0.018 [−0.027, −0.010] | 13 / 41 |
 | chunk keys, gbrain's facts extractor as shipped (Haiku 4.5) | LME-S | 452/470 | +0.005 [+0.0001, +0.011] | 16 / 8 |
 | chunk keys, published prompt | LME-M | 383/470 (vs 367) | +0.025 [+0.012, +0.038] | 58 / 33 |
-| chunk keys, gbrain's facts extractor as shipped (Haiku 4.5) | LME-M | pending | pending | pending |
+| chunk keys, gbrain's facts extractor as shipped (Haiku 4.5) | LME-M | 381/468 (vs 366) | +0.022 [+0.011, +0.034] | 58 / 25 |
 
 On LongMemEval-M the published-prompt arm replicates key expansion: strict
 R@5 rises from 78.1% to 81.5% (+3.4 points, 95% CI [+1.5, +5.5], 20 wins / 4
@@ -66,6 +66,15 @@ losses), mostly on temporal-reasoning (81 → 89 of 127) and single-session-user
 session-granularity result. The M baseline row is the unscoped top-5 from the
 time-scope run's 50-candidate pool; on LongMemEval-S that row is identical to
 the plain limit-5 baseline on every question.
+
+gbrain's own facts extractor gives the same gain on LongMemEval-M: strict
+R@5 rises from 78.2% to 81.4% (+3.2 points, 95% CI [+1.3, +5.1], 18 wins / 3
+losses) on the 468 questions where both runs completed (two questions failed
+on embedding-provider timeouts and are excluded from every arm in this
+comparison). Against the published-prompt arm on the same questions it is
+indistinguishable (−0.2 points, 95% CI [−2.1, +1.7], 9 wins / 10 losses),
+with the gains in the same types: temporal-reasoning 81 → 86 of 127,
+multi-session 81 → 86 of 120, single-session-user 59 → 63 of 64.
 
 Page keys (every fact on every chunk) are rejected: the shared prefix makes a
 session's chunks look alike and pushes gold sessions down. The published
