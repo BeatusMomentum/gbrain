@@ -20,8 +20,9 @@
  * counts as proof that a file passed. Exit 0 when written, 2 on usage error.
  * Docs: docs/ci-red-runbook.md#ci-failure-manifest
  */
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { buildSide, compare, DEFAULT_DELTAS, loadReceiptDir, parseDeltas, type DeltaRow, type Receipt } from './ci-executed-counts.ts';
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { buildSide, compare, DEFAULT_DELTAS, loadReceiptDir, parseDeltas, parseJUnit, type DeltaRow, type Receipt } from './ci-executed-counts.ts';
 
 export const MANIFEST_SCHEMA = 'gbrain-ci-manifest/v1';
 export const MANIFEST_ARTIFACT = 'ci-manifest';
@@ -29,7 +30,8 @@ export const MANIFEST_FILE = 'ci-manifest.json';
 export const MANIFEST_DOCS = 'docs/ci-red-runbook.md#ci-failure-manifest';
 
 export interface ManifestFile { file: string; lane: string; arm: string; executed: number; failed: number; skipped: number }
-export interface ManifestFailure { lane: string; file: string; test: string; arm: string }
+/** `signature` is the stress gate's failure signature of the JUnit failure message, so exemption records match its failures; it is omitted when the message carries a credential (then no exemption is offered). */
+export interface ManifestFailure { lane: string; file: string; test: string; arm: string; signature?: string; message?: string }
 export interface CiManifest {
   schema: typeof MANIFEST_SCHEMA;
   workflow: string;
@@ -45,7 +47,7 @@ export interface CiManifest {
 export interface ManifestBinding { workflow: string; event: string; sha: string; run_id: number; run_attempt: number }
 
 /** `deltas` are the declared skips of docs/test-audit/2026-10-04/expected-deltas.tsv (a keyless lane declared empty is not a problem). */
-export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas: { rows: DeltaRow[]; errors: string[] } = { rows: [], errors: [] }): CiManifest {
+export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas: { rows: DeltaRow[]; errors: string[] } = { rows: [], errors: [] }, messages: Map<string, string> = new Map()): CiManifest {
   const side = buildSide('manifest', receipts, new Map([[String(bind.run_id), bind.run_attempt]]));
   const problems = compare(side, undefined, deltas).issues.map(i => i.detail);
   if (!receipts.length) problems.push('no receipts were downloaded (every receipts-* upload is missing)');
@@ -60,7 +62,9 @@ export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas
     else entry.skipped++;
     if (id.status === 'fail') {
       entry.failed++;
-      failures.push({ lane: id.lane, file: id.file, test: id.test, arm: id.arm });
+      const message = messages.get(`${id.file}\u001f${id.test}`);
+      const safe = message !== undefined && redactMessage(message) === message;
+      failures.push({ lane: id.lane, file: id.file, test: id.test, arm: id.arm, ...(message === undefined ? {} : { ...(safe ? { signature: failureSignature(message) } : {}), message: redactMessage(message).slice(0, 500) }) });
     }
     files.set(key, entry);
   }
@@ -71,6 +75,54 @@ export function buildManifest(receipts: Receipt[], bind: ManifestBinding, deltas
     files: [...files.values()].sort(byKey),
     failures: failures.sort((a, b) => byKey(a, b) || a.test.localeCompare(b.test)),
   };
+}
+
+/**
+ * The stress gate's failure signature (scripts/stress/run.ts `failureSignature`):
+ * the first four non-empty lines of the failure message with ANSI codes,
+ * temp paths, UUIDs and numbers masked, capped at 200 characters. An
+ * exemption record matches a stress failure only when this is identical;
+ * test/scripts/nightly-issue.test.ts pins it against the gate's contract.
+ */
+export function failureSignature(message: string): string {
+  return message.replace(/\x1b\[[0-9;]*m/g, '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 4).join(' ')
+    .replace(/\/(?:private\/)?(?:tmp|var\/folders)\/\S+/g, '<tmp>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
+    .replace(/\b\d+(?:\.\d+)?\b/g, 'N').replace(/\s+/g, ' ').slice(0, 200);
+}
+
+const redactMessage = (text: string) => text
+  .replace(/\b(postgres(?:ql)?:\/\/[^:/@\s]+):[^@\s]*@/gi, '$1:***@')
+  .replace(/\b(PGPASSWORD|[A-Z_]*(?:TOKEN|API_KEY|SECRET))=\S+/g, '$1=***');
+
+const ENTITY: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+const decode = (t: string) => t.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (w, r: string) => (r[0] === '#' ? String.fromCodePoint(r[1] === 'x' ? parseInt(r.slice(2), 16) : Number(r.slice(1))) : ENTITY[r] ?? w));
+
+/** First JUnit failure message per failing test (`file\u001ftest`), paired in report order as the stress gate pairs them. */
+export function junitMessages(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (d: string) => {
+    for (const name of readdirSync(d)) {
+      const path = join(d, name);
+      if (statSync(path).isDirectory()) { walk(path); continue; }
+      if (!name.endsWith('.junit.xml')) continue;
+      const xml = readFileSync(path, 'utf8');
+      let failed;
+      try { failed = parseJUnit(xml).filter(c => c.status === 'fail'); } catch { continue; }
+      const messages: string[] = [];
+      for (const [, body] of xml.matchAll(/<testcase\b[^>]*?(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+        const m = /<(?:failure|error)\b[^>]*?message="([^"]*)"/.exec(body ?? '');
+        if (m || /<(?:failure|error)\b/.test(body ?? '')) messages.push(decode(m?.[1] ?? 'failure without a message'));
+      }
+      failed.forEach((c, i) => {
+        const file = c.file.includes('test/') ? c.file.slice(c.file.indexOf('test/')) : c.file;
+        const key = `${file}\u001f${c.test}`;
+        if (!out.has(key) && messages[i] !== undefined) out.set(key, messages[i]!);
+      });
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return out;
 }
 
 /** Validate a downloaded manifest against the run it must describe; a mismatch is a problem string, never a silent pass. */
@@ -106,7 +158,7 @@ function main(argv: string[]): number {
   const receipts = existsSync(dir) ? loadReceiptDir(dir) : [];
   const deltasPath = flag('--deltas') ?? DEFAULT_DELTAS;
   const deltas = existsSync(deltasPath) ? parseDeltas(readFileSync(deltasPath, 'utf8')) : { rows: [], errors: [] };
-  const manifest = buildManifest(receipts, { workflow: env.GITHUB_WORKFLOW ?? '', event: env.GITHUB_EVENT_NAME ?? '', sha: env.GITHUB_SHA, run_id: runId, run_attempt: attempt }, deltas);
+  const manifest = buildManifest(receipts, { workflow: env.GITHUB_WORKFLOW ?? '', event: env.GITHUB_EVENT_NAME ?? '', sha: env.GITHUB_SHA, run_id: runId, run_attempt: attempt }, deltas, junitMessages(dir));
   writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
   const line = `ci-manifest: ${manifest.files.length} file/lane/arm entries, ${manifest.failures.length} failing tests, ${manifest.complete ? 'complete' : `INCOMPLETE (${manifest.problems.length} problems; nightly-watch will not clear failures from this run)`}.`;
   console.log(line);

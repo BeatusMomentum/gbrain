@@ -61,7 +61,14 @@ response: a repair PR whose body says `Fixes #<issue>`.
 A `flake` issue records one intermittent failure: the file, test name, lane,
 arm, platform, failing job, failure signature, first red run, owner and an
 expiry date 14 days out. The stress gate can exempt only a failure that matches
-an open issue's test name, backend and signature. Next step: run the reproduce
+an open issue's test name, backend and signature. The watcher writes those as
+`<!-- gbrain-stress-exemption -->` JSON records (file, exact test name,
+backend `pglite`, `pglite+postgres` or `postgres`, the gate's failure
+signature, owner `agent on release duty`, expiry) in `master-red`, `flake` and
+`nightly-red` bodies, one per failing test identity from the manifest. A
+failure without an exact test name, or whose message carries a credential,
+gets no record. Master-red and nightly-red records expire 14 days after the
+watcher last saw the failure; flake records at the flake's expiry. Next step: run the reproduce
 line (`bun run test:stress <file> --iterations 10 [--postgres]`) until it fails,
 find the race, and open a repair PR with `Fixes #<issue>`. Never widen a
 timeout or weaken an assertion. When the signature names a runner, disk or

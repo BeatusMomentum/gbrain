@@ -31,7 +31,7 @@ import {
   commentIssue, createIssue, ensureLabel, getIssue, inert, inertBlock, jsonBlock, linkedPulls, listLabeled, readJsonBlock, updateIssue,
   type GitHubClient, type Issue,
 } from './gh-issue.ts';
-import { collectEvidence, reproduceCommand, verdictOf, workflowFile, type EvidenceOptions, type FailedJob, type FailedTest, type RunEvidence, type RunInfo } from './ci-run.ts';
+import { collectEvidence, EXEMPTION_DAYS, EXEMPTION_MARKER, exemptionRows, plusDays, reproduceCommand, stressBackend, verdictOf, workflowFile, type EvidenceOptions, type FailedJob, type FailedTest, type RunEvidence, type RunInfo } from './ci-run.ts';
 
 export const MR_LABEL = 'master-red';
 export const FLAKE_LABEL = 'flake';
@@ -66,6 +66,8 @@ export interface MasterRedState {
   tests: FailedTest[];
   evidence: { run_id: number; complete: boolean; problems: string[] } | null;
   blocked: string[];
+  /** Expiry of the stress-gate exemption records this issue carries (14 days after the watcher last saw it red). */
+  exemption_expires?: string;
   rebuilt?: string;
 }
 export interface FlakeRecord {
@@ -76,6 +78,7 @@ export interface FlakeRecord {
   lane: string;
   arm: string;
   platform: 'linux' | 'windows' | 'macos';
+  backend: string;
   job: string;
   signature: string;
   first_seen: RunRef;
@@ -272,6 +275,10 @@ export function renderMasterRed(state: MasterRedState, repo: string, issue?: num
     lines.push(`<details><summary>Every failing test file this incident (${new Set(state.tests.map(t => t.file)).size})</summary>`, '', ...filesList(state), '', '</details>', '');
   }
   for (const j of state.open_jobs.filter(x => x.excerpt.length)) lines.push(`Errors in \`${j.job}\` (sanitized excerpts):`, '~~~text', inertBlock(j.excerpt.join('\n')), '~~~', '');
+  const rows = state.status === 'red' && state.exemption_expires ? exemptionRows(state.tests, state.exemption_expires) : [];
+  if (rows.length) {
+    lines.push(`Stress-gate exemption records (${rows.length}): a PR's stress gate does not count a failure that matches one of these exactly (file, test name, backend, signature) until ${state.exemption_expires}; any other failure still fails. Docs: ${FLAKE_DOCS}`, '', jsonBlock(EXEMPTION_MARKER, rows), '');
+  }
   lines.push('### Next step for the agent', '', nextStep(state, repo, issue), '', jsonBlock(MR_MARKER, state), '');
   return lines.join('\n');
 }
@@ -283,8 +290,8 @@ export function flakeFor(state: MasterRedState, t: FailedTest, issue: number, to
   const expires = new Date(Date.parse(`${today}T00:00:00Z`) + FLAKE_EXPIRY_DAYS * 86_400_000).toISOString().slice(0, 10);
   const reproduce = reproduceCommand(t.file, t.postgres) ?? null;
   const record: FlakeRecord = {
-    schema: FLAKE_SCHEMA, workflow: state.workflow, file: t.file, test: t.test, lane: t.lane, arm: t.arm, platform, job: jobName,
-    signature: inert(job?.excerpt[0] ?? '', 200), first_seen: state.first_red!, master_red_issue: issue,
+    schema: FLAKE_SCHEMA, workflow: state.workflow, file: t.file, test: t.test, lane: t.lane, arm: t.arm, platform, backend: stressBackend(t), job: jobName,
+    signature: t.signature ?? inert(job?.excerpt[0] ?? '', 200), first_seen: state.first_red!, master_red_issue: issue,
     owner: 'agent on release duty', opened: today, expires, reproduce,
   };
   const title = `Flake: ${inert(`${t.file}${t.test ? ` › ${t.test}` : ''}`, 200)}`;
@@ -304,6 +311,7 @@ export function flakeFor(state: MasterRedState, t: FailedTest, issue: number, to
     '',
     `Docs: ${FLAKE_DOCS}`,
     '',
+    ...(() => { const rows = exemptionRows([t], expires); return rows.length ? [jsonBlock(EXEMPTION_MARKER, rows), ''] : []; })(),
     jsonBlock(FLAKE_MARKER, record),
     '',
   ].join('\n');
@@ -378,6 +386,7 @@ export async function planMasterRed(client: GitHubClient, repo: string, run: Run
   for (const s of [...closed, state]) {
     if (s.first_red && s.suspect?.note === 'not looked up yet') s.suspect = await suspectRange(client, s.suspect.from_sha, s.suspect.to_sha);
   }
+  if (state.status === 'red' && evaluated.length) state.exemption_expires = plusDays(opts.today, EXEMPTION_DAYS);
   const plan = decide(stored, state, closed, issue, repo, title, evaluated, opts.today);
   plan.evidence = cache.get(run.id * 1000 + run.run_attempt);
   return { plan, issue };

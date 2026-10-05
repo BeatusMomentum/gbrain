@@ -44,7 +44,8 @@ export interface JobInfo {
 }
 export interface Annotation { annotation_level: string; title?: string | null; message: string; path?: string }
 
-export interface FailedTest { file: string; test: string; lane: string; arm: string; job?: string; postgres: boolean }
+/** `test` is sanitized for display; `name` (the exact JUnit test name) and `signature` feed stress-gate exemption records only. */
+export interface FailedTest { file: string; test: string; lane: string; arm: string; job?: string; postgres: boolean; name?: string; signature?: string }
 export interface FailedJob { job: string; job_id: number; step: string; conclusion: string; files: string[]; excerpt: string[]; owner_signal: boolean }
 export interface RunEvidence {
   verdict: 'red' | 'green' | 'ignored';
@@ -84,6 +85,33 @@ export function verdictOf(conclusion: string | null): RunEvidence['verdict'] {
 }
 
 /** `bun run test:stress <file> --iterations 10 [--postgres]`, or undefined when the path fails validation. */
+export const EXEMPTION_MARKER = 'gbrain-stress-exemption';
+export const EXEMPTION_OWNER = 'agent on release duty';
+export const EXEMPTION_DAYS = 14;
+export interface ExemptionRow { file: string; test: string; backend: string; signature: string; owner: string; expires: string }
+
+/** The stress gate's backend arm for a failing file: E2E files run on Postgres, Postgres-armed unit files on both arms, the rest on PGLite. */
+export function stressBackend(t: Pick<FailedTest, 'file' | 'postgres'>): string {
+  return t.file.startsWith('test/e2e/') ? 'postgres' : t.postgres ? 'pglite+postgres' : 'pglite';
+}
+
+/**
+ * Stress-gate exemption rows (scripts/stress/README.md): one per failing test
+ * identity with its exact test name and failure signature; identities without
+ * both (annotation-only failures, messages carrying credentials) get none.
+ */
+export function exemptionRows(tests: FailedTest[], expires: string): ExemptionRow[] {
+  const rows = new Map<string, ExemptionRow>();
+  for (const t of tests) {
+    if (!t.name || !t.signature || !TEST_FILE.test(t.file)) continue;
+    const row = { file: t.file, test: t.name, backend: stressBackend(t), signature: t.signature, owner: EXEMPTION_OWNER, expires };
+    rows.set(JSON.stringify([row.file, row.test, row.backend, row.signature]), row);
+  }
+  return [...rows.values()];
+}
+
+export const plusDays = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
 export function reproduceCommand(file: string, postgres: boolean): string | undefined {
   if (!TEST_FILE.test(file) || file.includes('..')) return undefined;
   return `bun run test:stress ${file} --iterations 10${postgres ? ' --postgres' : ''}`;
@@ -165,7 +193,7 @@ export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: 
       if (!m.complete) problems.push(`the ${MANIFEST_ARTIFACT} artifact is incomplete: ${m.problems.slice(0, 3).map(p => inert(p, 160)).join('; ')}${m.problems.length > 3 ? ` (+${m.problems.length - 3} more)` : ''}`);
       for (const f of m.failures) {
         if (!TEST_FILE.test(f.file)) continue;
-        tests.push({ file: f.file, test: inert(f.test, 300), lane: inert(f.lane, 60), arm: inert(f.arm, 60), postgres: POSTGRES_SIGNAL.test(`${f.arm} ${f.lane}`) });
+        tests.push({ file: f.file, test: inert(f.test, 300), lane: inert(f.lane, 60), arm: inert(f.arm, 60), postgres: POSTGRES_SIGNAL.test(`${f.arm} ${f.lane}`), ...(f.signature && f.test.length <= 500 ? { name: f.test, signature: f.signature.slice(0, 200) } : {}) });
       }
       passed = [...passedFiles(m)].filter(f => TEST_FILE.test(f)).sort();
     } else {

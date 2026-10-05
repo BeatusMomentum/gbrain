@@ -12,7 +12,8 @@ import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { safeLoad } from 'js-yaml';
 import { loadReceiptDir } from '../../scripts/ci-executed-counts.ts';
-import { buildManifest, checkManifest, MANIFEST_ARTIFACT, MANIFEST_SCHEMA, type CiManifest } from '../../scripts/ci-manifest.ts';
+import { buildManifest, checkManifest, failureSignature, junitMessages, MANIFEST_ARTIFACT, MANIFEST_SCHEMA, type CiManifest } from '../../scripts/ci-manifest.ts';
+import { failureSignature as gateSignature, parseExemptionBlocks } from '../fixtures/nightly-watch/stress-exemption-contract.ts';
 import { inert, jsonBlock, labelNames, readJsonBlock, readZipEntry, type GitHubClient, type Issue } from '../../scripts/lib/gh-issue.ts';
 import { FLAKE_MARKER, MR_MARKER, PUSH_ALLOWLIST, type FlakeRecord, type MasterRedState } from '../../scripts/lib/master-red.ts';
 import {
@@ -739,7 +740,7 @@ describe('master-red: push-to-master runs', () => {
   test('a flake outside the Postgres arms closes after its repair PR merged and a later complete run passed its file and arm', async () => {
     const w = testWorld(T.g8352);
     const rec: FlakeRecord = {
-      schema: 'flake/v1', workflow: 'Test', file: 'test/unit-only.test.ts', test: 'ordering', lane: 'unit', arm: '', platform: 'linux', job: 'test (2)', signature: 'expected 7',
+      schema: 'flake/v1', workflow: 'Test', file: 'test/unit-only.test.ts', test: 'ordering', lane: 'unit', arm: '', platform: 'linux', backend: 'pglite', job: 'test (2)', signature: 'expected 7',
       first_seen: { run_id: 1, run_number: 1, run_attempt: 1, sha: 'c'.repeat(40) }, master_red_issue: 1, owner: 'agent on release duty', opened: TODAY, expires: '2026-10-19', reproduce: null,
     };
     const flake: WorldIssue = { number: 50, title: 'Flake: test/unit-only.test.ts › ordering', state: 'open', labels: [{ name: 'flake' }], body: jsonBlock(FLAKE_MARKER, rec), created: 0, comments: [] };
@@ -842,5 +843,79 @@ describe('operator messages carry docs anchors that resolve', () => {
       return !cache.get(doc)!.has(anchor);
     });
     expect(missing).toEqual([]);
+  });
+});
+
+describe('stress-gate exemption records (lane D contract: scripts/stress/README.md)', () => {
+  const e2eRed = async () => {
+    const w = new World();
+    w.addRun(E.g8470).addRun(E.r8486, `jobs-${E.r8486.id}.json`, mr('ci-manifest-37351182593.json'));
+    await go(w, E.r8486);
+    return w;
+  };
+  const manifestFailures = mr<CiManifest>('ci-manifest-37351182593.json').failures;
+
+  test('the master-red body carries one record per failing test identity that the stress gate parser accepts', async () => {
+    const w = await e2eRed();
+    const rows = parseExemptionBlocks(masterIssue(w, 'E2E Tests')!.body!);
+    expect(rows).toHaveLength(new Set(manifestFailures.map(f => `${f.test}|${f.signature}`)).size);
+    for (const row of rows) {
+      expect(row).toMatchObject({ file: 'test/e2e/fact-embedding-backfill-parity.test.ts', backend: 'postgres', owner: 'agent on release duty', expires: '2026-10-19' });
+      const source = manifestFailures.find(f => f.test === row.test)!;
+      expect(row.signature).toBe(gateSignature(source.message!));
+    }
+    expect(rows.map(r => r.test)).toContain('postgres explicit fact embedding backfill > preview is read-only and scoped; null active facts only, with zero provider calls');
+  });
+
+  test('the manifest signature is the gate\'s failureSignature of the JUnit message (numbers, temp paths, UUIDs, ANSI masked)', () => {
+    for (const msg of [
+      'expected 8 dimensions, not 1536',
+      '\x1b[31merror\x1b[0m: ENOENT /tmp/gbrain-abc123/x.md\n  at foo (src/a.ts:12:3)\n\n  at bar\n  at baz\n  at qux',
+      'job 3f2b8c1a-1111-2222-3333-444455556666 took 12.5s, limit 10s',
+      'x'.repeat(400),
+    ]) expect(failureSignature(msg)).toBe(gateSignature(msg));
+    const dir = mkdtempSync(join(tmpdir(), 'junit-msg-'));
+    writeFileSync(join(dir, 'a.junit.xml'), '<?xml version="1.0"?><testsuites tests="2"><testsuite name="s" file="test/a.test.ts" tests="2"><testcase name="ok" classname="s" file="test/a.test.ts"/><testcase name="bad" classname="s" file="test/a.test.ts"><failure type="Error" message="expected 7 &amp; got 6">trace</failure></testcase></testsuite></testsuites>');
+    const messages = junitMessages(dir);
+    expect([...messages.values()]).toEqual(['expected 7 & got 6']);
+  });
+
+  test('flake issues carry their own record; a nightly-red body fed by a scheduled run carries records too', async () => {
+    const w = await e2eRed();
+    const n = masterIssue(w, 'E2E Tests')!.number;
+    w.addRun(E.g8493, `jobs-${E.g8493.id}.json`, mr('ci-manifest-37354832141.json'));
+    await go(w, E.g8493);
+    expect(w.issue(n).state).toBe('closed');
+    const flakes = w.labeled('flake');
+    expect(flakes.length).toBeGreaterThan(0);
+    for (const f of flakes) {
+      const rows = parseExemptionBlocks(f.body!);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ backend: 'postgres', owner: 'agent on release duty', expires: '2026-10-19' });
+      expect(readJsonBlock<FlakeRecord>(f.body, FLAKE_MARKER)!.signature).toBe(rows[0]!.signature);
+    }
+    expect(parseExemptionBlocks(w.issue(n).body!)).toEqual([]);
+
+    const nightly = new World();
+    const scheduled: RunInfo = { ...E.r8486, id: 999201, event: 'schedule', run_number: 8490 };
+    nightly.addRun(scheduled, `jobs-${E.r8486.id}.json`, { ...mr<CiManifest>('ci-manifest-37351182593.json'), run_id: scheduled.id, event: 'schedule' });
+    await go(nightly, scheduled);
+    const rows = parseExemptionBlocks(nightly.labeled('nightly-red')[0]!.body!);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(r => r.owner === 'agent on release duty' && r.expires === '2026-10-19')).toBe(true);
+  });
+
+  test('a failure without an exact test name or whose message carries a credential gets no record', async () => {
+    const w = testWorld(T.g8315, T.r8320);
+    await go(w, T.r8320);
+    expect(parseExemptionBlocks(masterIssue(w)!.body!)).toEqual([]);
+    const dir = mkdtempSync(join(tmpdir(), 'ci-manifest-cred-'));
+    writeFileSync(join(dir, 'unit--s1--primary.receipt'), `version=1\nlane=unit\nkind=primary\nshard=1\nof=1\narm=\nsha=${'a'.repeat(40)}\nroot=\nrun_id=5\nrun_attempt=1\nstarted=1\nexit=1\n`);
+    writeFileSync(join(dir, 'unit--s1--primary.files'), 'test/a.test.ts\n');
+    writeFileSync(join(dir, 'unit--s1--primary.junit.xml'), '<?xml version="1.0"?><testsuites tests="1"><testsuite name="test/a.test.ts" file="test/a.test.ts" tests="1"><testcase name="bad" file="test/a.test.ts"><failure message="connect postgresql://postgres:hunter2@db:5432/x failed"/></testcase></testsuite></testsuites>');
+    const m = buildManifest(loadReceiptDir(dir), { workflow: 'Test', event: 'push', sha: 'a'.repeat(40), run_id: 5, run_attempt: 1 }, undefined, junitMessages(dir));
+    expect(m.failures[0]!.signature).toBeUndefined();
+    expect(m.failures[0]!.message).toContain('postgres:***@');
+    expect(JSON.stringify(m)).not.toContain('hunter2');
   });
 });

@@ -34,7 +34,7 @@ import {
   type GitHubClient, type Issue,
 } from './lib/gh-issue.ts';
 import {
-  annotationFiles, collectEvidence, FAILING, OWNER_SIGNAL, pagedJobs, reproduceCommand, type Annotation, type EvidenceOptions, type JobInfo, type RunEvidence, type RunInfo,
+  annotationFiles, collectEvidence, EXEMPTION_DAYS, EXEMPTION_MARKER, exemptionRows, FAILING, OWNER_SIGNAL, pagedJobs, plusDays, reproduceCommand, type ExemptionRow, type Annotation, type EvidenceOptions, type JobInfo, type RunEvidence, type RunInfo,
 } from './lib/ci-run.ts';
 import { closeFlakes, externalPass, PUSH_ALLOWLIST, watchMasterRed, type MasterRedPlan } from './lib/master-red.ts';
 
@@ -186,7 +186,7 @@ function nextStepText(rec: IncidentRecord, assessment: Assessment): string {
   }
 }
 
-export function renderBody(rec: IncidentRecord, assessment: Assessment): string {
+export function renderBody(rec: IncidentRecord, assessment: Assessment, exemptions: ExemptionRow[] = []): string {
   const lines = [
     `Workflow **${inert(rec.workflow)}** (\`${rec.workflow_file}\`) — state: **${rec.state}**.`,
     '',
@@ -227,11 +227,14 @@ export function renderBody(rec: IncidentRecord, assessment: Assessment): string 
   if (rec.evidence && !rec.evidence.complete) {
     lines.push(`- Incomplete evidence: ${rec.evidence.problems.join('; ')}. This run's failures may be under-reported and it cannot close an incident. Docs: docs/ci-red-runbook.md#ci-failure-manifest`);
   }
+  if (exemptions.length) {
+    lines.push('', `Stress-gate exemption records (${exemptions.length}; race-hunt and other failing tests): a PR's stress gate does not count a failure that matches one exactly (file, test name, backend, signature) until ${exemptions[0]!.expires}; any other failure still fails. Docs: docs/ci-red-runbook.md#flake-issues`, '', jsonBlock(EXEMPTION_MARKER, exemptions));
+  }
   lines.push('', '### Next step for the agent', '', nextStepText(rec, assessment), '', jsonBlock(JSON_MARKER, rec), '');
   return lines.join('\n');
 }
 
-export function planIncident(run: RunInfo, assessment: Assessment, existing: Issue | undefined, lastGreenSha: string | null, repo: string, succeededJobs: string[], evidence?: RunEvidence): Plan {
+export function planIncident(run: RunInfo, assessment: Assessment, existing: Issue | undefined, lastGreenSha: string | null, repo: string, succeededJobs: string[], evidence?: RunEvidence, today?: string): Plan {
   const title = `Nightly red: ${inert(run.name, 100)}`;
   const previous = existing ? readJsonBlock<IncidentRecord>(existing.body, JSON_MARKER) : undefined;
   const keepLabels = existing ? labelNames(existing).filter(l => l !== KNOWN_LABEL && l !== LABEL) : [];
@@ -288,7 +291,7 @@ export function planIncident(run: RunInfo, assessment: Assessment, existing: Iss
     review_by_notified: [...notified, ...newlyPassed.map(r => `${r.job}|${r.review_by}`)],
     ...(evidence ? { files: evidence.files, evidence: { complete: evidence.complete, problems: evidence.problems.map(p => inert(p, 300)) } } : {}),
   };
-  const body = renderBody(record, assessment).replaceAll('{repo}', repo);
+  const body = renderBody(record, assessment, evidence && today ? exemptionRows(evidence.tests, plusDays(today, EXEMPTION_DAYS)) : []).replaceAll('{repo}', repo);
   const labels = [LABEL, ...(assessment.state === 'red' ? [] : [KNOWN_LABEL]), ...keepLabels];
 
   if (!existing) return { action: 'create', title, labels, body, record, reason: `new ${assessment.state} incident` };
@@ -335,7 +338,7 @@ export async function watchRun(opts: WatchOptions): Promise<WatchResult> {
     `repos/{repo}/actions/workflows/${run.workflow_id}/runs?event=schedule&status=success&per_page=1`).catch(() => ({ workflow_runs: [] }));
   const existing = await findIssueByTitle(client, LABEL, `Nightly red: ${inert(run.name, 100)}`);
   const succeeded = evidence.jobs.filter(j => j.conclusion === 'success').map(j => j.name);
-  const plan = planIncident(run, assessment, existing, greens.workflow_runs[0]?.head_sha ?? null, repo, succeeded, evidence);
+  const plan = planIncident(run, assessment, existing, greens.workflow_runs[0]?.head_sha ?? null, repo, succeeded, evidence, opts.today);
   const fed = run.event === 'schedule' && PUSH_ALLOWLIST[run.name] ? await externalPass(client, repo, run, evidence, { dryRun: opts.dryRun, today: opts.today }) : undefined;
   const flakesClosed = run.event === 'schedule' ? await closeFlakes(client, repo, run, evidence, opts.dryRun) : [];
   if (opts.dryRun) return { plan, assessment, run, evidence, masterRed: fed, flakesClosed };
