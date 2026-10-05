@@ -2,7 +2,7 @@
 
 ## Contributor audit wave follow-ups (filed 2026-10-05, GBRA-40)
 
-### delta (owner: GBRA-49, core memory and retrieval)
+### delta (owner: GBRA-40 (delta follow-ups))
 
 - [ ] **P2 — Commit-visibility watermark for delta.** **What:** rows are stamped with their transaction's start time, so a transaction that commits more than 2 s (`DELTA_COMMIT_LAG_MS`) after it started can be passed by an empty wake that advanced the cursor meanwhile. `test/delta-cursor-integrity.test.ts` ("commit visibility", Postgres) pins the bound. **Fix:** advance each arm only to a watermark below the oldest in-flight writer (e.g. `pg_snapshot_xmin` mapped to time, or a commit-sequence column), so the bound becomes zero. **Effort:** M. **Priority:** P2.
 - [ ] **P3 — Paginated thread arm.** **What:** thread events key on event date through `buildEntityCard`, which caps and swallows internally, so delta's threads are best-effort and follow the pages' time cursor. **Fix:** give threads their own keyset (event id or date + id) and an overflow signal like the pages and facts arms. **Effort:** M. **Priority:** P3.
