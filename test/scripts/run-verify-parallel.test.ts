@@ -267,6 +267,9 @@ describe("run-verify-parallel.sh — no-timeout-binary fallback rc capture (regr
       join(bin, "bun"),
       `#!/usr/bin/env bash
 name="\${2:-}"
+[ -n "\${STUB_LOG:-}" ] && echo "start $name" >> "$STUB_LOG"
+if [ -n "\${STUB_SLOW_CHECK:-}" ] && [ "$name" = "\${STUB_SLOW_CHECK}" ]; then sleep 2; fi
+[ -n "\${STUB_LOG:-}" ] && echo "end $name" >> "$STUB_LOG"
 echo "stub check OK: $name"
 if [ -n "\${STUB_SKIP_CHECK:-}" ] && [ "$name" = "\${STUB_SKIP_CHECK}" ]; then
   echo "GBRAIN_CHECK_SKIPPED: subject absent in this checkout"
@@ -349,6 +352,39 @@ exit 0
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("a self-timed SOLO check starts only after every pool check has finished, and fails like any other", () => {
+    const { root, env } = makeFallbackHarness();
+    try {
+      const log = join(root, "order.log");
+      const dry = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh"), "--dry-list"], { encoding: "utf8", env }).stdout.trim().split("\n");
+      expect(dry.at(-1)).toBe("check:guard-self-test");
+      expect(dry.filter((c) => c === "check:guard-self-test")).toHaveLength(1);
+      const r = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], {
+        encoding: "utf8",
+        env: { ...env, STUB_LOG: log, STUB_SLOW_CHECK: "typecheck", GBRAIN_VERIFY_MAX_PARALLEL: "4" },
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stderr).toMatch(/running \d+ checks: \d+ in the pool, then 1 solo/);
+      const checks = new Set(dry);
+      const lines = readFileSync(log, "utf8").trim().split("\n").filter((l) => checks.has(l.replace(/^(start|end) /, "")));
+      const soloStart = lines.indexOf("start check:guard-self-test");
+      expect(soloStart).toBeGreaterThan(-1);
+      const poolEnds = lines.filter((l) => l.startsWith("end ") && l !== "end check:guard-self-test");
+      expect(poolEnds).toHaveLength(dry.length - 1);
+      expect(lines.slice(soloStart).filter((l) => l !== "end check:guard-self-test")).toEqual(["start check:guard-self-test"]);
+      expect(lines.indexOf("end typecheck")).toBeLessThan(soloStart);
+      const failing = spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], {
+        encoding: "utf8",
+        env: { ...env, STUB_FAIL_CHECK: "check:guard-self-test" },
+      });
+      expect(failing.status).toBe(1);
+      expect(failing.stderr).toContain("--- check:guard-self-test (rc=7)");
+      expect(readFileSync(join(root, "logs", "outcomes.tsv"), "utf8")).toMatch(/^check:guard-self-test\tfail\t7\t\S+\t\d+$/m);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("one check failing → exit 1, sentinel records the check's own rc (7), not 143", () => {
     const { root, env } = makeFallbackHarness();
