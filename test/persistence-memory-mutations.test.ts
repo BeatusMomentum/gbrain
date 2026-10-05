@@ -179,7 +179,7 @@ describe('journaled memory publication, both engines', () => {
 
   test('a remember prepared against a stale page re-prepares; every committed receipt is readable at acknowledgement', async () => {
     let held = 0;
-    const gate = Promise.withResolvers<void>();
+    let gate = Promise.withResolvers<void>();
     configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { OPENAI_API_KEY: 'sk-test' } });
     __setEmbedTransportForTests((async (opts: { values: string[] }) => {
       if (opts.values.some(v => v.endsWith('stale 99')) && ++held === 1) await gate.promise;
@@ -190,11 +190,14 @@ describe('journaled memory publication, both engines', () => {
       for (const engine of engines) {
         const slug = 'people/stale-preparation-example';
         held = 0;
+        gate = Promise.withResolvers<void>();
         await setupPage(engine, slug, upsertFactRow('Biography', { claim: 'Seed fact', kind: 'fact', visibility: 'world', confidence: 1, notability: 'medium' }).body);
         const claims = async () => parseFactsFence((await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth).facts.map(f => f.claim);
         const stale = submitRememberMutation(context(engine), { fact: 'Held stale 99', provenance: 'test', entity: slug, request_id: randomUUID() }, 30_000);
         await waitFor(() => held === 1, { label: `${engine.kind}: stale remember holding inside preparation` });
+        // A coordinated writer reads and rewrites the page under its guard, as the coordinator's own publication does.
         await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
+          await tx.lockPageKeys([{ sourceId, slug }]);
           const s = (await tx.readPageSnapshot(slug, { sourceId }))!;
           await tx.putPage(slug, { ...pageInput(upsertFactRow(s.page.compiled_truth, { claim: 'Out of journal 50', kind: 'fact', visibility: 'world',
             confidence: 1, notability: 'medium' }).body), timeline: s.page.timeline }, { sourceId });
