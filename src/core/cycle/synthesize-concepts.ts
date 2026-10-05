@@ -34,6 +34,7 @@ import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
+import { derivedWriteThrough } from './derived-write-through.ts';
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
 } from './concept-publication.ts';
@@ -289,6 +290,7 @@ export async function runPhaseSynthesizeConcepts(
   // maintenance authority before any model spend so a missing canonical owner
   // fails fast; null on an unmanaged brain.
   const maintenance = opts.dryRun ? null : await maintenancePreflight(engine, opts.sourceId ?? 'default', opts.brainDir);
+  const conceptFiles = await derivedWriteThrough(engine, 'synthesize_concepts', opts.sourceId ?? 'default', { managed: maintenance !== null, dryRun: opts.dryRun ?? false });
   // Managed publication outcomes, kept out of `failures` (LLM fallback). A
   // deferred concept moved under a concurrent writer and is retried next run;
   // a held concept cannot be republished without losing canonical material.
@@ -450,7 +452,7 @@ export async function runPhaseSynthesizeConcepts(
         }
         // #4416: target the cycle's resolved source, not the 'default' literal.
         baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
-          baseline, !isAvailable('embedding'));
+          baseline, { noEmbed: !isAvailable('embedding'), writeThrough: conceptFiles !== null });
       };
       // A publication that lost a revision race or would lose canonical
       // material is recorded and skipped; any other error stops the phase.

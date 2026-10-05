@@ -19,6 +19,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { acquirePageLock } from '../page-lock.ts';
 import { importFromContent } from '../import-file.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
+import { writeDerivedPageThrough } from './derived-write-through.ts';
 
 /** Error code for a concept held because republication could lose canonical material. */
 export const CONCEPT_PRESERVATION_CODE = 'concept_preservation_hold';
@@ -153,12 +154,11 @@ export function stripFenceSections(body: string): string {
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** The body and timeline a fence writer last wrote: the page's file when it has one, else the database row. */
-async function canonicalConceptBody(engine: BrainEngine, slug: string, sourceId: string,
-  page: Pick<Page, 'compiled_truth' | 'timeline'>): Promise<Pick<Page, 'compiled_truth' | 'timeline'>> {
-  if (await isWriteThroughDisabled(engine)) return page;
+/** The page's markdown file, when it has one and write-through is not off: the fence writers write it first. */
+async function conceptFile(engine: BrainEngine, slug: string, sourceId: string): Promise<Pick<Page, 'compiled_truth' | 'timeline'> | null> {
+  if (await isWriteThroughDisabled(engine)) return null;
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
-  if (!target.ok || !existsSync(target.filePath)) return page;
+  if (!target.ok || !existsSync(target.filePath)) return null;
   const parsed = parseMarkdown(readFileSync(target.filePath, 'utf-8'), target.filePath);
   return { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline };
 }
@@ -170,11 +170,14 @@ async function canonicalConceptBody(engine: BrainEngine, slug: string, sourceId:
  * writer took it over, nothing is written and the concept is deferred
  * (`revision_conflict`) to the next run. Otherwise the new narrative is
  * composed with the latest `## Facts` / `## Takes` fences, timeline, tags and
- * frontmatter, so a take or fact appended during synthesis survives. Returns
- * the narrative now on the page (the next call's baseline).
+ * frontmatter, so a take or fact appended during synthesis survives. The
+ * page's file is rewritten when it already has one (a stale file would
+ * otherwise be synced back over the new narrative) or when
+ * `cycle.synthesize_concepts.write_through` is on (#5041). Returns the
+ * narrative now on the page (the next call's baseline).
  */
 export async function publishClassicConcept(engine: BrainEngine, slug: string, sourceId: string,
-  synthesized: Record<string, unknown>, narrative: string, baseline: string, noEmbed: boolean): Promise<string> {
+  synthesized: Record<string, unknown>, narrative: string, baseline: string, opts: { noEmbed: boolean; writeThrough: boolean }): Promise<string> {
   const lock = await acquirePageLock(slug, { timeoutMs: 5_000 });
   if (!lock) throw Object.assign(new Error('The concept page is locked by another writer.'), { code: 'revision_conflict' });
   try {
@@ -185,10 +188,12 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
       throw Object.assign(new Error('The concept narrative changed during synthesis.'), { code: 'revision_conflict' });
     }
     const title = slug.split('/').pop()!.replace(/-/g, ' ');
+    const file = page ? await conceptFile(engine, slug, sourceId) : null;
     const markdown = page
-      ? composeConceptRepublication({ ...page, ...await canonicalConceptBody(engine, slug, sourceId, page) }, snapshot!.tags, synthesized, narrative)
+      ? composeConceptRepublication({ ...page, ...file }, snapshot!.tags, synthesized, narrative)
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
-    await importFromContent(engine, slug, markdown, { noEmbed, sourceId });
+    await importFromContent(engine, slug, markdown, { noEmbed: opts.noEmbed, sourceId });
+    if (file || opts.writeThrough) await writeDerivedPageThrough(engine, slug, sourceId);
     return narrative;
   } finally {
     await lock.release();
