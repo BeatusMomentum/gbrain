@@ -897,7 +897,6 @@
   "unit:test/audit/audit-writer.test.ts": 127,
   "unit:test/audit/batch-retry-audit.test.ts": 130,
   "unit:test/audit/batch-retry-redaction.test.ts": 128,
-  "unit:test/audit/connection-audit.test.ts": 133,
   "unit:test/audit/content-sanity-audit.test.ts": 118,
   "unit:test/audit/lock-renewal-audit.test.ts": 202,
   "unit:test/audit/pool-recovery-audit.test.ts": 138,
