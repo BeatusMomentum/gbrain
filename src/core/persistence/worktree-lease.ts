@@ -14,7 +14,8 @@
  * waiting to commit roll back and release their claims, and the native lock
  * is released as soon as the running lanes finish, so the exclusive writer
  * gets it on its next attempt. A lease also drains (without wounding) after
- * `LEASE_TURN_MS` of continuous holding, so writers in other processes,
+ * `LEASE_TURN_MS` of continuous holding: lanes already claimed still join it,
+ * but no new lane is claimed until it ends, so writers in other processes,
  * which cannot mark it, still get a turn.
  */
 import type { NativeLockHandle } from './native-lock.ts';
@@ -40,13 +41,14 @@ export function leaseWounded(path: string): boolean {
 
 /**
  * Joins this process's lease on `path`, or takes the native lock through
- * `acquire` when there is none. Null when the lock is busy elsewhere or the
- * lease is draining; the caller releases its claim and retries later.
+ * `acquire` when there is none. Null when the lock is busy elsewhere or an
+ * exclusive writer waits for the lease; the caller releases its claim and retries later.
  */
 export async function acquireShared(path: string, acquire: () => Promise<NativeLockHandle | null>): Promise<NativeLockHandle | null> {
   const live = leases.get(path);
   if (live) {
-    if (live.lock.released || leaseDraining(path)) return null;
+    // A used-up turn only stops new lane claims (sync-lanes.ts laneRoots); a wounded lease also refuses joins.
+    if (live.lock.released || live.wounded) return null;
     live.holders++;
     return share(path, live);
   }

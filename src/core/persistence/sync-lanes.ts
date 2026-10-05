@@ -64,7 +64,7 @@ export function laneClaimed(state: LaneState, rows: WriteRequest[]): void { stat
 export function laneFinished(state: LaneState, rows: WriteRequest[]): void { state.claimed.delete(groupKey(rows)); state.begun.delete(groupKey(rows)); }
 
 export class LaneAbort extends Error {
-  constructor(readonly reason: 'predecessor_failed' | 'wounded' | 'order_timeout') { super(`lane ${reason}`); }
+  constructor(readonly reason: 'predecessor_failed' | 'predecessor_requeued' | 'wounded' | 'order_timeout') { super(`lane ${reason}`); }
 }
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -85,8 +85,8 @@ export async function awaitLaneBegin(state: LaneState, rows: WriteRequest[], max
  * Inside the group transaction, after its members are applied and before the
  * counters are locked: waits until the previous group committed. Each poll is
  * a fresh read of the predecessor's receipt. Throws LaneAbort when the
- * predecessor ended without committing, when the worktree's lease drains for
- * an exclusive writer, or after `maxMs`.
+ * predecessor ended without committing or went back to the queue, when an
+ * exclusive writer waits for the worktree's lease, or after `maxMs`.
  */
 export async function awaitLaneTurn(tx: BrainEngine, state: LaneState, rows: WriteRequest[], maxMs = 60_000): Promise<void> {
   const after = predecessorOf(rows);
@@ -98,6 +98,8 @@ export async function awaitLaneTurn(tx: BrainEngine, state: LaneState, rows: Wri
       [head.principal_kind, head.principal_id, after]);
     if (prior?.state === 'committed') return;
     if (!prior || ['failed', 'conflict', 'cancelled'].includes(prior.state)) throw new LaneAbort('predecessor_failed');
+    // A released predecessor goes first: this lane gives its slot and claims back, rather than wait on it.
+    if (prior.state === 'queued') throw new LaneAbort('predecessor_requeued');
     if (state.coordinationPath && leaseWounded(state.coordinationPath)) throw new LaneAbort('wounded');
     if (Date.now() - started >= maxMs) throw new LaneAbort('order_timeout');
     await sleep(Math.min(200, 25 * (poll + 1)));

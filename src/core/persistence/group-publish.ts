@@ -231,7 +231,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
 }
 
 /** Why a group transaction did not commit, for the lane fallback and step-down. */
-export type GroupFailure = 'busy' | 'predecessor_failed' | 'wounded' | 'order_timeout' | 'lock_timeout' | 'statement_timeout' | 'failed';
+export type GroupFailure = 'busy' | 'predecessor_failed' | 'predecessor_requeued' | 'wounded' | 'order_timeout' | 'lock_timeout' | 'statement_timeout' | 'failed';
 function groupFailure(error: unknown): GroupFailure {
   if (error instanceof LaneAbort) return error.reason;
   const code = (error as { code?: unknown } | null)?.code;
