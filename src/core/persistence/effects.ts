@@ -33,6 +33,7 @@ import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } fr
 import { commitGitTargets, publishGitEffect, pushGitRoot } from './effect-git.ts';
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import { dispatchFactsBackstopEffect } from './effect-facts.ts';
+import { runLinksEffect } from './effect-links.ts';
 import { PARK_AFTER_FAILURES, type EffectRecovery, type PersistenceEffect, type SkippedTarget } from './effect-model.ts';
 import { SYNC_SKIP_FILES } from '../sync.ts';
 import { recoveryStagingFile } from './staging.ts';
@@ -498,7 +499,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
     // still proves the owned root, but it is not held while recording.
     const recordOnly = effect.kind === 'git' && hardened === false && !targetedWithdrawalEffect(effect) && !effect.data.source_scan;
     try {
-      if (effect.worktree_id && !['embedding', 'facts-backstop'].includes(effect.kind)) {
+      if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) {
         if (!binding) throw opError('owner_unavailable', 'The canonical effect owner is unavailable.',
           `This host does not hold source ${effect.source_id}'s canonical worktree, so its ${effect.kind} effect waits for the owner. Check which host owns the source; the effect runs there.`,
           { fix: effectStatusFix(effect) });
@@ -518,7 +519,8 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       else if (effect.kind === 'git') await gitPage(engine, effect, binding, opts, attempt, hardened);
       else await withAIAttribution({ request_id: effect.request_id, effect: effect.kind }, () => effect.kind === 'facts-backstop'
         ? dispatchFactsBackstopEffect(engine, effect, opts.hostId)
-        : embedPage(engine, config, effect, opts));
+        : effect.kind === 'links' ? runLinksEffect(engine, effect, opts.hostId)
+          : embedPage(engine, config, effect, opts));
     } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
     finally { await lock?.release(); }
   };
@@ -598,7 +600,7 @@ export async function runPersistenceEffects(engine: BrainEngine, config: GBrainC
       attempted++;
       let binding: WorktreeBinding | null = null;
       try {
-        if (effect.worktree_id && !['embedding', 'facts-backstop'].includes(effect.kind)) binding = await getWorktreeBinding(engine, effect.source_id, opts.hostId);
+        if (effect.worktree_id && !['embedding', 'facts-backstop', 'links'].includes(effect.kind)) binding = await getWorktreeBinding(engine, effect.source_id, opts.hostId);
       } catch (error) { await recordFailure(engine, effect, error, opts.signal); continue; }
       if (effect.kind === 'git' && binding?.local_path) {
         const root = binding.local_path;
