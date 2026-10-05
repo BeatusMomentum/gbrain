@@ -7,7 +7,9 @@
  * judge; attempts and retries count) → judge one immutable snapshot inside a
  * BudgetTracker scope labelled `chronicle:<trigger>` with the per-page cap →
  * explicit post-call budget check → publish with re-validation and
- * reconciliation → ledger outcome. A failed or superseded run never retires
+ * reconciliation → ledger outcome. An ended calendar invite takes the judge's
+ * place with its deterministic projection (invite-projection.ts): no
+ * reservation, no model call. A failed or superseded run never retires
  * the previous generation.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -20,7 +22,11 @@ import { CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, type ChronicleLedgerRo
 import type { ChronicleReasonCode } from './reasons.ts';
 import type { ChronicleSettings } from './config.ts';
 import { isChronicleEligible } from './eligibility.ts';
-import { buildChronicleEvents, chronicleJudgeContext, isValidProposal, type ChronicleJudge, type ChronicleJudgeResult } from './extract-events.ts';
+import {
+  allDroppedReason, buildChronicleEvents, chronicleJudgeContext, isValidProposal,
+  type ChronicleDropCounts, type ChronicleJudge, type ChronicleJudgeResult,
+} from './extract-events.ts';
+import { endedInviteProposal, markInviteEvents } from './invite-projection.ts';
 import { RETIRE_REASONS, reserveChronicleSlot } from './ledger.ts';
 import { pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
 
@@ -43,7 +49,7 @@ export type ChronicleRowOutcome =
   | { kind: 'waiting'; reason: string }
   | { kind: 'deferred'; reason: 'daily_limit' }
   | { kind: 'done'; state: ChronicleLedgerRow['state']; reason: string | null; judged: boolean;
-      written: number; retired: number; costUsd: number | null; unpriced: boolean };
+      written: number; retired: number; costUsd: number | null; unpriced: boolean; dropped: ChronicleDropCounts };
 
 const CONFIG_BLOCKED = new Set(['judge_llm_unavailable', 'no_pricing']);
 const LEASE_MS = 15 * 60_000;
@@ -121,7 +127,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const { engine, settings } = ctx;
   const now = ctx.now?.() ?? new Date();
   const done = (state: ChronicleLedgerRow['state'], reason: string | null, extra: Partial<Extract<ChronicleRowOutcome, { kind: 'done' }>> = {}): ChronicleRowOutcome =>
-    ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, ...extra });
+    ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, dropped: {}, ...extra });
 
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || Number(snapshot.page.id) !== Number(row.page_id)) {
@@ -164,7 +170,9 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     return done('skipped', reason);
   }
 
-  if (auto && !(await reserveChronicleSlot(engine, settings.dailyLimit, { sourceId: row.source_id, pageId: Number(row.page_id), contentHash: row.content_hash }))) {
+  const judgeCtx = chronicleJudgeContext(snapshot.page);
+  const invite = endedInviteProposal(snapshot.page, judgeCtx.attendees, now);
+  if (auto && !invite && !(await reserveChronicleSlot(engine, settings.dailyLimit, { sourceId: row.source_id, pageId: Number(row.page_id), contentHash: row.content_hash }))) {
     await setNextAttempt(engine, row, null);
     return { kind: 'deferred', reason: 'daily_limit' };
   }
@@ -172,7 +180,6 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     `UPDATE chronicle_page_state SET attempts=attempts+1 WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 RETURNING attempts`,
     [...key(row)]);
 
-  const judgeCtx = chronicleJudgeContext(snapshot.page);
   const tracker = new BudgetTracker({
     maxCostUsd: ctx.gate.enforceCap ? settings.jobBudgetUsd : undefined,
     label: ctx.label ?? `chronicle:${row.trigger}`,
@@ -182,7 +189,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   let thrown: unknown = null;
   const parent = getCurrentBudgetTracker();
   try {
-    result = await withBudgetTracker(tracker, () => ctx.judge(judgeCtx.input));
+    result = await withBudgetTracker(tracker, () => (invite ? Promise.resolve({ events: [invite] }) : ctx.judge(judgeCtx.input)));
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
     thrown = error ?? new Error('judge failed');
@@ -192,7 +199,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const models = tracker.snapshot().models;
   const unpriced = models.some((m) => m.cost_usd === null && m.calls > 0);
   const spend = { costUsd: unpriced ? null : tracker.totalSpent, unpriced };
-  const judged = { judged: true, ...spend };
+  const judged = { judged: !invite, ...spend };
 
   // E4: gateway accounting defers a breach to the next reservation; check the cap explicitly.
   const overCap = tracker.cap !== undefined && tracker.totalSpent > tracker.cap;
@@ -204,25 +211,27 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   }
 
   const proposals = result?.events ?? [];
+  const { events, dropped } = buildChronicleEvents(proposals, judgeCtx,
+    { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now });
   let generation;
   try {
     generation = await publishChronicleGeneration(engine, {
       sourceId: row.source_id, pin, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
-      events: buildChronicleEvents(proposals, judgeCtx, { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, ctx.tz),
+      events: invite ? markInviteEvents(events) : events,
     });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
     console.warn(`[chronicle] ${row.slug}: publishing events failed (${error instanceof Error ? error.message : String(error)}); the row retries with backoff. Run now: gbrain dream --phase chronicle`);
     await finish(engine, row, { state: 'failed', reason: 'publish_error', nextAttemptAt: backoff(attempts, now), ...spend });
-    return done('failed', 'publish_error', judged);
+    return done('failed', 'publish_error', { ...judged, dropped });
   }
   if (generation.superseded) {
     await finish(engine, row, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, events: generation.written, ...spend });
-    return done('skipped', 'superseded', { ...judged, written: generation.written.length });
+    return done('skipped', 'superseded', { ...judged, written: generation.written.length, dropped });
   }
-  const reason = proposals.length === 0 ? 'no_events' : null;
+  const reason = events.length > 0 ? null : proposals.length === 0 ? 'no_events' : allDroppedReason(dropped);
   await finish(engine, row, { state: 'extracted', reason, nextAttemptAt: null, events: generation.written, ...spend });
-  return done('extracted', reason, { ...judged, written: generation.written.length, retired: generation.retired.length });
+  return done('extracted', reason, { ...judged, written: generation.written.length, retired: generation.retired.length, dropped });
 }
 
 export type { ChronicleDepthPin };

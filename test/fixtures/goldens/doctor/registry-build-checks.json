@@ -190,6 +190,10 @@
         "name": "pglite_leftovers"
       },
       {
+        "category": "ops",
+        "name": "graduation_interrupted"
+      },
+      {
         "category": "meta",
         "name": "default_source_local_path"
       },
@@ -324,6 +328,14 @@
       {
         "category": "brain",
         "name": "embedding_migration_state"
+      },
+      {
+        "category": "ops",
+        "name": "chat_fallback_chain"
+      },
+      {
+        "category": "meta",
+        "name": "behavior_changes"
       },
       {
         "category": "brain",
@@ -551,6 +563,10 @@
       },
       {
         "category": "ops",
+        "name": "legacy_token_null_scope"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
@@ -568,6 +584,10 @@
       {
         "category": "ops",
         "name": "canonical_content_writes"
+      },
+      {
+        "category": "ops",
+        "name": "shared_skills_sources"
       },
       {
         "category": "ops",
@@ -611,6 +631,10 @@
       },
       {
         "category": "brain",
+        "name": "edge_validity"
+      },
+      {
+        "category": "brain",
         "name": "auto_chronicle"
       },
       {
@@ -623,6 +647,10 @@
       },
       {
         "category": "brain",
+        "name": "facts_drain"
+      },
+      {
+        "category": "brain",
         "name": "fact_take_vectors"
       },
       {
@@ -630,8 +658,12 @@
         "name": "planner_stats_stale"
       },
       {
-        "category": "ops",
-        "name": "chat_fallback_chain_inert"
+        "category": "meta",
+        "name": "retrieval_feedback_health"
+      },
+      {
+        "category": "meta",
+        "name": "revision_backfill"
       },
       {
         "category": "ops",

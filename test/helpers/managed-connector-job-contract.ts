@@ -66,6 +66,7 @@ export const contractCases = [
   'loops_extract_run',
   'loops_close',
   'cycle_extract',
+  'cycle_extract_loops_race',
   'cycle_extract_facts',
   'extract_conversation_facts',
   'facts_absorb',
@@ -550,6 +551,10 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     await engine.executeRaw("DELETE FROM links WHERE from_page_id IN (SELECT id FROM pages WHERE source_id=$1 AND slug='notes/plan-review')", [state.sourceId]);
     await engine.executeRaw("UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1", [state.sourceId]);
     expect(await staleCount(state)).toBeGreaterThan(0);
+    // The sweep queued loops_extract (priority 5). Left waiting, the cycle's worker can
+    // claim it once the cycle job finishes; its commitment fact then republishes
+    // people/alice-example after the extract phase stamped it, and that page reads stale.
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
     const [job] = await runJobs(engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract'] } }], 120_000);
     requireCompleted([job]);
     const extract = (job.result as { report?: { phases?: Array<{ phase: string; status: string; details?: Record<string, unknown> }> } }).report?.phases?.find(p => p.phase === 'extract');
@@ -559,6 +564,34 @@ const cases: Record<ContractCase, (state: CaseState) => Promise<void>> = {
     const links = await engine.executeRaw(`SELECT 1 FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
       WHERE f.source_id=$1 AND f.slug='notes/plan-review' AND t.slug='people/alice-example'`, [state.sourceId]);
     expect(links).toHaveLength(1);
+  },
+
+  /**
+   * #5961 bound: a loops_extract the sweep queued can republish a page after
+   * the extract phase stamped it (eventual consistency, no lock between the
+   * two). Worst-case order: the cycle stamps every page, then the competing
+   * job republishes people/alice-example, which reads stale again; the next
+   * cycle re-extracts it, so staleness is bounded by one cycle.
+   */
+  async cycle_extract_loops_race(state) {
+    await gmailSweep(state);
+    const { engine } = state.brain;
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
+    await engine.executeRaw("UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1", [state.sourceId]);
+    const cycle = async () => {
+      const [job] = await runJobs(engine, [{ name: 'autopilot-cycle', data: { source_id: state.sourceId, phases: ['extract'] } }], 120_000);
+      requireCompleted([job]);
+      const extract = (job.result as { report?: { phases?: Array<{ phase: string; status: string }> } }).report?.phases?.find(p => p.phase === 'extract');
+      expect(extract?.status).toBe('ok');
+    };
+    await cycle();
+    expect(await staleCount(state)).toBe(0);
+    const competing = await extractLoops(state);
+    expect(competing.result).toMatchObject({ status: 'extracted', commitments: 1 });
+    expect(await staleCount(state)).toBeGreaterThan(0);
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id > $1 AND status IN ('waiting','delayed')", [state.detector.jobsFrom]);
+    await cycle();
+    expect(await staleCount(state)).toBe(0);
   },
 
   async cycle_extract_facts(state) {

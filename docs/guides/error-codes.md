@@ -4,14 +4,14 @@
 Every gbrain error carries a stable `code`. Read `code` first and fall back to `error`
 (older servers send only `error`); then follow `fix.next` as described in
 [AGENT_OPERATOR_v1](../protocol/AGENT_OPERATOR_v1.md). Exit codes are in [exit codes](exit-codes.md).
-Offline, `gbrain errors <code>` prints the same row and `gbrain errors --changed` the renamed codes.
+Offline, `gbrain errors <code>` prints the same row and `gbrain errors --changed` the legacy pairs.
 
 **Say to your agent:** *"gbrain returned an error code I don't recognize. Look it up and tell me what to do."*
 
-## Renamed in this release
+## Legacy `error` values
 
-Under contract v1 an existing `error` value never changes. Where a surface historically sent a
-different value, it keeps sending it in `error` and adds the canonical value in `code`.
+Under contract v1 an `error` value never changes. Where a surface sends a legacy value in
+`error`, it also sends the canonical value in `code`:
 
 | `error` (frozen) | `code` (canonical) | Meaning |
 |---|---|---|
@@ -79,6 +79,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The legacy id matches multiple readable pages. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### ambiguous_ref
+
+<a id="ambiguous_ref"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page reference in a rating matches pages in more than one source of that answer. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#ambiguous_ref](../../docs/guides/retrieval-feedback.md#ambiguous_ref)
+
 ### ambiguous_skill
 
 <a id="ambiguous_skill"></a>
@@ -86,6 +96,36 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | This name belongs to multiple authorized sources. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### answer_not_yours
+
+<a id="answer_not_yours"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The rated answer was returned to a different client. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#answer_not_yours](../../docs/guides/retrieval-feedback.md#answer_not_yours)
+
+### answer_pending
+
+<a id="answer_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The rated answer is still being recorded; retry in a few seconds. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/retrieval-feedback.md#answer_pending](../../docs/guides/retrieval-feedback.md#answer_pending)
+
+### answer_unavailable
+
+<a id="answer_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The rated answer is not recorded: unknown, dropped, or older than the retention window. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#answer_unavailable](../../docs/guides/retrieval-feedback.md#answer_unavailable)
 
 ### api_not_enabled
 
@@ -273,6 +313,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Reserved by MEMORY_VERBS v1; never returned. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### cache_quota_exceeded
+
+<a id="cache_quota_exceeded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Retained shared-skill revisions reached this installation's local cache quota. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
+
 ### cancelled
 
 <a id="cancelled"></a>
@@ -280,6 +330,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The write was cancelled before it committed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### catalog_capacity_exceeded
+
+<a id="catalog_capacity_exceeded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The shared-skills catalog visible to this connection exceeds the delivery limits. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
 
 ### catalog_unavailable
 
@@ -321,7 +381,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Automatic event extraction (auto_chronicle) skipped or failed this page; `reason` says why and `fix`, when present, is the next step. | A capability this request needs is not configured or not reachable on this brain. | Read the receipt or doctor `auto_chronicle` check: its `why` explains the reason and its `fix`, when present, is the next step (paid fixes need the user's agreement). | agent | `gbrain doctor --json` | 1 | no |
 
-Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `no_chat_provider`.
+Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `future_dated`, `date_imprecise`, `no_chat_provider`.
 
 More: [docs/guides/life-chronicle.md#skip-and-failure-codes](../../docs/guides/life-chronicle.md#skip-and-failure-codes)
 
@@ -539,6 +599,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The brain database could not be reached or refused the operation. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### delta_cursor_upgrade_required
+
+<a id="delta_cursor_upgrade_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A since/since_slug delta call reached more undelivered facts at one timestamp than that cursor can page; repeat the call with the opaque cursor. | The legacy cursor is a single timestamp, so facts that share one can only be paged by fact id, which next_cursor.cursor carries. Nothing was skipped and no cursor moved. | Repeat the delta call with the cursor from fix (next_cursor.cursor) instead of since/since_slug, and keep passing next_cursor.cursor afterwards. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/guides/ambient-recall.md#replay-after-a-degraded-wake)
+
 ### demo_graph_failed
 
 <a id="demo_graph_failed"></a>
@@ -685,6 +755,24 @@ More: [docs/guides/write-refusals.md#embedding_auth_failed](../../docs/guides/wr
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### engine_graduated
+
+<a id="engine_graduated"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A client opened a PGLite brain that moved to Postgres; its old path holds a tombstone. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/move-to-postgres.md#graduated-datastore)
+
+### eval_suite_unwired
+
+<a id="eval_suite_unwired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain eval run-all` was asked for a suite it does not run in-process (longmemeval or replay); nothing ran. | run-all runs only wired suites (brainbench). Recording a skipped run and exiting 0 would read as a completed sweep with no numbers behind it. | Run each requested suite with its own command (`gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record`, `gbrain eval replay --mode <mode>`), once per mode, or drop it from --suites. | agent | `repeat the read that failed` | 1 | no |
+
 ### export_limit
 
 <a id="export_limit"></a>
@@ -735,6 +823,28 @@ More: [docs/guides/write-refusals.md#embedding_auth_failed](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#facts_absorb_write_refused](../../docs/guides/write-refusals.md#facts_absorb_write_refused)
 
+### facts_drain_deferred
+
+<a id="facts_drain_deferred"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The automatic facts drain left queued facts-absorb jobs waiting; `reason` says why and `fix`, when present, is the next step. Nothing is dropped: the jobs run on a later drain. | A capability this request needs is not configured or not reachable on this brain. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `no_key`, `extraction_unavailable`, `budget_exhausted`, `daily_budget_exhausted`, `job_over_budget`, `no_pricing`, `provider_halted`, `drain_error`.
+
+More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
+
+### facts_drain_job_failed
+
+<a id="facts_drain_job_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A facts-absorb job failed inside the automatic facts drain; it retries with backoff until its attempts run out. | The server failed; this is not a caller mistake. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
+
 ### facts_payload_expired
 
 <a id="facts_payload_expired"></a>
@@ -742,6 +852,26 @@ More: [docs/guides/write-refusals.md#facts_absorb_write_refused](../../docs/guid
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The accepted fact extraction failed and its retained payload has expired. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### feedback_disabled
+
+<a id="feedback_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Retrieval feedback is off (or not learning) on this brain, so ratings are not recorded. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#feedback_disabled](../../docs/guides/retrieval-feedback.md#feedback_disabled)
+
+### feedback_not_authorized
+
+<a id="feedback_not_authorized"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This caller may not change the brain's shared ranking for that source. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#feedback_not_authorized](../../docs/guides/retrieval-feedback.md#feedback_not_authorized)
 
 ### fetch_failed
 
@@ -760,6 +890,16 @@ More: [docs/guides/write-refusals.md#fetch_failed](../../docs/guides/write-refus
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The file is over the import size limit (5 MB for Markdown and code, 10 MiB for any sync read), so it was not imported. | Size limits bound parsing, chunking and embedding cost. The same bytes refuse on every retry. | Split the file into smaller files, or leave it out of the source (sync.exclude), then sync or import again. | agent | `repeat the read that failed` | 1 | no |
+
+### follow_approval_required
+
+<a id="follow_approval_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Following a brain's shared skills needs the user's explicit follow approval. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately](../../docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately)
 
 ### frontmatter_slug_conflict
 
@@ -824,6 +964,166 @@ More: [docs/guides/write-refusals.md#fetch_failed](../../docs/guides/write-refus
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A git command did not complete. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### graduation_drain_timeout
+
+<a id="graduation_drain_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Queued or running writes did not drain within --drain-timeout; the move stopped before copying and the source is unchanged. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 11 | yes |
+
+Reasons: `progressing`, `blocked`.
+
+More: [docs/guides/move-to-postgres.md#drain](../../docs/guides/move-to-postgres.md#drain)
+
+### graduation_embedding_dimension_mismatch
+
+<a id="graduation_embedding_dimension_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An existing, non-empty target database has a different embedding column layout than the brain being moved. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#embeddings](../../docs/guides/move-to-postgres.md#embeddings)
+
+### graduation_foreign_host_binding
+
+<a id="graduation_foreign_host_binding"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source's worktree is owned by another host, so this host cannot move it to Postgres. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#hosts](../../docs/guides/move-to-postgres.md#hosts)
+
+### graduation_in_progress
+
+<a id="graduation_in_progress"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another process is moving this brain to Postgres; neither engine may be opened until it finishes. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 75 | yes |
+
+More: [docs/guides/move-to-postgres.md#in-progress](../../docs/guides/move-to-postgres.md#in-progress)
+
+### graduation_interrupted
+
+<a id="graduation_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine graduation stopped before it finished and no process owns it. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#resume](../../docs/guides/move-to-postgres.md#resume)
+
+### graduation_rollback_writes_lost
+
+<a id="graduation_rollback_writes_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Rolling back to PGLite would drop changes made on Postgres since the move. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `user_data`, `security_changes`.
+
+More: [docs/guides/move-to-postgres.md#rollback](../../docs/guides/move-to-postgres.md#rollback)
+
+### graduation_source_writer_held
+
+<a id="graduation_source_writer_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A live serve or daemon holds the PGLite brain and did not hand it over to the move. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#graduation-writer-held](../../docs/ENGINES.md#graduation-writer-held)
+
+### graduation_split_brain
+
+<a id="graduation_split_brain"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A different brain appeared at the graduated brain's old path; the target is withheld from authority until the user decides. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#split-brain](../../docs/guides/move-to-postgres.md#split-brain)
+
+### graduation_target_auth_failed
+
+<a id="graduation_target_auth_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target database rejected the credentials recorded for this move. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#credentials](../../docs/guides/move-to-postgres.md#credentials)
+
+### graduation_target_ddl_unreachable
+
+<a id="graduation_target_ddl_unreachable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target's direct (schema) connection is unreachable or names a different database than its main URL. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#ddl-connection](../../docs/guides/move-to-postgres.md#ddl-connection)
+
+### graduation_target_not_empty
+
+<a id="graduation_target_not_empty"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target database already holds data that is not this move's. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#target-not-empty](../../docs/guides/move-to-postgres.md#target-not-empty)
+
+### graduation_target_unsupported
+
+<a id="graduation_target_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target database is missing a prerequisite (server version, vector extension with halfvec, CREATE privilege or a matching column). | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `server_version`, `vector`, `halfvec`, `create_privilege`, `column`, `env_override`.
+
+More: [docs/guides/move-to-postgres.md#target-requirements](../../docs/guides/move-to-postgres.md#target-requirements)
+
+### graduation_unclassified_table
+
+<a id="graduation_unclassified_table"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A database has a relation the graduation inventory does not classify, so moving it could lose data. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `newer_schema`, `missing_inventory_row`.
+
+More: [docs/guides/move-to-postgres.md#inventory](../../docs/guides/move-to-postgres.md#inventory)
+
+### graduation_unsupported_platform
+
+<a id="graduation_unsupported_platform"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Moving a brain with write history to Postgres is not available on this platform yet. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#platforms](../../docs/guides/move-to-postgres.md#platforms)
+
+### graduation_verify_failed
+
+<a id="graduation_verify_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The moved copy did not verify against the source; the target stays fenced and the source stays authoritative. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `count`, `digest`, `sequence`, `fk`, `trigger`, `relation_set`, `replay`, `doctor`.
+
+More: [docs/guides/move-to-postgres.md#verify](../../docs/guides/move-to-postgres.md#verify)
 
 ### graph_incomplete
 
@@ -897,6 +1197,16 @@ More: [docs/guides/write-refusals.md#fetch_failed](../../docs/guides/write-refus
 |---|---|---|---|---|---|---|
 | The operation was interrupted by a signal before it finished. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 130 | no |
 
+### invalid_acknowledgment
+
+<a id="invalid_acknowledgment"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The shared-skills delivery acknowledgment does not match a batch issued to this enrollment. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
+
 ### invalid_client
 
 <a id="invalid_client"></a>
@@ -962,6 +1272,36 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A parameter is missing, has the wrong type, or has an invalid value. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 2 | no |
+
+### invalid_rating
+
+<a id="invalid_rating"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A rating must be an integer from 1 to 5. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#invalid_rating](../../docs/guides/retrieval-feedback.md#invalid_rating)
+
+### invalid_receipt
+
+<a id="invalid_receipt"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A company-source ingestion receipt input failed validation inside gbrain; nothing was written. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### invalid_receipt_transition
+
+<a id="invalid_receipt_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An ingestion receipt cannot skip a phase or complete while files failed, writes are pending or verification failed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
 
 ### invalid_request
 
@@ -1056,6 +1396,26 @@ More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#leg
 | The managed pull was skipped. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#managed_pull_skipped](../../docs/guides/write-refusals.md#managed_pull_skipped)
+
+### membership_inactive
+
+<a id="membership_inactive"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The shared-skills enrollment epoch was left or superseded. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollment](../../docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollment)
+
+### membership_not_found
+
+<a id="membership_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This principal has no shared-skills membership with that installation id. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
 
 ### method_not_allowed
 
@@ -1387,6 +1747,46 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | The request was rate-limited; retry after the stated delay. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### receipt_conflict
+
+<a id="receipt_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The ingestion receipt changed since it was read. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### receipt_fence_changed
+
+<a id="receipt_fence_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The managed owner, topology or source binding changed while the ingestion ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### receipt_fence_required
+
+<a id="receipt_fence_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Ingestion into a managed or bound source needs the worktree owner's fence. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### receipt_identity_mismatch
+
+<a id="receipt_identity_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The receipt ID is already bound to different approved ingestion metadata. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#agent-and-ci-use](../../docs/guides/company-brain-ingestion.md#agent-and-ci-use)
+
 ### recovery_required
 
 <a id="recovery_required"></a>
@@ -1404,6 +1804,16 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 | Google connect credential error: redirect uri mismatch. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### ref_not_in_answer
+
+<a id="ref_not_in_answer"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The rated page is not one of the pages the answer used. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/retrieval-feedback.md#ref_not_in_answer](../../docs/guides/retrieval-feedback.md#ref_not_in_answer)
 
 ### refresh_dirty
 
@@ -1621,7 +2031,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | gbrain serve is in status-only mode: its brain is locked by another server, missing, damaged, or its config is unreadable. | A capability this request needs is not configured or not reachable on this brain. | Call gbrain_status for the cause, the fix and what to tell the user. | agent | `gbrain doctor --json` | 1 | no |
 
-Reasons: `lock_held`, `no_brain`, `config_unreadable`, `missing_brain`, `brain_unopenable`, `repair_failed`.
+Reasons: `lock_held`, `no_brain`, `config_unreadable`, `missing_brain`, `brain_unopenable`, `repair_failed`, `unavailable`.
 
 ### shared_skills_unavailable
 
@@ -1678,6 +2088,16 @@ Reasons: `lock_held`, `no_brain`, `config_unreadable`, `missing_brain`, `brain_u
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Retained skill revisions exceed this source storage budget. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### skill_unavailable
+
+<a id="skill_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The qualified shared skill is not in this installation's current authorized view. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
 
 ### source_binding_required
 
@@ -1758,6 +2178,16 @@ Reasons: `lock_held`, `no_brain`, `config_unreadable`, `missing_brain`, `brain_u
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Split unparseable. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### stale_unavailable
+
+<a id="stale_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No complete, current authorized shared-skills view is available; cached shared skills stay unused. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
 
 ### state_mismatch
 

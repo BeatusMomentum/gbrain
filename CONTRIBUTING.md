@@ -5,9 +5,12 @@
 ```bash
 git clone https://github.com/garrytan/gbrain.git
 cd gbrain
-bun install
-bun test
+bun install --frozen-lockfile && bun run test && bun run verify
 ```
+
+`bun run test` is the parallel unit loop; `bun run verify` is CI's guard
+battery. [`docs/TESTING.md`](docs/TESTING.md#quick-start) covers E2E, failure
+logs and the lanes.
 
 Requires Bun 1.4.0 or newer, matching `package.json`.
 
@@ -159,7 +162,7 @@ in one-shot with `GBRAIN_E2E_ALLOW_DB=<name>`.
 
 Changes to durable persistence also require the native/runtime, process-crash,
 soak, deployment-matrix and read-latency gates in
-[`docs/TESTING.md`](docs/TESTING.md#durable-persistence-schedules-and-process-crashes).
+[`scripts/persistence/README.md`](scripts/persistence/README.md#test-suites).
 `test:full` alone does not execute those complete platform and runtime matrices.
 Keep each result tied to its tested revision and disclose skipped cells.
 
@@ -178,8 +181,8 @@ loop" below), silent fallback to recursive chunking in the compiled binary
 manifest; coverage ratchets up from the `todo` rows) can actually fail by
 running it against known-bad fixtures — a new `scripts/check-*` guard must be
 registered in the manifest or the build fails. There is no `check:all` script; the
-trailing-newline, exports-count, and no-legacy-getconnection checks run in
-`verify` with everything else.
+trailing-newline and no-legacy-getconnection checks run in `verify` with
+everything else, and `test/public-exports.test.ts` owns the package export map.
 
 ### Writing tests that survive the parallel loop
 
@@ -235,6 +238,18 @@ Vacuous-assertion shapes to avoid (they recur):
 - asserting a substring that would also appear in the broken output —
   assert parsed structure instead.
 
+For a whole range of merged changes or open PRs, the contributor audit runs
+the same check per change without the helper's whole-file revert: it reverses
+only that change's product hunks at the audited head, so later fixes stay in
+place. Try it on the offline fixture first:
+
+```bash
+bun scripts/contributor-audit-fixture.ts /tmp/audit-demo   # prints the audit command for the fixture range
+bun run audit:contributors <base>..<head> [--prs <manifest>] [--json]
+```
+
+Details, exit codes and the scrubbed sandbox: [Contributor audit](docs/TESTING.md#contributor-audit).
+
 Before adding a test, answer the four questions in the
 [authoring gate](docs/TESTING.md#authoring-gate); before deleting one, follow
 [Retiring a test](docs/TESTING.md#retiring-a-test) and record its evidence
@@ -255,10 +270,10 @@ the authoring gate. See [Source reads in tests](docs/TESTING.md#source-reads-in-
 
 ```bash
 bun run ci:local         # full gate: gitleaks + guards/typecheck + 4-shard parallel unit + E2E
-bun run ci:local:diff    # gate with diff-aware E2E selector
-bun run ci:select-e2e    # print which E2E files the selector would run
+bun run ci:local:diff    # doc-only diff: gitleaks + doc checks; otherwise the full gate
+bun run ci:select-e2e    # print the E2E files the diff selects (nothing for doc-only, else all)
 bun run ci:ubicloud      # the same gate fanned out across ephemeral Ubicloud VMs (~5 min)
-bun run ci:ubicloud:diff # Ubicloud gate with the diff-aware E2E selector
+bun run ci:ubicloud:diff # Ubicloud gate with the same doc-only fast path
 ```
 
 `ci:local` spins up four pgvector services plus a transaction-mode PgBouncer via
@@ -273,8 +288,57 @@ on host (`brew install gitleaks`). Override the postgres host port with
 uncommitted edits included; see "Ubicloud fan-out" in
 [`docs/TESTING.md`](docs/TESTING.md).
 
-Fail-closed selector: an unmapped `src/` change runs ALL E2E files. Hand-tune
-narrower mappings via `scripts/e2e-test-map.ts`.
+E2E selection runs every E2E file for any change that is not doc-only; diff
+narrowing is retired because a typical E2E file imports most of `src/`. A
+doc-only diff still runs llms freshness, the KEY_FILES byte caps, documented
+paths, skill references and the privacy guards (`scripts/ci-doc-checks.sh`).
+See [E2E selection](docs/TESTING.md#e2e-selection).
+
+### Local graduation smoke (PGLite → Postgres)
+
+A five-minute end-to-end check of `gbrain migrate --to postgres` on the E2E
+container conventions from [`docs/TESTING.md`](docs/TESTING.md) (pinned
+`pgvector/pgvector:pg16`, a database name carrying "test", tear down when done).
+It uses its own container name and port so it never touches `gbrain-test-pg`,
+and an isolated `GBRAIN_HOME` so it never touches your brain. Unset
+`DATABASE_URL` and `GBRAIN_DATABASE_URL` first: the plan lists either one as a
+blocker when it points anywhere but the target.
+
+```bash
+# 1. Target database
+docker run -d --name gbrain-graduation-pg \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=gbrain_graduation_test \
+  -p 5436:5432 pgvector/pgvector:pg16
+until docker exec gbrain-graduation-pg pg_isready -U postgres; do sleep 1; done
+
+# 2. Source brain with write history, in a throwaway home
+export GBRAIN_HOME="$(mktemp -d)"
+bun run src/cli.ts init --pglite --no-embedding
+echo "Alice Example runs the acme-example pilot." | bun run src/cli.ts put people/alice-example
+
+# 3. Plan (exit 3, nothing changes), then run with the plan hash
+export GBRAIN_TARGET_URL=postgresql://postgres:postgres@localhost:5436/gbrain_graduation_test
+bun run src/cli.ts migrate --to postgres --url-env GBRAIN_TARGET_URL --json > plan.json; echo "exit $?"
+bun run src/cli.ts migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect "$(jq -r .plan_hash plan.json)"
+
+# 4. The brain answers from Postgres
+bun run src/cli.ts doctor --no-migrate --json
+bun run src/cli.ts get people/alice-example
+bun run src/cli.ts migrate --status --json
+
+# 5. Clean up (always, pass or fail)
+docker rm -f gbrain-graduation-pg
+rm -rf "$GBRAIN_HOME" plan.json
+unset GBRAIN_HOME GBRAIN_TARGET_URL
+```
+
+Expected: step 3 prints `exit 3` and then a run that ends with the target's
+doctor result, `get` returns the page, and `ls "$GBRAIN_HOME/.gbrain"` before
+cleanup shows `brain.pglite` as a tombstone file next to the retained
+`brain.pglite.graduated-<run_id>` copy. For rollback,
+run `bun run src/cli.ts migrate --rollback-to-source` before step 5 and check
+that `get` answers from PGLite again.
 
 ### PR-side security checks
 
@@ -610,6 +674,27 @@ community-PR-wave workflow) lives in [`docs/RELEASING.md`](docs/RELEASING.md).
 Community PRs are batched into release waves rather than merged one-by-one;
 contributor attribution stays attached via `Co-Authored-By:` trailers and every
 accepted contribution is credited in `CHANGELOG.md`.
+
+### How a contributor PR lands
+
+Contributor PRs are never merged into master as-is. A maintainer folds the
+change into a fix-wave PR, revises it there (tests, agent-facing errors,
+conventions) and lands it with credit: the commit says `Contributed by @handle`
+and carries a `Co-Authored-By:` trailer. Your PR stays open until then.
+
+The **Fix-wave gate** check enforces this. It fails every PR into master whose
+head branch is not in `garrytan/gbrain` itself, and posts one comment saying
+so when the PR opens. A red gate on a contributor PR is expected and is not a
+judgment of the work. Maintainers' own branches (`capy/*`, `garrytan/*`) pass.
+
+`maintainer-override` label: a human on the maintainer allowlist in
+`scripts/fix-wave-gate.ts` (it starts as `garrytan`) may apply it to pass the
+gate for one PR a maintainer has decided may land from its fork (for example a
+fix wave a maintainer opened from a fork); record the reason in a PR comment.
+Bots never count, and the label only counts when the most recent
+`labeled` event was made by an allowlisted human. Every override is written to
+the check's run log and step summary with who applied it and when. Process and
+settings: [docs/RELEASING.md](docs/RELEASING.md#fix-wave-gate).
 
 ## Welcome PRs
 

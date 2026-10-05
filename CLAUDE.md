@@ -104,11 +104,10 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   reverse-writes on the composite key; `validateSourceId` before any `source_id` path join.
 - **One canonical chat-pricing table.** All paid-cloud chat/completion prices live ONCE in
   `src/core/model-pricing.ts` (`CANONICAL_PRICING` + `canonicalLookup`). Every other table
-  (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, `takes-quality-eval/pricing.ts`'s
-  `MODEL_PRICING`, the contradictions/cross-modal/skillopt cost views) is a DERIVED view, never
-  a hand-copied duplicate — so cross-table price drift is structurally impossible. Update a
-  price in `model-pricing.ts` only; each consumer keeps its own key allowlist + miss policy
-  (fail-closed vs warn-only vs null), not its own numbers. Pinned by `test/model-pricing.test.ts`
+  (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, the contradictions/cross-modal/skillopt cost
+  views) is a DERIVED view, never a hand-copied duplicate — so cross-table price drift is
+  structurally impossible (takes-quality reads `pricing.overrides`, then canonical). Update a
+  price in `model-pricing.ts` only; each consumer keeps its own miss policy, not its own numbers. Pinned by `test/model-pricing.test.ts`
   (drift guard asserts each view equals canonical). Embeddings price separately in
   `embedding-pricing.ts` (different unit).
 - **Module-size ratchet.** `scripts/module-size-limits.tsv` pins per-file line ceilings
@@ -217,8 +216,8 @@ routing eval evidence, and shared conventions.
 Durable facts and preferences belong in shared memory with provenance. Transient
 task state, credentials, local configuration, and harness activation state do not.
 Automatic capture is opt-in. Withdrawal is not physical erasure. Remote
-`put_page` does not extract graph links inline: stdio has best-effort startup/idle
-sweeps; HTTP needs explicit maintenance or authorized `add_link`. Configured
+`put_page` links plain mentions of existing visible pages post-commit (`links`
+effect); typed edges need the stdio sweep, maintenance or `add_link`. Configured
 providers can receive text, and Markdown export is not a full database backup.
 Read [memory boundaries](docs/guides/memory-boundaries.md).
 

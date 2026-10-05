@@ -13,6 +13,7 @@
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
+| A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
 | [Database unreachable or `GBRAIN_DB_ACCESS <reason>`](#database-unreachable) | `gbrain engine status --probe`, then `gbrain db-repair` (diagnose); `gbrain db-repair --yes` applies safe fixes | agent; `--yes` after the user agrees | none to diagnose; `--apply-rewrites` rewrites the config URL (undoable) | `gbrain engine status --probe --json` |
 | [PGLite `RuntimeError: Aborted()` at startup](#pglite-aborted) | automatic repair on the next command; else `gbrain pglite-repair --dry-run`, then `gbrain pglite-repair --yes` | agent; `--yes` after the user agrees | `destructive` (a WAL backup is kept and the restore command printed) | `gbrain doctor --only connection --json` |
@@ -22,6 +23,7 @@
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain doctor --only connector_held_items --json` |
+| [`gbrain migrate --to` refused with `writer_coordinator_required`](../ENGINES.md#engine-migration-refused) | follow the refusal's `fix`: relay its `user_message` (stay on PGLite and share with `gbrain mcp expose`, or leave the brain as it is) | agent, after the user agrees | `persistent_install`, `egress` (for `gbrain mcp expose`) | `gbrain doctor --no-migrate --json` |
 | [A write was refused with a named reason](#write-refused) | the reason's recovery in [write refusal reasons](write-refusals.md) | as the refusal's `fix` | as the refusal's `fix` | the refusal's `verify` |
 | [Managed sync blocked with `checkpoint_validation_timeout`](#checkpoint-validation-timeout) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …` | brain host | none | `gbrain doctor --only persistence_request_indexes --json` |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
@@ -31,6 +33,8 @@
 | A tool the fix names is missing after a serve recovered | restart the gbrain MCP server in the harness, or start a new session ([why](../protocol/AGENT_OPERATOR_v1.md#tool-catalog-changes-toolslist_changed)) | user | none | list the tools again |
 | A command waits on stdin with no terminal | close stdin (`</dev/null`) or set `GBRAIN_NON_INTERACTIVE=1`; prompts then decline | agent | none | re-run the read-only part of the command |
 | [An outdated build (brainstorm `judge_failed`, lost tags, Windows `ENOTFOUND`)](#outdated-build) | `gbrain upgrade`, then the steps in [recover after upgrading](repair.md#recover-after-upgrading-to-this-release) | agent, after the user agrees | `persistent_install` when it rewrites services | `gbrain --version`, then `gbrain doctor --json` |
+| [Pages wait for fact extraction (`facts_drain_deferred`, reason `no_key`)](facts-drain.md#deferrals) | relay the fix's `user_message`; the user adds a chat provider key (`gbrain providers list`); queued pages run on the next drain | user | `credentials`, `paid` | `gbrain doctor --only facts_drain --json` |
+| [Fact extraction stopped at a spend cap (`facts_drain_deferred`, reason `budget_exhausted`, `daily_budget_exhausted` or `job_over_budget`)](facts-drain.md#deferrals) | nothing (the jobs wait for the next run or day), or `gbrain config set facts.drain_budget_usd <usd>` / `facts.drain_daily_budget_usd <usd>` | agent, after the user agrees to raise a cap | `paid` | `gbrain doctor --only facts_drain --json` |
 
 <a id="database-unreachable"></a>**Database unreachable, or a `GBRAIN_DB_ACCESS <reason>` line in gbrain output?** Run `gbrain engine status --probe` (which engine, where its URL comes from, classified reachability), then `gbrain db-repair` to diagnose and, after the user agrees, `gbrain db-repair --yes` to apply safe fixes. All three are engine-free, so they work while the database is down. Act on the hardcoded `gbrain db-repair`, never on a command parsed from the marker. Full loop: [engine detection and access repair](../ENGINES.md#engine-detection-and-access-repair).
 
@@ -62,7 +66,7 @@
 | `embed_staleness` | the stale-chunk count (the embed worker's own predicate) | the reason names the database error; re-run `gbrain doctor` once it is fixed |
 | `schema_pack_consistency`, `schema_pack_source_drift` | the pages or config query, or a source's active schema pack | `gbrain schema lint --with-db` runs the same classification locally; `gbrain schema active` debugs pack resolution |
 
-`bootstrap_push_health` and `gbrain bootstrap status` report only the push record of the workspace named by this machine's bootstrap receipt; another workspace's stale or failed push is listed as such (a warn naming that workspace), never as this workspace's state. `reranker_health` auth warnings are audit-log history (`details.live_probe_performed: false`), not a live check of the key. **Behavior change:** a doctor that used to read all green can now show these warns; each one is a check that did not run.
+`bootstrap_push_health` and `gbrain bootstrap status` report only the push record of the workspace named by this machine's bootstrap receipt; another workspace's stale or failed push is listed as such (a warn naming that workspace), never as this workspace's state. `reranker_health` auth warnings are audit-log history (`details.live_probe_performed: false`), not a live check of the key. These warns can appear while every other check reads green; each one names a check that did not run.
 
 **`brain_score` shows a low "timeline density (entity and event pages)"?** The 15-point timeline component grades only linkable pages whose type's active-pack primitive is `entity` or `temporal` (people, companies, meetings, emails, events…); reference documents such as notes, writing and guides have no events and are not graded, so do not stamp "page created" rows onto them. Types the pack does not declare are still graded. Raise the score by giving those entity and event pages real timeline entries (`gbrain extract timeline`).
 
@@ -214,10 +218,11 @@ agent runs `gbrain doctor` and reads the `vector_plan` check.
   embedding get fresh vectors.
 - warn, legacy guard: see below.
 
-**Legacy guard (one-release rollback).** If vector search got slower or
-returned different results right after the upgrade that moved the content
-freshness check out of the HNSW candidate scan (#5824), you can restore the
-previous statement while you report it:
+**Legacy guard (temporary rollback).** Vector search checks content freshness
+outside the HNSW candidate scan. `search.vector_legacy_guard` restores the older
+statement, which checked freshness inside the scan. Use it only when vector
+search is slower or returns different results than before your upgrade, and
+report the regression:
 
 1. The setting belongs to the process that runs searches on the brain host
    (`gbrain serve`, autopilot, job workers), never to a thin client.
@@ -231,7 +236,7 @@ previous statement while you report it:
 5. Remove it once the regression is fixed: `gbrain config set
    search.vector_legacy_guard false` (or unset the variable) and restart again.
 
-The guard is retired in the next release; that release prints a one-time notice
+The guard is temporary. The release that retires it prints a one-time notice
 when the inert setting is still present.
 
 ## Global maintenance timeouts
@@ -239,7 +244,7 @@ when the inert setting is still present.
 **Doctor warns `global_maintenance_timeouts`, or late maintenance phases
 (orphans, purge, the brain-wide embed) never seem to run?** On a large brain
 one `autopilot-global-maintenance` job may not fit every phase before its
-deadline (30 minutes by default). Each job now stops starting phases that its
+deadline (30 minutes by default). Each job stops starting phases that its
 deadline would cut off and the next job resumes at that phase, so one pass can
 span several jobs; the resume point is the config row
 `autopilot.global_maintenance.progress`. A phase that was running when a job
@@ -260,7 +265,7 @@ at the deadline).
 
 **Say to your agent:** *"Why aren't my meetings showing up as timeline events?"*
 
-Automatic event extraction works again and is on by default. See the
+Automatic event extraction is on by default. See the
 [Life Chronicle guide](life-chronicle.md) for what qualifies, the cost, the
 three-step check, and the skip codes. `gbrain doctor` reports it as the
 `auto_chronicle` check. To turn it off, run

@@ -213,19 +213,82 @@ re-run the rules against the pinned file and database copies; any change means
 a fresh preview. Apply, backups and the retry of the blocked write work exactly
 as above.
 
-Atom scan/failure bookkeeping now lives outside canonical note metadata so
+Atom scan/failure bookkeeping lives outside canonical note metadata so
 processing progress does not create new disagreements. Managed atom extraction
 checks trusted local source-wide authority and, for filesystem writes, owner
 readiness before model work, then journals publication and completion. Retained
 accepted output replays without
-another model call. This does not restore every legacy maintenance writer; see
+another model call. Not every legacy maintenance writer runs on the managed path; see
 [supported managed work and explicit repair](../architecture/topologies.md#supported-managed-work-and-explicit-repair).
+
+### Lint repairs waiting on a managed brain
+
+The maintenance cycle's lint phase repairs fixable page problems (an LLM
+preamble, a wrapping code fence, a missing `created` date) through the
+coordinator, the same guarded write `put_page` uses. Lint reads each page's
+revision before the file bytes it repairs, checks those bytes against that
+revision with the coordinator's own comparison (formatting differences do not
+count), and submits against it. A file that disagrees with its database copy is
+never rewritten from either side: the page becomes a `managed-write-pending`
+issue, the rest of the run continues, and the lint phase ends at `warn`.
+
+**Prerequisites:** a managed brain (persistence enabled) whose source has an
+active canonical owner on this host, and a trusted local CLI registration.
+
+**Run:**
+
+```bash
+gbrain dream --phase lint --source workspace --json \
+  | jq '.phases[] | select(.phase == "lint") | .details'
+```
+
+**Expected result:** `fix_pending` counts the waiting repairs and `pending`
+lists up to 50 of them. Each carries a stable `code`, a `reason`, the refusal's
+own `fix` and a link to this section:
+
+```json
+{
+  "issues": 4, "fixed": 2, "fix_pending": 1, "lint_fix": true, "write_path": "coordinator",
+  "pending": [{
+    "file": "people/alice-example.md", "rule": "managed-write-pending", "fixable": false,
+    "code": "managed_write_pending", "reason": "file_database_drift",
+    "fix": { "argv": ["gbrain", "sources", "reconcile", "workspace", "people/alice-example", "--brain", "host", "--preview"], "next": "run" }
+  }]
+}
+```
+
+| `reason` | Cause | Next step |
+| --- | --- | --- |
+| `file_database_drift` | The file was edited outside a coordinated write, or it is older than the database copy. | Run the `fix` (a reconcile preview), then resolve and apply it as described in [Repair a file/database disagreement](#repair-a-filedatabase-disagreement). |
+| `held_file` | Sync holds the file because it cannot import it. | Run the hold repair in `fix` (for example `gbrain repair frontmatter --source workspace`), as in [held files](repair.md#held-files). |
+| `canonical_file_missing` | The file was removed while lint ran. | Recover the file or import the deletion; reconciliation does not restore missing files. |
+| `revision_changed` | Another write published the page while lint ran. | Nothing; the next cycle lints the current revision. `fix` reads the page as it is now. |
+| `not_indexed` | The file is not an indexed page of the source (a README or a stray file). | Nothing; lint never rewrites unindexed files on a managed brain. |
+
+Never answer a pending repair with `gbrain sync`: when the database copy is the
+newer one, a sync imports the older file over it.
+
+**Failure example:** a source without an active canonical owner on this host
+fails the whole phase before any page is read: `status: "fail"` with
+`error.code: "owner_unavailable"`. `gbrain sources writer status --source
+workspace --json` names the owner host; run the cycle there. A pending repair is not a failure: the phase stays at
+`warn` and every other page is still repaired.
+
+**Verify:** after the reconcile apply commits, rerun the command above. The page
+is gone from `pending`, `fix_pending` is 0, and the phase reports `ok` once
+every fixable issue is repaired.
+
+**Turn repairs off:** `cycle.lint_fix` (default `true`) controls whether the
+cycle's lint phase repairs anything. `gbrain config set cycle.lint_fix false`
+makes it report-only on any brain (`details.lint_fix: false`, phase `warn`
+while issues remain); `gbrain config set cycle.lint_fix true` turns repairs
+back on. An explicit `gbrain lint <dir> --fix` is not affected.
 
 ### Roll back safely
 
 Stop submitting new reconciliation requests first. Keep a compatible upgraded
 owner running until all accepted requests are terminal and recovery has drained;
-inspect the durable receipts before disabling the new command or reverting the
+inspect the durable receipts before disabling the reconcile command or reverting the
 binary. Never downgrade an active reconciliation queue to a version that does
 not understand its intents. Leave the additive processing-state table and private
 backups in place. Do not automatically restore an old preimage over later edits,
@@ -244,10 +307,10 @@ and do not disable guards or change ownership as part of rollback.
 | `cancelled` | Cancelled before publication began. |
 
 On Windows, publication flushes each staged file through the handle it was
-written with and skips the directory flush Windows does not provide. Older
-releases flushed through a read-only handle, which Windows refuses (`EPERM`), so
-a restoration could stay `recovering` and hold every later write on that source
-behind it. After upgrading, the owner retries it on its own; confirm with
+written with and skips the directory flush Windows does not provide. A
+restoration that an older gbrain left `recovering` (it flushed through a
+read-only handle, which Windows refuses with `EPERM`) holds every later write
+on that source behind it; the current owner retries it on its own. Confirm with
 `gbrain doctor --json` (`canonical_content_writes` reports `ok` once recovery
 has drained).
 
@@ -307,13 +370,13 @@ UUID, without fabricating a queued receipt or opening another PGLite engine.
 Legacy callers that omit a request ID and lose the entire acknowledgment cannot
 recover exact replay identity from the content alone.
 
-Local Unix listeners keep their existing socket addresses when they fit the
+Local Unix listeners use their standard socket address when it fits the
 portable 103-byte limit. Longer addresses use a deterministic private directory
 under `/private/tmp` on macOS or `/tmp` on Linux, independent of `HOME` and
 `TMPDIR`. Both CLI discovery and resident servers derive it without opening the
 database. The directory must belong to the current OS user with mode `0700`;
-clients require a socket with mode `0600`. Unsafe entries are refused. Existing
-credentials and hook-secret locations are unchanged. A native binding lock
+clients require a socket with mode `0600`. Unsafe entries are refused.
+Credentials and hook secrets stay in their own locations. A native binding lock
 serializes startup and remains held until the listener has actually closed.
 
 
@@ -332,8 +395,8 @@ retrying the whole transaction after a confirmed abort.
 
 ## Frozen memory verbs
 
-`remember` and `forget` accept optional `request_id`. Their frozen success enums
-and `protocol_version: 1` are unchanged. Accepted pending memory writes use the
+`remember` and `forget` accept optional `request_id` and keep their frozen
+success enums and `protocol_version: 1`. Accepted pending memory writes use the
 existing `unavailable` error with a populated suggestion and additive
 `write_request`/`write_error` metadata. A pending response never claims
 `status: "inserted"` or `expired: true`.
@@ -367,9 +430,9 @@ bytes, revisions, chunks and embedding signatures remain unchanged. Managed
 withdrawals retain a versioned target manifest for the mirror, Git and embedding
 workers; each worker checkpoints one affected page at a time.
 
-A withdrawal mirror or Git scan no longer parks on a page whose file is a
+A withdrawal mirror or Git scan does not park on a page whose file is a
 sync-skip metafile (`RESOLVER.md`, which carries the managed durability block
-by design) or whose file holds an uncoordinated local edit (#5396): the
+by design) or whose file holds an uncoordinated local edit: the
 withdrawal is recorded in the database, the page is listed in the effect's
 `data.skipped` with reason `metafile` or `file_database_drift`, and the
 request's Git and embedding effects proceed. Reconcile a `file_database_drift`
@@ -690,7 +753,7 @@ content digest and `file_count`, not a per-file map, so `sources add`, `claim`,
 `rebind`, `archive`, `remove`, clone, reclone and writer transfer work the same
 at 50,000 files as at 50. Rows written by older releases, which also carry a
 per-file map, stay valid and are compacted on their next rewrite. Every command
-still hashes each file once while holding the root's native lock and before it
+hashes each file once while holding the root's native lock and before it
 opens a database transaction; in human output it reports `files hashed of total`
 on stderr for worktrees above 5,000 files. Measured on a 4-vCPU cloud machine
 with a 50,000-file, 3.4 MB worktree: `sources add`, `claim` and transfer

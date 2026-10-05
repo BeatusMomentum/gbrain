@@ -168,7 +168,7 @@ const entity: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'MEMORY VERB (v1): one known person/company/project card, zero LLM. A miss returns found:false with near matches and create_safety, so you do not duplicate a page. Facts: recall.',
+  description: 'MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.',
   params: {
     name: { type: 'string', required: true, description: 'Name, alias or slug (e.g. "Alice Example").' },
   },
@@ -188,14 +188,21 @@ const entity: Operation = {
     const t0 = Date.now();
     const { buildEntityCard } = await import('./verbs/entity-card.ts');
     const result = await buildEntityCard(ctx.engine, ctx.sourceId ?? 'default', name, {
-      remote: ctx.remote !== false,
+      remote: ctx.remote !== false, includeReferences: true, surfaceCeiling: ctx.surfaceCeiling,
     });
+    const coverage = result.card?.coverage ?? result.coverage;
+    if (coverage) {
+      const { mentionCoverageNotice } = await import('./mentions/coverage.ts');
+      const notice = mentionCoverageNotice(coverage, result.card?.entity.type);
+      if (notice) ctx.emitNotice?.(notice);
+    }
     return {
       protocol_version: MEMORY_VERBS_VERSION,
       found: result.found,
       latency_ms: Date.now() - t0,
       ...(result.card ? { card: result.card } : {}),
       ...(result.suggestions !== undefined ? { suggestions: result.suggestions } : {}),
+      ...(!result.card && result.coverage ? { coverage: result.coverage } : {}),
     };
   },
   cliHints: { name: 'entity', positional: ['name'] },
@@ -298,6 +305,8 @@ const synthesize: Operation = {
     // gather → typed error. An answer is NEVER fabricated from nothing
     // (ENG-19). Defensive ?? 'ok' mirrors synthesisOk's back-compat posture.
     const status = result.synthesis_status ?? 'ok';
+    const { recordThinkAnswer, feedbackMetaFields } = await import('./feedback/record.ts');
+    const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'synthesize', result));
     if (status !== 'ok') {
       if (result.extractive) {
         return {
@@ -309,6 +318,7 @@ const synthesize: Operation = {
           pages_gathered: result.pagesGathered,
           takes_gathered: result.takesGathered,
           warnings: result.warnings,
+          ...feedbackMeta,
           protocol_version: MEMORY_VERBS_VERSION,
         };
       }
@@ -329,6 +339,7 @@ const synthesize: Operation = {
       pages_gathered: result.pagesGathered,
       takes_gathered: result.takesGathered,
       warnings: result.warnings,
+      ...feedbackMeta,
       protocol_version: MEMORY_VERBS_VERSION,
     };
   },
@@ -399,6 +410,28 @@ const STATUS_ENUM = ['inserted', 'duplicate', 'superseded'];
 const SYNTHESIS_STATUS_ENUM = [
   'ok', 'empty_answer', 'not_json', 'output_truncated', 'no_llm', 'model_unusable', 'llm_error', 'extractive_fallback',
 ];
+
+/** `coverage` on entity cards and misses (mentions/coverage.ts). */
+const COVERAGE_SCHEMA = {
+  type: 'object',
+  required: ['state', 'pending_pages', 'last_pass_at'],
+  properties: {
+    state: { type: 'string', enum: ['complete', 'pending', 'disabled', 'type_not_linkable', 'failed'] },
+    pending_pages: { type: 'integer' },
+    last_pass_at: { type: ['string', 'null'] },
+    degraded: { type: 'boolean', const: true },
+  },
+} as const;
+
+/** One `referenced_by` row (mentions/referrers.ts). */
+const REFERENCE_ROW_SCHEMA = {
+  type: 'object',
+  required: ['slug', 'title', 'type', 'canonical_type', 'date', 'date_source', 'preview'],
+  properties: {
+    slug: { type: 'string' }, title: { type: 'string' }, type: { type: ['string', 'null'] }, canonical_type: { type: 'string' },
+    date: { type: ['string', 'null'] }, date_source: { type: 'string' }, preview: { type: 'string' },
+  },
+} as const;
 
 const RECALL_BUDGET_ARM_SCHEMA = {
   type: 'object',
@@ -543,13 +576,37 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
                 direction: { type: 'string', enum: ['out', 'in'] },
                 slug: { type: 'string' },
                 context: { type: ['string', 'null'] },
+                // Temporal typed edges — ADDITIVE OPTIONAL (frozen-v1 legal).
+                status: { type: 'string' },
+                since: { type: ['string', 'null'] },
+                until: { type: ['string', 'null'] },
               },
             },
           },
           backlink_count: { type: 'integer' },
           active_fact_count: { type: 'integer' },
+          relationship_note: { type: 'string' },
+          // Entity recall — ADDITIVE OPTIONAL (frozen-v1 legal); the `entity`
+          // verb sets them, ambient callers (context_pack, delta) do not.
+          referenced_by_count: { type: 'integer' },
+          referenced_by: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['canonical_type', 'total', 'rows'],
+              properties: {
+                canonical_type: { type: 'string' },
+                total: { type: 'integer' },
+                rows: { type: 'array', items: REFERENCE_ROW_SCHEMA },
+                next: { type: 'object', required: ['tool', 'arguments'], properties: {
+                  tool: { type: 'string', const: 'get_backlinks' }, arguments: { type: 'object' }, requires_surface: { type: 'string', enum: ['starter'] } } },
+              },
+            },
+          },
+          coverage: COVERAGE_SCHEMA,
         },
       },
+      coverage: COVERAGE_SCHEMA,
       suggestions: {
         type: 'array',
         items: {
@@ -653,10 +710,14 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
                   direction: { type: 'string', enum: ['out', 'in'] },
                   slug: { type: 'string' },
                   context: { type: ['string', 'null'] },
+                  status: { type: 'string' },
+                  since: { type: ['string', 'null'] },
+                  until: { type: ['string', 'null'] },
                 },
               },
             },
             backlink_count: { type: 'integer' },
+            relationship_note: { type: 'string' },
           },
         },
       },
@@ -705,12 +766,16 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
     properties: {
       protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
       since: { type: 'string', description: 'The ISO cursor this delta was computed against.' },
-      has_more: { type: 'boolean', description: 'True when changes beyond the fetch limit or budget were NOT delivered; with session_id the cursor advanced only to the last delivered page, so the tail surfaces on the next wake.' },
+      has_more: { type: 'boolean', description: 'True when more content is waiting (a fetch limit or the budget); each arm advanced only through what it delivered, so the rest surfaces on the next wake. Failure is degraded_reason, never has_more.' },
       next_cursor: {
         type: 'object',
         required: ['since', 'slug'],
-        description: 'Keyset to resume from (stateless callers pass back as since + since_slug).',
-        properties: { since: { type: 'string' }, slug: { type: 'string' } },
+        description: 'Where to resume. `cursor` (opaque, both arms exact) is passed back as cursor; older clients pass since + since_slug, which is conservative (may re-deliver, never skips): it holds while any arm failed and stays strictly before the oldest undelivered fact.',
+        properties: { since: { type: 'string' }, slug: { type: 'string' }, cursor: { type: 'string' } },
+      },
+      cursor_arms: {
+        type: 'object',
+        description: 'Replay audit trail: each arm\'s start and next keyset (pages: since + slug; facts: since + id).',
       },
       pages: {
         type: 'array',
@@ -731,6 +796,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           type: 'object',
           required: ['fact', 'kind'],
           properties: {
+            id: { type: 'integer', description: 'Fact id (dedupe key for replay).' },
             fact: { type: 'string' },
             kind: { type: 'string' },
             entity_slug: { type: ['string', 'null'] },
@@ -752,7 +818,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
         },
       },
       text: { type: 'string' },
-      degraded_reason: { type: 'string' },
+      degraded_reason: { type: 'string', description: 'Comma-joined incomplete parts: deadline, pages, facts, threads, session_state. No cursor moved past anything undelivered; a delta_incomplete notice carries the retry step.' },
       budget_tokens: { type: 'integer' },
       budget_used: { type: 'integer' },
       dropped_count: { type: 'integer' },

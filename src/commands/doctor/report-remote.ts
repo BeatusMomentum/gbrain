@@ -20,6 +20,7 @@ import { resolveHoursEnv } from '../../core/env-number.ts';
 import { schemaVersionHealth } from '../../core/schema-version-health.ts';
 import { checkProjectionReadiness } from './checks/projection-readiness.ts';
 import { remoteUnlinkedFactsCheck } from './checks/unlinked-facts.ts';
+import { checkChatFallbackChain } from './checks/chat-fallback.ts';
 import { resolveExcludePrivatePages } from '../../core/search/private-visibility.ts';
 import {
   type Check,
@@ -40,7 +41,6 @@ import {
   checkSyncConsolidation,
   checkPoolBudget,
   checkLinksExtractionLag,
-  checkChatFallbackChainInert,
   checkSearchMode,
   checkEvalDrift,
   checkRerankerHealth,
@@ -377,8 +377,6 @@ export async function doctorReportRemote(
   checks.push(await checkSchemaPackSourceDrift(engine));
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.
-  const inertFallbackChain = await checkChatFallbackChainInert(engine);
-  if (inertFallbackChain) checks.push(inertFallbackChain);
   checks.push(await checkSearchMode(engine));
 
   // 8. v0.32.3 eval_drift: retrieval-affecting files changed since last
@@ -391,6 +389,7 @@ export async function doctorReportRemote(
   // search.reranker.enabled FIRST so absence-of-failures means different
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
+  checks.push(await checkChatFallbackChain(engine, { remote: opts.remote !== false }));
 
   // 9a. v0.40.4 graph_signals_coverage: when graph_signals is enabled
   // (via mode bundle default or explicit config override), surface

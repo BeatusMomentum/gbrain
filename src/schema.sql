@@ -501,6 +501,10 @@ CREATE TABLE IF NOT EXISTS links (
   -- extraction time. NULL for legacy/manual/frontmatter edges.
   resolution_type TEXT   CHECK (resolution_type IS NULL OR resolution_type IN ('qualified', 'unqualified')),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Temporal typed edges: tense of the assertion on its origin page ('past' for
+  -- "previously at", "former CTO of"); NULL = present. Temporal state lives in
+  -- link_transitions / link_relationships (src/core/link-temporal-schema.ts).
+  assertion_tense TEXT   CONSTRAINT links_assertion_tense_check CHECK (assertion_tense IS NULL OR assertion_tense IN ('present', 'past')),
   -- NULLS NOT DISTINCT (PG15+) so two rows with link_source IS NULL or
   -- origin_page_id IS NULL collide as expected. Without this, every row with
   -- NULL origin_page_id (markdown/manual edges) would be treated as unique.
@@ -690,7 +694,11 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   grant_profile           TEXT NULL,
   grant_revision          INTEGER NOT NULL DEFAULT 0,
   grant_repair_reasons    TEXT[] NOT NULL DEFAULT '{}',
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Explicit no-source grant ('none') and per-client takes holders (NULL =
+  -- ['world']); upgrades add both through src/core/grants/oauth-client-axes-schema.ts.
+  source_grant            TEXT NULL CHECK (source_grant IN ('none')),
+  takes_holders           TEXT[] NULL
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
 -- federated_read is the read-source array. Migrations v60-v65 land both
@@ -821,10 +829,65 @@ CREATE INDEX IF NOT EXISTS context_volunteer_events_src_time_idx
 CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
   ON context_volunteer_events (source_id, slug);
 
+-- Use-attributed retrieval feedback (src/core/feedback/): answers record the
+-- pages (with the retrieved revision's content_hash) and relational-path edges
+-- they used; ratings move per-element weights (neutral 0.5) that the search
+-- ranking stage reads. No query text is stored. Mirrors migration v207.
+CREATE TABLE IF NOT EXISTS retrieval_events (
+  id          TEXT PRIMARY KEY,
+  client_id   TEXT NOT NULL DEFAULT 'local',
+  op          TEXT NOT NULL CHECK (op IN ('query','search','think','synthesize','recall')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS retrieval_events_time_idx ON retrieval_events (created_at);
+CREATE TABLE IF NOT EXISTS retrieval_event_pages (
+  event_id      TEXT NOT NULL REFERENCES retrieval_events(id) ON DELETE CASCADE,
+  source_id     TEXT NOT NULL,
+  slug          TEXT NOT NULL,
+  content_hash  TEXT,
+  rank          INTEGER NOT NULL,
+  cited         BOOLEAN NOT NULL DEFAULT false,
+  PRIMARY KEY (event_id, source_id, slug)
+);
+CREATE TABLE IF NOT EXISTS retrieval_event_links (
+  event_id   TEXT NOT NULL REFERENCES retrieval_events(id) ON DELETE CASCADE,
+  source_id  TEXT NOT NULL,
+  edge_key   TEXT NOT NULL,
+  to_slug    TEXT NOT NULL,
+  PRIMARY KEY (event_id, source_id, edge_key, to_slug)
+);
+CREATE TABLE IF NOT EXISTS retrieval_feedback (
+  event_id       TEXT NOT NULL REFERENCES retrieval_events(id) ON DELETE CASCADE,
+  signal         TEXT NOT NULL CHECK (signal IN ('explicit','cited')),
+  element_kind   TEXT NOT NULL CHECK (element_kind IN ('page','link')),
+  source_id      TEXT NOT NULL,
+  element_key    TEXT NOT NULL,
+  client_id      TEXT NOT NULL DEFAULT 'local',
+  rating         SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  weight_before  REAL NOT NULL,
+  weight_after   REAL NOT NULL,
+  applied_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, signal, element_kind, source_id, element_key)
+);
+CREATE INDEX IF NOT EXISTS retrieval_feedback_client_time_idx
+  ON retrieval_feedback (client_id, applied_at DESC);
+CREATE TABLE IF NOT EXISTS retrieval_weights (
+  source_id     TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  element_kind  TEXT NOT NULL CHECK (element_kind IN ('page','link')),
+  element_key   TEXT NOT NULL,
+  weight        REAL NOT NULL DEFAULT 0.5 CHECK (weight >= 0 AND weight <= 1),
+  content_hash  TEXT,
+  updates       INTEGER NOT NULL DEFAULT 0,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, element_kind, element_key)
+);
+
 -- session_context_state (v0.45.7 / migration v126 — ambient recall issue #1):
 -- per-session cursor + boundary-tie dedup for the `delta` verb + heartbeat
 -- runtime. Key (source_id, client_id, session_id); client_id 'local' sentinel
 -- for CLI/hook, remote auth client id otherwise. jsonb DDL-literal defaults.
+-- facts_cursor_at/_id + degraded_wakes (migration v208): delta's per-arm facts
+-- keyset and its consecutive incomplete-wake counter.
 CREATE TABLE IF NOT EXISTS session_context_state (
   source_id           TEXT NOT NULL,
   client_id           TEXT NOT NULL DEFAULT 'local',
@@ -834,6 +897,9 @@ CREATE TABLE IF NOT EXISTS session_context_state (
   checkpoint_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
   last_wake_at        TIMESTAMPTZ,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  facts_cursor_at     TIMESTAMPTZ,
+  facts_cursor_id     BIGINT,
+  degraded_wakes      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (source_id, client_id, session_id)
 );
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
@@ -1610,6 +1676,9 @@ BEGIN
   ELSIF NEW.status = 'active' AND (OLD.status <> 'active' OR NEW.lock_token IS DISTINCT FROM OLD.lock_token) THEN
     IF NEW.submission_authority IS NULL OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation + 1 THEN
       RAISE EXCEPTION 'Minion queue protocol 1 required: old workers cannot claim upgraded queue jobs';
+    END IF;
+    IF NEW.spend_authorization IS NOT NULL AND NEW.spend_claim_token IS DISTINCT FROM NEW.claim_generation THEN
+      RAISE EXCEPTION 'Minion spend protocol 1 required: only upgraded workers can claim spend-authorized jobs; restart workers on the upgraded binary';
     END IF;
   ELSIF NEW.claim_generation IS DISTINCT FROM OLD.claim_generation THEN
     RAISE EXCEPTION 'Minion queue claim generation may advance only with a claim';
@@ -2542,6 +2611,89 @@ DO $rls$ BEGIN
   END IF;
 END $rls$;
 -- END GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL)
+
+-- Temporal typed edges: dated evidence, derived relationship state, proposals.
+-- BEGIN GENERATED from src/core/link-temporal-schema.ts (LINK_TEMPORAL_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS link_transitions (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT NOT NULL,
+  from_page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  to_page_id      INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  link_type       TEXT NOT NULL,
+  kind            TEXT NOT NULL CHECK (kind IN ('start','end')),
+  occurred_on     DATE NOT NULL,
+  date_precision  TEXT NOT NULL DEFAULT 'day' CHECK (date_precision IN ('day','month','year')),
+  producer        TEXT NOT NULL CHECK (producer IN ('timeline','explicit','frontmatter','manual','inline','dream')),
+  origin_page_id  INTEGER REFERENCES pages(id) ON DELETE CASCADE,
+  line_hash       TEXT NOT NULL DEFAULT '',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
+  ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer) NULLS NOT DISTINCT;
+CREATE INDEX IF NOT EXISTS link_transitions_relationship_idx ON link_transitions (from_page_id, to_page_id, link_type);
+CREATE INDEX IF NOT EXISTS link_transitions_origin_idx ON link_transitions (origin_page_id);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE link_transitions ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS link_relationships (
+  from_page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  to_page_id      INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  link_type       TEXT NOT NULL,
+  scope           TEXT NOT NULL CHECK (scope IN ('all','world')),
+  source_id       TEXT NOT NULL,
+  semantics       TEXT NOT NULL CHECK (semantics IN ('state','event')),
+  valid_ranges    DATEMULTIRANGE NOT NULL,
+  status_now      TEXT NOT NULL CHECK (status_now IN ('live','ended','ended_unknown_date','not_started','disputed','event')),
+  first_start     DATE,
+  last_start      DATE,
+  last_end        DATE,
+  undated_present INTEGER NOT NULL DEFAULT 0,
+  undated_past    INTEGER NOT NULL DEFAULT 0,
+  disputed        BOOLEAN NOT NULL DEFAULT false,
+  recorded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  retired_at      TIMESTAMPTZ,
+  evidence_hash   TEXT NOT NULL,
+  refreshed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (from_page_id, to_page_id, link_type, scope)
+);
+CREATE INDEX IF NOT EXISTS link_relationships_to_idx ON link_relationships (to_page_id, link_type, scope);
+CREATE INDEX IF NOT EXISTS link_relationships_source_idx ON link_relationships (source_id, status_now);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE link_relationships ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS link_edge_proposals (
+  id                 BIGSERIAL PRIMARY KEY,
+  source_id          TEXT NOT NULL,
+  from_page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  a_to_page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  b_to_page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  link_type          TEXT NOT NULL,
+  evidence_hash      TEXT NOT NULL,
+  status             TEXT NOT NULL CHECK (status IN ('proposed','applied','rejected','undone','stale','reverted_by_user','undated_unresolved','ambiguous_same_date','compatible','error')),
+  ending_to_page_id  INTEGER REFERENCES pages(id) ON DELETE SET NULL,
+  close_date         DATE,
+  born_closed        BOOLEAN NOT NULL DEFAULT false,
+  model              TEXT,
+  confidence         REAL,
+  cost_usd           REAL,
+  generated_line     TEXT,
+  detail             TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash)
+);
+CREATE INDEX IF NOT EXISTS link_edge_proposals_status_idx ON link_edge_proposals (source_id, status, created_at);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE link_edge_proposals ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE SEQUENCE IF NOT EXISTS graph_generation_seq;
+-- END GENERATED from src/core/link-temporal-schema.ts (LINK_TEMPORAL_SCHEMA_SQL)
 
 -- #5255/#5176 (O-DX-8): last upstream observation per source, recorded by sync
 -- from the checkout's Git state (upstream ref, its last fetch/push time, commits

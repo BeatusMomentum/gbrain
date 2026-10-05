@@ -30,6 +30,7 @@ import { resolveModel } from '../model-config.ts';
 import type { DreamPhaseResult } from './auto-think.ts';
 import { maintenancePreflight, publishMaintenancePage } from '../persistence/prepared-maintenance.ts';
 import { serializeMarkdown } from '../markdown.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -174,6 +175,7 @@ export async function defaultDriftJudge(input: {
     messages: [{ role: 'user', content: buildDriftPrompt(input.candidate, input.evidence) }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: input.maxOutputTokens ?? resolveSynthMaxOutputTokens(input.modelHint ?? ''),
+    allowFallback: false,
   });
   const parsed = parseDriftOutput(result.text);
   if (!parsed) {
@@ -371,12 +373,12 @@ export async function runPhaseDrift(
       await publishMaintenancePage(engine, maintenance, reportSlug, serializeMarkdown({ report_type: 'drift' }, buildReportBody(judged, config, modelId), '',
         { type: 'note', title: `Drift report ${cycleDate}`, tags: [] }), { expectedRevision: snapshot?.revision ?? null, file: false });
     } else {
-      await engine.putPage(reportSlug, {
+      await maintenanceTransaction(engine, tx => tx.putPage(reportSlug!, {
         type: 'note',
         frontmatter: { report_type: 'drift' },
         title: `Drift report ${cycleDate}`,
         compiled_truth: buildReportBody(judged, config, modelId),
-      });
+      }));
     }
   }
 

@@ -167,7 +167,7 @@ rung prints a one-line note and falls through; only the PGLite floor is terminal
 | 2. Supabase discovery | Management-API project discovery (10s timeouts; the candidate URL is connect-probed before anything persists; discovery only — project CREATION stays dashboard guidance) | `SUPABASE_ACCESS_TOKEN` + `SUPABASE_DB_PASSWORD` (+ `SUPABASE_PROJECT_REF` on multi-project accounts) |
 | 3. local Postgres | an already-running local server (detection-only; `CREATE DATABASE gbrain` needs explicit `--allow-create-db`) | `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD` env vars set, or `--local-postgres` |
 | 4. docker | gbrain's own container `gbrain-postgres` (image `pgvector/pgvector:pg16`, loopback-only port 5434, data on the named `gbrain-pgdata` volume, `--restart unless-stopped`; idempotent reuse recovers credentials via `docker inspect`; refuses to share a container/volume that already holds a brain this home's config doesn't record; gbrain never stops or removes it) | explicit `--allow-docker` |
-| 5. PGLite floor | zero-config fallback, with an upgrade-later note (`gbrain migrate --to supabase`) | nothing |
+| 5. PGLite floor | zero-config fallback, with an upgrade-later note (the later move is `gbrain migrate --to postgres`; see [Move a PGLite brain to Postgres](docs/guides/move-to-postgres.md)) | nothing |
 
 The ladder REFUSES to run over an already-configured brain — rung choice is
 environment-dependent, so a re-run during an outage could silently repoint a
@@ -307,8 +307,10 @@ gbrain stats                                             # verify links > 0
 
 For brand-new empty brains, skip this backfill: there is nothing to extract yet.
 Trusted local page writes auto-link when enabled. Remote `put_page` (both stdio
-and HTTP MCP) saves references as text without inline graph extraction. Stdio
-`gbrain serve` runs bounded startup/idle sweeps; `gbrain serve --http` does not
+and HTTP MCP) saves references as text without inline graph extraction; a
+post-commit `links` effect then adds plain mention edges to existing pages the
+writer can see (`gbrain config set mcp.remote_auto_links off` disables it). Stdio
+`gbrain serve` runs bounded startup/idle sweeps for typed edges; `gbrain serve --http` does not
 self-sweep. For HTTP, arrange explicit host-side `gbrain sweep --once` or
 extraction; use authorized `add_link` calls for edges needed immediately.
 
@@ -390,9 +392,9 @@ gbrain skillpack scaffold --all       # copy the 50+ bundled skills + RESOLVER.m
 
 Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
 refuses to overwrite anything that exists. Use `gbrain skillpack reference <name>` to
-diff against gbrain's bundle when you want upstream improvements. (The legacy
-`gbrain skillpack install` managed-block model was removed in v0.33 — run
-`gbrain skillpack migrate-fence` once if upgrading from an older release.)
+diff against gbrain's bundle when you want upstream improvements. (A workspace
+that still carries the managed-block fence from `gbrain skillpack install`, a
+model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 
 > **PGLite brains are single-process (applies to every MCP registration
 > below).** PGLite is a single-writer embedded Postgres: the first running
@@ -492,7 +494,7 @@ platform glue entirely with `gbrain autopilot --install` (built-in self-maintain
   works during DB outages.
 - **Auto-update** (daily): `gbrain check-update --json` (tell user, never auto-install).
 - **Dream cycle** (nightly): `gbrain dream` runs the 8-phase overnight maintenance cycle.
-  Entity sweep, citation fixes, memory consolidation, plus (v0.23+) overnight conversation
+  Entity sweep, citation fixes, memory consolidation, plus overnight conversation
   synthesis and cross-session pattern detection. One cron-friendly command. This is what
   is an opt-in maintenance capability. See `docs/guides/cron-schedule.md` for the
   full protocol.
@@ -536,16 +538,16 @@ consent gates around unattended remediation.
 
 ## Upgrade
 
-For v0.60.5.0 and later, confirm a database backup exists before upgrading,
-upgrade every process that writes to the brain, then follow the
+When an upgrade crosses v0.60.5.0, confirm a database backup exists before
+upgrading, upgrade every process that writes to the brain, then follow the
 [v0.60.5.0 steps](skills/migrations/v0.60.5.0.md): one full `gbrain doctor`,
 then preview `gbrain repair` and apply only after the user agrees
-([repair guide](docs/guides/repair.md)). For v0.60.6.0, also follow the
-[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md). For v0.60.11.0, preview
+([repair guide](docs/guides/repair.md)). Across v0.60.6.0, also follow the
+[one-time timeline prune and slug-collision steps](skills/migrations/v0.60.6.0.md). Across v0.60.11.0, preview
 `gbrain repair contextual-mode` and rebuild PGLite vector indexes after a crash
 repair ([steps](skills/migrations/v0.60.11.0.md)).
 
-For v0.53.0.0, follow the
+When an upgrade crosses v0.53.0.0, follow the
 [mechanical shared-skills migration](skills/migrations/v0.53.0.0.md) on the host,
 starting with `gbrain apply-migrations --dry-run --json`. Stop/exclude old writers,
 review writer status, and use the checklist's action-specific `--admin-intent`
@@ -594,20 +596,20 @@ v0.31.x retrieval shape), then run `gbrain config set search.mode <mode>`. See
 Step 3.5 above for the full ask-the-user protocol — the upgrade path uses the
 same matrix and same default.
 
-For v0.12.0+ specifically: if your brain was created before v0.12.0, run
+If the brain was created before v0.12.0, run
 `gbrain extract links --source db && gbrain extract timeline --source db` to
-backfill the new graph layer (see Step 4.5 above).
+backfill the graph layer (see Step 4.5 above).
 
-For v0.12.2+ specifically: if your brain is Postgres- or Supabase-backed and
-predates v0.12.2, the `v0_12_2` migration runs `gbrain repair-jsonb`
-automatically during `gbrain post-upgrade` to fix the double-encoded JSONB
-columns. PGLite brains no-op. If wiki-style imports were truncated by the old
+If the brain is Postgres- or Supabase-backed and was created before v0.12.2,
+the `v0_12_2` migration runs `gbrain repair-jsonb` automatically during
+`gbrain post-upgrade` to fix double-encoded JSONB columns (PGLite brains
+no-op). If wiki-style imports from before v0.12.2 were truncated by a
 `splitBody` bug, run `gbrain sync --full` after upgrading to rebuild
 `compiled_truth` from source markdown.
 
 ## The onboard surface
 
-`gbrain onboard` is the activation surface gbrain did not have before.
+`gbrain onboard` is gbrain's activation surface.
 Once your brain has any content, run `gbrain onboard --check --json` to
 see structured recommendations across 5 brain-health axes (orphans,
 stale embeddings, entity link coverage, timeline coverage, takes count).
@@ -651,8 +653,8 @@ grants.
   writing/originals page content to your configured chat model (default
   Anthropic Haiku). Refuses to run unless `takes.bootstrap_enabled=true`
   is set in config AND `--yes` is passed. Two-gate opt-in by design.
-- Autopilot's auto-apply tier for takes-bootstrap stays `manual_only`
-  until v0.42.1's eval gate (do not bypass).
+- Autopilot's auto-apply tier for takes-bootstrap is `manual_only`
+  (do not bypass).
 
 **Suppress nudges in CI / scripted environments:**
 ```bash

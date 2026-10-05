@@ -361,7 +361,7 @@ stdout (`--json`):
           "options": [
             {
               "id": "wire",
-              "label": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "label": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             {
               "id": "skip",
@@ -540,7 +540,9 @@ gbrain returns these content blocks:
     }
   },
   "checked_at": "2026-10-03T16:20:00.000Z",
-  "contract_version": 1
+  "contract_version": 1,
+  "surface": "full",
+  "surface_source": "default"
 }
 ```
 
@@ -554,7 +556,7 @@ of an MCP `isError` result, and HTTP error bodies.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `error` | string | Legacy wire value, frozen forever under v1. Equals `code` for codes new in v1. |
+| `error` | string | Legacy wire value, frozen forever under v1. Equals `code` except for the four legacy values listed under **Precedence** below. |
 | `code` | string | Canonical registry code ([error codes](../guides/error-codes.md)). |
 | `reason` | string? | Sub-cause where one code covers several (`embeddings_disabled`, `wired_running`, …). |
 | `message` | string | What happened, one sentence. |
@@ -572,8 +574,8 @@ Pre-existing keys keep their names and meaning: `detail`, `protocol_version`
 (memory verbs), `write_request` and `write_error` (write receipts).
 
 **Precedence.** Read `code`; fall back to `error` when `code` is absent (a
-server older than v1). Four surfaces historically sent a different `error`
-value and keep sending it; the canonical value rides `code`:
+server older than v1). Four surfaces send a legacy `error` value that differs
+from `code`; the canonical value rides `code`:
 
 | `error` (frozen) | `code` (canonical) |
 |---|---|
@@ -746,12 +748,97 @@ final document.
 is stateless, so dedupe is per authenticated client and session, and
 `degraded` and `safety` notices ride every affected call. At most 2
 `coaching` notices per session. Notices that describe one call's result
-(`empty_retrieval`, `unknown_param`, `listing_truncated`) are never deduped.
+(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`)
+are never deduped.
 
-**Mute.** Only `coaching` and `info` notices can be muted. The brain's owner
+**Degraded retry hint.** A `degraded` notice whose fix has `actor: provider`
+renders `next: wait`: repeat the same call (the fix carries it) after the delay
+the `why` states, in seconds. `delta_incomplete` uses it: delta moved no cursor
+past what it did not deliver, so the retry re-reads the same window. When the
+same session has been incomplete on three consecutive wakes, the fix has no
+command and renders `next: report`: tell the user and run
+`gbrain doctor --json`. Stateless callers always get `wait`. A session store
+that cannot be read at all refuses the call with `unavailable` (reason
+`session_state`) and the same wait/report fix.
+
+**Mute.** `coaching` and `info` notices can be muted, plus one `ask`:
+`first_run_decisions`, so an unanswered first-run bundle stays dismissible.
+Every other safety, degraded and ask notice always shows. The brain's owner
 runs `gbrain notices mute <code>` (global; `gbrain notices list` shows the
-muted and muteable codes); a remote client calls `mute_notice {code}` (write
-scope; that client only). Safety, degraded and ask notices always show.
+muted and muteable codes). An MCP client calls `mute_notice {code}` (write
+scope): over HTTP it mutes for that client only; over the owner's stdio pipe
+it mutes for every stdio session on this machine. `gbrain notices unmute
+<code>` clears both the owner's mute and the stdio mute. Under `serve --access
+read-only`, `mute_notice` is not callable, so notice text names the CLI mute
+instead.
+
+**Notices by transport.**
+
+| Notice | stdio MCP (owner's pipe) | HTTP MCP | CLI |
+|---|---|---|---|
+| `onboard_stale_chunks`, `onboard_link_coverage`, `onboard_timeline_coverage`, `onboard_no_takes` | on a call whose result shows the gap (below) | never | `gbrain init` prints `onboard_opportunities`; `gbrain onboard --check` lists every remedy |
+| `features_auto_fix` | on `get_backlinks` / `traverse_graph` while the link graph is empty | never | `gbrain features` |
+| `first_run_decisions` | on the second successful call of a session while a decision is open | never | `gbrain init` |
+| `post_upgrade` | the first session after an upgrade | never | `gbrain post-upgrade` |
+| `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
+| `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
+| `backup_coverage` | once per process | never | the CLI startup rail |
+| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call | every affected call (redacted) | the command's own notices |
+
+HTTP gets no onboarding coaching because the counts are brain-wide (they cross
+source-scoped grants) and every remedy runs on the brain host, which a remote
+client cannot see. The owner gets the same coaching on stdio, the CLI and
+`gbrain doctor`.
+
+**Onboarding coaching on stdio.** The stdio serve keeps the counts behind
+init's nudge in a per-brain cache (`GBRAIN_HOME/onboard-counts-<brain>.json`,
+6 h TTL) and refreshes them in the background only while no request is in
+flight; a call that arrives while the cache is cold gets no onboarding notice.
+Each opportunity class has its own code, and attaches only to a call whose own
+result shows the limitation:
+
+| Code | Calls | Evidence on the call |
+|---|---|---|
+| `onboard_stale_chunks` | `search`, `query`, `recall`, `context_pack` | the vector arm ran and the brain has unembedded chunks (never on a keyless brain) |
+| `onboard_link_coverage` | `get_backlinks`, `traverse_graph`, `entity` | under 70% of people/company pages have an incoming link (`entity`: this card has no backlinks) |
+| `onboard_timeline_coverage` | `get_timeline`, `entity`, `get_page` | under 90% of people/company pages have timeline entries, and this people/company page has none |
+| `onboard_no_takes` | `think`, `takes_list`, `recall`, `context_pack` | the brain holds no takes |
+
+Each notice names its remedy and its cost in `why` and `user_message` (the
+embedding backfill and takes extraction are paid and need the user's consent;
+link and timeline extraction are local). Its `fix` is a read-only preview:
+`get_health` where that tool is on the session's surface (`next: run`),
+otherwise `gbrain onboard --check` rendered `tell_user_to_run`. CLI remedies
+take the brain lock the stdio serve holds, so run them after the session ends
+or through the running server. An empty brain and `GBRAIN_NO_ONBOARD_NUDGE=1`
+emit nothing.
+
+**One-time safety disclosures.** Two `safety` notices disclose behavior that
+stays on; they ask for nothing and their delivery is never consent.
+`behavior_changes` lists what an upgrade turned on for an existing brain: a
+live `chat_fallback_chain` (its entries, the providers that receive traffic,
+and that it falls back on refusals unless `chat_fallback_on_refusal` is
+false), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
+false` opts out), smaller transcript parts re-embedded once, and a one-time
+mention-linker rescan. It arrives once per brain on each local channel and
+once per authenticated HTTP client, and a fresh install never sees it; it is
+not silenced by `GBRAIN_NO_ONBOARD_NUDGE`. Tell the user. Its `fix`, when a
+chain is set, is the optional removal for the plane that set it (`ask_user`
+for the database; the user's own step for the environment or `config.json`):
+remove nothing unless the user asks. `chat_fallback_hop` says a request
+went to another model for the first time in this process, naming both
+models; its fix is the read-only `gbrain doctor --only chat_fallback_chain`.
+See [chat fallback](../guides/chat-fallback.md).
+
+**First-run decisions on stdio.** An MCP-only agent gets the `writeback` and
+`skills_scaffold` decisions (never `search_mode` or `harness_wiring`) on the
+second successful call of a session, never the first, so the user's own request
+comes first. Finish it, then relay the bundle. Delivering the bundle records
+nothing; it returns in the next session until the decision is answered
+(`memory.auto_writeback` set, the skills scaffolded) or the user mutes
+`first_run_decisions`. `gbrain doctor` (the `memory_writeback` check) and
+`gbrain onboard --check` list decisions that are open but muted, with the
+`gbrain notices unmute first_run_decisions` command.
 
 ## Consent and preapproval
 
@@ -814,8 +901,10 @@ model's per-token rates (for example by web search) and register them with
   for consent. To keep writes text-only, use `--no-embed` where the command has
   it, or a keyless brain.
 - **Unattended library paths keep their authorization.** Autopilot, dream
-  cycles and queued jobs keep running under their configured budget; the
-  gates above apply to the explicit CLI invocations only.
+  cycles and other queued jobs keep running under their configured budget;
+  the gates above apply to the explicit CLI invocations only. Consent-gated
+  commands that queue paid jobs carry the user's approval onto every job
+  (next section).
 - **Looking never spends.** Plain `gbrain doctor`, `doctor --only`,
   `--remediation-plan`, MCP `run_doctor`, readiness, `features` without
   `--auto-fix` and `onboard --check` make no provider call: the embedding
@@ -824,6 +913,39 @@ model's per-token rates (for example by web search) and register them with
   `consent: ["paid", "egress"]`; one tiny request). Run it only after the
   user agrees. Local providers that bill nothing (ollama, llama-server,
   LM Studio) need no consent for either.
+
+### Queued paid jobs
+
+`gbrain book-mirror`, `gbrain enrich --background` and
+`gbrain jobs submit enrich|subagent` ask for consent before they queue
+anything (exit 3 with the consent payload; `--dry-run` queues nothing and
+needs none). The approval is stored on every job the command queues, never
+in job data, and all of them share one approved total (a spend group). The
+`enrich --background` payload's `fix` already carries `--yes --max-usd
+<derived cap>`, so it runs verbatim once the user agrees.
+
+The worker enforces the group's total on every provider attempt. What you
+see:
+
+| Situation | Outcome |
+|---|---|
+| Sibling jobs' calls in flight fill the group | the job is delayed (no attempt burned) and retried; after 6 retries it dies like exhaustion |
+| The group's settled spend reaches its cap | the job dies with `derived_cap_exhausted` (derived cap) or `cost_cap_exceeded`; its `result.spend_refusal` envelope carries the group's spent, reserved and remaining amounts and a `fix` that reruns the command with twice the cap (`next: ask_user`) |
+| A model with no known price, derived or default cap | runs unmetered and warns `BUDGET_TRACKER_NO_PRICING` |
+| A model with no known price, user cap | dies with `no_pricing` before the provider call; register the rate with `gbrain pricing set` and rerun |
+
+A rerun queues the unfinished work under a new group: completed jobs are
+reused, dead ones are replaced, and still-queued jobs keep their earlier
+approval (the command prints the `gbrain jobs cancel --group <id>` to use
+first if the user wants the new cap to apply). Inspect a group with
+`gbrain jobs list --group <id> --json`; `gbrain jobs get <id> --json` shows
+`spend_basis` (`authorized`, `legacy_default`, `unrecorded`), `spend_why`
+and the group amounts. Jobs of these commands queued before submit-time
+authorization run as `legacy_default` under the $5 default cap (or the
+job's own `--max-usd`); every other job is `unrecorded` and runs under its
+producer's own budget. Spend-authorized jobs run only on upgraded workers:
+an older worker cannot claim them, and `gbrain doctor` warns when such jobs
+wait while workers run.
 
 ### A brain whose automatic repair failed
 
@@ -868,8 +990,8 @@ that work in this conversation.
 | 130 | interrupted | ask the user whether to re-run |
 
 `gbrain mcp expose` and `gbrain google` still exit 2 when they need
-confirmation (documented v1 legacy). Details and the "changed in this release"
-table: [exit codes](../guides/exit-codes.md).
+confirmation (documented v1 legacy). Details and the per-command exit table:
+[exit codes](../guides/exit-codes.md).
 
 **`--json` documents.** A command whose `--help` documents `--json` writes
 exactly one JSON document to stdout (or NDJSON lines for `eval export`,
@@ -969,50 +1091,9 @@ Nested legacy errors keep their nesting and gain sibling `code` and `fix`.
   know.
 - Removing a legacy shape needs a written support policy and evidence about
   its consumers first. A breaking change means a new `AGENT_OPERATOR_v2`.
-
-## Behavior changes for scripts and agents
-
-What changed when contract v1 shipped, for scripts and agents that parsed the
-old behaviour. The release's CHANGELOG entry carries the same table.
-
-| Area | Before | Now | What to change |
-| --- | --- | --- | --- |
-| `gbrain embed --stale` time-budget stop | exit 3 | exit 11 (since v0.60.37.0) | treat 11 as "run `resume_command`"; 3 now only means `confirmation_required` |
-| `gbrain dream --drain` with backlog left | exit 3 | exit 11, `--json` carries `resume_command` | treat 11 as a resumable stop |
-| Other exit-3 sites (`agent run --follow` timeout, `providers test`, `sources harden`, `sources pull`, `sources remove/archive default`, `extract-conversation-facts`) | exit 3 | 124, 1 or 2 ([exit codes](../guides/exit-codes.md#changed-in-this-release)) | branch on the new codes |
-| `migrate embeddings`, `reindex-search-vector`, `reindex-code`, `dream retriage`, `sources connect`, `bootstrap harness` without authorization | exit 2 ("pass `--yes`") | exit 3 with the consent payload | stop, relay `user_message`, run `fix.command` only after the user agrees |
-| `pglite-repair`, `reinit-pglite`, `enrich`, `connect --install` without authorization | exit 1 | exit 3 with the consent payload | same |
-| `book-mirror` paid fan-out without authorization | exit 0 ("cancelled", nothing ran) | exit 3 with the consent payload | same |
-| `gbrain doctor --remediate` without a terminal | ran paid and mutating work with no `--yes` and no cap | refuses with exit 3; nothing runs. Repairs (`--include-repairs`) need `--yes --expect <plan_hash>` from `--remediation-plan --json` | relay `user_message`; pass `--yes` (derived cap) or `--max-usd <n>` only after the user agrees |
-| Paid, destructive, credential, egress and install commands without a terminal | "re-run with `--yes`" text | exit 3 with `effects`, `user_message` and an `ask_user` fix | stop and ask; never add `--yes` on your own |
-| `--yes` on paid work without `--max-usd` | no cap unless the command had its own default | runs under a derived cap (estimate x1.5, floor $0.25; the $5 default with no estimate), printed first; exhaustion exits 1 with a resume command | pass `--max-usd <n>` for a bigger job the user approved |
-| Unpriced model (no per-token rate known) | refused whenever a cap was set | warns and runs under a derived or default cap; under a user cap refuses with a fix to look up the rate and run `gbrain pricing set` | register the rate, then retry |
-| `gbrain reindex-frontmatter --json` | `--json` skipped the confirmation | `--json` never implies consent | pass the authorization the payload names |
-| `gbrain jobs submit` on PGLite | queued with no worker to run it | refuses with `no_worker` unless `--follow` or `--queue-only` | add `--follow` (run it now) or `--queue-only` |
-| Invalid input: `autopilot --interval`, `serve --port`, `dream --phase`, `init --mcp-only` missing flags, `delta --since` | exit 1 | exit 2 (`invalid_params`) | treat 2 as "fix the command" |
-| `gbrain doctor --json` with no brain configured | human text or nothing | one `no_brain` envelope with the `gbrain init` fix | parse the document |
-| `gbrain serve` on a brain another serve holds, or with no brain | exited before the MCP handshake | completes the handshake in status-only mode with one `gbrain_status` tool; `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`) restores the early exit for supervisors | read `gbrain_status`; supervisors pass `--fail-fast` |
-| `gbrain doctor` (plain, `--only`, `--remediation-plan`, MCP `run_doctor`) with an embedding key | sent one paid embedding request on every run | no provider call; `embedding_provider` reports `configured, not probed` with a `paid`+`egress` fix (`--only embedding_provider --probe --yes`) | run the probe only after the user agrees |
-| `gbrain embed`, `jobs submit embed*`, `features --auto-fix` with a billed embedding provider and no terminal | embedded without asking | exit 3 with the consent payload unless `--yes`, `--max-usd`, tokenmax or a preapproval covers it; writes that embed new content are unchanged | cron jobs that backfill on purpose pass `--yes` (or `--max-usd <n>`), or set a preapproval |
-| `doctor --remediation-plan --json` steps | `command` only | each step also carries `fix` with `consent` (`paid` / `destructive`) and `next` | follow `fix.next` |
-| A PGLite brain whose automatic repair failed | later commands kept opening it and wrote to `pg_wal/` | every command exits 3 with the consented `pglite-repair` until the user decides; nothing touches the data directory | relay `user_message`; never move or rebuild the brain files yourself |
-| `gbrain serve` whose configured brain directory is missing (unmounted drive) or whose writer-lock file cannot be opened | exited before the MCP handshake (`internal_error`) | status-only mode: `gbrain_status` names the path (`missing_brain`, `brain_unopenable`); nothing is created at the path | relay it; the server reopens the brain once it is back |
-| `gbrain transcripts recent` while `gbrain serve` holds the brain | `pglite_busy` | reads through the running serve | none |
-| Error envelopes | `error`, `message`, `suggestion` | adds `code`, `fix`, `class`, `retryable`, `docs_cmd`, `contract_version`; `error` unchanged (legacy values frozen) | read `code`, fall back to `error` |
-| Docs pointers in errors | repo-relative paths | absolute URLs pinned to the installed version | open the URL, or run `gbrain errors <code>` offline |
-| MCP results with advice | advice in `_meta` or stderr only | extra `[gbrain notice …]` text blocks plus `_meta.gbrain_notices`; `content[0]` unchanged | parse `content[0]` alone; read the notice blocks |
-| MCP error results | could carry several blocks | exactly one block; notices inside the envelope | parse the one block |
-| MCP tool list on stdio | listed 10 owner-only tools that always refused there | those tools are not listed on stdio; their refusals name the CLI command | use the CLI command the refusal names |
-| MCP advisor on stdio | off | on by default (read-only); remote HTTP stays opt-in | none |
-| MCP `initialize` instructions | one fixed text | generated per surface (`verbs`, `starter`, `full`) from the tools that caller can call | none |
-| Keyless brains (no embedding key) | doctor warned and the health score dropped | doctor reports `severity: info` with the enable command; the score is not penalized | none |
-| stdin reads | could wait forever on an open, silent pipe | 30 s to the first byte, 60 s idle; `GBRAIN_STDIN_TIMEOUT_MS` overrides | close stdin or pipe the payload |
-| Prompts under an agent process or `CI` | prompted whenever stdin was a terminal | decline unless `GBRAIN_INTERACTIVE=1` | answer through the consent payload instead |
-| `--json` stdout for commands that declare it | could mix human text into stdout or print nothing on failure | exactly one JSON document; other output goes to stderr; a fallback document on a silent non-zero exit | parse stdout as one document |
-| Fix commands (`fix.argv`, `command`, `preview_argv`, `verify.argv`, `then`) | a few named the brain and source; most ran against whatever `GBRAIN_BRAIN_ID`, `GBRAIN_SOURCE` or dotfile the shell had | every gbrain fix names `--brain <id>` (and `--source <id>` where the command routes a source), so it acts on the intended brain from any directory | run fixes exactly as given |
-| `gbrain doctor --remediation-plan` on a brain with pending migrations | applied the migrations before computing the plan | never migrates; the plan carries a `migrations_pending` notice whose fix applies them | run the notice's fix, or `doctor --remediate` after consent |
-| `sources harden` with no id, `migrate` without `--to`, `mcp grant` without a NAME, malformed `backup create/restore` | exit 1 (`sources harden`: `internal_error`) | exit 2, `invalid_params`, with the usage and an example | treat 2 as "fix the command" |
-| `gbrain db-repair` under an ambient `GBRAIN_BRAIN_ID` pointing at a mount | refused, ignoring `--brain host` | `--brain host` repairs the host brain | none |
+- Legacy values are frozen. The change table for scripts and agents written
+  against gbrain v0.60.45.0 or earlier, before contract v1, is in the
+  [v0.60.46.0 CHANGELOG entry](../../CHANGELOG.md#behavior-changes-for-scripts-and-agents).
 
 ## Tool catalog changes (`tools/list_changed`)
 
@@ -1023,11 +1104,38 @@ swaps in the full catalog. Harness support varies by version:
 | Harness | Behaviour |
 |---|---|
 | Claude Code | recent versions refresh the tool list on the notification; some versions and modes have been reported to keep the old list |
-| Codex | refreshes the tool list (since openai/codex#12449); its deferred tool search can stay stale |
+| Codex | versions that include openai/codex#12449 refresh the tool list; its deferred tool search can stay stale |
 | other MCP clients | not measured |
 
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
+
+## A shared HTTP server that cannot open its brain
+
+`gbrain serve --http` whose brain is locked, missing, damaged or unconfigured
+stays up on its port in status-only mode instead of exiting:
+
+- `GET /health` answers `503` with `Retry-After: 5` and the payload
+  `{status, reason, why, fix, user_message, retry_after_s, contract_version, instance}`.
+- `POST /mcp` lists exactly `gbrain_status`; any other tool returns one
+  `serve_status_only` error block. OAuth discovery, `/token`, `/authorize`,
+  `/register` and `/admin*` answer `503` with the `serve_status_only` envelope.
+- Every response is unauthenticated, so `reason` is always `unavailable` and
+  no path, PID or host detail appears. The fix is `gbrain doctor --json` for
+  `actor: host_admin` (`next: tell_user_to_run`): relay `user_message` to the
+  user. The detailed reason is on the brain host: stderr, the marker
+  `GBRAIN_HOME/serve-http-status-<port>.json`, and `gbrain doctor`, whose
+  `harness_wiring` check reports `serve_status_only` (`transport: http`) with
+  the reason's fix.
+- The server re-checks every 5 s and opens the brain in place on the same
+  port. HTTP cannot push `tools/list_changed` to these clients: re-list tools
+  or reconnect. A client that connected during status mode gets `401` with
+  `WWW-Authenticate` and signs in again; an authenticated `gbrain_status` on
+  the recovered server answers `status: recovered`.
+- A thin client (`gbrain` with `remote_mcp`) reports the host's
+  `serve_status_only` envelope from discovery or `/token`, with the same fix.
+- `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1` exits non-zero instead, for
+  supervisors and container health checks that must restart the process.
 
 ## First run
 
@@ -1046,8 +1154,9 @@ Relay the bundle's one `user_message` ("Reply 'defaults' to accept …"); apply
 each answer with the decision's `argv`. Then:
 
 1. Register gbrain with the harness using the `harness_wiring` fix. The
-   registration always uses the absolute gbrain path and `--surface verbs`
-   (for example `claude mcp add gbrain -- /abs/path/gbrain serve --surface verbs`).
+   registration always uses the absolute gbrain path and `--surface starter`
+   (for example `claude mcp add gbrain -- /abs/path/gbrain serve --surface starter`;
+   `gbrain init --surface <verbs|starter|full>` changes the surface it prints).
 2. Run `gbrain doctor --only harness_wiring --json`, a read-only smoke check:
    it reads the registration, then either finds the registered server already
    running or starts it and runs initialize, tools/list and one `recall`.
@@ -1079,8 +1188,14 @@ each with a `fix`.
 - **Backup.** Repo backups exclude database-only pages and facts. When the
   `backup_coverage` notice fires, tell the user what is unprotected.
 - **Surface.** `--surface verbs` (memory verbs), `starter` or `full` decides
-  which tools you see. If a fix names a tool you cannot call, the fix is
-  rendered as `tell_user_to_run` with the CLI command instead.
+  which tools you see; every stdio registration gbrain writes pins `starter`.
+  When you call a real tool outside the session's surface, the `unknown_tool`
+  fix is `request_tools {"surface":"full"}` (`next: run`): it widens this
+  session only, sends `tools/list_changed` and returns the new tools' schemas,
+  so call them by name. Where `request_tools` is not callable (the `verbs`
+  surface, `--access read-only`, or `mcp.allow_session_widen` off), the fix is
+  the CLI equivalent rendered `tell_user_to_run`, and its `why` names the
+  lasting route: `GBRAIN_SURFACE=full` in the env of the harness's MCP server entry for gbrain.
 
 Coach at most once per topic, at a natural point, and never about something
 the user turned off on purpose.

@@ -19,10 +19,9 @@ Two equivalent paths:
   than PR CI's four-file Tier 1 job; closer to what nightly Tier 1 catches. Spins
   up + tears down postgres automatically via `docker-compose.ci.yml`. Override
   the host port with `GBRAIN_CI_PG_PORT=5435 bun run ci:local` if 5434 collides.
-- `bun run ci:local:diff` runs only the E2E files matched by the diff selector
-  (`scripts/select-e2e.ts`), falling back to ALL E2E files on unmapped src/
-  paths or schema/skills/package.json changes. Fast iteration during a focused
-  branch.
+- `bun run ci:local:diff` checks a doc-only diff in seconds (gitleaks plus
+  `scripts/ci-doc-checks.sh`) and runs the full gate for any other diff: E2E
+  narrowing is retired (see docs/TESTING.md "E2E selection").
 - `bun run ci:ubicloud` (and `ci:ubicloud:diff`) runs the same lanes across ten
   ephemeral Ubicloud VMs in about five minutes instead of one Docker host. Needs
   `UBICLOUD_API_KEY` or `UBICLOUD_API_TOKEN`; see "Ubicloud fan-out" in
@@ -58,6 +57,62 @@ shipping the v0.23.2 round-trip E2E (`type: 'reflection'` is not a
 member of `PageType`). Run `bun run typecheck` once before push, even
 when only test files changed.
 
+
+## Generated artifacts
+
+`bun run regen:all` regenerates every generated artifact offline and keyless
+(schema bundles, error-code and agent-protocol blocks, harness reference, tool
+catalog, skills manifest, metric glossary, CLI flag registry, plugin tree and
+persona variants, structural-suites manifest, then `llms.txt`/`llms-full.txt`
+last) and lists the files it changed. Run it before pushing whenever a
+freshness gate could fail; a second run changes nothing. `bun run verify`
+runs the read-only half, `check:regen-all`, whose failure names each stale
+artifact and the same fix. Contract goldens (export surface, CLI goldens, SQL
+text) are behavior pins, so `regen:all` leaves them alone unless you pass
+`--goldens`, and each changed golden needs a reason in the PR body. Goldens
+that need Postgres are named in its output with their own command.
+
+## Nightly-red issues
+
+`.github/workflows/nightly-watch.yml` runs `scripts/nightly-issue.ts` after every
+scheduled workflow and keeps one issue per workflow titled `Nightly red: <workflow>`
+(label `nightly-red`). The issue body lists the failing job and step pairs, the
+first red run and the commits since the last green one, the `gh workflow run`
+re-check, and a "Next step for the agent" block plus a JSON block.
+
+- **Owner:** the agent on release duty owns every open `nightly-red` issue; Garry is
+  the escalation for owner-only actions (secrets, repository settings).
+- **Response within 24 hours:** a repair PR, or a row in
+  `.github/nightly-known-red.tsv` (job, failure signature, the owning TODOS.md entry,
+  a review-by date). The file holds at most 3 rows; fix one before adding another.
+  A matching cell keeps the issue open with the `known-red` label; a new failure in
+  the same job opens a new incident; a passed review-by date asks for a fix again.
+- **Closing:** nightly-watch closes the issue only when a later scheduled run is
+  green and every previously failing job executed. A skipped job never closes it.
+- **Re-check after a fix:** `gh workflow run <workflow>.yml --ref master`, then
+  `gh workflow run nightly-watch.yml -f run_id=<that scheduled run id>` to preview
+  (`-f dry_run=true`) or apply the issue update.
+- **Dependency advisories:** pull requests block on `bun audit` only when they change
+  `bun.lock`, `admin/bun.lock`, `patches/` or a package.json dependency field, or
+  carry the `dependency-audit` label; pushes and the nightly run always block, so a
+  new upstream advisory shows up as one red nightly instead of every open PR.
+
+## Merge queue
+
+`test.yml` and `e2e.yml` carry `merge_group` triggers. They are inert until the
+merge queue is enabled for `master` in the repository settings; check with
+`gh api repos/garrytan/gbrain/rulesets` (or the branch protection page). Queue runs use
+the pull-request profile against the queued merge commit: primary native scope,
+the newest Bun version only in the security and persistence matrices, the
+2,500-write soak and the 10,001-page export scale; the E2E selector diffs the
+queued commit against `master`.
+
+- Without the queue, a release rebases onto the latest `origin/master` and re-runs
+  the full CI (`test.yml`, `e2e.yml`, persistence-validation) immediately before
+  merging, because a stale base can break master even when the PR was green.
+- With the queue on, `gh pr merge` only enqueues the PR. Wait until the PR is
+  actually merged (`gh pr view <n> --json state,mergedAt`) before tagging,
+  announcing or starting dependent work.
 
 ## CHANGELOG + VERSION are branch-scoped
 
@@ -482,7 +537,13 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
    or manually re-implement the best fixes from each PR. Do NOT merge PR branches directly —
    read the diff, understand the fix, and write it yourself if needed.
 4. **Test the wave** — verify with `bun test && bun run test:e2e` (full E2E lifecycle).
-   Every fix in the wave must have test coverage.
+   Every fix in the wave must have test coverage. Run
+   `bun run audit:contributors <base>..<collector-head> --prs <manifest>` to re-prove,
+   per merged change and per open PR (trial-merged), that its tests fail with its product
+   hunks reversed; the tool pins the PR heads into `prs.pinned.json` so a rerun tests the
+   same code, and its Markdown table keeps mechanical results apart from your verdicts
+   (see [Contributor audit](TESTING.md#contributor-audit)). Paste the table into the wave
+   PR body.
 5. **Security review** — run `bun run wave-security-scan <base>..<collector-head>` over the
    collector branch (the repeatable mechanical sweep). It ALARMS on newly-introduced
    obfuscation/eval in code, secrets found by gitleaks **with the test/skills allowlist
@@ -503,6 +564,45 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
   promotional material (README intro, CHANGELOG voice, skill templates).
 - Never auto-merge PRs that remove YC references or "neutralize" the founder perspective.
 - Preserve contributor attribution in commit messages.
+
+### Fix-wave gate
+
+`.github/workflows/fix-wave-gate.yml` (job `contributor-gate`) fails every PR into
+master unless its head repository is `garrytan/gbrain` or the `maintainer-override`
+label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
+(`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
+called. When a contributor PR opens, a second job posts one comment with the same
+text as the failure: the work is welcome and the PR stays open, it lands through a
+fix wave with credit (`Contributed by @handle` plus a `Co-Authored-By:` trailer), and
+CONTRIBUTING.md "Where does my change go?" explains where changes belong.
+
+The workflow uses `pull_request_target`, so the workflow and
+`scripts/fix-wave-gate.ts` always come from the default branch: a PR that edits
+either cannot change its own result. It reads only the event payload and the PR
+timeline, never PR code, with `permissions: {}` at the top, `pull-requests: read`
+for the gate and `pull-requests: write` only for the comment job. A null head
+repository (deleted fork) fails closed. The check re-runs on `opened`, `edited`,
+`reopened`, `synchronize`, `labeled` and `unlabeled`.
+
+**`maintainer-override` label.** Who: a human on `MAINTAINERS` in
+`scripts/fix-wave-gate.ts` (starts as `garrytan`; changing it is a reviewed PR to
+master). When: only for a PR a maintainer has decided may land from its fork, such as
+a fix wave a maintainer opened from a fork; record the reason in a PR comment. How it
+is checked: the label counts only when the most recent `labeled` timeline event for it
+was made by an allowlisted `User`; bots (`capy-ai[bot]`, `github-actions[bot]`, any
+`[bot]` login) never qualify, and removing the label fails the PR again. Audit: the run
+log prints a `notice` naming who applied the label, when, and the timeline event id,
+and the step summary repeats it.
+
+**Turning it on (repository settings, maintainer only).** The guard is active only
+after this step; until then the check is advisory. Settings → Rules → Rulesets (or
+Settings → Branches → the `master` protection rule) → Require status checks to pass →
+add `contributor-gate` with GitHub Actions as the source → save. The check must have
+run once on any PR before GitHub offers it in the picker.
+
+**Residual risk.** A same-repo branch (`capy/*` or `garrytan/*`) that carries
+contributor commits passes by design. Keeping contributor work inside a revised fix
+wave on those branches stays a policy rule, enforced by review, not by this check.
 
 ## Checking out PRs from garrytan-agents
 
@@ -533,6 +633,22 @@ Why this over alternatives: adding `garrytan-agents` as a collaborator, or
 flipping the repo-wide "send secrets to fork PRs" toggle, both broaden
 secret distribution to every fork PR from that account or any fork. Moving
 the branch keeps secret scope tight to just the one PR being shipped.
+
+## ClawHub bundle plugin publish (manual)
+
+`openclaw.plugin.json` makes this repository a ClawHub bundle plugin (see
+[docs/mcp/OPENCLAW.md](mcp/OPENCLAW.md)). Publishing a new version to ClawHub is
+a manual step outside `release.yml`, run from a clean checkout of the release
+tag by an owner with an authenticated `clawhub` CLI:
+
+```bash
+bun run prepublish:clawhub   # bun run build:all: bin/gbrain-darwin-arm64 + bin/gbrain-linux-x64
+bun run publish:clawhub      # clawhub package publish . --family bundle-plugin
+```
+
+`build:all` compiles only those two targets; the full binary matrix ships
+through the GitHub release job above. ClawHub users upgrade with
+`clawhub update gbrain`, which `gbrain upgrade` runs for ClawHub installs.
 
 ## Plugin dist tree (codex/claude lanes)
 

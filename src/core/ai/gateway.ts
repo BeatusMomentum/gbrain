@@ -36,6 +36,7 @@ import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTok
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetKind } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
+import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -445,7 +446,8 @@ export function configureGateway(config: AIGatewayConfig): void {
     embedding_image_ocr_model: config.embedding_image_ocr_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
-    chat_fallback_chain: config.chat_fallback_chain,
+    chat_fallback_chain: normalizeChatFallbackChain(config.chat_fallback_chain),
+    chat_fallback_on_refusal: config.chat_fallback_on_refusal,
     // v0.35.0.0+: reranker_model stays undefined when unset — reranker is
     // opt-in and pulling DEFAULT_RERANKER_MODEL into every gateway start
     // would silently register a third-party model id on brains that never
@@ -3008,6 +3010,8 @@ export interface ChatResult {
   providerId: string;
   /** Raw provider metadata (Anthropic-specific cache fields, OpenAI finish_reason, etc.) for downstream callers that need it. */
   providerMetadata?: Record<string, any>;
+  /** Set when a `chat_fallback_chain` entry answered: the call's own model, which failed or refused (`model` names the one that ran). */
+  fallbackFrom?: string;
 }
 
 export interface ChatOpts {
@@ -3054,6 +3058,12 @@ export interface ChatOpts {
   responseSchema?: { name: string; description?: string; schema: Record<string, unknown> };
   /** Caller purpose (`skillopt.judge`, …) stamped on the BudgetTracker ledger row. */
   purpose?: string;
+  /**
+   * `false` pins the call to its own model: `chat_fallback_chain` is not
+   * consulted (see `chat-fallback.ts`). Judge, critic and eval call sites set
+   * it so a verdict or score always comes from the model they named.
+   */
+  allowFallback?: boolean;
 }
 
 /**
@@ -3232,7 +3242,7 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
 /**
  * Map AI SDK's `finish_reason` (and provider-specific signals) to a provider-
  * neutral `stopReason`. This is the structural-signal layer that
- * `chatWithFallback` (commit 3) consults BEFORE any regex heuristic (per D8).
+ * `chatWithFallback` (chat-fallback.ts) consults BEFORE any regex heuristic (per D8).
  */
 function mapStopReason(
   finishReason: string | undefined,
@@ -3418,6 +3428,8 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  const fallbackChain = opts.allowFallback === false ? undefined : _config?.chat_fallback_chain;
+  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: _config?.chat_fallback_on_refusal !== false });
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 
@@ -3784,6 +3796,8 @@ export interface ToolLoopOpts {
   cacheSystem?: boolean;
   /** Forwarded to every `chat()` turn; see `ChatOpts.purpose`. */
   purpose?: string;
+  /** Forwarded to every `chat()` turn; see `ChatOpts.allowFallback`. */
+  allowFallback?: boolean;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -3933,6 +3947,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
           : opts.abortSignal,
         cacheSystem: opts.cacheSystem,
         purpose: opts.purpose,
+        allowFallback: opts.allowFallback,
       });
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;

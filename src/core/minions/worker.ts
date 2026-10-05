@@ -20,6 +20,7 @@ import type {
   MinionQueueOpts, TokenUpdate,
 } from './types.ts';
 import {
+  JobDeferredError,
   UnrecoverableError,
   ABORT_REASON_LOCK_RENEWAL_FAILED,
   ABORT_REASON_LOCK_LOST,
@@ -49,6 +50,7 @@ import {
   type PoolDiagnostics,
 } from './db-probe.ts';
 import { buildJobContext } from './job-context.ts';
+import { runWithJobSpend } from './spend-authorization.ts';
 import {
   runJobInChild,
   ChildSpawnInfraError,
@@ -1458,6 +1460,13 @@ export class MinionWorker extends EventEmitter {
     execution.promise = promise;
   }
 
+  /** A handler deferral (JobDeferredError): back to delayed, no attempt counted. */
+  private async deferJob(job: MinionJob, lockToken: string, err: JobDeferredError): Promise<void> {
+    const deferred = await this.queue.deferJob(job.id, lockToken, `deferred (${err.reason}): ${err.message}`, err.retryInMs);
+    if (!deferred) console.warn(`Job ${job.id} deferral dropped (lock token mismatch)`);
+    else console.log(`Job ${job.id} (${job.name}) deferred (${err.reason}) for ${Math.round(err.retryInMs / 1000)}s (no attempt burned)`);
+  }
+
   private async executeJob(
     job: MinionJob,
     lockToken: string,
@@ -1507,7 +1516,7 @@ export class MinionWorker extends EventEmitter {
       }
       const result = isolated
         ? await runJobInChild({
-            jobId: job.id,
+            jobId: job.id, spendAuthorized: job.spend_authorization != null,
             jobName: job.name,
             lockToken,
             abortSignal: abort.signal,
@@ -1525,7 +1534,7 @@ export class MinionWorker extends EventEmitter {
           })
         // #4218: attribute every gateway.chat() the handler makes to this
         // job so chat_usage_log rows carry `phase = 'job:<name>'`.
-        : await withSubmissionAuthority(authority, () => withChatPhase(`job:${job.name}`, () => handler(context as MinionJobContext)), abort.signal);
+        : await withSubmissionAuthority(authority, () => withChatPhase(`job:${job.name}`, () => runWithJobSpend(this.engine, job, context as MinionJobContext, handler)), abort.signal);
 
       // The child spawned and ran — the spawn path is healthy again.
       this._consecutiveChildSpawnFailures = 0;
@@ -1656,6 +1665,7 @@ export class MinionWorker extends EventEmitter {
       // `failJob` minus the `attempts_made` increment. Audit row to
       // `minion_lease_pressure_log` so operators see pressure live in
       // `gbrain doctor` + `gbrain jobs stats lease_pressure`.
+      if (err instanceof JobDeferredError) return this.deferJob(job, lockToken, err);
       const isLeaseFull = err instanceof RateLeaseUnavailableError;
       if (isLeaseFull) {
         const leaseErr = err as RateLeaseUnavailableError;

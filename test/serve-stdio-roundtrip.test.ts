@@ -26,7 +26,7 @@
  *
  * Lane: unit. Run: `bun test test/serve-stdio-roundtrip.test.ts`. Moved from test/e2e/
  * by the 2026-09 lane-move pilot (PGLite-only, no DATABASE_URL); see
- * docs/TESTING.md "Lane-move pilot".
+ * docs/test-audit/2026-09-29/implementation/lane-pilot.md.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -329,6 +329,9 @@ describe('serve --surface verbs stdio E2E (the 7 frozen memory verbs over a real
     expect(['inserted', 'duplicate', 'superseded']).toContain(rem.status);
     expect(typeof rem.id).toBe('string');
 
+    // delta never advances a cursor past now() - 2 s (commit-visibility lag), so
+    // let the seeded pages age past it; otherwise wake 2 re-delivers them once.
+    await new Promise((r) => setTimeout(r, 2_100));
     // Wake 1: explicit epoch cursor + session_id — delivers every seeded page
     // and establishes the per-session keyset cursor server-side.
     const first = await client!.callTool({

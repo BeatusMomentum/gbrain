@@ -73,8 +73,8 @@ stdin:
   single-writer lock.
 - `--settings '{"disableAllHooks":true}'` stops the child from running your
   Claude Code hooks (user and project settings). Without it, gbrain's own
-  Stop hook banked every claude-cli call's prompt as one of your
-  conversations, and extracting facts from it spawned another call (#5820).
+  Stop hook would bank every claude-cli call's prompt as one of your
+  conversations, and extracting facts from it would spawn another call.
   Your login is unaffected: credentials are not settings. Hooks from a
   managed policy file (`/etc/claude-code/managed-settings.json` on Linux)
   are a different case. Claude Code 2.1.287 still runs them, because policy
@@ -133,7 +133,7 @@ above.
 | Streaming | Not implemented. `doStream()` throws. `gateway.toolLoop()` (the main caller) is non-streaming already, so this is not a practical limitation for subagent dispatch, but any caller that expects a streaming chat surface cannot use `claude-cli`. |
 | Tool use | JSON emission via a system-prompt-injected protocol, not the CLI's native tool-call mechanism. Parallel tool calls in one turn round-trip correctly. |
 | Multimodal | Not supported over the subprocess path. File/image message parts are rendered as a `[file <mediaType>]` text stub, not sent as actual content. |
-| Prompt caching | The recipe declares `supports_prompt_cache: true`: Claude Code caches prompt prefixes itself on every `--print` run (Anthropic's Claude Code docs put `-p` runs in the main-conversation TTL bucket — one hour on a subscription, five minutes on an API key). gbrain cannot place `cache_control` breakpoints on this path — the adapter renders messages to stdin text and ignores `providerOptions` — so caching is automatic rather than gateway-driven, and `doctor`'s `subagent_capability` no longer grades a claude-cli subagent tier `degraded:no_caching`. `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens` (next row). |
+| Prompt caching | The recipe declares `supports_prompt_cache: true`: Claude Code caches prompt prefixes itself on every `--print` run (Anthropic's Claude Code docs put `-p` runs in the main-conversation TTL bucket — one hour on a subscription, five minutes on an API key). gbrain cannot place `cache_control` breakpoints on this path — the adapter renders messages to stdin text and ignores `providerOptions` — so caching is automatic rather than gateway-driven, and `doctor`'s `subagent_capability` does not grade a claude-cli subagent tier `degraded:no_caching`. `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens` (next row). |
 | Usage / token counts | Reported `usage.input_tokens` / `usage.output_tokens` are read straight from the CLI's `--output-format json` envelope (`result.usage?.input_tokens` / `output_tokens`); gbrain does not independently count tokens for this path. The envelope's `cache_read_input_tokens` is surfaced as `usage.cachedInputTokens`, so cache reads are counted in gbrain's usage accounting; `cache_creation_input_tokens` is not surfaced (the AI SDK's usage shape has no corresponding field). |
 | Cost figures | The recipe declares `cost_per_1m_input_usd: 3.0` / `cost_per_1m_output_usd: 15.0` — the same Sonnet-class figures the `anthropic` recipe declares (`price_last_verified: 2026-06-17`) — purely so gbrain's budget ledger has a number to attribute per call. Neither the recipe nor the adapter code checks what you're actually billed; treat these as the ledger's nominal per-call number, not a verified charge. The `--max-usd` / `--max-cost` budget gate does not read them either: it prices `claude-cli:<model>` at the nominal Anthropic rate for that model, and a short alias (`claude-cli:haiku`) prices identically to the dated id it resolves to; `pricing.overrides` forces $0 or a real rate for any `claude-cli:*` string. |
 | User-level CLAUDE.md | `~/.claude/CLAUDE.md` still loads on every call (see above) — only the working directory changes (see "What actually happens on a call" for exactly what that directory is and isn't). |
@@ -158,6 +158,31 @@ the adapter's abort message doesn't match `classifyError`'s network
 patterns, so it lands in the catch-all. A persistent `unknown` is worth
 investigating directly (run the same model via `gbrain models doctor
 --json` or call `claude` by hand) rather than assuming cold-start.
+
+## Falling back to an API model at the subscription limit
+
+When the Claude subscription's usage window is used up, the CLI reports
+`claude-cli API error 429: You've hit your session limit · resets <time>`.
+`chat_fallback_chain` retries the same call on the next model in the chain
+instead of failing it:
+
+```bash
+gbrain config set chat_fallback_chain "anthropic:claude-sonnet-4-6"
+gbrain doctor --only chat_fallback_chain --json
+```
+
+**Say to your agent:** *"When my Claude subscription runs out, fall back to an API model instead of failing."*
+
+The [chat fallback guide](../guides/chat-fallback.md) covers the chain for
+every provider: prerequisites, the env / `config.json` / database planes and
+their precedence, refusal fallback and `chat_fallback_on_refusal`, the doctor
+check, removal and hosted brains. Two points are specific to `claude-cli`:
+
+- The subscription limit arrives as a provider error (`apiErrorStatus` 429),
+  so the chain treats it like any outage; when every entry fails, the
+  claude-cli error is the one reported.
+- Every call still tries the claude-cli model first, so during the limit
+  window each call pays one failed CLI spawn before the fallback runs.
 
 ## Troubleshooting
 

@@ -380,6 +380,42 @@ brain data. To end one client's access, follow the distinct preview/revision
 flows for token invalidation, revocation, or deletion in
 [MCP administration](../mcp/ADMIN.md#invalidate-tokens-revoke-or-delete).
 
+## Writing many pages
+
+Say to your agent: *"When you save more than three pages to gbrain, use
+put_pages with one request_id per batch and wait_ms 25000."*
+
+- **`put_pages`** writes 1-50 complete pages (8 MB of content at most) in one
+  call. Every page is an ordinary `put_page` write with the same fences,
+  revision checks and receipts; the pages are admitted together, so the
+  writer queue has room for the whole batch or the call refuses with
+  `queue_capacity` and admits none of them. Keep 5-8 large pages per call:
+  the model has to write every page into the tool arguments.
+- **One receipt per batch.** The reply lists each page's state, revision or
+  error (with its own `fix`), counts, and `next`: `done`, `poll` or
+  `fix_pages`. A page refused for its own reason (an invalid slug, a slug
+  outside the grant, a revision conflict) does not stop the others.
+- **Replays and progress.** Replaying the identical call with the same
+  `request_id` never writes twice. Calling `put_pages` with only the
+  `request_id` reads the batch's progress without resending the pages. A
+  replay with different pages refuses with `idempotency_conflict` and names
+  the pages that changed.
+- **`wait_ms`** (put_page and put_pages, 0-30000 ms) holds the reply until
+  the commit. It is not part of the write, so changing it on a replay is
+  safe. When a reply is still pending, follow `next` no sooner than
+  `retry_after_ms`.
+- **Links.** For remote writes, `[[wikilinks]]` in a page body that point at
+  pages already in the same source become plain `mentions` links after the
+  commit, and a batch links pages to each other once its last page commits.
+  The batch receipt's `links` field shows when they have landed; agents do
+  not add them by hand. Typed links still need `add_link`. Turn this off with
+  `gbrain config set mcp.remote_auto_links false`.
+- **Embedding** runs after the commit. New text is searchable by keyword
+  immediately and by meaning once its embedding effect finishes.
+- **Request size.** `gbrain serve --http` reads the whole request; the
+  simpler HTTP transport caps a request at `GBRAIN_HTTP_MAX_BODY_BYTES`
+  (1 MiB by default) and its 413 reply tells the agent to split the batch.
+
 ## PGLite brains
 
 PGLite is single-writer. While the service runs, host-side commands that open
@@ -403,6 +439,13 @@ then `gbrain connect http://127.0.0.1:3131/mcp … --install`). Postgres
 brains mint fine while the server runs: `gbrain bootstrap harness --yes --port 3131`.
 
 ## Troubleshooting
+
+A served `gbrain serve --http` that cannot open its brain stays up in
+[status-only mode](../mcp/DEPLOY.md#status-only-mode): `/health` answers 503
+with `Retry-After: 5`, remote clients get a `serve_status_only` envelope whose
+fix is `gbrain doctor` on this host, and the server opens the brain on the same
+port once the cause is fixed. `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`)
+exits instead.
 
 `gbrain mcp expose --status` re-runs the probes; `--json` names the failing
 check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
@@ -439,6 +482,7 @@ check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 | An interrupted `gbrain mcp expose` (no receipt, but a handler / service / wrapper is left behind) — `gbrain mcp expose --status` reports `leftovers_without_receipt` (exit 1) naming each artifact | Run the command `--status` prints: `gbrain mcp expose --remove --yes` (add `--port N` if you published a non-default port; `--force` when only a handler stands) recovers without a receipt: it removes the service, the wrapper and the `:443` handler proxying that port, and leaves the admin token. A handler with no wrapper, unit or service next to it is left in place until you add `--force`. See [`--remove`](#--remove). | agent, after the user agrees | none | `gbrain mcp expose --status --json` |
 | `handler_not_removed` (exit 1) — "--remove" stopped with "the tailscale handler for port <port> is still present" (or "could not be confirmed gone") | `tailscale serve --https=443 --set-path=/ off` ran but the re-read still shows gbrain's handler (or the serve status could not be re-read). The service was already uninstalled; the receipt and the wrapper were kept on purpose so the re-run finds everything. Run `tailscale serve status`, fix what it reports (operator, daemon), then `gbrain mcp expose --remove --yes` again. | user | none | `gbrain mcp expose --status --json` |
 | `foreign_serve_config` — "tailscale serve already proxies :443 to <target>. Re-run with --force to take it over, or pick another local port for that service." | A `/` handler on `:443` (a background config, another terminal's foreground `tailscale serve` session, or a raw TCP forward) already points somewhere else. Inspect it with `tailscale serve status` (the suggested next action), move that service, or — for a background handler only — re-run with `--force`; a foreground session must be stopped in its own terminal. | user | none | `gbrain mcp expose --status --json` |
+| `verify.local` warn — "status-only (<reason>): the server runs but cannot open its brain" (publish exit 2; `--status` exit 1) | The served `gbrain serve --http` is up on the port but in [status-only mode](../mcp/DEPLOY.md#status-only-mode): `/health` answers 503 and clients get the `serve_status_only` envelope. `gbrain doctor --only harness_wiring` names the reason's fix (for `lock_held`, stop the other process holding the PGLite brain). The server opens the brain within 5 s of the fix; no restart. | brain host | none | `gbrain mcp expose --status --json` |
 | `verify.local` warn / `local_health_timeout` (exit 2) | The service was installed but `http://127.0.0.1:<port>/health` did not answer within 20s; `verify.tailnet` is skipped. Read `~/.gbrain/serve/serve.err`, then `gbrain mcp expose --status`. | brain host | none | `gbrain mcp expose --status --json` |
 | `service: manual` (cloud sandbox, ephemeral container, no user bus) | There is no supervisor to keep the server alive. Run the printed foreground command, or the `nohup ~/.gbrain/serve/gbrain-serve.sh &` line, and re-run `--status`. On Linux without a user bus, `loginctl enable-linger $USER` may enable one. | brain host | none | `gbrain mcp expose --status --json` |
 | `thin_client` (exit 1) — "run on the brain host" | This install is a thin client; `expose` publishes the machine that holds the database. Run it there. | brain host | none | run `--status --json` on the brain host |

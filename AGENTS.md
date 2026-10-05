@@ -33,8 +33,8 @@ start here.
    and confirm their choice before continuing. Cost spread between corners
    is 25x — silent acceptance is the wrong default. See
    [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
-   exact ask-the-user protocol. Same banner fires on `gbrain post-upgrade`
-   for existing users (search modes were added in v0.32.3).
+   exact ask-the-user protocol. The same banner fires on `gbrain post-upgrade`
+   for a brain created before v0.32.3, when search modes arrived.
 4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full step-by-step
    flow (keyless memory, optional API capabilities, maintenance, verification).
 
@@ -45,8 +45,10 @@ Recall relevant saved context before answering. Save explicit requests to rememb
 Durable preferences and facts belong in shared memory when the user wants them
 recalled later. Transient task state, credentials, local configuration, and harness
 activation state do not. Remote `put_page` saves references as text without inline
-graph extraction; stdio has best-effort startup/idle sweeps, while HTTP requires
-explicit host maintenance or authorized `add_link` calls. Configured model
+graph extraction; a post-commit `links` effect then adds plain mention edges to
+existing pages the writer can see (`mcp.remote_auto_links`, on by default). Typed
+edges rely on stdio's best-effort startup/idle sweeps, explicit host maintenance
+or authorized `add_link` calls. Configured model
 providers can receive text; Markdown export is not a full database backup.
 Read [memory boundaries](docs/guides/memory-boundaries.md) before promising
 portability, graph freshness, privacy, or recovery.
@@ -203,14 +205,14 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
 guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
 containers plus a transaction-mode PgBouncer; unit phase keeps `DATABASE_URL`
-unset) and tears down. Use `bun run ci:local:diff` for the
-diff-aware subset during fast iteration on a focused branch. Requires Docker
+unset) and tears down. `bun run ci:local:diff` checks a doc-only diff in
+seconds (gitleaks plus the doc checks) and runs the full gate otherwise. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
 Fastest path, with a Ubicloud token (`UBICLOUD_API_KEY` or
 `UBICLOUD_API_TOKEN`): `bun run ci:ubicloud` runs the same gate across ten
 ephemeral VMs in about five minutes, uncommitted edits included
-(`ci:ubicloud:diff` for the diff-aware subset). See "Ubicloud fan-out" in
+(`ci:ubicloud:diff` for the doc-only fast path). See "Ubicloud fan-out" in
 [`docs/TESTING.md`](./docs/TESTING.md).
 
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin

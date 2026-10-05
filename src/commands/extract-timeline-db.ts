@@ -21,6 +21,7 @@ import type { Page, PageType } from '../core/types.ts';
 import { parseTimelineEntries, deriveTimelineAnchor } from '../core/link-extraction.ts';
 import { retractRemovedTimelineEntries } from '../core/timeline-extract.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { maintenanceTransaction } from '../core/persistence/attribution.ts';
 import { unrecordedCanonicalTimeline } from '../core/persistence/canonical-projections.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
 import { authorizeWrite } from '../core/persistence/authority.ts';
@@ -28,8 +29,10 @@ import { getWriteRequest } from '../core/persistence/journal.ts';
 import { isTerminal, type WriteRequest } from '../core/persistence/model.ts';
 import { digest } from '../core/persistence/digest.ts';
 import type { PreparedMutation } from '../core/persistence/coordinator.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
+import { readFix } from '../core/ops/op-fix.ts';
 import { createProgress } from '../core/progress.ts';
+import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../core/planner-stats.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { filterRefsSince } from './extract.ts';
 
@@ -113,13 +116,18 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   const managed = !opts.dryRun && await managedPersistenceEnabled(engine);
   const dryRunSeen = opts.dryRun ? new Set<string>() : null;
   const batch: TimelineBatchInput[] = [];
+  // PGLite has no autovacuum: a walk that grows timeline_entries from empty
+  // re-plans its per-page reads against stale statistics and slows with
+  // every row, so it refreshes them on the bulk-import cadence.
+  const analyzeEvery = opts.dryRun ? 0 : await importAnalyzeEveryPages(engine);
+  let walked = 0;
 
   async function flush() {
     if (batch.length === 0) return;
     const snapshot = batch.slice();
     batch.length = 0;
     try {
-      result.created += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_db' });
+      result.created += await maintenanceTransaction(engine, tx => tx.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_db' }));
     } catch (e) {
       const code = refusalCode(e);
       codes.add(code);
@@ -129,6 +137,11 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   }
 
   for (const { slug, source_id } of refs) {
+    if (analyzeEvery > 0 && walked > 0 && walked % analyzeEvery === 0) {
+      await flush();
+      await maybeRefreshPlannerStats(engine, 'extract', { throttle: false }).catch(() => undefined);
+    }
+    walked++;
     if (managed) {
       try {
         const outcome = await publishPageTimeline(engine, await authorityFor(source_id), slug, source_id, opts);
@@ -253,16 +266,22 @@ async function publishPageTimeline(engine: BrainEngine, authority: MaintenanceAu
 }
 
 /** Preparer for `managed_maintenance_timeline_extract`: a database-only publication on the page key. */
+function timelinePageChanged(row: WriteRequest, message: string): OperationError {
+  return opError('page_identity_changed', message,
+    `Page ${row.slug} in source ${row.source_id} changed before its queued timeline extraction ran, so this page was skipped. Read the page that holds the slug now; gbrain extract timeline --source db --source-id ${row.source_id} extracts it again under a new request.`,
+    { fix: readFix(`Shows which page holds ${row.slug} now and its revision.`, { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug], mcp: { tool: 'get_page', arguments: { slug: row.slug, source_id: row.source_id } } }) });
+}
+
 export async function prepareTimelineExtract(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (!snapshot || snapshot.page.id !== Number(row.page_id)) throw new OperationError('page_identity_changed', 'The page was deleted or replaced before its timeline was extracted.');
+  if (!snapshot || snapshot.page.id !== Number(row.page_id)) throw timelinePageChanged(row, 'The page was deleted or replaced before its timeline was extracted.');
   await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
   const inferDates = (row.intent as { infer_dates?: unknown } | null)?.infer_dates === true;
   return { observedRevision: snapshot.revision, noop: true,
     validate: async tx => { await authorizeWrite(tx, row.authority, 'submit_job', row.slug); },
     apply: async tx => {
       const current = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
-      if (!current) throw new OperationError('page_identity_changed', 'The page disappeared before its timeline was extracted.');
+      if (!current) throw timelinePageChanged(row, 'The page disappeared before its timeline was extracted.');
       return { status: 'completed', added: await writePageTimeline(tx, current.page, row.slug, row.source_id, inferDates) };
     } };
 }

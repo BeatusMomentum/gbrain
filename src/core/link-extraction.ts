@@ -91,8 +91,8 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-// 2026-10-02: normalizeBasename collapses hyphen runs (#5623), so [[Backlog - vault]] resolves; re-extract.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-02T00:00:00Z';
+// 2026-10-02: hyphen-run basenames resolve (#5623); 2026-10-05: temporal edges derive dated evidence on extraction. Re-extract.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-10-05T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -2016,7 +2016,7 @@ function isValidDate(s: string): boolean {
   if (mo < 1 || mo > 12) return false;
   if (d < 1 || d > 31) return false;
   // Use Date object as final check (catches 2026-02-30 etc.)
-  const dt = new Date(Date.UTC(y, mo - 1, d));
+  const dt = new Date(new Date(0).setUTCFullYear(y, mo - 1, d)); // not Date.UTC: it maps years 0-99 to 1900-1999
   return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 

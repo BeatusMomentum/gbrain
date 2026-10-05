@@ -75,6 +75,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'auto_chronicle',
   'auto_chronicle_default_on',
   'chronicle_config_invalid',
+  'facts_drain',
   'fact_take_vectors',
   'code_chunk_metadata',
   'content_hash_duplicates',
@@ -151,6 +152,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
   'unlinked_facts',
+  'edge_validity',
   'text_projection_readiness',
   'timeline_coverage',
   'timeline_orphans',
@@ -190,6 +192,8 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
  * Infrastructure liveness signals. DB, workers, OAuth, RLS, locks, providers.
  */
 export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
+  // The effective chat_fallback_chain, its config plane, the providers it reaches and per-entry readiness.
+  'chat_fallback_chain',
   // Agent operator wave: is an agent harness wired to this brain (registration read; --only adds the smoke test).
   'harness_wiring',
   'frontmatter_hook',
@@ -210,10 +214,11 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_serve_lock',
   'batch_retry_health',
   'canonical_content_writes',
+  // Sources opted out of, or parked by, the shared-skills migration (checks/shared-skills.ts).
+  'shared_skills_sources',
   'brainstorm_health',
   'connectors',
   'dream_paid_loop',
-  'chat_fallback_chain_inert',
   'connection',
   'db_only_collector_collision',
   'federation_health',
@@ -240,6 +245,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pglite_scale',
   'db_repair_recurrence',
   'pglite_leftovers',
+  // Engine graduation (PGLite -> Postgres) interrupted / split brain.
+  'graduation_interrupted',
   'pgvector',
   'postgres_cancellation_driver',
   'plugin_lane_collision',
@@ -253,6 +260,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // F3: legacy tokens on the JSONB-only grant shape (info) and grant drift (warn).
   'legacy_token_grant_shape',
   'legacy_token_grant_drift',
+  // Lane E: tokens minted without scopes (grandfathered read+write+admin).
+  'legacy_token_null_scope',
   'reranker_health',
   'rls',
   'rls_event_trigger',
@@ -278,11 +287,14 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
  * housekeeping. Default category for unknown names (with stderr warn).
  */
 export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
+  // The one-time behavior-change disclosure, readable again here (read-only).
+  'behavior_changes',
   // Agent operator wave E11: recent agent dead ends from the agent-contract event log.
   'agent_contract',
   'cycle_phase_scope',
   'default_source_local_path',
   'eval_capture',
+  'retrieval_feedback_health',
   // #4613 — links_link_source_check CHECK shape: schema coherence healed by
   // `gbrain apply-migrations` (sibling of pages_upsert_arbiter).
   'links_link_source_check',
@@ -293,6 +305,8 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   // coherence healed by `gbrain apply-migrations` (sibling of
   // timeline_dedup_index / schema_version).
   'pages_upsert_arbiter',
+  // #5216: the resumable pages.knowledge_revision backfill (resumed by apply-migrations --force-schema).
+  'revision_backfill',
   'schema_columns',
   'schema_pack_active',
   'schema_pack_consistency',

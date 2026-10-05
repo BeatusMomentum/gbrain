@@ -71,6 +71,7 @@ export interface GBrainConfig {
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
   persistence?: { write_wait_ms?: number | string };
+  migrate?: { graduation?: boolean }; // `migrate.graduation false`: legacy copier instead of graduation (file plane, read pre-connect)
   /** A4 user preapprovals (file plane only; set by the trusted local CLI; read by core/consent.ts). */
   consent?: { preapprove?: { paid?: { max_usd_per_run?: number }; persistent_install?: boolean } };
   database_url?: string;
@@ -150,11 +151,13 @@ export interface GBrainConfig {
    */
   chat_model?: string;
   /**
-   * Optional silent-refusal fallback chain for `chatWithFallback()` (v0.27+).
-   * Each entry is a "provider:modelId" string. Blocked from critic/judge/
-   * synthesize flows in their respective handlers (per D13 review decision).
+   * Optional chat fallback chain for `chatWithFallback()` (v0.27+): tried in
+   * order when a chat call fails or refuses. Each entry is a "provider:modelId"
+   * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
+  /** `false`: the chain still covers errors but never forwards a refused request. Default true (env, file, DB). */
+  chat_fallback_on_refusal?: boolean;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
   /** Optional chat request providerOptions overrides keyed by recipe id or "recipe:modelId". */
@@ -553,6 +556,8 @@ export interface GBrainConfig {
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
     /** Search/query row shape for remote MCP callers: 'lean' (default) | 'full'. Dual-plane, DB > file. */
     result_rows?: 'lean' | 'full';
+    /** Stdio `request_tools {surface}` widens the session's tool surface (default true). Dual-plane, DB > file. */
+    allow_session_widen?: boolean | string;
   };
 }
 
@@ -732,6 +737,9 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_CHAT_MODEL ? { chat_model: process.env.GBRAIN_CHAT_MODEL } : {}),
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
       ? { chat_fallback_chain: process.env.GBRAIN_CHAT_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
+      : {}),
+    ...(process.env.GBRAIN_CHAT_FALLBACK_ON_REFUSAL?.trim()
+      ? { chat_fallback_on_refusal: !isEnvDisabled(process.env.GBRAIN_CHAT_FALLBACK_ON_REFUSAL) }
       : {}),
     ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL
       ? { embedding_multimodal: process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true' }
@@ -1226,6 +1234,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',
+  'chat_fallback_on_refusal',
   'provider_base_urls',
   // Integration gates (file-plane, hook-lane)
   'integrations.memorable.enabled',
@@ -1314,6 +1323,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.mcp_keyword_only',
   REMOTE_PRIVATE_PAGES_KEY,
   'search.track_retrieval',
+  // Retrieval feedback (feedback/settings.ts).
+  'feedback.enabled', 'feedback.learn', 'feedback.influence', 'feedback.implicit', 'feedback.alpha',
+  'feedback.max_ratings_per_hour', 'feedback.event_retention_days', 'feedback.rating_prompt', 'feedback.notice_shown',
   // #4415: per-brain query-intent pattern extensions (JSON bank→regex[]),
   // merged over the shipped banks in src/core/search/query-intent.ts.
   'search.intent_patterns',
@@ -1349,6 +1361,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.expansion_variant_budget',
   // Ranker wave (R1): relational-arm rows re-pinned above reranked text rows (mode.ts reads; `off` | 0..10).
   'search.relational_rerank_pin',
+  // Multi-hop planner (mode.ts reads; boolean) and typed one-hop orientation (boolean; unset follows the planner).
+  'search.relational_planner',
+  'search.relational_orient_onehop',
+  // Multi-hop chain slots: chain rows leading page 1 when a chain fired (mode.ts reads; 0..10).
+  'search.relational_chain_slots',
   // Ranker wave (Phase E2): keyword-arm confidence floor — weak keyword arm fuses at half weight (mode.ts reads; `off` | (0, 1]).
   'search.keyword_arm_confidence_floor',
   // Ranker wave (Phase E3): metadata boost gate — `lexical` skips post-fusion metadata boosts when the vector arm was the only voter (mode.ts reads; `always` | `lexical`).
@@ -1409,6 +1426,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'loops.extraction_enabled',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // Automatic facts drain caps (src/core/facts/drain.ts FACTS_DRAIN_KEYS).
+  'facts.drain_budget_usd', 'facts.drain_daily_budget_usd', 'facts.drain_max_jobs',
   // #3852: operator-set system-prompt appendix for the facts extractor (e.g.
   // a durable-vs-ephemeral rubric for agent work-session transcripts).
   // Composes with BOTH honest-notability prompt variants.
@@ -1535,6 +1554,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',
   'mcp.result_rows', // C1 row shape, read dual-plane by src/mcp/result-rows.ts
+  'mcp.allow_session_widen', // stdio request_tools session widening (default on), read dual-plane by src/mcp/surface.ts
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
@@ -1565,6 +1585,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // reconcile-links, and sweep. The documented off-switch is `gbrain config
   // set auto_link false` — same unregistered-key class as auto_chronicle.
   'auto_link',
+  // Entity mention index (core/mentions/policy.ts): off switch, +type/-type linkable types, names never linked.
+  'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore',
   // #4987: the write-path timeline extractor's off switch (read by
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
@@ -1645,7 +1667,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
+  // shared-skills migration inventory bounds (src/core/shared-skills/inventory-limits.ts)
+  'shared_skills.inventory.max_files', 'shared_skills.inventory.max_total_bytes', 'shared_skills.inventory.max_file_bytes', 'shared_skills.inventory.max_entries',
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
+  'migrate.graduation', // file plane, src/commands/migrate-graduation.ts (engine graduation opt-out)
   'consent.preapprove.paid.max_usd_per_run', 'consent.preapprove.persistent_install', // A4: file plane, core/consent.ts
   // F4b: PGLite row-delta ANALYZE (src/core/planner-stats.ts); F4a: get_health memo TTL (src/core/health-memo.ts, 0 disables).
   'planner.auto_analyze', 'planner.first_read_budget_ms', 'import.analyze_every_pages', 'health.cache_ttl_ms',
@@ -1658,6 +1683,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'search.',           // search.* (mode, cache.*, etc.)
+  'graph.',            // graph.edge_validity (temporal typed-edge read policy, src/core/link-validity.ts)
   'models.',           // models.* (tier, aliases, per-task)
   'dream.',            // dream.synthesize.*, dream.patterns.*
   'cycle.',            // cycle.<phase>.*

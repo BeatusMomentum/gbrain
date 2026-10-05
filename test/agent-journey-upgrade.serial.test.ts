@@ -25,7 +25,7 @@
  *   budget stop 3 → 11 (`embed --stale`, `dream --drain`)                    → test/embed.serial.test.ts, test/embed-exit-code-3037.serial.test.ts,
  *                                                                              test/dream-drain-failure-summary.serial.test.ts
  *   consent table: every gated command non-TTY exits 3 and mutates nothing   → test/consent-table.serial.test.ts (C9)
- *   absolute `serve --surface verbs` Claude registration smoke, live owner   → test/doctor-harness-smoke.serial.test.ts
+ *   absolute `serve --surface verbs` Claude registration smoke, live owner   → test/doctor-harness-smoke.test.ts
  *   #5157 pre-cutover jobs (no submission authority) need review first       → test/minions-legacy-journey.test.ts,
  *                                                                              test/e2e/minions-legacy-journey-postgres.test.ts
  *   Postgres parity of the H1 journey                                        → test/e2e/agent-journey-postgres.test.ts
@@ -127,7 +127,15 @@ function splitArgs(command: string): string[] {
   return i < 0 ? command.split(' ') : [...command.slice(0, i).split(' '), command.slice(i + 1)];
 }
 
-/** Rows of docs/guides/exit-codes.md "Changed in this release" this file proves on the real CLI. */
+/** The v0.60.46.0 CHANGELOG section that starts at `heading`, up to the next release heading. */
+/** A section of the contract v1 release entry (v0.60.46.0), which later entries may repeat headings of. */
+function changelogSection(heading: string): string {
+  const entry = readFileSync(join(REPO, 'CHANGELOG.md'), 'utf8').split('\n## [0.60.46.0]')[1] ?? '';
+  const after = entry.split(heading)[1] ?? '';
+  return after.split('\n## [')[0];
+}
+
+/** Rows of the CHANGELOG "Exit code changes by command" table this file proves on the real CLI. */
 const RENUMBERED: Record<string, { now: number; docRow: string }> = {
   'sources remove default --json': { now: 2, docRow: '`gbrain sources remove default` / `gbrain sources archive default`' },
 };
@@ -154,7 +162,7 @@ describe('(1) existing scripts after the upgrade', () => {
   }, 300_000);
 
   test('the renumbered exits are the documented ones, on every lane that reaches them', async () => {
-    const changed = readFileSync(join(REPO, 'docs', 'guides', 'exit-codes.md'), 'utf8').split('## Changed in this release')[1] ?? '';
+    const changed = changelogSection('#### Exit code changes by command');
     for (const { now, docRow } of Object.values(RENUMBERED)) expect(changed).toContain(`| ${docRow} | 3 | ${now} |`);
     expect(changed).toContain('| `gbrain call` invalid parameters | 1 | 2 |');
 
@@ -188,7 +196,7 @@ describe('(2) scheduled jobs: cron and autopilot invocations, non-TTY', () => {
   beforeAll(async () => { h = await upgradedBrain('upgrade-cron'); }, 180_000);
 
   test('the one listed flip: doctor --remediate with runnable work now stops for consent (exit 3, nothing submitted)', async () => {
-    const table = readFileSync(join(REPO, 'docs', 'protocol', 'AGENT_OPERATOR_v1.md'), 'utf8').split('## Behavior changes for scripts and agents')[1] ?? '';
+    const table = changelogSection('### Behavior changes for scripts and agents');
     expect(table).toContain('| `gbrain doctor --remediate` without a terminal | ran paid and mutating work');
     const r = await run(h, ['doctor', '--remediate', '--target-score', '30', '--json']);
     expect(r.exitCode, r.stdout + r.stderr).toBe(3);

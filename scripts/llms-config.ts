@@ -106,9 +106,22 @@ export const SECTIONS: DocSection[] = [
     heading: "Configuration",
     entries: [
       {
+        title: "docs/guides/multi-hop.md",
+        description: "Multi-hop relationship questions: typed hop chains over links (search planner + traverse_graph hops), evidence edges, refusals, notices, settings.",
+        path: "docs/guides/multi-hop.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/ENGINES.md",
         description: "PGLite vs Postgres trade-off and when to migrate.",
         path: "docs/ENGINES.md",
+      },
+      {
+        title: "docs/guides/move-to-postgres.md",
+        description:
+          "Move a PGLite brain to Postgres with its history: --url-env target setup, plan (exit 3) then --yes --expect, status/resume/rollback, what moves vs stays on this computer, recovery by error code.",
+        path: "docs/guides/move-to-postgres.md",
+        includeInFull: false,
       },
       {
         title: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
@@ -126,13 +139,13 @@ export const SECTIONS: DocSection[] = [
         // headroom, so this value-explainer rides the single-fetch bundle again.
         title: "docs/what-schemas-unlock.md",
         description:
-          "Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring (v0.40.7.0).",
+          "Why schemas matter: 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator) + the structural argument for typed page kinds. Read this before pitching schema authoring.",
         path: "docs/what-schemas-unlock.md",
       },
       {
         title: "docs/schema-author-tutorial.md",
         description:
-          "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows` (v0.40.7.0).",
+          "5-minute walkthrough: fork the bundled pack, add a custom `researcher` type, backfill existing pages via `gbrain schema sync --apply`, prove the T1.5 wiring via `gbrain whoknows`.",
         path: "docs/schema-author-tutorial.md",
       },
       {
@@ -140,6 +153,13 @@ export const SECTIONS: DocSection[] = [
         description:
           "System One decision support (TypeSafe Jev or an llm: provider): every slot off or on, executed quickstart (`gbrain decide probe`, `probe --query`, `enable --recommended`, `status`), each slot in plain words, calibration and qualification, fail directions, egress rules, reading status/doctor, receipts, troubleshooting by refusal reason.",
         path: "docs/guides/system-one.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/guides/retrieval-feedback.md",
+        description:
+          "Use-attributed retrieval feedback: answer ids, `rate_answer` / `gbrain rate` (whole answer or single pages), how ratings move page weights and ranking (bounded ±λ), citation learning, revision handling, who may teach the brain, `gbrain feedback status|reset`, config keys and every refusal code.",
+        path: "docs/guides/retrieval-feedback.md",
         includeInFull: false,
       },
       {
@@ -172,7 +192,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/scaling-skills.md",
         description:
-          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the v0.41.7.0 compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
+          "Three-tier architecture for agents with 300+ skills: always-loaded, resolver-routed, and dormant. Per-turn token math, the compact list-format resolver, and the `gbrain doctor` safety net. 306 skills, ~21K tokens freed per turn, zero capability loss.",
         path: "docs/guides/scaling-skills.md",
       },
       {
@@ -180,6 +200,13 @@ export const SECTIONS: DocSection[] = [
         description:
           "Life Chronicle automatic event extraction (on by default): what qualifies, per-page cost and daily ceiling, privacy, the receipt -> `gbrain dream --phase chronicle` -> `gbrain day` check, skip/failure codes with fixes, opt-out `gbrain config set auto_chronicle false`, history backfill.",
         path: "docs/guides/life-chronicle.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/guides/facts-drain.md",
+        description:
+          "Automatic facts drain on PGLite (on by default): queued facts-absorb jobs run inside gbrain serve, serve --http and the facts_drain cycle phase with no command; per-run, daily and job-count caps, deferrals that never drop work, doctor facts_drain, opt-out `gbrain config set facts.extraction_enabled false`.",
+        path: "docs/guides/facts-drain.md",
         includeInFull: false,
       },
       {
@@ -264,7 +291,7 @@ export const SECTIONS: DocSection[] = [
       },
       {
         title: "docs/guides/exit-codes.md",
-        description: "Exit statuses (3 = confirmation_required only, 10 pending write, 11 resumable budget stop) and what changed in this release.",
+        description: "Exit statuses (3 = confirmation_required only, 10 pending write, 11 resumable budget stop) and what the agent does on each.",
         path: "docs/guides/exit-codes.md",
       },
       {

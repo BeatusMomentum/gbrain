@@ -21,6 +21,7 @@ import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteR
 import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
+import { maintenancePublishWaitMs } from './maintenance-wait.ts';
 import { AGENT_WRITE_WAIT_MS, configuredWriteWaitMs } from './write-wait.ts';
 import { managedSyncAuthority, validateManagedSyncOptions, validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
@@ -42,6 +43,7 @@ import { readJournalLimits } from './limits.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readConnectorV2Cutoff } from './connector-checkpoint-migration.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
 
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
@@ -355,7 +357,7 @@ export class ManagedConnectorSync {
       if (blocked) {
         await this.authorizeRetryReceipt(this.engine, blocked);
         if (!isTerminal(blocked) && !blocked.recovery) {
-          writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }));
+          writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
           await this.recover('__managed_sync_checkpoint__');
         }
         await this.refuseRetryBlocker(this.engine);
@@ -843,6 +845,7 @@ export class ManagedConnectorSync {
             { fix: ownerStatusFix(this.sourceId, 'Shows what the canonical owner is running and what is queued behind it.') });
         }
         row = await this.engine.transaction(async tx => {
+          await declarePersistenceProtocol(tx);
           if (this.binding) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [this.binding.worktree_id]);
           await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [this.sourceId]);
           await this.validate(tx, slug);
@@ -900,7 +903,7 @@ export class ManagedConnectorSync {
       if (kind === 'connector_v2_checkpoint') this.counts.checkpoint_admissions++;
     }
     if (kind === 'connector_v2_google_receipts') {
-      row = await waitForWrite(this.engine, row!, loadConfig() ?? { engine: this.engine.kind });
+      row = await waitForWrite(this.engine, row!, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs());
       writeResponse(row);
       this.receipts.push(row.id);
       return { row, pending: false, created: false };

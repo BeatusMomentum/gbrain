@@ -30,7 +30,8 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
-import { GrantError, grantFromClient } from '../core/grants/model.ts';
+import { GRANT_PROFILES, GrantError, grantFromClient } from '../core/grants/model.ts';
+import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 
 function hashToken(token: string): string {
@@ -836,8 +837,9 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
   console.log(`OAuth client ${parsed.dryRun ? 'grant preview' : 'rescoped'}: ${result.after.clientName} (${clientId})`);
   console.log(`  Revision: ${result.before.revision} -> ${result.after.revision}`);
   console.log(`  Scopes: ${result.after.scopes.join(' ') || '<none>'}`);
-  console.log(`  Write source: ${result.after.sourceId}`);
-  console.log(`  Federated reads: ${result.after.federatedRead.join(', ')}`);
+  console.log(`  Write source: ${result.after.sourcesNone ? 'none (every read and write refused)' : result.after.sourceId}`);
+  console.log(`  Federated reads: ${result.after.federatedRead.join(', ') || '<none>'}`);
+  console.log(`  Takes holders: ${result.after.takesHolders === null ? 'world (default)' : result.after.takesHolders.join(', ') || 'none (every take hidden)'}`);
   console.log(`  Tool surface: ${result.after.surface ?? '<server default>'}`);
   console.log(`  Delegated spending: ${result.after.budgetUsdPerDay === null ? 'unlimited' : '$' + result.after.budgetUsdPerDay + '/day'}`);
   console.log('Restrictions apply on the next request. Added scopes require a new access token; the client secret is unchanged.');
@@ -926,6 +928,64 @@ export interface ClientRow {
   surface_set_by: string | null;
   source_id: string | null;
   federated_read: string[] | null;
+  /** The operation snapshot: NULL = none stored; absent = the brain predates the column. */
+  allowed_operations?: string[] | null;
+  /** Soft-revoke stamp (`auth` lifecycle revoke); absent on schemas without it. */
+  deleted_at?: string | Date | null;
+}
+
+/** The operation-snapshot axis of one client, as `auth clients` reports it. */
+export interface ClientOperationsView {
+  /** 'all' = no snapshot (SQL NULL); [] = deny-all; a list = pinned; 'unavailable' = old schema. */
+  operations: 'all' | string[] | 'unavailable';
+  operations_state: 'all' | 'none' | 'list' | 'unavailable';
+  /** true only for 'all': operations later upgrades add are reachable without a regrant. */
+  includes_future_operations: boolean | null;
+  revoked: boolean;
+  /** The re-pin command for a live client with no snapshot. */
+  fix?: RenderedAction;
+}
+
+/**
+ * Four distinct operation states (#6008 visibility): SQL NULL is `all` on the
+ * operation-snapshot axis only (scopes, surface and source limits still
+ * apply); an empty array refuses every operation; a list is pinned; a schema
+ * without the column is `unavailable`, never guessed.
+ */
+export function clientOperationsView(row: ClientRow): ClientOperationsView {
+  const revoked = row.deleted_at != null;
+  const ops = row.allowed_operations;
+  if (ops === undefined) return { operations: 'unavailable', operations_state: 'unavailable', includes_future_operations: null, revoked };
+  if (ops === null) {
+    const view: ClientOperationsView = { operations: 'all', operations_state: 'all', includes_future_operations: true, revoked };
+    if (revoked) return view;
+    view.fix = renderAction({
+      argv: ['gbrain', 'auth', 'rescope', '--client', row.client_id, '--operations', '<OPERATIONS>'],
+      inputs: [{ name: 'OPERATIONS', how: `Ask the user which operations this client should keep (comma-separated, e.g. search,get_page,remember), or pin a profile instead: gbrain auth rescope --client ${row.client_id} --profile <profile> (${GRANT_PROFILES.join(', ')}).` }],
+      consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'This client has no operation snapshot, so it reaches every operation its scopes and surface allow, including operations later upgrades add. A pinned list or profile keeps new operations from arriving without a regrant.',
+      verify: { argv: ['gbrain', 'auth', 'clients', '--json'] },
+    }, cliRenderContext());
+    return view;
+  }
+  return { operations: ops, operations_state: ops.length === 0 ? 'none' : 'list', includes_future_operations: false, revoked };
+}
+
+/** Text lines for the operation axis (and revocation) of one client. */
+export function clientOperationsLines(row: ClientRow): string[] {
+  const view = clientOperationsView(row);
+  const lines: string[] = [];
+  if (view.revoked) lines.push(`  revoked: ${row.deleted_at instanceof Date ? row.deleted_at.toISOString() : String(row.deleted_at)} (credentials no longer work)`);
+  if (view.operations_state === 'unavailable') lines.push('  operations: unavailable (this brain predates per-client operation snapshots)');
+  else if (view.operations_state === 'none') lines.push('  operations: none (deny-all snapshot)');
+  else if (view.operations_state === 'list') {
+    const ops = view.operations as string[];
+    lines.push(`  operations: ${ops.length} pinned (${ops.slice(0, 8).join(', ')}${ops.length > 8 ? ', ...' : ''})`);
+  } else {
+    lines.push('  operations: all (no snapshot; includes operations later upgrades add; scopes, surface and source limits still apply)');
+    if (view.fix) lines.push(`    re-pin: gbrain auth rescope --client ${row.client_id} --operations <op,...>  (or --profile <profile>)`);
+  }
+  return lines;
 }
 
 /**
@@ -943,8 +1003,17 @@ export async function listClientRows(engine: BrainEngine): Promise<ClientRow[]> 
   // 42703 by code; the column list covers message-only (code-less) variants.
   const isSchemaShapeError = (e: unknown): boolean =>
     isUndefinedTableError(e) ||
-    ['surface', 'surface_set_by', 'source_id', 'federated_read']
+    ['allowed_operations', 'deleted_at', 'surface', 'surface_set_by', 'source_id', 'federated_read']
       .some(col => isUndefinedColumnError(e, col));
+  try {
+    return await engine.executeRaw<ClientRow>(
+      `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read, allowed_operations, deleted_at
+         FROM oauth_clients ORDER BY client_name, client_id`,
+    );
+  } catch (e) {
+    // Brain predates the operation-snapshot columns: operations read `unavailable`.
+    if (!isSchemaShapeError(e)) throw e;
+  }
   try {
     return await engine.executeRaw<ClientRow>(
       `SELECT client_id, client_name, scope, surface, surface_set_by, source_id, federated_read
@@ -1004,6 +1073,8 @@ async function clientsCmd(args: string[]) {
             surface_set_by: c.surface_set_by,
             source_id: c.source_id,
             federated_read: c.federated_read,
+            ...clientOperationsView(c),
+            revoked_at: c.deleted_at ?? null,
             usage: usageByToken.get(c.client_id) ?? null,
           })),
           // Legacy bearer tokens seen in the window (no oauth_clients row).
@@ -1026,6 +1097,7 @@ async function clientsCmd(args: string[]) {
           : '<server/config resolution>';
         console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
         console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}`);
+        for (const line of clientOperationsLines(c)) console.log(line);
         if (parsed.usage) {
           if (u) {
             const auto = u.likely_automation ? '    [automation-shaped: >90% context_pack/delta]' : '';
@@ -1122,10 +1194,13 @@ Usage:
                                                           grants. A bare name matching both a token and a
                                                           client refuses; pass --token or --client.
      --sources <id1,id2,...|none>                         Source grant (first = write source; 'none' = deny-all,
-                                                          tokens only — revoke a client with revoke-client)
+                                                          scopes and secret unchanged)
      --read-sources <id1,id2,...>                         Client only: a read set that differs from --sources
-     --takes-holders <h1,h2,...|none>                     Token only: takes-holder allow-list ('none' = deny-all)
-     --operations <op1,op2,...|none>                      Operation snapshot ('none' = deny-all)
+     --takes-holders <h1,h2,...|none>                     Takes-holder allow-list (default world; 'none' = deny-all)
+     --operations <op1,op2,...|none|all>                  Operation snapshot ('none' = deny-all). Client only:
+                                                          'all' = no snapshot: every operation the scopes and the
+                                                          surface allow, including ones later upgrades add; clears
+                                                          the profile (tokens: --reset-default operations)
      --scopes <read,write,...>                            Replace the scopes
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;
@@ -1177,7 +1252,9 @@ Usage:
                                                           so server/config resolution applies again). Always
                                                           bounded by the server's --surface ceiling.
   gbrain auth clients [--usage] [--days N] [--json]       List OAuth clients with scopes, write source, federated
-                                                          reads + tool surface. --usage
+                                                          reads, tool surface + operation snapshot ('all' = no
+                                                          snapshot, includes future operations; re-pin with
+                                                          auth rescope --client <id> --operations|--profile). --usage
                                                           joins per-client op-call counts, top ops, and last-seen
                                                           from mcp_request_log (default 30d window; HTTP clients
                                                           only — stdio use is not logged). Automation-shaped

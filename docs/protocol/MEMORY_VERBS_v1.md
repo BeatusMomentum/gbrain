@@ -49,7 +49,7 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs     # the memory-verb surface
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter   # the verbs plus page tools
 gbrain remember "gbrain install check" --provenance install-check
 gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
@@ -64,21 +64,21 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter
 ```
 
 **opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter
 ```
 
 **OpenClaw / any stdio MCP host** — register the server command
-`gbrain serve --surface verbs`. Remote brains: `gbrain serve --http` on the
+`gbrain serve --surface starter`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
 each client.
 
@@ -90,10 +90,15 @@ verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and 
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
 (pinned by test) — starter extends the ladder ABOVE verbs and never changes
-verb semantics. `--surface full` (the default) exposes every operation,
-verbs included. Why default full: verbs/starter are for agents and
-quickstarts; full preserves existing advanced tooling. Persist a default
-with `gbrain config set mcp_surface verbs`.
+verb semantics. `--surface full` (the default for a bare `serve`) exposes
+every operation, verbs included. Every stdio registration gbrain writes
+(`gbrain init`'s quickstart, readiness, `gbrain bootstrap hooks`, the plugins)
+pins `starter`, because `verbs` lacks the page reads and writes bootstrap's
+instructions use and `full` puts the whole catalogue in front of the model.
+Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
+On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
+session widens itself with `request_tools {"surface":"full"}` (see
+`docs/operations/mcp-surface-runbook.md`).
 
 **Ceiling semantics (OAuth HTTP transport):** the server-resolved surface
 is a CEILING, not the final answer. Each request resolves
@@ -287,8 +292,11 @@ Optional response fields; clients must ignore any they do not know.
 One known person/company/project card. NEVER errors on a miss.
 
 Resolution (frozen precedence): alias > exact slug > exact title > slug-suffix.
-When multiple pages share an exact title, canonical entity types (`person`,
-`company`, `organization`, `entity`) outrank note/conversation containers;
+A derived alias (a title subject such as `X` in `CRM record: X`, or a code the
+page declares) never answers for another live page's exact title. When
+multiple pages share an exact title, linkable entity types (the source pack's
+entity types, at least `person`, `company`, `organization`, `entity`) outrank
+note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
@@ -301,6 +309,29 @@ backlink_count, active_fact_count }`.
 
 - `summary` passes the same privacy fences as `get_page` (takes + private
   facts stripped); remote callers never see private facts in the card.
+
+#### entity references and coverage (additive)
+
+The `entity` verb adds three optional card fields (ambient callers,
+`context_pack` and `delta`, do not compute them):
+
+- `referenced_by_count` — distinct pages with any inbound link to the entity,
+  every link source included (`backlink_count` keeps excluding mentions).
+- `referenced_by[]` — those pages grouped by pack-canonical type:
+  `{ canonical_type, total, rows[], next? }`, groups ordered by their newest
+  row. Each row: `{ slug, title, type, canonical_type, date, date_source,
+  preview }`; `date` is `COALESCE(effective_date, updated_at)`, rows newest
+  first, at most 10 per group and 50 per card. `preview` is the first 160
+  characters of body text with private fences stripped; it is not evidence.
+  A truncated group's `next` is `{ tool: "get_backlinks", arguments: { slug,
+  source_id, type, group: "page", limit, cursor } }` and returns exactly the
+  rest of the group; on a verbs-only connection it carries
+  `requires_surface: "starter"`.
+- `coverage` — `{ state, pending_pages, last_pass_at, degraded? }` with
+  `state` one of `complete`, `pending`, `disabled`, `type_not_linkable`,
+  `failed`. A miss carries `coverage` at the top level. Any state but
+  `complete` sets `degraded: true` and adds a `[gbrain notice mention_index]`
+  block. Coverage means recognized names within the caller's source.
 - `open_threads` (best-effort in v1): active commitment-kind facts + timeline
   entries from the last 90 days, capped at 3.
 
@@ -325,7 +356,7 @@ pending-decision loops — the ADDITIVE-FOREVER optional fields disambiguate:
 All five are absent on threads not backed by a loop row and on servers that
 do not implement them; a server that omits them still certifies. Same propagation to the
 per-entity cards and top-level `open_threads` of `context_pack`.
-- `edges`: top ~10 typed edges, mentions excluded, out-edges first.
+- `edges`: top ~10 typed edges, mentions excluded, out-edges first, live relationships first. Additive fields: `status` (`live`, `ended`, `ended_unknown_date`, `event`, …), `since` / `until` (latest stint). `relationship_note` (additive) summarizes current and ended relationships and flags a summary that still names an ended one ([temporal edges](../guides/temporal-edges.md)).
 - The p99 < 100ms promise is op-layer latency (transport excluded), CI-gated
   on a 20K-page corpus. 200K validation recipe below.
 
@@ -376,6 +407,15 @@ mask the misconfiguration forever. Refusals parse as `not_json` (coarse on
 purpose, no dedicated status); a `max_tokens`-cut envelope parses as
 `output_truncated` (warning `LLM_OUTPUT_TRUNCATED`) so a too-small output
 budget is distinguishable from malformed model output.
+
+#### Answer feedback fields (additive)
+
+`recall` (when its `query` arm searched pages on the hybrid path) and
+`synthesize` add `answer_id` (`ans_…`) and `feedback: { rateable: true, how_to_rate? }`
+when the caller may change this brain's shared ranking and retrieval feedback is
+on. Callers that cannot rate see no new fields. Pass the id to the `rate_answer`
+operation to rate how useful the answer's evidence was; see
+[retrieval feedback](../guides/retrieval-feedback.md).
 
 ### forget(id, reason?, request_id?) — write
 
@@ -542,7 +582,7 @@ degraded_reason?, budget_tokens?, budget_used?, dropped_count? }`. `text` is the
 pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
 rendered from the packed sets and never exceeds the declared budget.
 
-### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
+### delta(since?, since_slug?, cursor?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 
 "What changed since T" for heartbeats — pages updated after
 the cursor (oldest first) + facts recorded after the cursor + open-thread
@@ -559,16 +599,50 @@ namespaced by their auth client id, auth-less remotes share the `'remote'`
 sentinel, and `'local'` is RESERVED for the trusted CLI/hook lane, so a remote
 harness can never read or advance the local lane's cursor.
 
-Delivery is at-least-once via a **keyset cursor `(updated_at, slug)`**: a cluster
-of pages sharing one `updated_at` (bulk syncs stamp identical timestamps) pages
-deterministically by slug, so a >fetch-limit cluster drains across wakes instead
-of livelocking. Stateless callers resume by passing the response's
-`next_cursor.since` + `next_cursor.slug` back as `since` + `since_slug`;
-`session_id` callers get this automatically.
+Delivery is at-least-once **per arm**. Pages page by the keyset
+`(updated_at, slug)`, facts by `(created_at, id)`, both at column (microsecond)
+precision, each arm with its own cursor: a cluster sharing one timestamp (bulk
+syncs stamp identical timestamps) pages deterministically, so a >fetch-limit
+cluster drains across wakes instead of livelocking. **No-advance rule:** each
+arm advances through the prefix it delivered and no further; an arm whose read
+threw or did not finish before a deadline does not advance; neither arm
+advances past `now() - 2 s` (rows from a transaction that commits later than
+that lag can be passed by an empty wake; this is the documented bound).
+Duplicate facts collapse to their newest row, and the facts cursor is computed
+from the raw rows, so a duplicate cluster split by a budget cut loses nothing.
+Stateless callers resume by passing `next_cursor.cursor` back as `cursor`
+(exact, both arms); `session_id` callers get this automatically. Explicit
+overrides replace whole tuples: `since` without `since_slug` reads strictly
+after `since` on both arms, never with the session's stored slug.
+
+**Legacy cursor.** `next_cursor.since` + `next_cursor.slug` (passed back as
+`since` + `since_slug`) keep working and are conservative: they do not move
+while any arm failed, and they stay strictly before the oldest undelivered fact
+(the slug resets to `''` whenever `since` was clamped), so an older client may
+re-see pages but never skips facts. A legacy caller that reaches more
+undelivered facts at one timestamp than the fetch limit gets
+`delta_cursor_upgrade_required` with the same call using `cursor` as its fix.
+
+**Failure is not `has_more`.** `has_more` means more content is waiting.
+`degraded_reason` lists what did not complete, comma-joined: `deadline`,
+`pages`, `facts`, `threads` (only when the thread builder throws; threads are
+best-effort and follow the pages' time cursor), `session_state` (the session
+row could not be written; `next_cursor` is the stateless continuation). Every
+degraded response carries a `delta_incomplete` notice (kind `degraded`) whose
+fix retries the same call after about 30 seconds (`fix.next: wait`); on the
+third consecutive incomplete wake of one session it becomes `report`. A
+`budget_tokens` too small for even one waiting item gets the same notice code
+with a fix naming the budget that fits. A session whose state cannot be read is
+refused with `unavailable` (`reason: session_state`), never re-initialized at
+now; a first wake (no row, including a garbage-collected one) gets an
+`empty_retrieval` info notice explaining how to replay earlier changes.
 
 Response: `{ protocol_version, since, pages[], facts[], threads[], text,
-has_more, next_cursor: { since, slug }, degraded_reason?, budget_tokens?,
-budget_used?, dropped_count? }`. `budget_tokens` applies to pages and facts
+has_more, next_cursor: { since, slug, cursor }, cursor_arms, degraded_reason?,
+budget_tokens?, budget_used?, dropped_count? }`. Each fact carries its `id` (the
+replay dedupe key); `cursor_arms` reports each arm's start and next keyset.
+`since` and the timestamps inside `cursor` must fall in 0001-01-01 to
+9999-12-31 on the parsed UTC value (`invalid_params` otherwise). `budget_tokens` applies to pages and facts
 (pages pack first, then facts) — each item costs its rendered line and the
 envelope + section headers are reserved first, so `text` (rendered from the
 packed sets) fits the declared budget. **Threads are never truncated**: every
@@ -576,9 +650,9 @@ open-thread event after `since` is delivered and its line is reserved ahead of
 pages and facts, so `dropped_count` / `has_more` count only pages and facts.
 If the envelope + headers + threads alone exceed `budget_tokens`, all threads
 are still returned and `budget_used` (the token estimate of `text`) reports the
-real rendered size, which then exceeds the budget. Cursor semantics are the v1
-page keyset alone — facts and threads never move `next_cursor`. `since` is
-always normalized ISO (never the raw input string).
+real rendered size, which then exceeds the budget. `since` is always
+normalized ISO (never the raw input string). Replay recipe:
+[ambient recall guide](../guides/ambient-recall.md#replay-after-a-degraded-wake).
 
 ## Latency classes (per verb)
 

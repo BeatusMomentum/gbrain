@@ -5,6 +5,7 @@
  */
 import { type HybridRequest, applyIdentityBoosts, emitHybridMeta } from './request.ts';
 import type { LexicalArms } from './arms.ts';
+import { applyFeedbackStage } from '../feedback-boost.ts';
 import { type PostFusionOpts, RRF_K, rrfFusionWeighted, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions } from '../hybrid.ts';
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import type { SearchResult } from '../../types.ts';
@@ -46,6 +47,7 @@ export async function searchWithoutEmbeddings(
     await runPostFusionStages(engine, noEmbedResults, postFusionOpts);
     await applyIdentityBoosts(req, noEmbedResults);
     noEmbedResults.sort((a, b) => b.score - a.score);
+    noEmbedResults = await applyFeedbackStage(engine, noEmbedResults, { reranked: false });
   }
   // T3/T4 — alias hop + evidence stamp even without an embedding provider
   // (the named-thing fix is most valuable exactly when vector is unavailable).
@@ -64,7 +66,7 @@ export async function searchWithoutEmbeddings(
   if (relationalList.length > 0) {
     const r = ensureRelationalEvidenceSlot(noEmbedGated, relationalList, limit, offset, {
       cosineFloor: resolvedMode.evidence_cosine_floor,
-    });
+    }, resolvedMode.relational_chain_slots);
     noEmbedPool = r.pool;
     noEmbedRelSlot = r.decision;
   }
@@ -149,6 +151,7 @@ export async function searchVectorFallback(
     await runPostFusionStages(engine, fallbackResults, postFusionOpts);
     await applyIdentityBoosts(req, fallbackResults);
     fallbackResults.sort((a, b) => b.score - a.score);
+    fallbackResults = await applyFeedbackStage(engine, fallbackResults, { reranked: false });
   }
   const kwPreExact = await applyAliasHop(engine, dedupResults(fallbackResults), query, aliasHopOpts);
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
@@ -156,7 +159,16 @@ export async function searchVectorFallback(
   stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
   // System One S3 evidence gate (no-op when the slot is off), at the fused path's position.
   const kwGated = await applyEvidenceGate(req.decide, query, kwHopped);
-  const kwSliced = kwGated.slice(offset, offset + limit);
+  // #3995 — the same guaranteed page-1 relational evidence as the other two
+  // return paths: a vector failure must not drop a fired arm's answer.
+  let kwPool = kwGated;
+  let kwRelSlot: RelationalEvidenceSlotDecision | undefined;
+  if (relationalList.length > 0) {
+    const r = ensureRelationalEvidenceSlot(kwGated, relationalList, limit, offset, { cosineFloor: resolvedMode.evidence_cosine_floor }, resolvedMode.relational_chain_slots);
+    kwPool = r.pool;
+    kwRelSlot = r.decision;
+  }
+  const kwSliced = kwPool.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
   const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
   await stampContentFlags(engine, kwBudgeted, opts);
@@ -181,6 +193,7 @@ export async function searchVectorFallback(
     ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
       ? { token_budget: kwBudgetMeta }
       : {}),
+    ...(kwRelSlot ? { relational_evidence_slot: kwRelSlot } : {}),
   });
   return kwBudgeted;
 }

@@ -25,9 +25,9 @@ const workflow = safeLoad(readFileSync(join(import.meta.dir, '../../.github/work
 const suites = [
   'test/persistence-publication-native.serial.test.ts',
   'test/persistence-git-publication.test.ts',
-  'test/persistence-sync-origin-native.serial.test.ts',
+  'test/persistence-sync-origin-native.test.ts',
   'test/backup-portability-native.serial.test.ts',
-  'test/export-publication-native.serial.test.ts',
+  'test/export-publication-native.test.ts',
   'test/native-export-publication.test.ts',
 ];
 
@@ -205,19 +205,19 @@ describe('data-safety native CI coverage', () => {
     expect(step!.run!.trim().split('\n')).toEqual([
       ': "${DATABASE_URL:?Data-safety tests require the explicit test database}"',
       'bun --no-env-file test --timeout=180000 test/persistence-publication-native.serial.test.ts',
-      'bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.serial.test.ts',
+      'bun --no-env-file test --timeout=180000 test/persistence-sync-origin-native.test.ts',
       'bun --no-env-file test --timeout=180000 test/persistence-sync-options.serial.test.ts',
       'bun --no-env-file test --timeout=180000 test/persistence-sync-company.serial.test.ts',
     ]);
   });
 
-  test('pull requests run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
+  test('pull requests and merge-queue runs run a 2,500-write persistence soak while master keeps the full 10,000-write gate', () => {
     const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
       jobs: { invariants: { steps: Step[] } };
     };
     const step = persistence.jobs.invariants.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
     expect(step).toBeDefined();
-    expect(step!.env?.SOAK_OPERATIONS).toBe("${{ github.event_name == 'pull_request' && '2500' || '10000' }}");
+    expect(step!.env?.SOAK_OPERATIONS).toBe("${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '2500' || '10000' }}");
     for (const operations of ['2500', '10000']) {
       const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
         bun() { printf '%s\\n' "$@"; }
@@ -226,8 +226,25 @@ describe('data-safety native CI coverage', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout.toString().trim().split('\n')).toEqual([
         '--no-env-file', 'scripts/persistence/validate.ts', '--engine=pglite',
-        `--operations=${operations}`, '--manifest=.context/persistence-manifest.json',
+        `--operations=${operations}`, '--robot-seconds=0', '--manifest=.context/persistence-manifest.json',
       ]);
     }
+  });
+
+  test('the crash robot runs beside the soak: 150 s on pull requests, 600 s elsewhere, Postgres through PgBouncer', () => {
+    const persistence = safeLoad(readFileSync(join(import.meta.dir, '../../.github/workflows/persistence-validation.yml'), 'utf8')) as {
+      jobs: { 'crash-robot': { steps: Step[]; services: Record<string, { env?: Record<string, string> }> } };
+    };
+    const job = persistence.jobs['crash-robot'];
+    expect(job.services.pgbouncer?.env?.POOL_MODE).toBe('transaction');
+    const step = job.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
+    expect(step?.env?.ROBOT_SECONDS).toBe("${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '150' || '600' }}");
+    expect(step?.env?.GBRAIN_PGBOUNCER_URL).toContain(':55433/');
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
+      bun() { printf '%s\\n' "$@"; }
+      ${step!.run!.replaceAll('${{ matrix.engine }}', 'postgres')}
+    `], { env: { PATH: process.env.PATH ?? '', ROBOT_SECONDS: '150' } });
+    expect(result.stdout.toString().trim().split('\n')).toEqual(['--no-env-file', 'scripts/persistence/validate.ts', '--engine=postgres',
+      '--schedules=0', '--operations=0', '--no-crashes', '--robot-seconds=150', '--manifest=.context/persistence-robot.json']);
   });
 });

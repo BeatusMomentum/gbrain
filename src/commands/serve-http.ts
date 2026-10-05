@@ -15,7 +15,7 @@
  * is re-exported below.
  */
 
-import { listenOrRefuse } from './serve-http-listen.ts';
+import { listenOrRefuse, type AdoptableServer } from './serve-http-listen.ts';
 import express from 'express';
 import type { Socket } from 'net';
 import type { Request, RequestHandler, CookieOptions } from 'express';
@@ -404,6 +404,8 @@ interface ServeHttpOptions {
    * captured to a non-interactive log and accept the leak.
    */
   printAdminToken?: boolean;
+  /** A status-only serve's bound listener: recovery swaps its handler to this app instead of binding (serve-http-listen.ts). */
+  adoptServer?: AdoptableServer;
 }
 
 /**
@@ -848,7 +850,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
-  const httpServer = await listenOrRefuse(app, port, bind);
+  const httpServer = await listenOrRefuse(app, port, bind, options.adoptServer);
   console.error(`
 ╔══════════════════════════════════════════════════════╗
 ║  GBrain MCP Server v${VERSION.padEnd(37)}║
@@ -904,12 +906,17 @@ ${bootstrapFromEnv
   const deregisterIpcCleanup = registerCleanup('resolve-ipc-close', async () => {
     ipcBinding.close();
   });
-  const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', () =>
-    engine.disconnect(),
-  );
+  // Automatic facts drain (Lane D): the resident HTTP serve owns a PGLite brain the way stdio serve does.
+  const { startFactsDrainScheduler } = await import('../core/facts/drain-scheduler.ts');
+  const factsDrain = startFactsDrainScheduler(engine, { owner: 'serve_http', log: (line) => console.error(line) });
+  const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
+    await factsDrain.stop();
+    await engine.disconnect();
+  });
   try {
     await waitForHttpServerLifecycle(httpServer);
   } finally {
+    await factsDrain.stop();
     // Close the IPC listener + reap the socket file on orderly shutdown
     // (abnormal termination goes through the registered cleanup above).
     ipcBinding.close();

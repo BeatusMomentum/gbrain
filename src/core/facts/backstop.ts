@@ -50,6 +50,7 @@ import { decideSingleFact } from './single-prepare.ts';
 import { cosineVerdict, dedupCapturedFacts, withCaptureDrops } from './capture-dedup.ts';
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
 import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 /**
  * Notability-filter vocabulary shared by the durable facts-absorb payload
@@ -301,8 +302,9 @@ export async function runFactsBackstop(
   const { managedPersistenceEnabled } = await import('../persistence/ownership.ts');
   if (await managedPersistenceEnabled(ctx.engine)) {
     if (mode !== 'inline') {
-      const { OperationError } = await import('../ops/contract.ts');
-      throw new OperationError('writer_coordinator_required', 'Managed page backstops must use the durable publication outbox.');
+      const { opError } = await import('../ops/contract.ts');
+      throw opError('writer_coordinator_required', 'Managed page backstops must use the durable publication outbox.',
+        `On a managed brain the publication outbox queues facts for ${parsedPage.slug ?? 'a page'}; a direct ${mode} backstop is a gbrain bug in its caller. The page write is unaffected. Report it with gbrain --version.`);
     }
     return { mode: 'inline', ...await runPipeline(parsedPage, ctx, ctx.abortSignal) };
   }
@@ -793,7 +795,7 @@ async function runPipelineBodyInner(
       valid_from: f.valid_from ?? ctx.validFrom,
       context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred),
     };
-    const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
+    const result = await maintenanceTransaction(ctx.engine, tx => tx.insertFact(newFact, { source_id: ctx.sourceId })); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
     if (result.status === 'inserted') inserted += 1;
     else if ((result.status as FactInsertStatus) === 'duplicate') duplicate += 1;
@@ -880,7 +882,7 @@ async function runPipelineBodyInner(
           valid_from: f.valid_from ?? ctx.validFrom,
           context: ctx.sourceSlug ?? input.pageSlug ?? null,
         };
-        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
+        const legacyResult = await maintenanceTransaction(ctx.engine, tx => tx.insertFact(newFact, { source_id: ctx.sourceId })); // gbrain-allow-direct-insert: stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
         fact_ids.push(legacyResult.id);
         if (legacyResult.status === 'inserted') inserted += 1;
         else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
@@ -913,7 +915,7 @@ async function runPipelineBodyInner(
           valid_from: f.valid_from ?? ctx.validFrom,
           context: ctx.sourceSlug ?? input.pageSlug ?? null,
         };
-        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
+        const legacyResult = await maintenanceTransaction(ctx.engine, tx => tx.insertFact(newFact, { source_id: ctx.sourceId })); // gbrain-allow-direct-insert: DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
         fact_ids.push(legacyResult.id);
         if (legacyResult.status === 'inserted') inserted += 1;
         else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;

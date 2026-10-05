@@ -18,6 +18,7 @@ import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, upgradeRecoveryStaging } from './staging.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { advanceEffectCursor } from './effect-journal.ts';
+import { faultPoint } from './fault-points.ts';
 
 const effectStatusFix = (effect: Pick<PersistenceEffect, 'source_id'>): Action => readFix(
   `Shows source ${effect.source_id}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
@@ -25,6 +26,9 @@ const effectStatusFix = (effect: Pick<PersistenceEffect, 'source_id'>): Action =
 
 export async function guardEffectSource(tx: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<WorktreeBinding | null> {
   await declarePersistenceProtocol(tx);
+  // Lock order is brain row, then source row: the effect-row protocol trigger share-locks the brain row,
+  // and a worktree claim holds the brain row while it locks the source (#6007 deadlock).
+  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
   if (effect.worktree_id) {
     const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [effect.worktree_id]);
     if (!owner || owner.owner_host_id !== hostId || owner.state !== 'active') throw opError('owner_unavailable', 'The effect requires its active canonical owner.',
@@ -89,6 +93,7 @@ async function clearRecovery(tx: BrainEngine, effect: PersistenceEffect): Promis
   if (effect.recovery_bytes) for (const key of ['brain', `worktree:${effect.worktree_id}`]) {
     await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(effect.recovery_bytes)]);
   }
+  await faultPoint('effect_recovery:before_clear', { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
   await tx.executeRaw('UPDATE persistence_effects SET recovery=NULL,recovery_bytes=0 WHERE id=$1', [effect.id]);
 }
 

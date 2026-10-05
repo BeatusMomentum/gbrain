@@ -1,3 +1,6 @@
+import { searchAnswerFeedback } from '../feedback/record.ts';
+import type { RelationalPlanMeta } from '../search/relational-recall.ts';
+import type { Notice } from '../agent-output.ts';
 import { readHolders } from './context.ts';
 /**
  * Search operation cluster (search + query) — pure move from operations.ts
@@ -35,10 +38,11 @@ import { probeProjectionReadiness } from '../search/projection-readiness.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
+import { declaredNames, titleName } from '../mentions/aliases.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
-import { invalidParam, paramUse } from './op-fix.ts';
+import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   federatedSearchScope,
@@ -106,7 +110,7 @@ const FIELDS_PARAM = {
 const RETURN_UNIT_PARAM = {
   type: 'string' as const,
   enum: ['chunk', 'window', 'section', 'page', 'auto'],
-  description: "chunk, window, section, page or auto (default; whole page for conversations).",
+  description: 'auto (default) returns whole conversations.',
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
@@ -247,10 +251,6 @@ function indexOfName(text: string, word: string, wholeWord: boolean): number {
   return -1;
 }
 
-const ALIAS_DECLARATION = /\b(?:account code|also known as|a\.k\.a\.|aka|short name|ticker|code name)\b\s*[:(]?\s*["\u201c']?([A-Z0-9][A-Za-z0-9&.-]{1,24})/gi;
-/** Every ALIAS_DECLARATION keyword, lowercased: a row containing none of them cannot match the regex. */
-const DECLARATION_KEYWORDS = ['account code', 'also known as', 'a.k.a', 'aka', 'short name', 'ticker', 'code name'];
-
 /**
  * Pages often declare another name for their subject ("Account code: MULI",
  * "also known as ..."), and documents elsewhere use only that name, so a
@@ -264,14 +264,9 @@ export function aliasDeclarations(rows: Array<{ slug: string; title?: string; ch
   const q = queryText.toLowerCase();
   const out = new Map<string, AliasDeclaration>();
   for (const row of rows.slice(0, 10)) {
-    const name = (row.title ?? '').split(':').pop()!.trim();
+    const name = titleName(row.title ?? '');
     if (!name) continue;
-    const text = row.chunk_text ?? '';
-    const lower = text.toLowerCase();
-    if (!DECLARATION_KEYWORDS.some(k => lower.includes(k))) continue;
-    for (const m of text.matchAll(ALIAS_DECLARATION)) {
-      const alias = m[1].replace(/[.,;]+$/, '');
-      if (!/[A-Z0-9]/.test(alias) || alias.toLowerCase() === name.toLowerCase()) continue;
+    for (const alias of declaredNames(row.chunk_text ?? '', name)) {
       const hasName = q.includes(name.toLowerCase());
       const hasAlias = indexOfName(q, alias, true) >= 0;
       if (hasName === hasAlias) continue;
@@ -407,7 +402,7 @@ async function buildRetrievalResponseMeta(
   queryText: string,
   results: unknown[],
   meta: HybridSearchMeta | null,
-  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo } = {},
+  opts: { conceptHint?: boolean; types?: string[]; typeFilterNotice?: string; declarations?: DeclarationMemo; feedbackOp?: 'query' | 'search' } = {},
 ): Promise<Record<string, unknown>> {
   const m = meta as (HybridSearchMeta & { degraded?: unknown[]; retrieved_count?: number }) | null;
   const hint = opts.conceptHint && looksConceptShaped(queryText)
@@ -434,6 +429,8 @@ async function buildRetrievalResponseMeta(
   if (readiness.status !== 'ready') {
     degraded.push({ stage: readiness.status === 'projection_pending' ? 'projection_pending' : 'projection_status_unknown' });
   }
+  const planNotice = relationalPlanNotice(m?.relational_plan);
+  if (planNotice) ctx.emitNotice?.(planNotice);
   return {
     returned_count: results.length,
     retrieved_count: m?.retrieved_count ?? results.length,
@@ -446,6 +443,7 @@ async function buildRetrievalResponseMeta(
       ...(m.decide ? { decide: m.decide } : {}),
       ...(m.rerank ? { rerank: m.rerank } : {}),
       ...(m.answerability ? { answerability: m.answerability } : {}),
+      ...(m.relational_plan ? { relational_plan: m.relational_plan } : {}),
     } : {}),
     ...((m?.degraded !== undefined || degraded.length > 0) ? { degraded } : {}),
     projection_readiness: readiness,
@@ -454,6 +452,7 @@ async function buildRetrievalResponseMeta(
     ...(aliases.length ? { other_names: aliases } : {}),
     ...(heldFiles.length ? { held_files: heldFiles } : {}),
     ...(hint || readiness.hint ? { hint: [hint, readiness.hint].filter(Boolean).join(' ') } : {}),
+    ...(opts.feedbackOp ? await searchAnswerFeedback(ctx, opts.feedbackOp, results as SearchResult[]) : {}),
   };
 }
 
@@ -546,7 +545,7 @@ const search: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Evidence token budget (default 6000).' },
+    token_budget: { type: 'number', description: 'Evidence token cap (default 6000).' },
     // #4415: explicit ranking-axis overrides (the same knobs `query` has had
     // since v0.29.1). The auto-detect banks are English regex, so on a
     // non-English brain the recency/salience stages never fire — these flags
@@ -647,7 +646,7 @@ const search: Operation = {
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap,
-      rows => buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations }));
+      rows => buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search' }));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -668,7 +667,7 @@ const query: Operation = {
     /** v0.27.1: image-similarity search. Path resolved on the CLI side
      *  before the op fires (the op receives raw bytes neither side; the
      *  CLI loads the file, base64-encodes, and passes through `image`). */
-    image: { type: 'string', description: 'Base64 image for image search.' },
+    image: { type: 'string', description: 'Base64 image.' },
     image_mime: { type: 'string', description: 'MIME type of image.' },
     // #4356 — the text/hybrid path no longer hard-defaults this to 20; an
     // omitted OR falsy (0) `limit` resolves from the active search mode's
@@ -694,9 +693,9 @@ const query: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Token cap on the returned evidence.' },
-    expand: { type: 'boolean', description: 'Default true; false skips the expansion LLM call.' },
-    detail: { type: 'string', description: 'low (compiled truth only), medium (default) or high (all chunks).' },
+    token_budget: { type: 'number', description: 'Evidence token cap.' },
+    expand: { type: 'boolean', description: 'Default true; false skips the LLM expansion.' },
+    detail: { type: 'string', description: 'low (compiled truth), medium (default) or high (all chunks).' },
     fields: FIELDS_PARAM,
     mode: { type: 'string', description: 'Local callers only.' },
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
@@ -713,8 +712,8 @@ const query: Operation = {
     source_id: { type: 'string', description: SOURCE_ID_PARAM_DESCRIPTION },
     cross_modal: { type: 'string', enum: ['text', 'image', 'both', 'auto'], description: 'Default auto.' },
     embedding_column: { type: 'string', description: 'Registered embedding column.' },
-    adaptive_return: { type: 'boolean', description: 'true when one specific answer is wanted (fewer rows; never returns empty); omit for breadth.' },
-    autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth. Cuts at the score cliff, unlike adaptive_return.' },
+    adaptive_return: { type: 'boolean', description: 'true when one answer is wanted (fewer rows; never returns empty); omit for breadth.' },
+    autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth, unlike adaptive_return.' },
     relational: { type: 'boolean', description: 'Relationship-graph arm (default on).' },
   },
   handler: async (ctx, p) => {
@@ -1045,7 +1044,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, { ...querySourceScope, excludePrivate, detail }, capturedMeta, snippetCap,
-      async rows => ({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations })), crag }));
+      async rows => ({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query' })), crag }));
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },
@@ -1082,8 +1081,8 @@ const assemble_evidence: Operation = {
     if (!Array.isArray(hits) || hits.some(h => typeof h !== 'object' || h === null
       || typeof (h as Record<string, unknown>).source_id !== 'string' || typeof (h as Record<string, unknown>).slug !== 'string'
       || !Number.isInteger((h as Record<string, unknown>).chunk_id))) {
-      throw opError('invalid_params', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
-        'Pass the source_id, slug and chunk_id of each search hit. Example: {"hits": [{"source_id": "default", "slug": "chat/session-0412", "chunk_id": 8812}], "return_unit": "page"}');
+      throw invalidParam(ctx, 'assemble_evidence', 'hits', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
+        { def: assemble_evidence.params.hits, example: [{ source_id: 'default', slug: 'chat/session-0412', chunk_id: 8812 }] });
     }
     const scope = federatedSearchScope(ctx);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
@@ -1231,3 +1230,27 @@ const cache_stats: Operation = {
 export const searchOperations: Operation[] = [
   search, query, assemble_evidence, search_stats, search_modes, search_tune, cache_stats,
 ];
+
+/**
+ * A multi-relation question whose chain did not produce answers gets a
+ * notice naming why and the next call, so the agent never reads ordinary
+ * results as "the graph has no answer".
+ */
+function relationalPlanNotice(plan: RelationalPlanMeta | undefined): Notice | null {
+  if (!plan || plan.status === 'fired') return null;
+  if (plan.status === 'unsupported') {
+    return { code: 'relational_chain', kind: 'degraded', why: `This question chains relationships in a way the planner does not run (${plan.reason ?? 'unsupported'}), so no graph answer is included; split it into one-relationship questions, or call traverse_graph with explicit hops.` };
+  }
+  if (plan.status === 'anchor_not_found') {
+    const anchor = plan.anchor ?? '';
+    return { code: 'relational_chain', kind: 'degraded', why: `No page matches "${anchor}" in the searched sources, so the relationship chain did not run; the results are ordinary text matches.`,
+      fix: readFix('Find the entity page first, then ask again with its exact name (or call traverse_graph with its slug and explicit hops).', { argv: ['gbrain', 'search', anchor], mcp: { tool: 'search', arguments: { query: anchor } } }) };
+  }
+  if (plan.status === 'truncated') {
+    return { code: 'relational_chain', kind: 'info', why: `The relationship chain hit its ${plan.cap_hit?.cap ?? ''} cap at hop ${plan.cap_hit?.hop ?? '?'}, so lower-ranked answers were dropped; narrow the question or start from a more specific entity.` };
+  }
+  const hop = plan.empty_hop ?? 1;
+  const slug = plan.anchor_slugs?.[0];
+  return { code: 'relational_chain', kind: 'degraded', why: `Hop ${hop} of the relationship chain found no typed links${hop === 1 ? ` from "${plan.anchor ?? ''}"` : ''}; the relationship may only be written as plain mentions. The results are ordinary text matches.`,
+    ...(slug ? { fix: readFix('A depth-1 walk shows what the start page is linked to.', { argv: ['gbrain', 'graph-query', slug, `--${'depth'}`, '1'], mcp: { tool: 'traverse_graph', arguments: { slug, depth: 1 } } }) } : {}) };
+}

@@ -22,6 +22,10 @@ import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
+import { takeHttpBehaviorNotice, takeLocalBehaviorNotice } from '../core/behavior-change-notice.ts';
+import { takeChatFallbackHopNotices } from '../core/ai/fallback-hop-queue.ts';
+import { mcpOnboardingNotices } from '../core/onboard/mcp-onboarding.ts';
+import { takeFactsDrainNotice } from '../core/facts/drain.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import {
@@ -258,6 +262,8 @@ export interface DispatchOpts {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /** The stdio session surface (OperationContext.stdioSurface); its allow-set is the one `allowedOps` mirrors. */
+  stdioSurface?: OperationContext['stdioSurface'];
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
   /** C1: search/query row shape chosen by the transport (OperationContext.resultRows); unset = lean for remote callers. */
@@ -515,7 +521,7 @@ export function unknownToolEnvelope(name: string, opts: DispatchOpts, legacyErro
     .filter(op => !op.localOnly && !op.publishGateKey && (allowedOps ? allowedOps.has(op.name) : true))
     .map(op => op.name);
   const nearest = suggestNearest(name, candidates);
-  const hint = hiddenToolHint(operations.find(o => o.name === name), opts); // F6: owner's stdio pipe only
+  const hint = hiddenToolHint(operations.find(o => o.name === name), opts, dispatchRenderContext(opts).isCallable('request_tools') && opts.stdioSurface?.widenAllowed !== false); // F6: owner's stdio pipe only
   const suggestion = hint?.suggestion ?? (nearest
     ? `Did you mean "${nearest}"?`
     : 'List the tools this connection can call (tools/list) and use one of those names.');
@@ -571,10 +577,31 @@ function admitNotices(notices: Notice[], opts: DispatchOpts): Notice[] {
     const principal = opts.auth?.clientId;
     const transport = opts.transport === 'stdio' ? 'stdio' : opts.remote === false ? 'cli' : 'http';
     return (opts.noticeLedger ?? processNoticeLedger()).admit(notices,
-      { transport, principal, sessionId: opts.sessionId }, mutedNoticeCodes(principal));
+      { transport, principal, sessionId: opts.sessionId }, mutedNoticeCodes(principal ?? (transport === 'stdio' ? 'stdio' : undefined)));
   } catch {
     return notices;
   }
+}
+
+/**
+ * The one-time `behavior_changes` disclosure (stdio: once per brain; HTTP:
+ * once per authenticated client, remote view) and the first
+ * `chat_fallback_hop` of this process (stdio only: it names models). Rides
+ * success and failure results alike. Never throws.
+ */
+async function sessionSafetyNotices(engine: BrainEngine, opts: DispatchOpts, config: OperationContext['config']): Promise<Notice[]> {
+  const out: Notice[] = [];
+  try {
+    if (opts.transport === 'stdio' && opts.remote !== false) {
+      const behavior = await takeLocalBehaviorNotice(engine, 'stdio', { cfg: config ?? null });
+      if (behavior) out.push(behavior);
+      out.push(...takeChatFallbackHopNotices());
+    } else if (opts.transport === 'http') {
+      const behavior = await takeHttpBehaviorNotice(engine, opts.auth?.clientId, { cfg: config ?? null });
+      if (behavior) out.push(behavior);
+    }
+  } catch { /* a notice never breaks a tool call */ }
+  return out;
 }
 
 /** The one error result path: toAgentError → exactly one content block. */
@@ -646,6 +673,7 @@ export function buildOperationContext(
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
+    ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.resultRows ? { resultRows: opts.resultRows } : {}),
     auth: opts.auth,
@@ -851,7 +879,10 @@ export async function dispatchToolCall(
     }
     const result = registration
       ? await withVerifiedLocalRegistration(engine, registration, async verified => {
-        if (!verified.remote) throw new OperationError('permission_denied', 'This registration is not an agent-facing connection.');
+        if (!verified.remote) throw opError('permission_denied', 'This registration is not an agent-facing connection.',
+          `${name} on this stdio connection needs the agent-facing stdio writer registration, which only the user can create in a terminal on the brain host.`,
+          { fix: hostFix(ctx, ['gbrain', 'auth', 'local-writer', 'register', 'stdio', '--dry-run', '--json'],
+            'Previews the agent-facing stdio registration; the user reruns it without --dry-run (with --replace and the complete grant when a registration exists).') });
         return op.handler(ctx, safeParams);
       })
       : await op.handler(ctx, safeParams);
@@ -903,6 +934,9 @@ export async function dispatchToolCall(
     }
     maybeBackupNotice(notices, opts);
     if (opts.transport === 'stdio' && opts.remote !== false) { const up = takePostUpgradeMcpNotice(); if (up) notices.push(up); } // F7
+    if (opts.transport === 'stdio' && opts.remote !== false) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
+    if (opts.transport === 'stdio' && opts.remote !== false) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
+    notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     const out: ToolResult = toolResultWithNotices(result, admitNotices(notices, opts), dispatchRenderContext(opts));
     if (evidenceBlocks.length > 0) out.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
     if (opts.transport === 'stdio') {
@@ -937,6 +971,7 @@ export async function dispatchToolCall(
     // access errors, uncaught throws — goes through the one total normaliser,
     // which redacts raw messages, keeps verbs on their frozen v1 codes, and
     // never tells a mutating op with an unknown outcome to retry.
+    notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     return errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }
