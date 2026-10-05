@@ -36,7 +36,7 @@ cost to replace any cleared vectors.
 
 - The shared page-state writer clears active vectors and their completion stamps atomically on a contextual-to-`none` transition, in both PGLite and PostgreSQL.
 - Projection rebuilds no longer accept an unstamped vector on an explicit `none` page as proof that it came from raw text; they still preserve verified current inputs and grandfather pre-contextual NULL-mode pages.
-- Markdown re-import cannot reinstate an unstamped title vector after the mode switch and label it as raw. Repairing a pre-contextual NULL-mode page into `none` records raw provenance for retained vectors so a later rebuild does not discard them.
+- Markdown re-import cannot reinstate an unstamped title vector after the mode switch or race a concurrent contextual update. Repair and contextual reindex record raw provenance when they move a pre-contextual NULL-mode page to `none`, so a later rebuild does not discard retained raw vectors.
 
 ## [0.60.69.0] - 2026-10-05
 

@@ -823,7 +823,7 @@ export async function importFromContent(
   let persistedProjection: ProjectionSnapshot | null = null;
   const [timeZone, mentionPolicy] = await Promise.all([loadBrainTimeZone(engine), readMentionPolicy(engine).catch(() => null)]);
   const applyPrepared = async (tx: BrainEngine, preimage?: PageSnapshot | null) => {
-    if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing);
+    if (!opts.coordinated) await assertImportBase(tx, slug, txOpts.sourceId, existing, reused.size > 0);
     await assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug);
     if (existing) await tx.createVersion(slug, preimage ? { ...txOpts, preimage } : txOpts);
 

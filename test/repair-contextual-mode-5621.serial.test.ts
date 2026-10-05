@@ -23,6 +23,7 @@ import { runRepair, resolveRepairScope } from '../src/core/repair/core.ts';
 import { contextualModeRepair } from '../src/core/repair/contextual-mode.ts';
 import { checkContextualRetrievalCoverage } from '../src/commands/doctor/checks/calibration.ts';
 import { titleTierCorpusGeneration } from '../src/core/contextual-retrieval-service.ts';
+import { reembedPageWithContextualRetrieval } from '../src/core/contextual-retrieval-service.ts';
 import { __setEmbedTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -107,6 +108,24 @@ for (const kind of testBackends()) describe(`#5621 gbrain repair contextual-mode
     expect(before.every(row => row.v !== null && row.h === null)).toBe(true);
     inputs = [];
     await run(true, false);
+    const stamped = await vectors('off', slug);
+    expect((await page('off', slug)).mode).toBe('none');
+    expect(stamped.map(row => row.v)).toEqual(before.map(row => row.v));
+    expect(stamped.every(row => row.h !== null)).toBe(true);
+    expect(inputs).toHaveLength(0);
+    await queuePageProjection(engine, 'off', slug, 'regression');
+    await rebuildPendingPageProjections(engine, 10);
+    expect(await vectors('off', slug)).toEqual(stamped);
+  });
+
+  test('contextual reindex stamps grandfathered raw vectors when resolving a NULL mode to none', async () => {
+    const slug = 'notes/legacy-raw-reindex';
+    await legacyPage('off', slug, 'Legacy Reindex Example');
+    await engine.executeRaw(`UPDATE content_chunks SET embedding_input_hash=NULL WHERE page_id=(SELECT id FROM pages WHERE source_id='off' AND slug=$1)`, [slug]);
+    const before = await vectors('off', slug);
+    inputs = [];
+    expect(await reembedPageWithContextualRetrieval({ engine, pageSlug: slug, sourceId: 'off', globalMode: 'none' }))
+      .toMatchObject({ kind: 'skipped', reason: 'mode_none' });
     const stamped = await vectors('off', slug);
     expect((await page('off', slug)).mode).toBe('none');
     expect(stamped.map(row => row.v)).toEqual(before.map(row => row.v));
