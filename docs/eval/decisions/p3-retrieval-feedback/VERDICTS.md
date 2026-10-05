@@ -13,10 +13,38 @@ phrasing or seed.
 
 Exploratory rows: λ = 0.2 gives +5.45 on world-v1 and −2.23 on LoCoMo.
 
-LoCoMo fails E1, so feedback cannot ship on by default under any reading. Whether world-v1 passes depends on whether
-"no category drops more than 1.0 point" is part of E1's pass bar or only of the default-on list; that reading is open
-(see the pull request) and decides between shipping feedback off by default (opt-in, explicit ratings) and removing
-the subsystem.
+LoCoMo fails E1, so feedback cannot ship on by default under any reading.
+
+### Decision: feedback ships, off by default
+
+The preregistration did not say whether "no category drops more than 1.0 point" belongs to E1's pass bar. The clause
+appears only in the default-on list:
+
+> **Feedback ON by default** iff all hold: E2 judge mean +1.0 point or more with CI excluding 0 in the frozen and
+> online arms, and the sparse arm still positive; E1 NDCG@10 improves with CI excluding 0 and beats arm (d); the
+> cold-start subgroup loses at most 1.0 NDCG@10 point; no category drops more than 1.0 point; E3 shows zero
+> LongMemEval change, 0 NamedThingBench hit@1 losses and p95 latency +10 ms or less.
+
+and the per-corpus rule uses "E1 passes" without defining it:
+
+> E1 is evaluated **per corpus** (LoCoMo and world-v1 separately); "E1 passes" requires both. If world-v1 passes and
+> LoCoMo fails, feedback ships with `feedback.enabled=false` (opt-in, explicit ratings only, `feedback.implicit=false`).
+> […] If E1 fails on both corpora: the feedback subsystem leaves the pull request.
+
+Two readings follow:
+
+1. **E1's pass bar is the clause labelled E1** ("E1 NDCG@10 improves with CI excluding 0 and beats arm (d)"); the
+   category and cold-start clauses belong only to the default-on list. world-v1 passes, LoCoMo fails, and feedback
+   ships with `feedback.enabled=false`.
+2. **E1's pass bar is every condition in the list that E1 measures**, including cold-start and categories. world-v1's
+   `advises` category drops 2.0 points, so world-v1 fails too, and the subsystem leaves the pull request.
+
+Garry resolved it on 2026-10-05, after the sealed results were known: **reading 1**. Feedback ships with
+`feedback.enabled=false` and `feedback.implicit=false` (opt-in, explicit ratings only). Because the reading was chosen
+after the result, it is recorded here as a decision, not as a preregistered outcome.
+
+Future preregistrations name the experiment each gate clause belongs to (for example "E1 pass bar: …" versus
+"default-on list: …") and define "passes" for every experiment and corpus a later rule refers to.
 
 ## E2: implicit citation signal
 
@@ -27,6 +55,9 @@ gathers (gather Recall@5 identical in every arm).
 ## E3: no-regression guards
 
 LongMemEval-S (all 500 questions, dev by P0's split): identical retrieval lists, mean read latency +0.6 ms.
+NamedThingBench (weights trained on world-v1 dev, 0 hit@1 losses): not run. It was cancelled once feedback became
+opt-in; with no ratings the stage is a no-op (LongMemEval-S above), and an opted-in brain's multiplier stays within
+0.9x to 1.1x.
 
 ## E4: relational triplet scoring — fail
 
