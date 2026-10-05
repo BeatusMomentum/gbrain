@@ -137,6 +137,45 @@ jobs:
           bun --no-env-file test --timeout=180000 --test-name-pattern '^private ACL setup compares hidden and visible PowerShell windows$' test/backup-portability-native.serial.test.ts 2>&1 | tee "$RUNNER_TEMP/backup-console.log"
           grep -Fq 'Windows backup console controls:' "$RUNNER_TEMP/backup-console.log"
 
+  # TEMPORARY forced probe for the green-master wave (reverted in the next commit).
+  windows-backup-console-forced:
+    name: TEMP forced cold-start probe / ${{ matrix.runner }} / ${{ matrix.variant }} / ${{ matrix.rep }}
+    if: ${{ inputs.scope != 'smoke' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-11-arm]
+        variant: [before, after]
+        rep: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Run the console probe on a cold runner under CPU load
+        shell: bash
+        env:
+          GBRAIN_CI_DISABLE_TEST_ENV_FILE: '1'
+          GBRAIN_TEST_BACKUP_CONSOLE_PROBE: '1'
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          if [ "$VARIANT" = before ]; then git show 4022fd7c5:test/backup-portability-native.serial.test.ts > test/backup-portability-native.serial.test.ts; fi
+          grep -c powershellReady test/backup-portability-native.serial.test.ts || true
+          n=$(nproc); echo "cpus=$n hogs=$((n * 2))"
+          for i in $(seq 1 $((n * 2))); do (while :; do :; done) & done
+          set +e
+          bun --no-env-file test --timeout=180000 --test-name-pattern '^private ACL setup compares hidden and visible PowerShell windows$' test/backup-portability-native.serial.test.ts 2>&1 | tee "$RUNNER_TEMP/forced.log"
+          rc=${PIPESTATUS[0]}
+          kill $(jobs -p) 2>/dev/null
+          grep -o 'Windows backup console controls: .*' "$RUNNER_TEMP/forced.log" || true
+          echo "FORCED_PROBE variant=$VARIANT exit=$rc"
+          exit $rc
+
   windows-backup-dotnet:
     name: Windows ACL API probe / ${{ matrix.runner }} / Bun ${{ matrix.bun }}
     if: ${{ inputs.scope != 'smoke' }}
