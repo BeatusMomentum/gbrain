@@ -174,3 +174,6 @@ higher λ. That is why E1 is judged per corpus above. Raw summaries: [`dev/`](de
 ---
 
 Custodian edits (dated, with reason) go below this line.
+
+2026-10-05: E5 ran (decision `p3-e5-heldout-2026-10-05`) and failed; per the rule above, `dream.single_value.mode`
+defaults to `propose`. Results and cause: [`VERDICTS.md`](VERDICTS.md#e5-declared-single-value-relations--fail).

@@ -73,9 +73,33 @@ templates miss most rewordings. Any ranking change that acts on the relational a
 capped by how often the parser recognizes the question. Measuring the parser's recall on held-out phrasings, and
 widening it, is a prerequisite for re-testing relational ranking ideas.
 
-## E5: declared single-value relations — pending
+## E5: declared single-value relations — fail
 
-Preregistered on 2026-10-05 before any cell ran (see the E5 entry in [`PREREGISTRATION.md`](PREREGISTRATION.md)):
-P1's temporal-edges set C with a test pack declaring `works_at` single-valued; 0 wrong closures, every undated or
-same-date conflict left open, no as-of regression. Until the verdict is recorded, `dream.single_value.mode` acts only
-on packs that declare `cardinality`, and no bundled pack does.
+Custodian decision `p3-e5-heldout-2026-10-05`, build `bd700323e`, P1's temporal-edges phrasing set C, seeds 11, 13 and
+17, with a test pack declaring `works_at` `cardinality: one_per_from`; no model calls ($0).
+
+| Gate | Off → on | Bar | Result |
+|---|---|---|---|
+| Wrong closures | 3 of 3 applied closures wrong (seed 11: 0, seed 13: 2, seed 17: 1) | 0 | fail |
+| Now-precision | 0.943 → 0.913, Δ −0.029, CI [−0.086, 0] | lower bound ≥ −0.01 | fail |
+| Undated / same-date conflicts left open | none closed | all open | pass |
+| As-of exact rate | 0.678 → 0.678 | no lower | pass |
+| During-F1 | 0.653 → 0.653 | no lower | pass |
+| Traps | 115/115 | ≥ 0.99 | pass |
+| Order invariance | 240/240 | 1 | pass |
+
+Reported only: current-employer recall 0.612 → 0.577, live-edge recall 0.603 → 0.589.
+
+Cause: every wrong closure ended the person's actual current employer (one stint since 2009). The extractor types a
+later advisory line ("Took an advisory role with [X]") as `works_at`, so the chain rule read it as a newer job and
+closed the real one at its date. The rule did what it specifies; the upstream link typing is wrong for that phrasing.
+
+Decision, as preregistered: `dream.single_value.mode` defaults to `propose`. Closures for declared types are recorded
+as proposals (`gbrain edge-proposals list`) and nothing is written to pages until a user accepts one or sets the mode
+to `apply`.
+
+Follow-ups (not in this pull request; each needs a fresh held-out run):
+
+1. Stop advisory phrasing ("took an advisory role with", "advises", "board advisor to") from typing as `works_at` in
+   link extraction.
+2. In the chain rule, skip a successor relationship whose target also has an `advises` edge from the same page.

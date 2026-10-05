@@ -331,7 +331,7 @@ export const SINGLE_VALUE_MODEL = 'schema-pack:cardinality';
 
 async function loadSingleValueMode(engine: BrainEngine): Promise<SingleValueMode> {
   const raw = (await engine.getConfig('dream.single_value.mode'))?.trim().toLowerCase();
-  return raw === 'propose' || raw === 'off' ? raw : 'apply';
+  return raw === 'apply' || raw === 'off' ? raw : 'propose';
 }
 
 /**

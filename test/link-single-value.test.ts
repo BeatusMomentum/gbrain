@@ -137,7 +137,17 @@ describe('declared single-value closures in edge_contradictions', () => {
     expect(await liveWorksAt()).toEqual(['companies/acme-example', 'companies/gadget-co', 'companies/widget-co']);
   });
 
+  test('by default closures are proposals: nothing is written and the relationships stay live', async () => {
+    await engine.executeRaw(`DELETE FROM config WHERE key = 'dream.single_value.mode'`);
+    await seed(OUT_OF_ORDER);
+    const r = await runPhaseEdgeContradictions(engine, { judge: noJudge });
+    expect(r.totals).toMatchObject({ declared_proposed: 2, declared_applied: 0 });
+    expect((await proposals()).map(p => p.status)).toEqual(['proposed', 'proposed']);
+    expect(await liveWorksAt()).toEqual(['companies/acme-example', 'companies/gadget-co', 'companies/widget-co']);
+  });
+
   test('closes the chain with no model, lands as timeline lines, and a rerun changes nothing', async () => {
+    await engine.setConfig('dream.single_value.mode', 'apply');
     await seed(OUT_OF_ORDER);
     expect(await liveWorksAt()).toEqual(['companies/acme-example', 'companies/gadget-co', 'companies/widget-co']);
     const r = await runPhaseEdgeContradictions(engine, { judge: noJudge });
@@ -154,6 +164,7 @@ describe('declared single-value closures in edge_contradictions', () => {
   });
 
   test('a hand-deleted closure line is reverted and never re-applied', async () => {
+    await engine.setConfig('dream.single_value.mode', 'apply');
     await seed(OUT_OF_ORDER);
     await runPhaseEdgeContradictions(engine, { judge: noJudge });
     await seed(OUT_OF_ORDER);

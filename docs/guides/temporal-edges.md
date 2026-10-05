@@ -186,8 +186,9 @@ relationships by their latest dated start and ends each one on the date the next
 started, so an out-of-order import (Acme from January, Widget from March, then Gadget
 from February) ends Acme in February and Gadget in March. Relationships without a dated
 start, and two that start on the same date, stay open and appear in
-`gbrain edge-proposals list`. Closures land as the same reversible timeline lines,
-recorded with model `schema-pack:cardinality`.
+`gbrain edge-proposals list`. Closures are recorded as proposals with model
+`schema-pack:cardinality`; `gbrain edge-proposals accept <id>` writes one as the same
+reversible timeline line.
 
 - Only state relations take `cardinality`: the built-in ones (`works_at`, `advises`, `yc_partner`) and any type the
   pack declares `temporal: state`. `gbrain schema lint` rejects it elsewhere, because only state relations end.
@@ -197,9 +198,11 @@ recorded with model `schema-pack:cardinality`.
   more than one live relationship of a declared type and what the next dream cycle
   closes or leaves open. It writes nothing; run it before activating a pack that adds a
   declaration.
-- `gbrain config set dream.single_value.mode propose` records closures for review
-  instead of applying them; `off` hands declared types back to the model judge. The
-  default is `apply`.
+- `dream.single_value.mode` is `propose` by default: closures wait for review in
+  `gbrain edge-proposals list`. `gbrain config set dream.single_value.mode apply` writes them
+  automatically; `off` hands declared types back to the model judge. Held-out testing found
+  wrong closures when an advisory line ("Took an advisory role with X") was typed as
+  `works_at` and read as a newer job, so review proposals before accepting them.
 - To stop further closures, remove the declaration. `gbrain edge-proposals undo <id>`
   (or deleting the line) reopens a relationship it closed.
 
