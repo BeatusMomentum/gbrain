@@ -12,8 +12,8 @@ const declared = new WeakSet<object>();
  * for the brain row while holding what the topology change waits for, so
  * every protocol declaration takes the brain row FOR SHARE first, in the same
  * statement as its settings (a missing row still declares). Declare before
- * any other row lock; a transaction that needs the brain row FOR UPDATE takes
- * that first and declares after it.
+ * any other row lock. A transaction needing the exclusive brain lock takes it
+ * first and declares after it.
  */
 const BRAIN_SHARE = '(SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain';
 
