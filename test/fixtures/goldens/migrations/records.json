@@ -3046,10 +3046,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "decide_review_proposals",
+        "name": "entity_mention_index",
         "sql": {
-          "length": 1700,
-          "sha256": "8a20d8dac7096056bb53512bcb34316d15d44582b7d9b0f4f6fff3891c9daac3"
+          "length": 2442,
+          "sha256": "c76f74797f3bcc52158c7d8be80ab16bbbd2820d1732203aeaa796f4fec339b6"
         },
         "sqlFor": "absent",
         "transaction": "absent",

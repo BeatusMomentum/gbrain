@@ -699,6 +699,8 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
 
         // #5876: auto_chronicle now defaults on; one-shot [AGENT] cost + opt-out notice, best-effort.
         await (await import('../core/chronicle/upgrade-notice.ts')).printAutoChronicleUpgradeNotice(engine);
+        // Entity mention index: [AGENT] catch-up line while pages are due (best-effort).
+        await (await import('../core/mentions/upgrade-notice.ts')).printMentionIndexUpgradeNotice(engine);
 
         // Temporal typed edges: one-shot [AGENT] notice (live-by-default graph reads + relationship check), best-effort.
         await (await import('../core/temporal-edges-upgrade-notice.ts')).printTemporalEdgesUpgradeNotice(engine);

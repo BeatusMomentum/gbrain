@@ -1398,7 +1398,7 @@ async function runPhaseExtract(
         stale_pages_drained: drained.pagesProcessed,
         stale_links_created: drained.linksCreated,
         stale_timeline_created: drained.timelineCreated,
-        staleRemaining: drained.staleRemaining,
+        staleRemaining: drained.staleRemaining, ...(drained.mentions ? { mention_pages: drained.mentions.pages, mention_links_created: drained.mentions.created, mention_due: drained.mentions.remaining, mention_state: drained.mentions.state } : {}),
       };
     } catch (e) {
       staleDetails = { stale_drain_error: e instanceof Error ? e.message : String(e) };

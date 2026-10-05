@@ -46,9 +46,12 @@ function contractClauses(c: CallablePredicate): string[] {
   } else {
     out.push(`Treat gbrain as the user's shared memory.${c('recall') ? ' Use `recall` before external lookup.' : ''} Preserve the current agent's identity and unrelated instructions.`);
   }
+  // Entity recall: a brief starts from the entity card's referrers, wherever `entity` is served.
+  const brief = c('entity') ? `For a brief on an account, person or company, call \`entity\`, then walk \`referenced_by\`${c('get_backlinks') ? ' or `get_backlinks`' : ''} by type.` : null;
+  if (brief && !any('search', 'query')) out.push(brief);
   if (any('search', 'query')) {
     // Cat 40 (#5932): measured answer-completeness guidance; keep its wording.
-    out.push(`Answering from the brain: a search returns the best-ranked excerpts, not every relevant page, so keep going until the evidence is complete. Run separate searches for separate parts of a question. People and companies appear under several names (abbreviations, codes, nicknames); when a page lists another name, search for that too. For what is true now, prefer the newest governing source: a later correction, handoff or executed change outranks an older record, and drafts, proposals and agent-written notes do not override records.${c('recall') ? ` Facts saved with remember are read back with recall${c('entity') ? ' (or entity)' : ''}, not search.` : ''}`);
+    out.push(`Answering from the brain: a search returns the best-ranked excerpts, not every relevant page, so keep going until the evidence is complete. Run separate searches for separate parts of a question. ${brief ?? 'People and companies appear under several names (abbreviations, codes, nicknames); when a page lists another name, search for that too.'} For what is true now, prefer the newest governing source: a later correction, handoff or executed change outranks an older record, and drafts, proposals and agent-written notes do not override records.${c('recall') ? ` Facts saved with remember are read back with recall${c('entity') ? ' (or entity)' : ''}, not search.` : ''}`);
   }
   if (c('list_skills') && c('get_skill')) {
     out.push(`When the task calls for a procedure or workflow, discover available skills with list_skills using schema_version:2 when supported. Match descriptions and frontmatter triggers to the task, then read the matching skill in full with get_skill using its qualified_id, revision and schema_version:2.${c('get_skill_asset') ? ' Load approved dependencies from that exact revision with get_skill_asset.' : ''} If an older server explicitly rejects version 2, use its documented legacy discovery; an unavailable catalog is not empty.`);
