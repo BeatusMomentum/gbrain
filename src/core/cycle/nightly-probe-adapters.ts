@@ -92,11 +92,12 @@ export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promis
 
 /**
  * argv + RunOpts for the LongMemEval call. The brain-resolved reader rides
- * `--model` and the extractor `RunOpts.extractorModel`; with no routes the
- * call is the pre-#5872 one.
+ * `--model` and the extractor `RunOpts.extractorModel`. `--no-embed-cache`
+ * (C-N5): the cache swaps the gateway's process-global embed transport for
+ * the run, which inside the daemon would also catch every other embed call.
  */
 export function buildLongMemEvalProbeCall(args: LongMemEvalProbeArgs): { argv: string[]; runOpts: RunOpts } {
-  const argv = [args.fixturePath, '--output', args.outputPath];
+  const argv = [args.fixturePath, '--output', args.outputPath, '--no-embed-cache'];
   const runOpts: RunOpts = { searchConfigSnapshot: args.searchConfigSnapshot, exitOnError: false };
   if (args.modelRoutes) {
     argv.push('--model', args.modelRoutes.reader.model);

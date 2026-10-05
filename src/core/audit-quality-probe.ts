@@ -21,7 +21,8 @@ export type QualityProbeOutcome =
   | 'error'
   | 'budget_exceeded'
   | 'rate_limited'
-  | 'no_embedding_key';
+  | 'no_embedding_key'
+  | 'skipped';
 
 /**
  * One non-passing question of a completed batch: its failing dimensions
@@ -93,6 +94,18 @@ export interface QualityProbeAuditEvent {
   chat_calls?: number;
   chat_cost_usd?: number;
   unpriced_chat_calls?: number;
+  /**
+   * Machine reason behind a non-verdict outcome: `fixture_unavailable`
+   * (skipped), `panel_collapsed` (inconclusive: one model held two judge
+   * slots, or fewer than two models judged), or the run budget's
+   * `cost` / `runtime` / `no_pricing` (budget_exceeded).
+   */
+  reason?: string;
+  /** The run-level USD cap over every paid call of the run, and where it came from (`user` or `default`). */
+  cap_usd?: number;
+  cap_source?: string;
+  /** Directory holding the run's batch summary and LongMemEval output, kept for non-pass rows. */
+  receipt_dir?: string;
 }
 
 /** Fields copied onto the row only when the caller set them (rows written before #5506 lack them). */
@@ -109,6 +122,10 @@ const OPTIONAL_EVENT_FIELDS = [
   'chat_calls',
   'chat_cost_usd',
   'unpriced_chat_calls',
+  'reason',
+  'cap_usd',
+  'cap_source',
+  'receipt_dir',
 ] as const satisfies ReadonlyArray<keyof QualityProbeAuditEvent>;
 
 /** ISO-week-rotated filename: `quality-probe-YYYY-Www.jsonl`. Mirrors audit-slug-fallback. */

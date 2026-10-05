@@ -241,6 +241,7 @@ test/models-nightly-probe-routes.serial.test.ts	global-state	global-state: patch
 test/models-per-task-extract-atoms.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/models-probe-max-output-tokens.serial.test.ts	global-state	global-state: binds local servers/ports
 test/native-base-url-fold.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, OPENAI_BASE_URL)
+test/nightly-probe-compiled-binary.serial.test.ts	global-state	global-state: compiles a probe harness with bun build --compile and runs it plus a source-mode copy as subprocesses
 test/oauth-client-setup.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/observational-startup.serial.test.ts	R2	R2: mock.module(../src/cli/commands/repair.ts) replaces modules for every file in the process
 test/openai-latest.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_MODEL_DISCOVERY)

@@ -270,15 +270,36 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
     });
   });
 
-  test('missing fixture → outcome: error', async () => {
+  test('missing fixture → outcome: skipped with reason fixture_unavailable, no model call (#5187)', async () => {
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let longMemEvalCalls = 0;
       const r = await runNightlyQualityProbe(makeDeps({
         resolveRepoRoot: async () => '/this/repo/root/does/not/exist',
+        runLongMemEval: async () => { longMemEvalCalls++; },
       }));
-      expect(r.outcome).toBe('error');
+      expect(r.outcome).toBe('skipped');
+      expect(r.exit_code).toBe(0);
+      expect(longMemEvalCalls).toBe(0);
       const events = await readEvents();
-      expect(events[0].outcome).toBe('error');
-      expect(events[0].detail).toContain('not found');
+      expect(events[0].outcome).toBe('skipped');
+      expect(events[0].reason).toBe('fixture_unavailable');
+      expect(events[0].detail).toContain('the nightly fixture is not readable at /this/repo/root/does/not/exist/test/fixtures/longmemeval-nightly.jsonl');
+      expect(events[0].detail).toContain('gbrain doctor');
+    });
+  });
+
+  test('resolveFixturePath wins over resolveRepoRoot (the embedded fixture, #5187)', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const { NIGHTLY_PROBE_FIXTURES } = await import('../src/core/cycle/nightly-probe-fixtures.ts');
+      let seen = '';
+      const r = await runNightlyQualityProbe(makeDeps({
+        resolveRepoRoot: async () => '/this/repo/root/does/not/exist',
+        resolveFixturePath: () => NIGHTLY_PROBE_FIXTURES.longMemEval,
+        runLongMemEval: async (args) => { seen = args.fixturePath; },
+      }));
+      expect(r.outcome).toBe('pass');
+      expect(seen).toBe(NIGHTLY_PROBE_FIXTURES.longMemEval);
+      expect(readFileSync(seen, 'utf8').trim().split('\n')).toHaveLength(10);
     });
   });
 
@@ -314,6 +335,16 @@ describe('computeNightlyQualityProbeHealthCheck — pure doctor branch coverage'
     expect(check.status).toBe('ok');
     expect(check.message).toMatch(/disabled \(opt-in\)/);
     expect(check.message).toMatch(/gbrain config set autopilot\.nightly_quality_probe\.enabled true/);
+  });
+
+  test('latest run skipped (fixture unavailable) → warn with skipped count and reason, never ok (#5187)', async () => {
+    const { computeNightlyQualityProbeHealthCheck } = await import('../src/commands/doctor.ts');
+    const check = computeNightlyQualityProbeHealthCheck(true, [
+      { outcome: 'skipped', ts: '2026-10-02T03:00:00Z', detail: 'the nightly fixture is not readable at /x.jsonl' },
+    ]);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('skipped=1');
+    expect(check.message).toContain('Latest: skipped at 2026-10-02T03:00:00Z (the nightly fixture is not readable at /x.jsonl)');
   });
 
   test('enabled + no events → ok pending', async () => {
@@ -477,6 +508,10 @@ describe('codex CDX-5 — doctor health: every non-PASS outcome surfaces', () =>
 const SONNET = 'anthropic:claude-sonnet-4-6';
 const OPUS = 'anthropic:claude-opus-4-7';
 const COLLAPSED_PANEL = { judge_models: [SONNET, OPUS, SONNET], panel: { distinct_models: 2, distinct_providers: 1 } };
+const CLI_PANEL = {
+  judge_models: ['claude-cli:claude-opus-5-5', 'claude-cli:claude-sonnet-5', 'claude-cli:claude-haiku-4-5-20251001'],
+  panel: { distinct_models: 3, distinct_providers: 1 },
+};
 const ROUTES = {
   reader: { model: 'claude-cli:claude-opus-5-5', source: 'tier_config' as const },
   extractor: { model: 'claude-cli:claude-sonnet-5', source: 'tier_config' as const },
@@ -497,42 +532,103 @@ function batchStub(summary: CrossModalBatchSummary, exitCode = 1): NightlyProbeD
 }
 
 describe('runNightlyQualityProbe: panel, failures and digest on the audit row (#5506)', () => {
-  test('a FAIL summary writes the judge panel, each failing question and a digest detail', async () => {
+  test('a FAIL summary on a sound panel writes the judge panel, each failing question and a digest detail', async () => {
     const failures = [[6, 7, 6], [5, 8, 6], [5, 8, 5], [6, 7, 5], [6, 8, 6], [5, 7, 6]]
       .map((scores, i) => directnessFailure(`q${i + 1}`, scores));
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
       const r = await runNightlyQualityProbe(makeDeps({
         runCrossModalBatch: batchStub({
           pass_count: 4, fail_count: 6, inconclusive_count: 0, error_count: 0, est_cost_usd: 2.8,
-          verdict: 'fail', total: 10, failures, ...COLLAPSED_PANEL,
+          verdict: 'fail', total: 10, failures, ...CLI_PANEL,
         }),
       }));
       expect(r.outcome).toBe('fail');
       const [event] = await readEvents();
-      expect(event.judge_models).toEqual([SONNET, OPUS, SONNET]);
-      expect(event.distinct_judge_models).toBe(2);
+      expect(event.judge_models).toEqual(CLI_PANEL.judge_models);
+      expect(event.distinct_judge_models).toBe(3);
       expect(event.distinct_judge_providers).toBe(1);
       expect(event.failures).toEqual(failures);
+      expect(event.reason).toBeUndefined();
       expect(event.detail).toBe(
-        '6/10 questions did not pass (directness mean_below_7 x6); judges: 2 distinct models from 1 provider',
+        '6/10 questions did not pass (directness mean_below_7 x6); judges: 3 distinct models from 1 provider',
       );
       expect(event.est_cost_usd).toBe(2.8);
     });
   });
 
-  test('a PASS summary records the panel and no failure list or digest', async () => {
+  test('a sonnet/opus/sonnet panel turns a FAIL into inconclusive with the remedy (#5506, D12)', async () => {
+    const failures = [[6, 7, 6], [5, 8, 6]].map((scores, i) => directnessFailure(`q${i + 1}`, scores));
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
-      await runNightlyQualityProbe(makeDeps({
+      const r = await runNightlyQualityProbe(makeDeps({
+        runCrossModalBatch: batchStub({
+          pass_count: 8, fail_count: 2, inconclusive_count: 0, error_count: 0, est_cost_usd: 2.8,
+          verdict: 'fail', total: 10, failures, ...COLLAPSED_PANEL,
+        }),
+      }));
+      expect(r.outcome).toBe('inconclusive');
+      const [event] = await readEvents();
+      expect(event.outcome).toBe('inconclusive');
+      expect(event.reason).toBe('panel_collapsed');
+      expect(event.judge_models).toEqual([SONNET, OPUS, SONNET]);
+      expect(event.failures).toEqual(failures);
+      expect(event.detail).toBe(
+        `judge panel collapsed: ${SONNET} holds slots A, C, so its votes count more than once. ` +
+        'Set three different judge models: gbrain config set models.eval.cross_modal.slot_a <model> ' +
+        '(and slot_b, slot_c; one provider is enough). ' +
+        'See docs/eval-bench.md#nightly-cross-modal-quality-probe-opt-in-autopilot (batch verdict: fail); ' +
+        '2/10 questions did not pass (directness mean_below_7 x2); judges: 2 distinct models from 1 provider',
+      );
+    });
+  });
+
+  test('a PASS from a collapsed panel is inconclusive, never a pass', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const r = await runNightlyQualityProbe(makeDeps({
         runCrossModalBatch: batchStub({
           pass_count: 10, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 1.8,
           verdict: 'pass', total: 10, ...COLLAPSED_PANEL,
         }, 0),
       }));
+      expect(r.outcome).toBe('inconclusive');
       const [event] = await readEvents();
-      expect(event.outcome).toBe('pass');
+      expect(event.outcome).toBe('inconclusive');
+      expect(event.reason).toBe('panel_collapsed');
       expect(event.judge_models).toEqual([SONNET, OPUS, SONNET]);
       expect(event.failures).toBeUndefined();
+      expect(event.detail).toStartWith(`judge panel collapsed: ${SONNET} holds slots A, C`);
+    });
+  });
+
+  test('only one model judged (two slots silent) is inconclusive', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      const r = await runNightlyQualityProbe(makeDeps({
+        runCrossModalBatch: batchStub({
+          pass_count: 10, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 1.8,
+          verdict: 'pass', total: 10, judge_models: CLI_PANEL.judge_models,
+          panel: { distinct_models: 1, distinct_providers: 1, slot_scored_questions: [10, 0, 0] },
+        }, 0),
+      }));
+      expect(r.outcome).toBe('inconclusive');
+      const [event] = await readEvents();
+      expect(event.reason).toBe('panel_collapsed');
+      expect(event.detail).toStartWith('judge panel collapsed: 1 distinct model judged, so there is no cross-check.');
+    });
+  });
+
+  test('a PASS summary on a sound panel records the panel and no failure list or digest', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      await runNightlyQualityProbe(makeDeps({
+        runCrossModalBatch: batchStub({
+          pass_count: 10, fail_count: 0, inconclusive_count: 0, error_count: 0, est_cost_usd: 1.8,
+          verdict: 'pass', total: 10, ...CLI_PANEL,
+        }, 0),
+      }));
+      const [event] = await readEvents();
+      expect(event.outcome).toBe('pass');
+      expect(event.judge_models).toEqual(CLI_PANEL.judge_models);
+      expect(event.failures).toBeUndefined();
       expect(event.detail).toBeUndefined();
+      expect(event.receipt_dir).toBeUndefined();
     });
   });
 

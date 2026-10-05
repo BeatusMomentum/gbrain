@@ -201,9 +201,8 @@ export interface GBrainConfig {
       /** Enable the nightly probe in the autopilot loop. Defaults to false. */
       enabled?: boolean;
       /**
-       * Value (USD) the probe passes as the cross-modal batch's --max-usd.
-       * Defaults to 5. Not a spend cap: the probe also passes --yes, which
-       * skips that refusal; audit rows record the metered chat_cost_usd.
+       * Run-level cap (USD) over every paid call of one probe run (LongMemEval
+       * and judges). Default 5; a set value is a user cap (unpriced → no_pricing).
        */
       max_usd?: number;
     };
@@ -1412,7 +1411,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.contextual_synopsis',
   'models.chat',
   'models.brainstorm.judge',
-  'models.eval.longmemeval',
+  'models.eval.longmemeval', 'models.eval.cross_modal.slot_a', 'models.eval.cross_modal.slot_b', 'models.eval.cross_modal.slot_c', // #5872 D12 probe judge slots
   'facts.extraction_model',
   // Brain-wide kill switch for fact extraction, read by
   // src/core/facts/extract.ts:isFactsExtractionEnabled and honored by

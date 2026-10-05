@@ -395,7 +395,7 @@ export function computeConversationParserProbeHealthCheck(
     return {
       name,
       status: 'ok',
-      message: 'enabled but no probe events in the last 7 days (next run by autopilot; fixtures require a source-checkout install).',
+      message: 'enabled but no probe events in the last 7 days (next run by autopilot).',
     };
   }
   const bad = events.filter(e => e.outcome !== 'pass');
@@ -502,6 +502,7 @@ export function computeNightlyQualityProbeHealthCheck(
   const bad = events.filter(e => e.outcome !== 'pass');
   const latest = events[events.length - 1]!;
   if (bad.length > 0) {
+    const skipped = events.filter(e => e.outcome === 'skipped').length;
     const counts =
       `pass=${events.filter(e => e.outcome === 'pass').length} ` +
       `fail=${events.filter(e => e.outcome === 'fail').length} ` +
@@ -509,7 +510,8 @@ export function computeNightlyQualityProbeHealthCheck(
       `inconclusive=${events.filter(e => e.outcome === 'inconclusive').length} ` +
       `budget=${events.filter(e => e.outcome === 'budget_exceeded').length} ` +
       `no_embed_key=${events.filter(e => e.outcome === 'no_embedding_key').length} ` +
-      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}`;
+      `rate_limited=${events.filter(e => e.outcome === 'rate_limited').length}` +
+      (skipped > 0 ? ` skipped=${skipped}` : '');
     return {
       name,
       status: 'warn',
