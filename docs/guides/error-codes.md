@@ -763,7 +763,7 @@ More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#de
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A facts-absorb job failed inside the automatic facts drain; it retries with backoff until its attempts run out. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+| A facts-absorb job failed inside the automatic facts drain; it retries with backoff until its attempts run out. | The server failed; this is not a caller mistake. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
 
