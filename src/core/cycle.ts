@@ -1746,7 +1746,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     let purgedDecisionReceipts = 0;
     try { purgedDecisionReceipts = await (await import('./ai/decide/store.ts')).pruneReceiptsForCycle(engine); } catch { /* pre-v179 brain */ }
     let purgedFeedback = { events: 0, weights: 0 };
-    try { purgedFeedback = await (await import('./feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('./feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v201 brain */ }
+    try { purgedFeedback = await (await import('./feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('./feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v202 brain */ }
     return {
       phase: 'purge',
       status: purgedPages.error ? 'fail' : 'ok', error: purgedPages.error,
