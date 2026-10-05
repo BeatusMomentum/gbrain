@@ -223,8 +223,8 @@ afterAll(() => {
 
 describe('extraction_prompt_appendix — composes with BOTH prompt variants (#3852)', () => {
   const APPENDIX = 'Durable-vs-ephemeral rubric: work-session narration is never a fact.';
-  // extraction.date_grounding defaults on, so an unconfigured brain gets the grounded variant.
-  const GROUNDED = { dateGrounding: true } as const;
+  // extraction.date_grounding and facts.attribution default on, so an unconfigured brain gets both variants.
+  const GROUNDED = { dateGrounding: true, attribution: true } as const;
 
   async function systemSentFor(
     engine: BrainEngine,

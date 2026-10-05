@@ -113,6 +113,11 @@ describe('defaults from the verdicts', () => {
     for (const c of ['synthesis', 'atoms', 'takes'] as const) expect(await isConsumerDateGroundingOn(engineWith(null), c)).toBe(true);
     expect(await isConsumerDateGroundingOn(engineWith(null), 'chronicle')).toBe(false);
   });
+  test('facts.attribution defaults on; false/off/0 opt out', async () => {
+    const attr = (v: string | null) => ({ getConfig: async (k: string) => (k === 'facts.attribution' ? v : null) }) as never;
+    expect((await getExtractorVariant(attr(null))).attribution).toBe(true);
+    for (const v of ['false', 'off', '0']) expect((await getExtractorVariant(attr(v))).attribution).toBe(false);
+  });
   test('true turns every prompt on; false turns every prompt off', async () => {
     for (const c of ['chronicle', 'synthesis', 'atoms', 'takes'] as const) {
       expect(await isConsumerDateGroundingOn(engineWith('true'), c)).toBe(true);

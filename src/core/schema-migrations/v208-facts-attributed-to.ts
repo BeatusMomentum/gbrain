@@ -6,7 +6,7 @@ import { WRITE_ATTRIBUTION_SCHEMA_SQL } from '../persistence/attribution-schema.
 //
 // Speaker attribution: who asserted a saved fact ('user', 'assistant' or a
 // named 'other' party), written by the conversation-facts extractor when
-// `facts.attribution` is on. NULL means attribution is unavailable (older
+// `facts.attribution` is on (the default). NULL means attribution is unavailable (older
 // facts, non-conversation text) and is compatible with either speaker in
 // every dedup path. Nullable with no default: metadata-only on Postgres 11+
 // and PGLite, no backfill. The facts table is created by migrations only

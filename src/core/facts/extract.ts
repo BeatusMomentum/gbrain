@@ -111,9 +111,10 @@ export async function getFactsExtractionPromptAppendix(
 /**
  * Extraction prompt variants. `extraction.date_grounding` defaults ON for fact
  * extraction (held-out verdict p2-e2-heldout-2026-10-04: unresolved relative
- * dates in saved facts 8.95% -> 2.05%, QA non-inferior); `false` / `off` / `0`
- * opt out. `facts.attribution` stays off until its own verdict: `true` / `on`
- * / `1` enable it.
+ * dates in saved facts 8.95% -> 2.05%, QA non-inferior). `facts.attribution`
+ * defaults ON (held-out verdict p2-e3-heldout: assistant-said QA from saved
+ * facts 44.1% -> 95.8%, user-said non-inferior). For both, `false` / `off` /
+ * `0` opt out.
  */
 export interface ExtractorVariant {
   /** Resolve relative dates against the observation date; emit valid_from. */
@@ -130,7 +131,7 @@ const readFlag = (engine: BrainEngine, key: string) => Promise.resolve().then(()
 export async function getExtractorVariant(engine?: BrainEngine): Promise<ExtractorVariant> {
   if (!engine) return {};
   const [grounding, attribution] = await Promise.all([readFlag(engine, 'extraction.date_grounding'), readFlag(engine, 'facts.attribution')]);
-  return { dateGrounding: !flagIs(grounding, FLAG_OFF), attribution: flagIs(attribution, FLAG_ON) };
+  return { dateGrounding: !flagIs(grounding, FLAG_OFF), attribution: !flagIs(attribution, FLAG_OFF) };
 }
 
 /**
