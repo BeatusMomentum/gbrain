@@ -184,7 +184,13 @@ export function filterOpsForSurface(ops: Operation[], surface: McpSurface): Oper
   // FROZEN: 'verbs' is EXACTLY `op.verb === true` (MEMORY_VERBS v1) — starter
   // extends the ladder above it and must never alter these semantics.
   if (surface === 'verbs') return ops.filter(op => op.verb === true);
-  return ops.filter(op => STARTER_OPS.has(op.name));
+  return ops.filter(op => STARTER_OPS.has(op.name)).map(starterParams);
+}
+
+/** Starter ops advertise every param except the full-surface-only ones. */
+function starterParams(op: Operation): Operation {
+  if (!Object.values(op.params).some(p => p.fullSurfaceOnly)) return op;
+  return { ...op, params: Object.fromEntries(Object.entries(op.params).filter(([, p]) => !p.fullSurfaceOnly)) };
 }
 
 /** The fail-closed allow-set handed to dispatchToolCall. */

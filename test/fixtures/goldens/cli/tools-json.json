@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 199791,
-    "stdoutSha256": "4b3b9a5d7ff14bf8a3a92387fbd369dd5cc6dad1153b62d5588779e1fa916bb7",
+    "stdoutBytes": 200329,
+    "stdoutSha256": "b35a2b669248b9483351c784afd2a38dbf1643b3fbf040cd9820d725e62dde08",
     "toolNames": [
       "remember",
       "entity",
@@ -1701,6 +1701,7 @@
           "all_sources": "boolean?",
           "depth": "number?",
           "direction": "string?",
+          "hops": "array?",
           "link_type": "string?",
           "slug": "string",
           "source_id": "string?"
@@ -1724,6 +1725,23 @@
                 "both"
               ],
               "type": "string"
+            },
+            "hops": {
+              "description": "≤3 typed hops, e.g. [{\"link_type\":\"founded\",\"toward\":\"subject\"}]; toward: object|subject.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "link_type": {
+                    "type": "string"
+                  },
+                  "toward": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "type": "array"
             },
             "link_type": {
               "description": "Follow only this link type.",
