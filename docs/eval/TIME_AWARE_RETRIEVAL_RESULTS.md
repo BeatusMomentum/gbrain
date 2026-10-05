@@ -56,7 +56,16 @@ preference questions about "this weekend" whose evidence predates it).
 | chunk keys, published user-fact prompt (Haiku 4.5) | LME-S | 451/470 | +0.008 [+0.002, +0.015] | 21 / 8 |
 | page keys, published prompt | LME-S | 435/470 | −0.018 [−0.027, −0.010] | 13 / 41 |
 | chunk keys, gbrain's facts extractor as shipped (Haiku 4.5) | LME-S | 452/470 | +0.005 [+0.0001, +0.011] | 16 / 8 |
-| chunk keys, published prompt | LME-M | pending | pending | pending |
+| chunk keys, published prompt | LME-M | 383/470 (vs 367) | +0.025 [+0.012, +0.038] | 58 / 33 |
+| chunk keys, gbrain's facts extractor as shipped (Haiku 4.5) | LME-M | pending | pending | pending |
+
+On LongMemEval-M the published-prompt arm replicates key expansion: strict
+R@5 rises from 78.1% to 81.5% (+3.4 points, 95% CI [+1.5, +5.5], 20 wins / 4
+losses), mostly on temporal-reasoning (81 → 89 of 127) and single-session-user
+(59 → 63 of 64) questions; the relative gain (+4.4%) matches the published
+session-granularity result. The M baseline row is the unscoped top-5 from the
+time-scope run's 50-candidate pool; on LongMemEval-S that row is identical to
+the plain limit-5 baseline on every question.
 
 Page keys (every fact on every chunk) are rejected: the shared prefix makes a
 session's chunks look alike and pushes gold sessions down. The published
