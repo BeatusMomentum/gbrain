@@ -76,10 +76,20 @@ export interface EdgeContradictionsOpts {
 
 /**
  * Models whose sealed held-out run met the certification bar (wrong closures
- * ≤ 1% on every run). With no explicit mode, a certified model defaults to
- * `apply`; every other configured model defaults to `propose`.
+ * ≤ 1% on every run and as-of +10 points over the deterministic arm): E2 on
+ * set C, 3 runs each, 0 wrong closures (docs/eval/decisions/p1-e2-2026-10-05).
+ * With no explicit mode, a certified model defaults to `apply`; every other
+ * configured model defaults to `propose`. Matched without the provider prefix
+ * and dated snapshot suffix ("anthropic:claude-haiku-4-5-20251001").
  */
-export const CERTIFIED_APPLY_MODELS: readonly string[] = [];
+export const CERTIFIED_APPLY_MODELS: readonly string[] = [
+  'claude-haiku-4-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'gpt-6.1-sol',
+];
+
+export function isCertifiedApplyModel(model: string): boolean {
+  const id = model.trim().toLowerCase().replace(/^[a-z0-9_-]+:/, '').replace(/-\d{8}$/, '');
+  return CERTIFIED_APPLY_MODELS.includes(id);
+}
 
 const DEFAULT_MAX_SUBJECTS = 200;
 const DEFAULT_BUDGET_USD = 1.0;
@@ -91,7 +101,7 @@ export async function loadEdgeContradictionsConfig(engine: BrainEngine, model: s
   const raw = (await engine.getConfig('dream.edge_contradictions.mode'))?.trim().toLowerCase();
   const explicit = raw === 'propose' || raw === 'apply' || raw === 'off';
   const mode: EdgeContradictionsMode = explicit ? raw as EdgeContradictionsMode
-    : CERTIFIED_APPLY_MODELS.includes(model) ? 'apply' : 'propose';
+    : isCertifiedApplyModel(model) ? 'apply' : 'propose';
   const subjects = Number.parseInt((await engine.getConfig('dream.edge_contradictions.max_subjects')) ?? '', 10);
   return {
     mode,
