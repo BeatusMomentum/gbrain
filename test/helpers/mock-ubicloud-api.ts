@@ -16,7 +16,7 @@ export interface MockUbicloudOptions {
   createDelayMs?: (name: string) => number;
   /** Delay between `destroy` and the VM disappearing. Default 200. */
   destroyDelayMs?: number;
-  /** Answer every create with a 400, like a quota refusal. */
+  /** Refuse every create with Ubicloud's vCPU quota error (400). */
   rejectCreates?: boolean;
   seed?: Array<{ location?: string; name: string; size?: string }>;
 }
@@ -52,7 +52,7 @@ export function startMockUbicloud(opts: MockUbicloudOptions = {}): MockUbicloud 
         await Bun.sleep(opts.createDelayMs?.(name) ?? 0);
         if (opts.rejectCreates) {
           events.push(`create-rejected ${name}`);
-          return text("! Validation failed: quota exceeded", 400);
+          return text("! Unexpected response status: 400\nDetails: Validation failed for following fields: size\n  size: Insufficient quota for requested size. Requested vCPU count: 16, currently used vCPU count: 252, maximum allowed vCPU count: 256, remaining vCPU count: 4", 400);
         }
         const size = argv[argv.indexOf("-s") + 1] ?? "standard-16";
         vms.set(name, { location, name, size, state: "creating" });

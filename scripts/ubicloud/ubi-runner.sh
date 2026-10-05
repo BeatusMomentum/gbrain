@@ -23,7 +23,9 @@
 # Teardown: `up` records each VM's state (location, create status) before it
 # sends the create request, and `down` destroys and polls until the VM is
 # confirmed gone or provably never existed, waiting out a create that may still
-# be in flight. An interrupted `up` or `run` (EXIT, INT, TERM) runs that `down`.
+# be in flight. An interrupted `up` or `run` (EXIT, INT, TERM, HUP, QUIT) runs
+# that `down`; further signals are ignored until it finishes. A create refused
+# for vCPU quota prints the project's usage per owner.
 #
 # Stale-VM sweeps are off by default. With UBI_GC_HOURS set to a positive
 # number, every `up` first destroys this owner's VMs older than that; `gc HOURS`
@@ -227,15 +229,26 @@ cmd_up() {
   write_state "$name" "$location" "$size" "" unknown "$create_at"
   UP_NAME=$name
   log "creating $location/$name ($size)"
-  # Hold INT/TERM until the create answer is recorded, so teardown knows
+  # Hold signals until the create answer is recorded, so teardown knows
   # whether the VM exists instead of waiting out UBI_CREATE_GRACE.
-  local interrupted="" created=yes
-  trap 'interrupted=1' INT TERM
-  cli "${args[@]}" >/dev/null || created=no
+  local interrupted="" created=yes refusal need used max
+  trap 'interrupted=1' INT TERM HUP QUIT
+  cli "${args[@]}" >/dev/null 2>"$dir/create.err" || created=no
   write_state "$name" "$location" "$size" "" "$created" "$create_at"
-  trap 'exit 130' INT TERM
+  trap 'exit 130' INT TERM HUP QUIT
   [ -z "$interrupted" ] || exit 130
-  [ "$created" = yes ] || die "create failed"
+  if [ "$created" = no ]; then
+    refusal=$(sed -n 's/.*Requested vCPU count: \([0-9]*\), currently used vCPU count: \([0-9]*\), maximum allowed vCPU count: \([0-9]*\).*/\1 \2 \3/p' "$dir/create.err")
+    if [ -z "$refusal" ]; then
+      cat "$dir/create.err" >&2
+      die "create failed"
+    fi
+    read -r need used max <<<"$refusal"
+    log "quota refused $location/$name ($size): it needs $need vCPUs and the project already uses $used of $max"
+    log "VMs in the project by owner (the rest of the used count is other usage, such as managed GitHub runners):"
+    cmd_usage >&2 || true
+    die "create failed: vCPU quota exhausted; wait for running VMs to finish, or use fewer or smaller VMs (ci:ubicloud --vms N)"
+  fi
 
   local deadline=$(( $(date +%s) + 600 )) show state ip
   while :; do
@@ -394,8 +407,9 @@ cmd_run() {
   [ -n "$name" ] || { name=$(new_name); up_args+=(-n "$name"); }
   RUN_VM=$name
   # Armed before the create request: an interrupted `up` still destroys its VM.
-  trap 'cmd_down "$RUN_VM" || log "WARNING: failed to destroy $RUN_VM; run: $0 down $RUN_VM"' EXIT
-  trap 'exit 130' INT TERM
+  # A second signal must not cut teardown short, so the EXIT handler ignores them.
+  trap 'trap "" INT TERM HUP QUIT; cmd_down "$RUN_VM" || log "WARNING: failed to destroy $RUN_VM; run: $0 down $RUN_VM"' EXIT
+  trap 'exit 130' INT TERM HUP QUIT
   cmd_up "${up_args[@]}" >/dev/null
   if [ "$keep" = 1 ]; then
     trap - EXIT
@@ -466,8 +480,8 @@ case $cmd in
 esac
 case $cmd in
   run) cmd_run "$@" ;;
-  up) trap '[ -z "$UP_NAME" ] || [ -n "$UP_READY" ] || cmd_down "$UP_NAME" || log "WARNING: failed to destroy $UP_NAME; run: $0 down $UP_NAME"' EXIT
-      trap 'exit 130' INT TERM
+  up) trap 'trap "" INT TERM HUP QUIT; [ -z "$UP_NAME" ] || [ -n "$UP_READY" ] || cmd_down "$UP_NAME" || log "WARNING: failed to destroy $UP_NAME; run: $0 down $UP_NAME"' EXIT
+      trap 'exit 130' INT TERM HUP QUIT
       cmd_up "$@" ;;
   ssh) name=$1; shift; load "$name"
        # shellcheck disable=SC2046

@@ -17,9 +17,10 @@ of `[a-z0-9-]`, so a full name stays under 40.
 
 Each name is recorded before its create request is sent: the runner writes
 the VM's state directory first, and `ci-ubicloud.ts` appends the name to
-`.context/ci-ubicloud/<run>/vms.txt`. On every exit, including Ctrl-C and
-SIGTERM, an `up` still talking to the API finishes the request and destroys its
-own VM. Then every recorded name gets `down`, which destroys the VM and polls
+`.context/ci-ubicloud/<run>/vms.txt`. On every exit, including Ctrl-C,
+SIGTERM, SIGQUIT and SIGHUP (a dropped terminal or a cancelled background
+operation), an `up` still talking to the API finishes the request and destroys
+its own VM; further signals are ignored until teardown ends. Then every recorded name gets `down`, which destroys the VM and polls
 until it is confirmed gone. A create whose answer never arrived is waited out
 for `UBI_CREATE_GRACE` seconds (default 180) before the VM counts as never
 created. `down` gives up after `UBI_DOWN_TIMEOUT` seconds (default 900) and
@@ -78,7 +79,10 @@ multi-lane wave, each lane runs `ci:ubicloud:diff` or its targeted suites, and
 only the integrator runs the full gate; four lanes each running the full gate
 take 256 vCPUs, the whole quota. A VM that the
 quota refuses fails to provision and the run continues on the VMs that did
-start, so a busy project shrinks the fleet instead of failing. Pass `--vms 10`
+start, so a busy project shrinks the fleet instead of failing. The runner
+prints the refusal (needed, used and maximum vCPUs) with the project's VMs
+and vCPUs per owner; used vCPUs beyond that table are other usage, such as
+managed GitHub runners. Pass `--vms 10`
 only when the quota is idle. Slow-lane items run `test/export-scale.slow.test.ts`
 at the pull-request scale (`GBRAIN_TEST_EXPORT_SCALE_PAGES=10001`). `--lanes` runs a
 subset, `--keep` leaves the VMs up for debugging, and `--diff` follows

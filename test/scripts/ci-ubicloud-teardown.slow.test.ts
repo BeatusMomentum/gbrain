@@ -1,4 +1,5 @@
-// ci-ubicloud-teardown.slow.test.ts — SIGTERM to scripts/ci-ubicloud.ts while
+// ci-ubicloud-teardown.slow.test.ts — SIGTERM or SIGHUP (a dropped terminal,
+// a cancelled background operation) to scripts/ci-ubicloud.ts while
 // its VMs are still provisioning (one created, two creates in flight) against
 // a mock Ubicloud API. Every name is recorded before its create, and teardown
 // returns only after each VM that came to exist is destroyed and gone. Slow
@@ -22,7 +23,7 @@ afterEach(() => {
 });
 
 describe("ci:ubicloud teardown", () => {
-  it("SIGTERM mid-provision destroys every VM it asked for, including creates still in flight", async () => {
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) it(`${signal} mid-provision destroys every VM it asked for, including creates still in flight`, async () => {
     dir = mkdtempSync(join(tmpdir(), "ci-ubicloud-teardown-"));
     const api = (mock = startMockUbicloud({ createDelayMs: (name) => (/-ci01/.test(name) ? 0 : 4000) }));
     const proc = Bun.spawn(["bun", "run", "scripts/ci-ubicloud.ts", "--vms", "3", "--lanes", "gitleaks"], {
@@ -44,7 +45,7 @@ describe("ci:ubicloud teardown", () => {
     await waitForEvent(api, /^created \S+-ci01/, 120_000);
     await waitForEvent(api, /^create-start \S+-ci03/, 10_000);
     expect(api.events.some((e) => /^created \S+-ci0[23]/.test(e))).toBe(false);
-    proc.kill("SIGTERM");
+    proc.kill(signal);
     expect(await proc.exited).toBe(130);
     const out = await stdout;
     runDir = /logs in (\S+)/.exec(out)?.[1] ?? "";

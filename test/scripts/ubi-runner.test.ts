@@ -68,15 +68,30 @@ describe("owner tag", () => {
 });
 
 describe("teardown waits for in-flight creates", () => {
-  it("SIGTERM during the create request: the create finishes, then the VM is destroyed and confirmed gone", async () => {
-    const api = serve({ createDelayMs: () => 1500 });
+  for (const signal of ["SIGTERM", "SIGHUP", "SIGINT", "SIGQUIT"] as const) {
+    it(`${signal} during the create request: the create finishes, then the VM is destroyed and confirmed gone`, async () => {
+      const api = serve({ createDelayMs: () => 1500 });
+      const proc = spawnRunner(["up"], { UBI_OWNER: "t1" });
+      const started = await waitForEvent(api, /^create-start /);
+      const name = started.split(" ")[1]!;
+      expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}$/);
+      proc.kill(signal);
+      expect(await proc.exited).toBe(130);
+      expect(api.events).toEqual([`create-start ${name}`, `created ${name}`, `destroy ${name}`, `removed ${name}`]);
+      expect(api.vms.size).toBe(0);
+    });
+  }
+
+  it("a second signal during teardown does not cut it short", async () => {
+    const api = serve({ destroyDelayMs: 1500 });
     const proc = spawnRunner(["up"], { UBI_OWNER: "t1" });
-    const started = await waitForEvent(api, /^create-start /);
-    const name = started.split(" ")[1]!;
-    expect(name).toMatch(/^ubirun-t1-\d{10}-[0-9a-f]{8}$/);
+    const name = (await waitForEvent(api, /^created /)).split(" ")[1]!;
     proc.kill("SIGTERM");
+    await waitForEvent(api, /^destroy /);
+    proc.kill("SIGHUP");
+    proc.kill("SIGINT");
     expect(await proc.exited).toBe(130);
-    expect(api.events).toEqual([`create-start ${name}`, `created ${name}`, `destroy ${name}`, `removed ${name}`]);
+    expect(api.events.slice(-2)).toEqual([`destroy ${name}`, `removed ${name}`]);
     expect(api.vms.size).toBe(0);
   });
 
@@ -103,17 +118,20 @@ describe("teardown waits for in-flight creates", () => {
     expect(api.vms.size).toBe(0);
   });
 
-  it("a refused create needs no grace wait, and down of an unknown name reports it gone", async () => {
-    const api = serve({ rejectCreates: true });
+  it("a quota refusal reports usage by owner and needs no grace wait; down of an unknown name reports it gone", async () => {
+    const api = serve({ rejectCreates: true, seed: [{ name: `ubirun-lane2-${NOW}-aaaaaaaa` }, { name: `ubirun-lane2-${NOW}-bbbbbbbb` }] });
     const t0 = Date.now();
     const up = await run(["up"], { UBI_OWNER: "t1", UBI_CREATE_GRACE: "60" });
     expect(up.code).toBe(1);
-    expect(up.stderr).toContain("create failed");
+    expect(up.stderr).toMatch(/quota refused eu-central-h1\/ubirun-t1-\S+ \(standard-16\): it needs 16 vCPUs and the project already uses 252 of 256/);
+    expect(up.stderr).toMatch(/^lane2\s+2\s+32$/m);
+    expect(up.stderr).toContain("create failed: vCPU quota exhausted");
     expect(Date.now() - t0).toBeLessThan(15_000);
     const down = await run(["down", `ubirun-t1-${NOW}-deadbeef`, "-l", "eu-central-h1"]);
     expect(down.code).toBe(0);
     expect(down.stderr).toContain("never existed or already destroyed");
-    expect(api.vms.size).toBe(0);
+    expect(api.vms.size).toBe(2);
+    expect(api.events.some((e) => e.startsWith("destroy "))).toBe(false);
   });
 });
 

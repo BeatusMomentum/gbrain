@@ -33,7 +33,8 @@
  *
  * VMs are named ubirun-<owner>-<epoch>-ciNN<hex> (owner: UBI_OWNER or the
  * runner's per-machine id). Each name is appended to <run>/vms.txt before its
- * create request is sent. On exit, including SIGINT and SIGTERM, in-flight
+ * create request is sent. On exit, including SIGINT, SIGTERM, SIGHUP (a
+ * dropped terminal, a cancelled background operation) and SIGQUIT, in-flight
  * `up` calls are allowed to finish (they destroy their own VM), then every
  * recorded name is destroyed and polled until it is confirmed gone.
  */
@@ -284,7 +285,9 @@ async function main() {
     log(left ? `teardown left ${left} VM(s) unconfirmed (names in ${ledger})` : `teardown confirmed ${live.length} VM(s) gone`);
   };
   let interrupted = false;
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  // After SIGHUP the terminal may be gone: a failed log write must not abort teardown.
+  for (const stream of [process.stdout, process.stderr]) stream.on("error", () => {});
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
     process.on(signal, () => {
       if (interrupted) return;
       interrupted = true;
@@ -384,7 +387,10 @@ async function main() {
     if (tornDown) return;
     if (up.code !== 0) {
       vm.state = "failed";
-      log(`VM ${index + 1} failed to provision (see ${setupLog}): ${readFileSync(setupLog, "utf8").trim().split("\n").slice(-2).join(" | ")}`);
+      const setupText = readFileSync(setupLog, "utf8").trim();
+      const quota = setupText.indexOf("ubi-runner: quota refused");
+      if (quota >= 0) log(`VM ${index + 1} refused by the Ubicloud vCPU quota; the run continues on the VMs that started:\n${setupText.slice(quota)}`);
+      else log(`VM ${index + 1} failed to provision (see ${setupLog}): ${setupText.split("\n").slice(-2).join(" | ")}`);
       return;
     }
     vm.state = "setup";
