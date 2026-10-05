@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 199389,
-    "stdoutSha256": "325446e4b115d275755533f566458e68beb9e1e1ac3e9e63ecf7a717a48916e4",
+    "stdoutBytes": 198603,
+    "stdoutSha256": "7b5e35aa62ab4e12fbfa100da46f8e032101875370cb5a59a2348649c234689f",
     "toolNames": [
       "remember",
       "entity",
@@ -172,12 +172,11 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string?",
+          "fact": "string",
           "force": "boolean?",
           "infer_entity": "boolean?",
-          "items": "array?",
           "kind": "string?",
-          "provenance": "string?",
+          "provenance": "string",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -206,13 +205,6 @@
               "description": "Default true.",
               "type": "boolean"
             },
-            "items": {
-              "description": "Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]",
-              "items": {
-                "type": "object"
-              },
-              "type": "array"
-            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -225,7 +217,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Where the fact came from (max 500 chars); per item with items.",
+              "description": "Where the fact came from (max 500 chars).",
               "type": "string"
             },
             "request_id": {
@@ -249,7 +241,10 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "fact",
+            "provenance"
+          ],
           "type": "object"
         },
         "scope": "write"
@@ -4270,7 +4265,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} persists a wider surface for your OAuth client.",
+        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per OAuth client; stdio: this session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -4283,7 +4278,7 @@
         "schema": {
           "properties": {
             "surface": {
-              "description": "Surface to persist for your client.",
+              "description": "Surface to widen to (stdio: this session only).",
               "enum": [
                 "verbs",
                 "starter",
@@ -5240,14 +5235,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): core memory plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string?",
+          "entities": "string",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5260,7 +5255,7 @@
               "type": "number"
             },
             "entities": {
-              "description": "Comma-separated names or slugs (max 8); omit for core only.",
+              "description": "Comma-separated names or slugs (max 8).",
               "type": "string"
             },
             "include_private": {
@@ -5276,7 +5271,9 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "entities"
+          ],
           "type": "object"
         },
         "scope": "read"
@@ -6324,7 +6321,7 @@
         "scope": "write"
       },
       {
-        "description": "Stop a coaching or info notice from appearing for this client (or unmute it with muted: false). Safety, degraded and ask notices cannot be muted.",
+        "description": "Stop a coaching or info notice (or first_run_decisions) from appearing for this client; muted: false unmutes.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -6338,22 +6335,6 @@
           "properties": {
             "code": {
               "description": "Notice code, the word after `[gbrain notice` in the block.",
-              "enum": [
-                "backup_coverage",
-                "degraded_dedup",
-                "empty_retrieval",
-                "facts_drain_first_run",
-                "features_auto_fix",
-                "former_relationships_hidden",
-                "listing_truncated",
-                "local_transcripts",
-                "onboard_opportunities",
-                "recovered_frontmatter",
-                "source_binding_narrowed",
-                "synthesis_keyless",
-                "think_not_saved",
-                "unknown_param"
-              ],
               "type": "string"
             },
             "muted": {
