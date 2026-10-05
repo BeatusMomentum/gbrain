@@ -8,9 +8,9 @@
  *          timeline; parse fence; batch upsert
  *
  * Source-of-truth contract: markdown is canonical. The takes table is a
- * derived index. `gbrain extract takes --rebuild` deletes all takes for
- * the affected pages first, then re-inserts. Without --rebuild, ON CONFLICT
- * (page_id, row_num) DO UPDATE keeps the table in sync incrementally.
+ * derived index. The `rebuild` option deletes all takes for the affected
+ * pages first, then re-inserts. Without it, ON CONFLICT (page_id, row_num)
+ * DO UPDATE keeps the table in sync incrementally.
  * On a managed brain the db path publishes each page's rows through the
  * persistence coordinator (the `takes` guard refuses any other writer).
  *
