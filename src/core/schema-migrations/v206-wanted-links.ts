@@ -11,8 +11,8 @@ import type { Migration } from './types.ts';
 // state, replaced with the origin's links in the same transaction.
 // The basename expression index serves `ref_kind = 'name'` targets and the
 // put_page similar-pages advisory.
-export const v205: Migration = {
-  version: 205,
+export const v206: Migration = {
+  version: 206,
   name: 'wanted_links',
   idempotent: true,
   sql: `

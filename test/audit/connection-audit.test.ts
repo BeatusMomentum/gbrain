@@ -246,6 +246,21 @@ describe('connection-audit — setAuditEnabled', () => {
   });
 });
 
+describe('connection-audit — audit dir follows GBRAIN_HOME', () => {
+  test('a write after one under another home lands in the current home', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'gbrain-connaudit-other-'));
+    await withEnv({ GBRAIN_HOME: other }, async () => {
+      logConnectionEvent({ pool: 'ddl', op: 'acquire', caller: 'home.other' });
+    });
+    const now = new Date();
+    await withEnv(env, async () => {
+      logConnectionEvent({ pool: 'ddl', op: 'acquire', caller: 'home.current' });
+    });
+    expect(readLines(fileFor(now)).some(e => e.caller === 'home.current')).toBe(true);
+    expect(readLines(join(other, '.gbrain', 'audit', computeIsoWeekFilename('connection-events', now))).map(e => e.caller)).toEqual(['home.other']);
+  });
+});
+
 describe('connection-audit — tailRecentErrors', () => {
   test('[] when this week has no file (dir exists by now)', async () => {
     await withEnv(env, () => {

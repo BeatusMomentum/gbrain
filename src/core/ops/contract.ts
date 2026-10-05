@@ -16,6 +16,7 @@ import { publicWriteReceipt, type WriteErrorCode, type WriteReceipt } from '../p
 // renderer below when it loads.
 import type { Action, Notice } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
+import type { StdioSurfaceState } from '../../mcp/surface.ts';
 
 /** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
 interface OperationErrorWireRenderer { fix(a: Action): unknown; notice(n: Notice): unknown }
@@ -446,6 +447,8 @@ export interface OperationContext {
    * treated as 'full'.
    */
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
+  /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
+  stdioSurface?: StdioSurfaceState;
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
