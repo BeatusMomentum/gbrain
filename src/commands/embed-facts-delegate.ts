@@ -51,7 +51,7 @@ export async function maybeDelegateFactEmbed(hostConfig: GBrainConfig | null, ar
     if (!delegated.handled) {
       const paid = options.dryRun !== true;
       throw opError('owner_unavailable', 'The observed PGLite owner stopped before fact repair admission',
-        `Nothing ran: the running gbrain serve exited before admitting the repair. Run the same command again; it opens the brain directly or delegates to the new owner.${paid ? ' It spends up to the approved --max-cost-usd, as before.' : ''}`,
+        `Nothing ran: the running serve exited before admitting the repair. Run the same command again; it opens the brain directly or delegates to the new owner.${paid ? ' It spends up to the approved --max-cost-usd, as before.' : ''}`,
         { fix: { argv: ['gbrain', 'embed', ...args], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
           why: 'The owner stopped before admission, so the same request has not run yet.' } });
     }

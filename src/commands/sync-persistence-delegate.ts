@@ -33,14 +33,14 @@ export async function parsePersistenceSyncArgs(args:string[],cwd=process.cwd()) 
     if(['--timeout','--hard-deadline'].includes(arg)){if(!args[++i]||args[i].startsWith('--'))throw invalid(`${arg} requires a value.`,`Give ${arg} a duration right after it, e.g. ${arg} 10m.`);continue;}
     const key=SYNC_VALUE_FLAGS[arg as keyof typeof SYNC_VALUE_FLAGS];
     if(!key)throw invalid(`Unsupported owner-delegated sync option: ${arg.split('=')[0]}.`,
-      `Remove ${arg.split('=')[0]}; while gbrain serve holds the brain, sync runs inside it and accepts ${[...Object.keys(SYNC_BOOLEAN_FLAGS),...Object.keys(SYNC_VALUE_FLAGS),'--timeout','--hard-deadline','--json','--yes'].join(', ')}.`);
+      `Remove ${arg.split('=')[0]}; while the running serve holds the brain, sync runs inside it and accepts ${[...Object.keys(SYNC_BOOLEAN_FLAGS),...Object.keys(SYNC_VALUE_FLAGS),'--timeout','--hard-deadline','--json','--yes'].join(', ')}.`);
     const value=args[++i];if(!value||value.startsWith('--'))throw invalid(`${arg} requires a value.`,`Give ${arg} its value right after it, as ${arg} VALUE.`);
     if(key==='exclude'||key==='includeHidden')options[key]=[...(options[key] as string[]??[]),value];
     else options[key]=key==='repoPath'?resolve(cwd,value):value;
   }
   const source=resolveSourceIdEngineFree(typeof options.sourceId==='string'?options.sourceId:null,cwd);
   if(source==='__all__')throw opError('invalid_params','Owner-delegated sync requires one explicit source.',
-    'Name one source with --source while gbrain serve holds the brain (repeat the command per source); gbrain sources list --json lists them.',
+    'Name one source with --source while the running serve holds the brain (repeat the command per source); gbrain sources list --json lists them.',
     {fix:readFix('Lists the source ids to sync one at a time, read-only.',{argv:['gbrain','sources','list','--json']})});
   if(source)options.sourceId=source;
   const softTimeout=parseDurationSeconds(args.find((_,i)=>args[i-1]==='--timeout'),'--timeout');

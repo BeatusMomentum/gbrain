@@ -52,7 +52,7 @@ function bool(params: Record<string, unknown>, key: string): void {
 function keys(params: Record<string, unknown>, allowed: string[]) {
   const unknown = Object.keys(params).filter(key => !allowed.includes(key));
   if (unknown.length) throw invalid(`Unsupported administration parameters: ${unknown.join(', ')}.`,
-    `Remove ${unknown.join(', ')}; this operation accepts ${allowed.length ? allowed.join(', ') : 'no parameters'}. A caller on another gbrain version sends the parameters of its own version: run the same gbrain version on both sides.`);
+    `Remove ${unknown.join(', ')}; this operation accepts ${allowed.length ? allowed.join(', ') : 'no parameters'}. A caller on another gbrain release sends the parameters of its own release: run one release on both sides.`);
   bool(params, 'dry_run');
 }
 
@@ -340,7 +340,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { registered: true, id: local.id, lane: local.lane, grant, replaced: params.replace === true };
   }
   if (operation !== 'local_writer_revoke') throw invalid('Unknown local administration operation.',
-    `This brain host does not know ${operation}: run the same gbrain version on the caller and the host (gbrain --version on both).`);
+    `This brain host does not know ${operation}: upgrade the caller and the host to one release (gbrain --version on both).`);
   keys(params, ['id', 'dry_run']);
   const id = uuid(params.id, 'A valid local writer UUID is required.',
     'Pass the id of the writer to revoke exactly as gbrain auth local-writer list --json prints it (a UUID).', writerListFix);

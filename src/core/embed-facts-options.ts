@@ -19,7 +19,7 @@ export function validateEmbedFactsOptions(value: unknown): EmbedFactsOptions {
   const allowed = ['sourceId', 'dryRun', 'yes', 'maxCostUsd', 'maxFacts', 'batchSize', 'budgetMs'];
   const extra = Object.keys(options).filter(key => !allowed.includes(key));
   if (extra.length) return invalid('Unsupported fact backfill options',
-    `Remove ${extra.join(', ')}; fact repair options are ${allowed.join(', ')}. Run the same gbrain version on the caller and the brain host.`);
+    `Remove ${extra.join(', ')}; fact repair options are ${allowed.join(', ')}. Run one gbrain release on the caller and the brain host.`);
   if (!isValidSourceId(options.sourceId)) return invalid('Fact backfill requires an explicit --source <id>',
     'Name the source with --source, e.g. gbrain embed --stale --facts --source default --dry-run; gbrain sources list --json lists the source ids.');
   for (const flag of ['dryRun', 'yes']) {

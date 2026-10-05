@@ -51,7 +51,7 @@ function parseEnableArgs(args: string[]): EnableOpts {
     }
     const value = args[++i];
     if (!value || value.startsWith('-')) throw opError('invalid_params', `${a} requires a value.`, a === '--embedding-model'
-      ? 'Pass the model as provider:model, e.g. `gbrain embeddings enable --embedding-model openai:text-embedding-3-small`.'
+      ? 'Pass the model as provider:model right after --embedding-model; `gbrain providers list` shows the embedding models whose key is configured.'
       : 'Pass the vector width as a positive integer, e.g. `--embedding-dimensions 1536`, or omit the flag to keep the brain\'s width.');
     if (a === '--embedding-model') model = value;
     else if (/^\d+$/.test(value) && Number(value) > 0) dims = Number(value);

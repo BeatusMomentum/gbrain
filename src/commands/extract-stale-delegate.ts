@@ -31,12 +31,12 @@ export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null,
         if (args[++i] !== 'db') throw invalid("extract --stale is DB-source only; drop '--source fs'.", 'Drop --source fs (or pass --source db); stale extraction reads pages from the database.');
       } else if (!['--stale', '--json', '--include-frontmatter', '--catch-up', 'all'].includes(arg)) {
         throw invalid(`Unsupported owner-delegated extract --stale option: ${arg.split('=')[0]}.`,
-          `Remove ${arg.split('=')[0]}; while gbrain serve holds the brain, extract --stale accepts --source-id, --dry-run, --json, --include-frontmatter and --catch-up. Stop the serve to use other extract options.`);
+          `Remove ${arg.split('=')[0]}; while the running serve holds the brain, extract --stale accepts --source-id, --dry-run, --json, --include-frontmatter and --catch-up. Stop the serve to use other extract options.`);
       }
     }
     const delegated = await maybeDelegateLocalAdministration('writer_extract_stale', params, config, { timeoutMs: 86_400_000 });
     if (!delegated.handled) throw opError('owner_unavailable', 'The registered owner stopped before extraction. Retry the same command.',
-      'Nothing ran: the running gbrain serve exited before admitting the extraction. Run the same command again; it opens the brain directly or delegates to the new owner.',
+      'Nothing ran: the running serve exited before admitting the extraction. Run the same command again; it opens the brain directly or delegates to the new owner.',
       { fix: { argv: ['gbrain', 'extract', ...args], consent: [], actor: 'agent', requires_exclusive: false, why: 'The owner stopped before admission, so the same extraction has not run yet.' } });
     const result = delegated.result as ManagedLinkExtraction;
     const dryRun = params.dry_run === true;

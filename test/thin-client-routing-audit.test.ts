@@ -82,10 +82,11 @@ describe('thin-client routing audit — ROUTE additions call the remote op', () 
     const requestId = '0190c6d2-1111-7000-8000-000000000042';
     const docs: string[] = [];
     const final = spyOn(cliForceExit, 'writeStdoutFinal').mockImplementation(async (doc: string) => { docs.push(doc); });
+    const priorExitCode = process.exitCode;
     try {
       await thinClient(() => runForget(async () => { throw new Error('local engine opened'); },
         ['42', '--source', 'notes', '--request-id', requestId, '--json']));
-    } finally { final.mockRestore(); }
+    } finally { final.mockRestore(); process.exitCode = priorExitCode; }
     expect(calls).toEqual([]);
     const envelope = JSON.parse(docs.join(''));
     expect(envelope).toMatchObject({ code: 'invalid_params', fix: { argv: ['gbrain', 'forget', '42', '--request-id', requestId], next: 'run' } });

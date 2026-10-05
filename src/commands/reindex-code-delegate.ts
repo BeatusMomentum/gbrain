@@ -23,7 +23,7 @@ export function parseReindexCodeDelegateArgs(args: string[]): ReindexCodeOpts {
     const key = booleans[arg as keyof typeof booleans];
     if (key) { options[key] = true; continue; }
     if (!['--source', '--workers', '--concurrency', '--max-cost', '--max-cost-usd'].includes(arg)) throw invalid('Unsupported owner-delegated reindex-code option. Run gbrain reindex-code --help.',
-      `Remove ${arg.split('=')[0]}; while gbrain serve holds the brain, reindex-code accepts --source, --workers, --max-cost-usd, --force, --no-embed, --dry-run, --yes and --json.`);
+      `Remove ${arg.split('=')[0]}; while the running serve holds the brain, reindex-code accepts --source, --workers, --max-cost-usd, --force, --no-embed, --dry-run, --yes and --json.`);
     const value = args[++i];
     if (!value || value.startsWith('-')) throw invalid(`${arg} requires a value.`,
       `Give ${arg} its value right after it, e.g. ${arg} ${arg === '--source' ? 'default' : arg === '--workers' || arg === '--concurrency' ? '4' : '2'}.`);
@@ -67,7 +67,7 @@ export async function maybeDelegateReindexCode(hostConfig: GBrainConfig | null, 
     if (!delegated.handled) {
       const paid = !options.noEmbed && !options.dryRun;
       throw opError('owner_unavailable', 'The registered owner stopped before reindex admission. Retry the same command.',
-        `Nothing ran: the running gbrain serve exited before admitting the reindex. Run the same command again; it opens the brain directly or delegates to the new owner.${paid ? ' Re-embedding stays paid and needs the same approval.' : ''}`,
+        `Nothing ran: the running serve exited before admitting the reindex. Run the same command again; it opens the brain directly or delegates to the new owner.${paid ? ' Re-embedding stays paid and needs the same approval.' : ''}`,
         { fix: { argv: ['gbrain', 'reindex-code', ...args], consent: paid ? ['paid'] : [], actor: 'agent', requires_exclusive: false,
           why: 'The owner stopped before admission, so the same reindex has not run yet.' } });
     }
