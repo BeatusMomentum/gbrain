@@ -2029,6 +2029,25 @@ export class MinionQueue {
     }
   }
 
+  /**
+   * #5062: hand a claim back to the queue because the worker is shutting
+   * down (token-fenced; attempts_made is untouched). Returns false when the
+   * claim already moved on (reclaimed, completed, cancelled).
+   */
+  async releaseShutdownJob(id: number, lockToken: string): Promise<boolean> {
+    const rows = await this.engine.executeRaw<{ id: number }>(
+      `UPDATE minion_jobs SET
+        status = 'waiting',
+        error_text = 'worker_shutdown',
+        started_at = NULL, timeout_at = NULL,
+        lock_token = NULL, lock_until = NULL, updated_at = now()
+       WHERE id = $1 AND status = 'active' AND lock_token = $2
+       RETURNING id`,
+      [id, lockToken],
+    );
+    return rows.length > 0;
+  }
+
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
