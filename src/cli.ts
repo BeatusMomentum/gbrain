@@ -806,7 +806,7 @@ async function runThinClientRouted(
       // D1: a server tool error renders its own code/fix; --json gets the one v1
       // envelope on stdout while transport failures keep their human text on stderr.
       const scopeDenied = isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason);
-      if (e.reason === 'tool_error' && !scopeDenied) { process.off('SIGINT', onSigint); exitCliError(e, op.cliHints?.name ?? op.name); }
+      if ((e.reason === 'tool_error' && !scopeDenied) || e.detail?.code === 'serve_status_only') { process.off('SIGINT', onSigint); exitCliError(e, op.cliHints?.name ?? op.name); }
       const failExit = params.json === true ? writeCliError(e, op.cliHints?.name ?? op.name, { stderr: false }) : 1;
       const url = cfg.remote_mcp!.mcp_url;
       switch (e.reason) {
