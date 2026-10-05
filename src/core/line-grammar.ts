@@ -332,6 +332,12 @@ export async function lineGrammarOptions(engine: { getConfig(key: string): Promi
     allowUndeclaredTypes: allow != null && ['true', '1', 'yes', 'on'].includes(allow.trim().toLowerCase()) };
 }
 
+/** `line_grammar.effective_ranges` (default off; needs the grammar on): store relation-line ranges on edges (core/link-effective.ts). */
+export async function effectiveRangesEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
+  const ranges = await engine.getConfig('line_grammar.effective_ranges').catch(() => null);
+  return ranges != null && ['true', '1', 'yes', 'on'].includes(ranges.trim().toLowerCase()) && (await lineGrammarOptions(engine)).enabled;
+}
+
 /**
  * The stated relation type for a link at `index` in `text`, for link
  * extraction. `declaredVerbs` (the active pack's link verbs) gates types

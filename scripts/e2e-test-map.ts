@@ -655,6 +655,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/link-relationships.ts": ["test/e2e/link-relationships-postgres.test.ts"],
   "src/core/link-validity.ts": ["test/e2e/link-relationships-postgres.test.ts"],
   "src/core/link-temporal-apply.ts": ["test/e2e/link-relationships-postgres.test.ts"],
+  "src/core/link-effective.ts": ["test/e2e/link-relationships-postgres.test.ts"],
   "src/core/link-temporal-schema.ts": ["test/e2e/link-relationships-postgres.test.ts"],
   "src/core/link-reconciliation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts"],
   "src/core/persistence/links-preparation.ts": ["test/e2e/attendance-retrieval-postgres.test.ts", "test/e2e/wanted-links-postgres.test.ts"],

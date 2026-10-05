@@ -16,7 +16,7 @@ P5 is decided in two sealed runs.
    wanted-row recording on the remote `put_page` write path (after the link-effect hook in the persistence pipeline
    merges) and validity ranges stored on edges (`@effective[start,end)`, after the edge-validity schema merges). Its
    baseline is the frozen build above. Those pieces ship off by default and turn on only if the delta run passes; if
-   it fails, they stay off.
+   it fails, they stay off. Its preregistration is `../p5-delta-2026-10-05/preregistration.md`.
 
 ## Features and the default each verdict decides
 
@@ -25,7 +25,7 @@ P5 is decided in two sealed runs.
 | Wanted pages: unresolved authored links recorded and re-linked when the target appears | `wanted_pages.enabled` | on | off |
 | Typed relation lines (`- works_at [[companies/x]]`) | `line_grammar.enabled` | on | off |
 | Similar-page hint when a write creates a page | `put_page.similar_pages` | on | off |
-| Validity ranges stored on edges (`@effective[start,end)`) | needs the edge-validity schema | on only if the delta run passes | off |
+| Validity ranges stored on edges (`@effective[start,end)`) | `line_grammar.effective_ranges` | on only if the delta run passes | off |
 | Wanted rows from remote `put_page` writes | needs the persistence link-effect hook | on only if the delta run passes | off |
 
 Fact lines (`- [category] claim`) are parsed, linted and reported; they are not projected into `facts`, and no

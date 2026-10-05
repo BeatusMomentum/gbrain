@@ -38,7 +38,14 @@ They stay searchable page text; recall's facts come from `remember` and the
 `@effective[start,end)` (alias `@valid`) states when a relation or fact holds,
 with `YYYY`, `YYYY-MM` or `YYYY-MM-DD` dates in UTC. Square brackets are
 inclusive, parentheses exclusive, and an empty side is open. Ranges are parsed
-and validated on write; storing them on edges uses the edge validity columns.
+and validated on write. With `line_grammar.effective_ranges true` (off by
+default), a range on a relation line is stored on that relationship as dated
+start and end evidence, the same evidence a dated timeline line gives
+([temporal edges](temporal-edges.md)): `- works_at @effective[2021-03,2024-06) [[companies/acme-example]]`
+makes the works_at edge live from 2021-03-01 and ended on 2024-06-01, so
+default graph reads hide it and `as_of` reads find it. A range on a type that
+is not a dated relationship, or on a link the page does not store with that
+type, is reported and stores nothing.
 
 ## What `put_page` reports
 

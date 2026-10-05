@@ -50,6 +50,10 @@ category is known; write prose for everything else.
 it holds. Dates are `YYYY`, `YYYY-MM` or `YYYY-MM-DD` (UTC). `[`/`]` are
 inclusive, `(`/`)` exclusive, an empty side is open: `@effective[2022,)` means
 "since 2022". Natural-language and relative dates (`last spring`) are not read.
+When `line_grammar.effective_ranges` is on, the range on a relation line dates
+that relationship: an ended range hides the edge from default graph reads
+(`get_links` with `status: all` or `as_of` still shows it). To record that a
+job ended, edit the line's range rather than deleting the line.
 
 ## Check before writing
 

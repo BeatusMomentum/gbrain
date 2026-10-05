@@ -5,6 +5,7 @@ import { sanitizeForJsonb } from './batch-rows.ts';
 import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-store.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin } from './link-temporal-apply.ts';
 import { primeRelationSemantics } from './link-semantics-pack.ts';
+import { effectiveRangesEnabled } from './line-grammar.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -98,7 +99,7 @@ export async function replaceDerivedLinks(
     // of the same derived projection: captured before, replaced after.
     const temporalKeysBefore = await relationshipKeysForOrigin(tx, Number(id));
     const withTemporal = async (result: { created: number; removed: number }) => {
-      await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore);
+      await applyTemporalEvidence(tx, snapshot.page, rows, temporalKeysBefore, { inlineRanges: await effectiveRangesEnabled(tx) });
       return result;
     };
     if (opts.includeFrontmatter !== false && !opts.preserveExisting) {
