@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 196986,
-    "stdoutSha256": "a94ef05467e333a594813f1214c3c3d5d17174ebf09c587a357b40fde49c668e",
+    "stdoutBytes": 196536,
+    "stdoutSha256": "ab86bc39123901fe0553a6203314821e3139bd2291cb365ce227d4a4332b67ae",
     "toolNames": [
       "remember",
       "entity",
@@ -4198,7 +4198,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} persists a wider surface for your OAuth client.",
+        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per OAuth client; stdio: this session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -4211,7 +4211,7 @@
         "schema": {
           "properties": {
             "surface": {
-              "description": "Surface to persist for your client.",
+              "description": "Surface to widen to (stdio: this session only).",
               "enum": [
                 "verbs",
                 "starter",
@@ -6254,7 +6254,7 @@
         "scope": "write"
       },
       {
-        "description": "Stop a coaching or info notice from appearing for this client (or unmute it with muted: false). Safety, degraded and ask notices cannot be muted.",
+        "description": "Stop a coaching or info notice (or first_run_decisions) from appearing for this client; muted: false unmutes.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -6268,20 +6268,6 @@
           "properties": {
             "code": {
               "description": "Notice code, the word after `[gbrain notice` in the block.",
-              "enum": [
-                "backup_coverage",
-                "degraded_dedup",
-                "empty_retrieval",
-                "features_auto_fix",
-                "listing_truncated",
-                "local_transcripts",
-                "onboard_opportunities",
-                "recovered_frontmatter",
-                "source_binding_narrowed",
-                "synthesis_keyless",
-                "think_not_saved",
-                "unknown_param"
-              ],
               "type": "string"
             },
             "muted": {
