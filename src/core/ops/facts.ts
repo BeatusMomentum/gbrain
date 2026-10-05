@@ -899,11 +899,15 @@ const delta: Operation = {
     // minus a safety lag (in-flight write txns stamp updated_at at txn START)
     // and clear the keyset slug. If nothing delivered but something dropped, do
     // NOT advance (deliver-before-advance; a too-small budget must not eat it).
+    // P0 containment: a failed arm or a fired deadline (degradedReason) means
+    // the delivered set is not known to be complete, so no cursor moves at
+    // all; the next wake re-reads the same window (at-least-once).
+    const incomplete = res.degradedReason !== undefined;
     const nextCursor =
-      pages.length > 0
+      pages.length > 0 && !incomplete
         ? { since: rawPages[pages.length - 1].updated_at, slug: rawPages[pages.length - 1].slug }
         : { since: effectiveSince, slug: sinceSlug ?? '' };
-    if (sessionId) {
+    if (sessionId && !incomplete) {
       if (pages.length > 0) {
         await upsertSessionContextState(ctx.engine, sourceId, clientId, sessionId, {
           lastWakeAt: nextCursor.since,
