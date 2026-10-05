@@ -510,7 +510,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 205 (latest: 205)",
+          "message": "Version 206 (latest: 206)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1937,13 +1937,13 @@
         },
         {
           "category": "meta",
-          "message": "Active pack gbrain-base-v2@1.2.0+6c7be06e is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.3.0+a50a67b9 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "0 distinct typed values (pack declares 19)",
+          "message": "0 distinct typed values (pack declares 20)",
           "name": "type_proliferation",
           "status": "ok"
         },

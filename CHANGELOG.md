@@ -10,6 +10,96 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.62.0] - 2026-10-05
+
+**Ask your agent for a brief on an account and it now finds the open ticket, the latest contact and the blocker, and it spends about a quarter less to get there.**
+
+Before this release, a ticket that said `Customer: QUCO` or a meeting titled `QUCO renewal prep` was not connected to the account it was about. Your agent had to search, and search returns the best-matching handful. Nine near-identical tickets look alike to it, so the open one often never showed up. Now the brain links every page that names a person, company or account, by its name, by the name inside a record title (`CRM record: Acme Example`), or by a code the record declares (`Account code: ACMX`). Ask for the account and the card lists all of those pages by type, newest first, each with a one-line preview, plus the exact call to page through the rest. Building the links costs nothing: no model calls, no API key.
+
+On Cat 40, the agent benchmark run on five frontier models (Sonnet 5.5, Opus 5.5, Fable 5.1, GPT-6.1 Sol, GPT-6 Astra), account briefs on the held-out world gained 7 points, and overall scores held while cost per task fell 26%. Most tasks already sit near the ceiling, so the overall score cannot move much in either direction; the gain shows up in the briefs and in the bill.
+
+### How to use it
+
+```bash
+gbrain extract --stale --catch-up   # once after upgrading; autopilot keeps it current
+gbrain entity ACMX                  # the card, with "referenced by N page(s)"
+gbrain backlinks crm/acme-example --type ticket --group page
+gbrain extract mentions --explain acmx --page meetings/2026-04-03   # why a name did not link
+```
+
+Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `coverage`; `get_backlinks` takes `type`, `group: "page"`, `limit` and `cursor`. Guide with a two-minute keyless tutorial: `docs/guides/entity-recall.md`.
+
+### The numbers that matter
+
+| Measure | Before | Now |
+|---|---|---|
+| Account briefs (family E), held-out world, vs v0.60.44.0 (5 models × 2 repeats × 50 tasks) | baseline | +7.0 pts [+1.0, +12.0] |
+| All tasks, held-out world, vs v0.60.44.0 | baseline | +0.4 pts [−2.0, +2.4] |
+| Cost per task, held-out world | $0.323 | $0.238 (−26%) |
+| Account briefs (family E), development world | 44/50 | 46/50 |
+| All tasks, development world | 239/250 at $0.341/task | 239/250 at $0.240/task (−30%) |
+| Private finance-only text leaked into answers, held-out world | 0 | 0 |
+| Links from documents to the account they name (dev brain, 3,973 pages) | 0 | 4,124 |
+| First full mention pass, 52,000-document world, PGLite, no embeddings | n/a | 7-16 s (52,956 links; 0.2 s when nothing changed) |
+| `entity` p99 with references, 20K pages, a 10,000-link hub | n/a | 61-71 ms (budget 100 ms) |
+| Keyless tutorial on a fresh install | n/a | 8 s |
+| Tool list the model receives (starter surface) | 24,708 chars | 24,750 chars (cap 25,000) |
+
+The links and the card alone scored 236/250 overall and 43/50 on briefs in development; the instruction to start a brief with `entity` brings that to 239/250 and 46/50 at the lower cost. Against an agent reading the same documents as plain files, the held-out score is a tie at the ceiling (95.6% vs 95.6%, difference 0.0 [−3.2, +3.0]). Files cost about half as much per task ($0.11 vs $0.24), but the file agent read finance-only private text into its context 100 times, and gbrain did so 0 times.
+
+### Things to watch
+
+- `extract --stale` reads every page once after the upgrade. `gbrain post-upgrade` prints the command and an estimate while pages are due; autopilot does the same work over several cycles if you skip it.
+- A one-word code links only as written: `ACMX` links, `acmx` in prose does not. Names under 4 characters, generic words, a first word shared by two accounts, and names inside private facts or takes fences never link.
+- `entity("Acme Example")` stays the company page when a `CRM record: Acme Example` page also exists: an exact title always wins over a derived name.
+- `get_backlinks` without the new parameters returns the same link list as before.
+- Off switch: `gbrain config set mentions.auto_link false` removes mention links and derived names on the next sweep (typed links from `extract --ner` stay).
+
+## To take advantage of v0.60.62.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.60.62.0.md` the next time you interact with it.** It runs the first mention pass (`gbrain extract --stale --catch-up`, free) or leaves it to autopilot.
+3. **Verify the outcome:**
+   ```bash
+   gbrain extract --stale --dry-run --json   # mention_due_pages: 0
+   gbrain entity "<an account or person in your brain>"
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- **Linkable types follow the schema pack** (`src/core/mentions/policy.ts`): person, company, organization and entity, plus every type the source's pack marks `primitive: entity` and its type aliases (`product` excluded), adjusted by `mentions.entity_types` (`+type`, `-type`). The entity card's exact-title preference uses the same set.
+- **`gbrain-base-v2` 1.3.0** adds the `account` page type (alias `crm`, `accounts/` and `crm/` folders, not routed to expert lookup).
+- **Derived names** (`src/core/mentions/aliases.ts`): an entity page's title subject and the codes it declares (`account code`, `also known as`, `aka`, `short name`, `ticker`, `code name`) are stored in `page_aliases` with `origin` `subject` or `declared`, read from text with private fences stripped. A one-word declared code is case-sensitive. Import, `gbrain reindex --aliases` and the stale sweep write the same rows; on managed brains through the coordinated writer. Frontmatter aliases are never touched by them.
+- **Precedence everywhere aliases are read**: frontmatter > declared > subject within a source, and a derived alias never answers for another page's exact title (`readAliases`, used by `resolveEntitySlug`, the retrieval reflex, the search alias hop, intent weights and `search-diagnose`).
+- **The mention pass** (`src/core/mentions/pass.ts`) runs after link work in `gbrain extract --stale`, autopilot's stale drain and the managed stale path (sync's inline extraction stays link-only). It has its own per-page state and extractor version, so it never reruns link or timeline extraction. A changed name rescans only pages that link to the old target or match the new name; an edit or a name change during a scan leaves the page due instead of publishing a stale result; a failed index build writes nothing and records `failed`; only plain mention links are reconciled (`typed_ner` links stay). Page titles are scanned too; frontmatter `mention_ignore` and `mentions.ignore` skip names. A budgeted cycle gives the mention pass half its time while pages are due.
+- **Gazetteer guards** (`src/core/by-mention.ts`): an alias claimed by two pages is dropped, a same-source title wins over an alias, a one-word alias equal to the first word of another multi-word entity name is dropped, and the generic-word list applies to every one-word alias (titles keep the person-only rule).
+- **`entity` card**: `referenced_by_count`, `referenced_by` (groups by pack-canonical type, newest first by `COALESCE(effective_date, updated_at)`, 10 rows per group, 50 per card, 160-character previews, `next` continuation) and `coverage` (`complete`, `pending`, `disabled`, `type_not_linkable`, `failed`); misses carry `coverage` too. Remote callers never see or count private or derived-private referrers. `context_pack` and `delta` do not compute them.
+- **`get_backlinks`** (`src/core/ops/backlinks-paged.ts`): `type`, `limit` (max 500), and `group: "page"` returning `{rows, total, truncated, cursor, coverage}` with a keyset cursor; an unknown `type` or out-of-range `limit` is an error naming the valid values. No new parameters, no change.
+- **`gbrain extract mentions --explain <name|slug> [--page <slug>]`** reports the matched name and origin, or one of 11 reason codes.
+- **Notices and doctor**: a non-complete coverage adds a `[gbrain notice mention_index]` block; `links_extraction_lag` reports mention-due pages; `gbrain post-upgrade` prints an `[AGENT]` catch-up line; `extract --stale --dry-run` reports `mention_due_pages` and `mention_last_pass_at`.
+- **Schema**: migration v206 adds `page_aliases.origin`, `case_sensitive` and `alias_text` (unique key widened to include `origin`) and the `page_mention_state`, `mention_gazetteer_entries` and `mention_index_status` tables. No existing row is rewritten.
+- **Config**: `mentions.auto_link` (default on), `mentions.entity_types`, `mentions.ignore`.
+- **Faster private-page filtering for remote callers** (`src/core/search/private-visibility.ts`): the declared-lineage check runs only for pages that carry `derived_from`, so remote reads no longer probe the source's private pages once per candidate row. Results are unchanged.
+- **Server instructions**: wherever `entity` is served, the initialize instructions say: for a brief on an account, person or company, call `entity`, then walk `referenced_by` (or `get_backlinks`, where served) by type. The sentence replaces "several names" guidance on those surfaces; the full contract is 4,607 characters (ceiling 4,628).
+- **Tool descriptions**: `get_backlinks` describes its new parameters and `entity` tells agents that previews are not evidence; the server instructions name `referenced_by`. Everything fits the unchanged schema ceilings because the `query` and `search` descriptions are shorter.
+
+### For contributors
+
+- Tests: `test/mentions-*.test.ts`, `test/e2e/mentions-parity.test.ts` (PGLite and Postgres produce the same rows), and a 10,000-link hub gate in `test/entity-card-perf.slow.test.ts`.
+- Catalog, upgrade-replay and doctor goldens regenerated for migration v206 and the pack version.
+
 ## [0.60.61.0] - 2026-10-05
 
 **Background paid jobs ask before they spend and stay inside the amount the user approved, an agent on MCP gets the same setup tips a person at the terminal gets, every install gives the agent the same tool set, and a shared HTTP server that can't open its brain explains why instead of dying.**
