@@ -33,12 +33,14 @@ const CRITICAL: Phase[] = ['admission', 'claim', 'prepare', 'recovery_record', '
 
 /**
  * Per-phase statement budgets, about 10% above the measured counts (#6007
- * measured admission 25, claim 9, prepare 19, recovery record 6, publication
- * 45, completion 6: 110 on the critical path, and an 8-statement receipt; the
- * code before #6007 measured 29, 9, 21, 9, 61, 10: 139, and 10).
+ * measured admission 25, claim 5, prepare 19, recovery record 6, publication
+ * 46, completion 6: 107 on the critical path, and an 8-statement receipt; the
+ * code before #6007 measured 29, 5, 21, 9, 61, 10: 135, and 10). The claim
+ * counts only the transaction that claimed this write; another tick's empty
+ * claim attempt is a consumer scan.
  */
 const BUDGET: Record<string, number> = {
-  admission: 28, claim: 10, prepare: 21, recovery_record: 7, publication: 50, completion: 7, critical_path: 121, receipt: 9,
+  admission: 28, claim: 6, prepare: 21, recovery_record: 7, publication: 50, completion: 7, critical_path: 118, receipt: 9,
 };
 
 const SCAN = [
@@ -74,7 +76,8 @@ function classify(records: TraceRecord[]) {
     else if (/SET publication_started=true|UPDATE persistence_requests SET state=\$2,outcome/.test(text)) phase = 'publication';
     else if (/UPDATE persistence_requests SET recovery=\$3/.test(text)) phase = 'recovery_record';
     else if (/UPDATE persistence_requests (r )?SET recovery=NULL/.test(text)) phase = 'completion';
-    else if (/FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w\.id=r\.worktree_id WHERE r\.state='queued'/.test(text)) phase = 'claim';
+    // A claim transaction that claimed nothing is another consumer tick's empty attempt, not this write's claim.
+    else if (/FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w\.id=r\.worktree_id WHERE r\.state='queued'/.test(text)) phase = /SET state='running'/.test(text) ? 'claim' : 'consumer_scan';
     else if (/persistence_effects/.test(text)) phase = 'effects';
     return { ...group, phase };
   });
