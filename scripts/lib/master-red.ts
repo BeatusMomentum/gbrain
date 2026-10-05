@@ -331,12 +331,13 @@ async function pushRuns(client: GitHubClient, run: RunInfo): Promise<RunInfo[]> 
 }
 
 /** Pending runs above the high-water mark, or a rebuilt base state plus its pending runs. */
-export function pendingRuns(state: MasterRedState | undefined, runs: RunInfo[], blank: MasterRedState, rebuildReason: string): { state: MasterRedState; pending: RunInfo[] } {
+/** `bootstrap` (no master-red issue exists yet): a past incident that already ended green is not recorded; only a still-red one opens. */
+export function pendingRuns(state: MasterRedState | undefined, runs: RunInfo[], blank: MasterRedState, rebuildReason: string, bootstrap = false): { state: MasterRedState; pending: RunInfo[] } {
   const sorted = [...runs].sort((a, b) => order(a, b));
   if (state) return { state, pending: sorted.filter(r => !state.evaluated || order(r, state.evaluated) > 0) };
   const counted = sorted.filter(r => verdictOf(r.conclusion) !== 'ignored');
   const lastRed = counted.map(r => verdictOf(r.conclusion)).lastIndexOf('red');
-  if (lastRed < 0) {
+  if (lastRed < 0 || (bootstrap && verdictOf(counted.at(-1)!.conclusion) === 'green')) {
     const newest = counted.at(-1);
     return { state: { ...blank, evaluated: newest ? refOf(newest) : null, last_green: newest ? refOf(newest) : null, rebuilt: rebuildReason }, pending: [] };
   }
@@ -357,7 +358,7 @@ export async function planMasterRed(client: GitHubClient, repo: string, run: Run
   const stored = issue ? validState(readJsonBlock(issue.body, MR_MARKER), blank.workflow_file) : undefined;
   const reason = !issue ? 'no master-red issue for this workflow yet' : 'the JSON block of the newest master-red issue was missing or malformed';
   const runs = await pushRuns(client, run);
-  const { state: base, pending } = pendingRuns(stored, runs, blank, reason);
+  const { state: base, pending } = pendingRuns(stored, runs, blank, reason, !issue);
   let state = base;
   const evaluated: number[] = [];
   const closed: MasterRedState[] = [];

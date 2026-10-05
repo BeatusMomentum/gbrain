@@ -434,7 +434,13 @@ describe('master-red: push-to-master runs', () => {
   });
 
   test('red then green with the red run\'s watch dropped still records the incident, its suspect range and flake follow-ups', async () => {
-    const w = testWorld(T.g8315, T.r8320, T.g8352);
+    const w = testWorld(T.g8315);
+    await go(w, T.g8315);
+    expect(w.issues).toHaveLength(0);
+    const g = { run_id: T.g8315.id, run_number: 8315, run_attempt: 1, sha: T.g8315.head_sha };
+    const prior = { schema: 'master-red/v1', workflow: 'Test', workflow_file: 'test.yml', evaluated: g, status: 'green', first_red: null, latest_red: null, last_green: g, suspect: null, open_jobs: [], open_files: [], failed_jobs: [], tests: [], evidence: null, blocked: [] };
+    w.issues.push({ number: 90, title: 'Master red: Test', state: 'closed', labels: [{ name: 'master-red' }], body: jsonBlock(MR_MARKER, prior), created: 0, comments: [] });
+    w.addRun(T.r8320, `jobs-${T.r8320.id}.json`).addRun(T.g8352, `jobs-${T.g8352.id}.json`);
     const r = await go(w, T.g8352);
     expect(r.masterRed!.action).toBe('record-closed');
     const issue = masterIssue(w)!;
@@ -444,9 +450,19 @@ describe('master-red: push-to-master runs', () => {
     expect(w.labeled('flake').map(f => f.title)).toEqual(['Flake: test/persistence-history-fixture.test.ts']);
   });
 
-  test('an out-of-order red (completing after a newer run was evaluated) is ignored', async () => {
+  test('the first watch ever (no master-red issue yet) opens only a still-red incident, never one that already ended green', async () => {
     const w = testWorld(T.g8315, T.r8320, T.g8352);
+    const r = await go(w, T.g8352);
+    expect(r.masterRed!.action).toBe('none');
+    expect(w.issues).toHaveLength(0);
+  });
+
+  test('an out-of-order red (completing after a newer run was evaluated) is ignored', async () => {
+    const w = testWorld(T.g8315, T.r8320);
+    await go(w, T.r8320);
+    w.addRun(T.g8352, `jobs-${T.g8352.id}.json`);
     await go(w, T.g8352);
+    expect(mrState(masterIssue(w)!).evaluated!.run_number).toBe(8352);
     const before = JSON.stringify(w.issues);
     w.addRun(T.r8343, `jobs-${T.r8343.id}.json`);
     const r = await go(w, T.r8343);

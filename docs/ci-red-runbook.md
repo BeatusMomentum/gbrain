@@ -31,6 +31,8 @@ response: a repair PR whose body says `Fixes #<issue>`.
   issue's JSON block. A dropped or superseded watch therefore loses nothing; a
   run that completes after a newer one was evaluated is ignored; a successful
   re-run is a newer attempt; a run cancelled by a newer push changes nothing.
+  The first watch for a workflow with no master-red issue yet opens only an
+  incident that is still red.
 - **Missing or malformed JSON block:** the state is rebuilt from the actions API
   by folding from the last green run before the newest red one. The body says
   so. If the API cannot be read, the watch fails and writes nothing.
