@@ -119,6 +119,7 @@ import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
 import { noticesOperations } from './ops/notices.ts';
 import { pageEditOperations } from './ops/page-edit.ts';
+import { feedbackOperations } from './ops/feedback.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
 // verb (verbs.ts) loads it from THIS module at runtime — re-exported so every
@@ -140,6 +141,7 @@ export const operations: Operation[] = [
   ...persistenceOperations,
   // Search (search, query) — ops/search.ts
   ...searchOperations,
+  ...feedbackOperations,
   // v0.36 Phase 2: image-as-query (search_by_image) — ops/image.ts
   ...imageOperations,
   // Tags (add_tag, remove_tag, get_tags) — ops/tags.ts
