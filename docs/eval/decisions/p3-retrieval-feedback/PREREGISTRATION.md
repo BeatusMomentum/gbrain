@@ -67,6 +67,18 @@ worlds from held-out phrasing and seeds (`--phrasing-file`, access-logged); the 
 dev seeds 11 and 13. Guards: world-v1 relational sealed half and NamedThingBench relational. Precondition: the
 relational arm fires on at least 80% of the constrained questions. Metrics: NDCG@10 (primary), hit@1, hit@3.
 
+**E5. Declared single-value relations (correctness).** P1's temporal-edges category on the custodian's held-out
+phrasing set C, seeds 11, 13 and 17 (`eval/runner/temporal-edges.ts --phrasing-file …`), with a test pack that
+extends the default pack and declares `works_at` `cardinality: one_per_from`. Arms on the same build: off (default
+pack) and on (test pack, then one `edge_contradictions` pass with `dream.single_value.mode=apply` and
+`dream.edge_contradictions.mode=off`, so no model is called). Measurements, against the generator's employment ledger:
+wrong closures (a closed relationship the ledger says is current, or a close date that differs from the ledger's
+next start), conflicts left open for undated and same-date starts, and the category's as-of exact rate, now-precision
+and during-F1. Gate: 0 wrong closures; every undated or same-date conflict left open; as-of exact rate, now-precision
+and during-F1 each no lower than the off arm (cluster-bootstrap lower bound ≥ −0.01, cluster = person). Traps
+(advisor roles, investments and alumni meetings at former employers, rejoins) must still pass at ≥ 0.99. Cost: $0
+(no model calls).
+
 Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2026-10-04, before any sealed data was opened):
 
 - **Feedback ON by default** iff all hold: E2 judge mean +1.0 point or more with CI excluding 0 in the frozen and
@@ -84,12 +96,18 @@ Default decisions (the per-corpus E1 reading and the fixed λ were approved on 2
   0 (cluster bootstrap over held-out seeds and templates) and the guards show 0 hit@1 losses. Otherwise the setting
   is removed from the pull request. The wider fetch only runs with triplet scoring on, so the plan's E4a is not a
   separate arm.
-- Declared single-value relations (plan E5) are not part of this pull request.
+- **Declared single-value relations: `dream.single_value.mode` defaults to `apply`** iff E5 shows 0 wrong closures,
+  every undated or same-date conflict left open, and no as-of regression. Otherwise the default is `propose`
+  (closures recorded for review, nothing written to pages). Added 2026-10-05, before any E5 cell ran.
 
 Budget caps: E1 $16, E2 $180 (dev spent $23.65; the sealed run as specified is estimated at about $130), E3 $20, E4 $12
-(plan total cap $260, which also covered the dropped E5).
+E5 $0 (plan total cap $260).
 
 ## Harness requirements
+
+- E5: `temporal-edges.ts` needs two additions for the on arm: a `--pack <file>` option that installs the test pack
+  before the pages are written, and a pass of the `edge_contradictions` phase (declared-only, no judge) before the
+  probes, plus the wrong-closure and conflicts-left-open counts in its rows.
 
 - E1: `eval/runner/feedback-replay-locomo.ts` and `eval/runner/feedback-replay-world.ts` (gbrain-evals
   `p0-heldout-harness`), custodian mode `--split sealed --decision-id <id> --purpose <text>` with the access log.

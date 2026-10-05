@@ -72,3 +72,10 @@ surface forms: "who at X works on Y" fires, "who at X is working on Y" does not,
 templates miss most rewordings. Any ranking change that acts on the relational arm (triplet scoring included) is
 capped by how often the parser recognizes the question. Measuring the parser's recall on held-out phrasings, and
 widening it, is a prerequisite for re-testing relational ranking ideas.
+
+## E5: declared single-value relations — pending
+
+Preregistered on 2026-10-05 before any cell ran (see the E5 entry in [`PREREGISTRATION.md`](PREREGISTRATION.md)):
+P1's temporal-edges set C with a test pack declaring `works_at` single-valued; 0 wrong closures, every undated or
+same-date conflict left open, no as-of regression. Until the verdict is recorded, `dream.single_value.mode` acts only
+on packs that declare `cardinality`, and no bundled pack does.
