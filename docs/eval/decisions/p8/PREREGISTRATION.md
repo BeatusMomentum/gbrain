@@ -138,3 +138,14 @@ Written after the section 6 sealed run failed and before any retest data exists.
 - **Reason.** The first sealed run's text informed these fixes, so it can no longer test them; only fresh quotes can.
 - **Outcome.** PASS turns `think.quote_verify` and `dream.quote_verify` on by default; FAIL keeps them opt-in. The
   first run's FAIL stays in the verdict record either way.
+
+### 2026-10-05: Fable at 1 repeat in Cat 40 (section 7)
+
+Written after the Opus, Sonnet and GPT cells finished and before any `claude-fable-5-1` sealed cell runs.
+
+- **Change.** `claude-fable-5-1` runs 1 repeat per task in each arm (`full`, `starter`, `verbs`) instead of 2. The
+  other three models keep their 2 repeats. The world, arms, gates, paired task-bootstrap and decision rule are
+  unchanged.
+- **Reason.** Cost: at 2 repeats the Fable cell would take P8's sealed runs past the program cap.
+- **Disclosure.** The verdict record and the PR state that Fable ran 1 repeat per task while the other models ran 2,
+  and report Fable's per-model results with that repeat count.
