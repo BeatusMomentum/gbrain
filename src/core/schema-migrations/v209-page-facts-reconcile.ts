@@ -11,7 +11,7 @@ import type { Migration } from './types.ts';
 // page_mention_state. Placeholder number: the fix wave 9 integrator renumbers it.
 export const v209: Migration = {
   version: 209,
-  name: 'w9_p_facts_reconcile',
+  name: 'page_facts_reconcile',
   idempotent: true,
   sql: `
     CREATE TABLE IF NOT EXISTS page_facts_reconcile (
