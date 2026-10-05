@@ -33,6 +33,12 @@ ever destroys another owner's VM, an untagged legacy `ubirun-<epoch>-*` VM, or a
 VM the runner did not name. Use `down NAME` for those after checking who owns
 them.
 
+A machine that goes to sleep kills the run outright, with no signal, so
+teardown can't run: on Capy, run `ci:ubicloud` as a watched background
+operation so the machine stays awake. After any interrupted run, check
+`list --mine` and reap leftovers with `down NAME` (or `gc HOURS`, which only
+destroys your own VMs older than HOURS).
+
 `ubi-runner.sh list --mine` lists your VMs. `ubi-runner.sh usage` prints VMs
 and vCPUs per owner across the project, which shows who holds the shared quota.
 
