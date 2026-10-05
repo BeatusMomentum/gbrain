@@ -96,15 +96,16 @@ bootstrap intervals that resample whole conversations.
 
 - **Pressure notice stays on by default** if, on claude-sonnet-5-5, B − A′ ≥
   +3.0 accuracy points with the CI lower bound above 0, and no question type's
-  CI lies entirely below −2.0 points. Cost: pending the user's answer, either
-  the original "cost per question rises by at most 25%" or "cost per correct
-  answer no higher than A′'s". Otherwise `memory.pressure.enabled` ships
-  `false`.
+  CI lies entirely below −2.0 points. Otherwise `memory.pressure.enabled`
+  ships `false`.
 - **Core delivery stays on by default** if C − A′ ≥ 0 on every model that is
   not at ceiling, and neither category's CI lies entirely below −2.0 points.
   Otherwise `memory.core.enabled` ships `false`.
 - The report-only models decide nothing for the pressure gate; a negative
   B − A′ on one of them is reported next to the verdict.
+- Cost gates neither default. Cost per question and cost per correct answer
+  are reported for every arm and model, next to the verdict, in the release
+  notes and in the post-upgrade notice that announces the defaults.
 
 ## Development results (set no default)
 
@@ -193,4 +194,8 @@ check (E2) is capped at $4. Latency check (E3): session-start p95 under
   (harness fixed by reissuing the step; gbrain now names that cause in its
   error). Only results from the corrected harness and build count as
   development evidence.
-- 2026-10-05: the cost criterion is pending the user's answer (see Pass bars).
+- 2026-10-05: Garry decided that the gates are accuracy only. The cost
+  criterion (first "cost per question rises by at most 25%", then the
+  proposed "cost per correct answer no higher than A′'s") is removed as a
+  gate; cost per question and cost per correct answer stay reported metrics,
+  stated plainly in the release notes and the post-upgrade notice.
