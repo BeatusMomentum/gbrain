@@ -206,6 +206,7 @@ jobs:
           case "$SHARD" in
             1) files=(
                 test/attribution-backfill-history.test.ts
+                test/behavior-change-notice.test.ts
                 test/colon-slug-windows-5032.test.ts
                 test/decide/conflict-proposals-managed.test.ts
                 test/declared-lineage-visibility.test.ts

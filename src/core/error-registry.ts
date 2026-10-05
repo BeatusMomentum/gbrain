@@ -377,6 +377,8 @@ export const NOTICE_CODES = {
   surface_env_invalid: { kind: 'info', summary: 'GBRAIN_SURFACE holds a value other than verbs, starter or full; the server ignored it and names the surface it serves.' },
   features_auto_fix: { kind: 'coaching', summary: 'gbrain features found auto-fixable gaps; the fix is the auto-fix command (it may spend on embeddings).' },
   post_upgrade: { kind: 'safety', summary: 'gbrain was upgraded; behavior for scripts and agents changed — read the behavior table once.' },
+  behavior_changes: { kind: 'safety', summary: 'One-time disclosure of behavior an upgrade turned on (a live chat_fallback_chain, managed-brain lint repairs, smaller transcript parts, a mention-linker rescan); everything stays on, and the fix is optional.' },
+  chat_fallback_hop: { kind: 'safety', summary: 'chat_fallback_chain sent a request to another model for the first time in this process; names the failed and the next model.' },
   facts_drain_first_run: { kind: 'info', summary: 'The automatic facts drain is about to process its first backlog on this brain: the queued page count, the estimated spend, the caps and the opt-out.' },
   facts_drain_deferred: { kind: 'degraded', summary: 'The automatic facts drain left queued pages waiting (no key, a spend cap, an unpriced model under a user cap); the fix is the next step.' },
   relational_chain: { kind: 'degraded', summary: 'A typed relationship chain found no complete answer (start page not visible, no typed edges, an empty hop) or hit a cap; the notice names the hop and the next call.' },
