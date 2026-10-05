@@ -34,9 +34,10 @@ import { lookupRefsForSlugs } from './link-reconciliation.ts';
  *      sidecar (O_EXCL) fences concurrent sweeps off the same file so
  *      two processes never double-pay one transcript's LLM call.
  *
- * Budget: a wall-clock budget aborts BETWEEN items (and threads an
- * AbortSignal into the fence pass + corpus extraction); the report
- * carries the partial counts. runMaintenanceSweep NEVER throws.
+ * Budget: a wall-clock budget stops the sweep BETWEEN items (and threads an
+ * AbortSignal into the zero-LLM fence pass only; a corpus extraction in
+ * flight finishes and writes its sidecar, E-N2); the report carries the
+ * partial counts. runMaintenanceSweep NEVER throws.
  *
  * Heavy dependencies (cycle extractor, extract command cores, facts
  * pipeline, gateway) are lazy-imported inside each pass — the
@@ -160,9 +161,8 @@ export async function runMaintenanceSweep(
   };
   const overBudget = () => Date.now() >= deadline;
 
-  // Budget abort signal: threads into the fence pass's per-page loop and
-  // the corpus extraction's network call so a long item can be interrupted
-  // at its own checkpoints. unref'd — the sweep must never hold the
+  // Budget abort signal: threads into the fence pass's per-page loop so a
+  // long item can be interrupted at its own checkpoints. unref'd — the sweep must never hold the
   // process open (the serve unref convention).
   const budgetController = new AbortController();
   const budgetTimer = setTimeout(
@@ -240,11 +240,16 @@ export async function runMaintenanceSweep(
       if (overBudget()) {
         skip('budget_exhausted:corpus');
       } else {
+        // E-N2: the budget stops the corpus pass BETWEEN files and windows
+        // (overBudget), never mid-call. An extraction slower than the budget
+        // aborted at the deadline wrote no sidecar, so every scheduled
+        // `sweep --once` paid for the same call and finished nothing. The
+        // gateway's own timeout still bounds a hung call.
         await runCorpusIngestPass(engine, {
           sourceId,
           batchLimit,
           overBudget,
-          signal: budgetController.signal,
+          signal: new AbortController().signal,
           capabilities: opts.capabilities,
           report,
           skip,
