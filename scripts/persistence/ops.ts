@@ -12,15 +12,20 @@
  * Nothing here calls a preparer or `tx.*` directly.
  */
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import type { AuthInfo, OperationContext } from '../../src/core/ops/contract.ts';
 import { operationsByName } from '../../src/core/operations.ts';
+import { toAgentError } from '../../src/core/agent-output.ts';
+import { dispatchRenderContext, type DispatchOpts } from '../../src/mcp/dispatch.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import { revokeLegacyTokenById } from '../../src/core/token-mint.ts';
 
 export const OP_KINDS = ['put_page', 'edit_page', 'remember', 'forget', 'takes_add', 'takes_supersede',
-  'add_timeline_entry', 'delete_page', 'restore_page'] as const;
+  'add_timeline_entry', 'delete_page', 'restore_page', 'revoke_access', 'sync', 'connector_publish'] as const;
 export type OpKind = typeof OP_KINDS[number];
 /** Read surfaces the oracle checks; they never mutate. */
 export const READ_KINDS = ['get_page', 'recall', 'takes_list'] as const;
@@ -64,8 +69,12 @@ export interface OpObservation {
   receipt?: { request_id: string; state: string; revision?: string | null; principal_kind?: string; principal_id?: string; source_id?: string };
   /** Values later ops can `$ref`. */
   values: { fact_id?: string; row_num?: number; revision?: string };
+  /** The page bytes the caller could read right after a committed op on a page (for stale republication). */
+  pageContent?: string;
   /** The raw handler result or error fields, JSON-safe. */
   raw?: unknown;
+  /** For a failure: the code of the agent-contract envelope an MCP caller receives (`toAgentError`). */
+  agentCode?: string;
 }
 
 /**
@@ -82,6 +91,63 @@ export interface World {
   /** AuthInfo per remote actor, from the real token verifier. */
   auth: Map<string, AuthInfo>;
   observations: Map<string, OpObservation>;
+  /** Descriptors by id, and the exact parameters each was submitted with (a same-intent replay resends them). */
+  descriptors?: Map<string, OpDescriptor>;
+  submitted?: Map<string, Record<string, unknown>>;
+  /** Called with the exact parameters right before submission (a crash worker persists them). */
+  onSubmit?: (d: OpDescriptor, params: Record<string, unknown>) => void;
+  /** Checkout roots by source id: `sync` edits and commits files there as a user would. */
+  roots?: Record<string, string>;
+  /** The connector source, when the topology has one. */
+  connector?: { sourceId: string; root: string };
+}
+
+/** The GitHub item the connector fixture serves; its page is `CONNECTOR_SLUG` in the connector source. */
+export const CONNECTOR_SLUG = 'gh/acme-example/app/1';
+const CONNECTOR_CONFIG = { kind: 'github', gh_scope: 'repos', gh_repos: 'acme-example/app', gh_token_env: 'CRASH_ROBOT_CONNECTOR_TOKEN' };
+export function connectorSourceConfig(): Record<string, string> { return { ...CONNECTOR_CONFIG }; }
+
+/** A user edits a page file in the checkout and commits it, then the owner syncs through the real `sync_brain` handler. */
+async function runSync(world: World, d: OpDescriptor): Promise<Record<string, unknown>> {
+  const root = world.roots?.[d.source];
+  if (!root) throw new Error(`op descriptor ${d.id}: source ${d.source} has no checkout`);
+  const slug = String(d.args.slug);
+  const path = join(root, `${slug}.md`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, String(d.args.content));
+  // `extra` sibling files make a backlog, so a managed Postgres sync publishes in bulk groups.
+  const files = [`${slug}.md`];
+  for (let i = 0; i < Number(d.args.extra ?? 0); i++) {
+    const sibling = `${slug}-batch-${i}.md`; files.push(sibling);
+    writeFileSync(join(root, sibling), `---\ntype: note\ntitle: batch ${i}\n---\n\nBatch page ${i} of ${slug}.\n`);
+  }
+  const git = (...args: string[]) => Bun.spawnSync(['git', '-C', root, ...args], { stdout: 'pipe', stderr: 'pipe' });
+  git('add', '--', ...files);
+  git('-c', 'user.name=Crash Robot', '-c', 'user.email=robot@example.invalid', 'commit', '-q', '-m', `edit ${slug}`, '--', ...files);
+  return await operationsByName.sync_brain.handler(contextFor(world, 'local', d.source),
+    { source_id: d.source, no_pull: true, no_embed: true }) as Record<string, unknown>;
+}
+
+/** The connector fetches one issue whose body carries the descriptor's marker and publishes it through the coordinator. */
+async function runConnector(world: World, d: OpDescriptor): Promise<Record<string, unknown>> {
+  if (!world.connector) throw new Error(`op descriptor ${d.id}: the topology has no connector source`);
+  const { runGitHubSync } = await import('../../src/core/github-source.ts');
+  const { parseGitHubSourceConfig } = await import('../../src/core/github-source-config.ts');
+  const issue = { number: 1, title: 'Robot issue', state: 'open', body: String(d.args.body), created_at: '2026-09-01T00:00:00Z',
+    updated_at: String(d.args.updated_at ?? '2026-09-02T00:00:00Z'), labels: [], assignees: [], user: { login: 'example-user' },
+    html_url: 'https://github.com/acme-example/app/issues/1' };
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  const fetchImpl = async (url: string) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/issues/1')) return json(issue);
+    if (path.endsWith('/issues')) return json([issue]);
+    if (path.endsWith('/pulls') || path.endsWith('/comments')) return json([]);
+    if (path === '/repos/acme-example/app') return json({ full_name: 'acme-example/app', private: true, default_branch: 'main' });
+    throw new Error(`crash-robot connector fixture: unexpected route ${path}`);
+  };
+  process.env.CRASH_ROBOT_CONNECTOR_TOKEN ??= 'synthetic-local-fixture';
+  return await runGitHubSync(world.engine, world.connector.sourceId, parseGitHubSourceConfig(CONNECTOR_CONFIG, world.connector.root),
+    { noEmbed: true, noExtract: true, noSchemaPack: true, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } } as never, fetchImpl as never) as unknown as Record<string, unknown>;
 }
 
 export function descriptor(id: string, kind: OpKind, actor: string, source: string, args: Record<string, OpArg>,
@@ -106,6 +172,32 @@ export function parseDescriptor(value: unknown): OpDescriptor {
 export async function authenticateRemotes(world: World): Promise<void> {
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(world.engine) });
   for (const remote of world.remotes) world.auth.set(remote.name, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo);
+}
+
+/** Re-verify one actor's bearer token, as a remote transport does on every request. */
+async function reauthenticate(world: World, actor: string): Promise<void> {
+  const remote = world.remotes.find(r => r.name === actor);
+  if (!remote) return;
+  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(world.engine) });
+  // The transport's own verification retries a dropped connection; only the operation is under test.
+  for (let attempt = 0; ; attempt++) {
+    try { world.auth.set(actor, await provider.verifyAccessToken(remote.token) as unknown as AuthInfo); return; }
+    catch (error) {
+      if (attempt >= 8 || !/CONNECTION_CLOSED|ECONNRESET|08P01|57P01|server conn crashed/i.test(`${(error as { code?: string }).code} ${(error as Error).message}`)) throw error;
+      await Bun.sleep(150 * (attempt + 1));
+    }
+  }
+}
+
+/** Revoke a remote actor's credential through the owner's real revocation path. */
+async function revokeAccess(world: World, actor: string): Promise<void> {
+  const remote = world.remotes.find(r => r.name === actor);
+  if (!remote) throw new Error(`op descriptor: revoke_access names unknown actor ${actor}`);
+  const auth = world.auth.get(actor);
+  const sql = sqlQueryForEngine(world.engine);
+  if (remote.kind === 'oauth_client') {
+    await new GBrainOAuthProvider({ sql, transaction: fn => world.engine.transaction(tx => fn(sqlQueryForEngine(tx))) }).revokeClient(auth!.clientId);
+  } else await revokeLegacyTokenById(sql, auth!.principal!.id);
 }
 
 export function contextFor(world: World, actor: string, sourceId: string): OperationContext {
@@ -135,7 +227,15 @@ function resolveArg(world: World, value: OpArg): unknown {
 
 /** Map a descriptor to the operation's own parameter shape. */
 export async function paramsFor(world: World, d: OpDescriptor): Promise<{ op: string; params: Record<string, unknown> }> {
+  const original = d.replayOf ? world.descriptors?.get(d.replayOf) : undefined;
+  const resent = original && original.actor === d.actor && original.kind === d.kind && JSON.stringify(original.args) === JSON.stringify(d.args)
+    ? world.submitted?.get(original.id) : undefined;
+  if (resent) return { op: d.kind, params: resent };
+  // A resubmission after a crash sends exactly what the interrupted caller sent.
+  const interrupted = world.submitted?.get(d.id);
+  if (interrupted) return { op: d.kind, params: interrupted };
   const a = resolveArg(world, d.args as OpArg) as Record<string, unknown>;
+  if (a.content === '$stale_content') a.content = world.observations.get(String(a.stale_of))?.pageContent ?? 'missing stale content';
   if (a.expected_revision === '$current') {
     const snapshot = await world.engine.readPageSnapshot(String(a.slug), { sourceId: d.source, includeDeleted: true });
     a.expected_revision = snapshot?.revision ?? 'missing-page';
@@ -153,6 +253,9 @@ export async function paramsFor(world: World, d: OpDescriptor): Promise<{ op: st
     case 'add_timeline_entry': return { op: 'add_timeline_entry', params: { ...base, slug: a.slug, date: a.date, summary: a.summary } };
     case 'delete_page': return { op: 'delete_page', params: { ...base, ...revision, slug: a.slug } };
     case 'restore_page': return { op: 'restore_page', params: { ...base, ...revision, slug: a.slug } };
+    case 'revoke_access': return { op: 'revoke_access', params: { actor: a.actor } };
+    case 'sync': return { op: 'sync', params: { slug: a.slug, content: a.content, ...(a.extra ? { extra: a.extra } : {}) } };
+    case 'connector_publish': return { op: 'connector_publish', params: { body: a.body, updated_at: a.updated_at } };
   }
 }
 
@@ -170,15 +273,49 @@ function receiptOf(value: Record<string, unknown> | undefined): OpObservation['r
     source_id: r.source_id as string | undefined };
 }
 
+/** The code of the agent-contract envelope an MCP caller receives for this failure. */
+function agentEnvelopeCode(error: unknown, op: string): string {
+  return toAgentError(error, { transport: 'http', op, mutating: true, idempotent: true, outcome: 'unknown',
+    render: dispatchRenderContext({ transport: 'http', remote: true } as DispatchOpts) }).code;
+}
+
 /** Run one descriptor through its real handler and record what the caller observed. */
 export async function executeOp(world: World, d: OpDescriptor): Promise<OpObservation> {
+  const base = { id: d.id, kind: d.kind, actor: d.actor, source: d.source, requestId: d.requestId };
+  if (d.kind === 'revoke_access') {
+    await revokeAccess(world, String(d.args.actor));
+    const observation: OpObservation = { ...base, status: 'committed', values: {} };
+    world.observations.set(d.id, observation);
+    return observation;
+  }
+  if (d.kind === 'sync' || d.kind === 'connector_publish') {
+    const { params } = await paramsFor(world, d);
+    (world.submitted ??= new Map()).set(d.id, params);
+    world.onSubmit?.(d, params);
+    let observation: OpObservation;
+    try {
+      const run = { ...d, args: params as OpDescriptor['args'] };
+      const result = d.kind === 'sync' ? await runSync(world, run) : await runConnector(world, run);
+      const status = String(result.status);
+      observation = { ...base, status: ['synced', 'first_sync', 'up_to_date'].includes(status) ? 'committed' : status === 'partial' ? 'pending' : 'refused',
+        ...(['synced', 'first_sync', 'up_to_date', 'partial'].includes(status) ? {} : { code: status }), values: {}, raw: jsonSafe({ status, reason: result.reason }) };
+    } catch (error) {
+      const e = error as { code?: string; message?: string };
+      observation = { ...base, status: 'refused', code: e.code ?? 'uncoded_error', agentCode: agentEnvelopeCode(error, 'sync_brain'),
+        values: {}, raw: { code: e.code, name: (error as Error).name, message: e.message?.slice(0, 400) } };
+    }
+    world.observations.set(d.id, observation);
+    return observation;
+  }
   const { op, params } = await paramsFor(world, d);
+  (world.submitted ??= new Map()).set(d.id, params);
+  world.onSubmit?.(d, params);
   const handler = operationsByName[op]?.handler;
   if (!handler) throw new Error(`op descriptor ${d.id}: operation ${op} is not registered`);
-  const ctx = contextFor(world, d.actor, d.source);
-  const base = { id: d.id, kind: d.kind, actor: d.actor, source: d.source, requestId: d.requestId };
   let observation: OpObservation;
   try {
+    await reauthenticate(world, d.actor);
+    const ctx = contextFor(world, d.actor, d.source);
     const result = await handler(ctx, params) as Record<string, unknown>;
     const receipt = receiptOf(result);
     const state = receipt?.state ?? 'committed';
@@ -189,10 +326,24 @@ export async function executeOp(world: World, d: OpDescriptor): Promise<OpObserv
     if (typeof row === 'number') observation.values.row_num = row;
     if (receipt?.revision) observation.values.revision = receipt.revision;
   } catch (error) {
-    const e = error as { code?: string; writeRequest?: Record<string, unknown>; message?: string };
+    const e = error as { code?: string; name?: string; writeRequest?: Record<string, unknown>; message?: string };
+    // The HTTP transport answers a token the verifier rejects with 401 invalid_token.
+    if (!e.code && e.name === 'InvalidTokenError') e.code = 'invalid_token';
     const receipt = receiptOf(e.writeRequest);
-    observation = { ...base, status: e.code === 'write_pending' ? 'pending' : 'refused', code: e.code ?? 'uncoded_error',
+    // A memory verb reports an accepted, unfinished write as `unavailable` carrying its pending receipt.
+    const pending = e.code === 'write_pending' || (receipt !== undefined && !['committed', 'failed', 'conflict', 'cancelled'].includes(receipt.state));
+    // A token the verifier rejects never reaches an operation: the HTTP transport answers 401 invalid_token.
+    const agentCode = e.name === 'InvalidTokenError' ? 'http:401' : agentEnvelopeCode(error, op);
+    observation = { ...base, status: pending ? 'pending' : 'refused', code: e.code ?? 'uncoded_error', agentCode,
       receipt, values: {}, raw: { code: e.code, message: e.message?.slice(0, 400) } };
+  }
+  const slug = typeof params.slug === 'string' ? params.slug : typeof params.entity === 'string' ? params.entity : null;
+  if (observation.status === 'committed' && slug) {
+    try {
+      const page = await operationsByName.get_page.handler(contextFor(world, 'local', d.source),
+        { slug, include_content: true, source_id: d.source }) as Record<string, unknown>;
+      if (typeof page?.content === 'string') observation.pageContent = page.content;
+    } catch { /* deleted or not a page */ }
   }
   world.observations.set(d.id, observation);
   return observation;

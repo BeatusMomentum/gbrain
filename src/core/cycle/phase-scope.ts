@@ -29,6 +29,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   drift: 'global',
   edge_contradictions: 'global',
   chronicle: 'global',
+  facts_drain: 'global',
   embed: 'global',
   orphans: 'global',
   purge: 'global',

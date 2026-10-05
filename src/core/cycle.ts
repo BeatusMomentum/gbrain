@@ -83,6 +83,8 @@ export type CyclePhase =
   | 'drift'
   // #5876 — Life Chronicle events from meeting/conversation/calendar pages (default ON).
   | 'chronicle'
+  // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
+  | 'facts_drain'
   | 'embed' | 'orphans' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
@@ -175,6 +177,8 @@ export const ALL_PHASES: CyclePhase[] = [
   'drift',
   // #5876 — Life Chronicle events (global). BEFORE embed so event pages embed same-cycle.
   'chronicle',
+  // Lane D — automatic facts drain (PGLite). BEFORE embed so new facts embed same-cycle.
+  'facts_drain',
   // v0.41.11.0 — opt-in conversation-facts backfill. Default OFF; reads
   // cycle.conversation_facts_backfill.enabled gate inside the wrapper.
   // Ordered AFTER calibration_profile (matches the runCycle dispatch
@@ -336,6 +340,8 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'edge_contradictions', // writes proposals and (apply mode) closure lines
   // #5876 — writes event pages, projections and the chronicle ledger.
   'chronicle',
+  // Lane D — writes facts (fence + index) through facts-absorb jobs.
+  'facts_drain',
   // v0.41 T9 — extract_atoms writes atom-typed pages via put_page;
   // synthesize_concepts writes concept-typed pages + tier updates. Both
   // mutate DB state and need the lock.
@@ -1445,20 +1451,18 @@ async function runPhaseExtractFacts(
       signal,
     });
 
-    // Empty-fence guard: pre-v51 legacy rows pending the v0_32_2 backfill.
-    // Surface as 'warn' so doctor + the cycle report can see it; don't fail
-    // the cycle because the workaround is well-defined (run apply-migrations).
+    // Empty-fence guard: unfenced rows the phase's own fence step could not
+    // fence this run. Surface as 'warn' so doctor + the cycle report can see
+    // it; the warnings name each page and why.
     if (result.guardTriggered) {
       return {
         phase: 'extract_facts',
         status: 'warn',
         duration_ms: 0,
-        summary: `extract_facts skipped: ${result.legacyRowsPending} legacy v0.31 facts pending fence backfill`,
+        summary: `extract_facts skipped: ${result.legacyRowsPending} unfenced fact row(s) could not be fenced`,
         details: {
           legacyRowsPending: result.legacyRowsPending,
-          // A bare `apply-migrations --yes` no-ops once the v0.32.2 ledger
-          // entry is complete; the retry marker is what re-runs Phase B.
-          hint: 'gbrain apply-migrations --force-retry 0.32.2 && gbrain apply-migrations --yes',
+          unfencedRowsFenced: result.unfencedRowsFenced,
           warnings: result.warnings,
         },
       };
@@ -1500,6 +1504,7 @@ async function runPhaseExtractFacts(
         pagesWithFacts: result.pagesWithFacts,
         factsInserted: result.factsInserted,
         factsDeleted: result.factsDeleted,
+        unfencedRowsFenced: result.unfencedRowsFenced,
         pagesFailed: result.pagesFailed,
         warnings: result.warnings.slice(0, 5),
         // v0.35.5: phantom counters surfaced so extractTotals() can lift
@@ -2300,9 +2305,9 @@ export async function runCycle(
     // Reconcile DB facts index from the `## Facts` fence on every
     // affected entity page. Runs AFTER extract (link/timeline
     // materialization) and BEFORE patterns/recompute_emotional_weight
-    // so downstream phases see fresh DB facts. Empty-fence guard
-    // refuses to run while v0.31 legacy facts are pending the
-    // v0_32_2 backfill (Codex R2-#7).
+    // so downstream phases see fresh DB facts. The phase first fences
+    // unfenced (`row_num IS NULL`) rows itself; rows it could not fence
+    // still skip reconciliation (Codex R2-#7, #5299).
     if (phases.includes('extract_facts')) {
       checkAborted(cycleSignal);
       if (!engine) {
@@ -2767,6 +2772,12 @@ export async function runCycle(
         result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('facts_drain')) { // Lane D: queued facts-absorb jobs on PGLite (src/core/cycle/facts-drain.ts)
+      checkAborted(cycleSignal);
+      const { result, duration_ms } = await timePhase(async () => (await import('./cycle/facts-drain.ts')).runPhaseFactsDrain(engine, { dryRun, signal: cycleSignal, deadlineAtMs: opts.deadlineAtMs ?? null }), 'facts_drain');
+      phaseResults.push({ ...result, duration_ms }); await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── v0.41.11.0: conversation_facts_backfill ─────────────────
