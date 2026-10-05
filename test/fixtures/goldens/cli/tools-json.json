@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 197371,
-    "stdoutSha256": "aa63485c6fdaab8f7ec2fd5f61167df74d3a74468e1e5f54b59e04c146224962",
+    "stdoutBytes": 197487,
+    "stdoutSha256": "14108588a0d85afb59f67fd2d9053e666c379a40bed191c4361d344cf79385cb",
     "toolNames": [
       "remember",
       "entity",
@@ -250,7 +250,7 @@
         "scope": "write"
       },
       {
-        "description": "MEMORY VERB (v1): person/company/account card, zero LLM. referenced_by: every page linking here, by type, newest first (backlink_count excludes mentions); a group's `next` pages the rest. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.",
+        "description": "MEMORY VERB (v1): person/company/account card, zero LLM. referenced_by: every page linking here, by type, newest first; a group's `next` pages the rest. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -348,6 +348,7 @@
         "mutating": false,
         "name": "get_page",
         "parameters": {
+          "content_only": "boolean?",
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
@@ -358,6 +359,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "content_only": {
+              "description": "Round-trip fields only.",
+              "type": "boolean"
+            },
             "fuzzy": {
               "description": "Fuzzy slug match.",
               "type": "boolean"

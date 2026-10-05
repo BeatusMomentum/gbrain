@@ -60,7 +60,7 @@ export async function runChronicleJob(engine: BrainEngine, opts: {
   if (outcome.kind !== 'done') return { slug, status: 'skipped', reason: outcome.reason };
   if (outcome.state === 'failed') return { slug, status: 'failed', reason: outcome.reason ?? 'failed', retry: RETRYABLE.has(outcome.reason ?? '') };
   if (outcome.state === 'extracted') {
-    return { slug, status: outcome.reason === 'no_events' ? 'no_events' : 'extracted', events_written: outcome.written, events_retired: outcome.retired };
+    return { slug, status: outcome.reason ? 'no_events' : 'extracted', events_written: outcome.written, events_retired: outcome.retired };
   }
   return { slug, status: 'skipped', reason: outcome.reason ?? undefined };
 }

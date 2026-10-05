@@ -19,8 +19,8 @@ import type { Migration } from './types.ts';
 //     count, last pass), read by entity cards and get_backlinks as `coverage`.
 // page_aliases carries the managed-writer guard; ALTER TABLE fires no row
 // trigger, so the column adds need no coordinated write.
-export const v201: Migration = {
-  version: 201,
+export const v202: Migration = {
+  version: 202,
   name: 'entity_mention_index',
   idempotent: true,
   sql: `

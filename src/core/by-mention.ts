@@ -85,6 +85,8 @@ export interface GazetteerEntry {
    * as written, NFC. A body token matches only when its original text equals.
    */
   caseTokens?: string[];
+  /** Spelling being matched (the alias, not the display title, for aliases). */
+  matchText?: string;
 }
 
 /**
@@ -105,9 +107,10 @@ export type Gazetteer = Map<string, GazetteerEntry[]>;
 export function hashGazetteer(gazetteer: Gazetteer): string {
   const entries: string[] = [];
   for (const bucket of gazetteer.values()) {
-    for (const e of bucket) entries.push(`${e.source_id}\0${e.slug}\0${e.title}\0${e.tokens.join(' ')}${e.caseTokens ? `\0${e.caseTokens.join(' ')}` : ''}`);
+    for (const e of bucket) entries.push(`${e.source_id}\0${e.slug}\0${e.title}\0${e.tokens.join(' ')}\0${e.matchText ?? ''}${e.caseTokens ? `\0${e.caseTokens.join(' ')}` : ''}`);
   }
-  return createHash('sha256').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
+  // Matching semantics are part of the resume identity, not just DB contents.
+  return createHash('sha256').update('hangul-boundaries-v1\n').update(entries.sort().join('\n')).digest('hex').slice(0, 8);
 }
 
 /** One row of the saved entry set the mention pass diffs (mention_gazetteer_entries). */
@@ -433,7 +436,8 @@ export function tokenizeTitle(title: string): string[] {
     for (let i = 0; i < title.length;) {
       const cp = title.codePointAt(i) ?? 0;
       const charLen = cp > 0xffff ? 2 : 1;
-      tokens.push(normalizeToken(title.slice(i, i + charLen)));
+      const ch = title.slice(i, i + charLen);
+      if (isCJKChar(ch)) tokens.push(normalizeToken(ch));
       i += charLen;
     }
     return tokens;
@@ -540,7 +544,7 @@ export async function buildGazetteer(
     // below.
     if (tokens.length === 1 && row.type === 'person' && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     noteFirstWord(src, tokens);
-    add({ slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title' });
+    add({ slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title', matchText: row.title });
   }
 
   // ── Alias entries ────────────────────────────────────────────────────────
@@ -628,7 +632,7 @@ export async function buildGazetteer(
     if (userIgnore.has(tokens.join(' '))) { drop({ ...base, reason: 'ignored' }); continue; }
     if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     const caseTokens = a.case_sensitive && a.alias_text ? caseTokensOf(a.alias_text) : undefined;
-    const entry: GazetteerEntry = { slug: a.slug, source_id: src, title: a.title, tokens, origin,
+    const entry: GazetteerEntry = { slug: a.slug, source_id: src, title: a.title, tokens, origin, matchText: alias,
       ...(caseTokens && caseTokens.length === tokens.length ? { caseTokens } : {}) };
     noteFirstWord(src, tokens);
     aliasEntries.push({ entry, base });
@@ -661,6 +665,23 @@ function caseTokensOf(name: string): string[] {
 // ============================================================
 // Body-text scanner (pure)
 // ============================================================
+
+/** Korean uses word spaces; Han/Kana retain character-substring matching.
+ * Validate each candidate before maximal-munch selection so an invalid longer
+ * phrase does not consume a valid shorter name. Do not require an end boundary:
+ * Korean particles attach directly to names (지원은, 지원에게).
+ */
+function hasHangulMatchBoundary(
+  text: string, tokens: ScannedToken[], start: number, entry: GazetteerEntry,
+): boolean {
+  if (!entry.tokens.every(t => /^[가-힣]+$/u.test(t))) return true;
+  const first = tokens[start]!;
+  if (first.offset > 0 && /[가-힣]/u.test(text[first.offset - 1]!)) return false;
+  const last = tokens[start + entry.tokens.length - 1]!;
+  const actual = text.slice(first.offset, last.offset + last.length).replace(/\s+/gu, ' ');
+  const expected = (entry.matchText ?? entry.tokens.join('')).trim().replace(/\s+/gu, ' ');
+  return actual === expected;
+}
 
 /**
  * Scan body text for mentions of gazetteer entities. Pure function — no
@@ -722,6 +743,8 @@ export function findMentionedEntities(
     let matched: GazetteerEntry | null = null;
     let matchedTokens = 0;
     for (const entry of bucket) {
+      if (i + entry.tokens.length > tokens.length) continue;
+      if (!hasHangulMatchBoundary(stripped, tokens, i, entry)) continue;
       if (!caseMatches(entry, i)) continue;
       if (entry.tokens.length === 1) {
         matched = entry;
@@ -758,7 +781,8 @@ export function findMentionedEntities(
         e => e.source_id === opts.fromSourceId
           && e.tokens.length === want.length
           && e.tokens.every((t, k) => t === want[k])
-          && caseMatches(e, i),
+          && caseMatches(e, i)
+          && hasHangulMatchBoundary(stripped, tokens, i, e),
       );
       if (own) matched = own;
     }

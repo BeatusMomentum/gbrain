@@ -23,6 +23,14 @@ const MIGRATION_WAVE_TESTS = [
   "test/e2e/migration-wave-provider-outcomes.test.ts",
 ];
 
+const GRADUATION_E2E_TESTS = [
+  "test/e2e/graduation-cli.test.ts",
+  "test/e2e/graduation-clients.test.ts",
+  "test/e2e/graduation-crash.test.ts",
+  "test/e2e/graduation-faults.test.ts",
+  "test/e2e/graduation-legacy-copy.test.ts",
+];
+
 export const E2E_TEST_MAP: Record<string, string[]> = {
   // Entity mention index: pass, aliases, referrer query and coverage on Postgres.
   "src/core/mentions/**": ["test/e2e/mentions-parity.test.ts"],
@@ -262,7 +270,19 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/migrate-engine.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
     "test/e2e/migrate-engine-pglite-to-postgres.test.ts",
+    "test/e2e/graduation-legacy-copy.test.ts",
   ],
+  // Engine graduation (PGLite -> Postgres): the CLI, the orchestrator modules and the serve guard.
+  "src/commands/migrate-graduation.ts": GRADUATION_E2E_TESTS,
+  "src/core/persistence/engine-graduation*.ts": GRADUATION_E2E_TESTS,
+  "src/core/persistence/graduation-*.ts": GRADUATION_E2E_TESTS,
+  "src/core/persistence/graduation-copy.ts": ["test/e2e/graduation-copy.test.ts"],
+  "src/core/persistence/graduation-target.ts": ["test/e2e/graduation-copy.test.ts"],
+  "test/helpers/graduation-copy-harness.ts": ["test/e2e/graduation-copy.test.ts"],
+  "src/commands/doctor/checks/engine-graduation.ts": ["test/e2e/graduation-clients.test.ts"],
+  "scripts/persistence/graduation-*.ts": GRADUATION_E2E_TESTS,
+  "test/helpers/graduation-*.ts": GRADUATION_E2E_TESTS,
+  "test/fixtures/graduation/**": GRADUATION_E2E_TESTS,
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
     "test/e2e/minions-legacy-coalesce-postgres.test.ts",
@@ -504,6 +524,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/chronicle-auto-decision-postgres.test.ts",
     "test/e2e/chronicle-auto-phase-postgres.test.ts",
     "test/e2e/chronicle-event-privacy-postgres.test.ts",
+    "test/e2e/chronicle-date-quality-postgres.test.ts",
     "test/e2e/chronicle-surfaces-postgres.test.ts",
   ],
   // #5876: doctor auto_chronicle + the chronicle advisor read the ledger rollups.

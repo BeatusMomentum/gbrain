@@ -168,7 +168,7 @@ const entity: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'MEMORY VERB (v1): person/company/account card, zero LLM. referenced_by: every page linking here, by type, newest first (backlink_count excludes mentions); a group\'s `next` pages the rest. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.',
+  description: 'MEMORY VERB (v1): person/company/account card, zero LLM. referenced_by: every page linking here, by type, newest first; a group\'s `next` pages the rest. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.',
   params: {
     name: { type: 'string', required: true, description: 'Name, alias or slug (e.g. "Alice Example").' },
   },

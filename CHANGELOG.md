@@ -10,11 +10,13 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.61.1.0] - 2026-10-04
+## [0.60.57.0] - 2026-10-05
 
-**Ask your brain about an account and it now hands back every ticket, meeting and email that names it, not just the few a search happens to rank first.**
+**Ask your agent for a brief on an account and it now finds the open ticket, the latest contact and the blocker, and it spends about a quarter less to get there.**
 
-Before this release, a ticket that said `Customer: QUCO` or a meeting titled `QUCO renewal prep` was not connected to the account it was about. Your agent had to search, and search returns the best-matching handful. Nine near-identical tickets look alike to it, so the open one often never showed up. Now the brain links every page that names a person, company or account, by its name, by the name inside a record title (`CRM record: Acme Example`), or by a code the record declares (`Account code: ACMX`). Ask for the account and the card lists all of those pages by type, newest first, each with a one-line preview, plus the exact call to page through the rest. It costs nothing to run: no model calls, no API key.
+Before this release, a ticket that said `Customer: QUCO` or a meeting titled `QUCO renewal prep` was not connected to the account it was about. Your agent had to search, and search returns the best-matching handful. Nine near-identical tickets look alike to it, so the open one often never showed up. Now the brain links every page that names a person, company or account, by its name, by the name inside a record title (`CRM record: Acme Example`), or by a code the record declares (`Account code: ACMX`). Ask for the account and the card lists all of those pages by type, newest first, each with a one-line preview, plus the exact call to page through the rest. Building the links costs nothing: no model calls, no API key.
+
+On Cat 40, the agent benchmark run on five frontier models (Sonnet 5.5, Opus 5.5, Fable 5.1, GPT-6.1 Sol, GPT-6 Astra), account briefs on the held-out world gained 7 points, and overall scores held while cost per task fell 26%. Most tasks already sit near the ceiling, so the overall score cannot move much in either direction; the gain shows up in the briefs and in the bill.
 
 ### How to use it
 
@@ -31,13 +33,19 @@ Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `cov
 
 | Measure | Before | Now |
 |---|---|---|
-| Cat 40 account briefs (family E), development world | TODO(cat40 round 1 / round 2) | TODO |
-| Cat 40 held-out world, paired gain vs v0.60.44.0 | n/a | TODO(cat40 A3) |
-| Links from documents to the account they name (dev brain, 3,973 pages) | 0 | TODO(cat40 slot build) |
+| Account briefs (family E), held-out world, vs v0.60.44.0 (5 models × 2 repeats × 50 tasks) | baseline | +7.0 pts [+1.0, +12.0] |
+| All tasks, held-out world, vs v0.60.44.0 | baseline | +0.4 pts [−2.0, +2.4] |
+| Cost per task, held-out world | $0.323 | $0.238 (−26%) |
+| Account briefs (family E), development world | 44/50 | 46/50 |
+| All tasks, development world | 239/250 at $0.341/task | 239/250 at $0.240/task (−30%) |
+| Private finance-only text leaked into answers, held-out world | 0 | 0 |
+| Links from documents to the account they name (dev brain, 3,973 pages) | 0 | 4,124 |
 | First full mention pass, 52,000-document world, PGLite, no embeddings | n/a | 7-16 s (52,956 links; 0.2 s when nothing changed) |
 | `entity` p99 with references, 20K pages, a 10,000-link hub | n/a | 61-71 ms (budget 100 ms) |
 | Keyless tutorial on a fresh install | n/a | 8 s |
-| Tool list the model receives (starter surface) | 24,100 chars | 24,324 chars (cap 25,000) |
+| Tool list the model receives (starter surface) | 24,174 chars | 24,363 chars (cap 25,000) |
+
+The links and the card alone scored 236/250 overall and 43/50 on briefs in development; the instruction to start a brief with `entity` brings that to 239/250 and 46/50 at the lower cost. Against an agent reading the same documents as plain files, the held-out score is a tie at the ceiling (95.6% vs 95.6%, difference 0.0 [−3.2, +3.0]). Files cost about half as much per task ($0.11 vs $0.24), but the file agent read finance-only private text into its context 100 times, and gbrain did so 0 times.
 
 ### Things to watch
 
@@ -47,7 +55,7 @@ Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `cov
 - `get_backlinks` without the new parameters returns the same link list as before.
 - Off switch: `gbrain config set mentions.auto_link false` removes mention links and derived names on the next sweep (typed links from `extract --ner` stay).
 
-## To take advantage of v0.61.1.0
+## To take advantage of v0.60.57.0
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
 
@@ -55,7 +63,7 @@ Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `cov
    ```bash
    gbrain apply-migrations --yes
    ```
-2. **Your agent reads `skills/migrations/v0.61.1.0.md` the next time you interact with it.** It runs the first mention pass (`gbrain extract --stale --catch-up`, free) or leaves it to autopilot.
+2. **Your agent reads `skills/migrations/v0.60.57.0.md` the next time you interact with it.** It runs the first mention pass (`gbrain extract --stale --catch-up`, free) or leaves it to autopilot.
 3. **Verify the outcome:**
    ```bash
    gbrain extract --stale --dry-run --json   # mention_due_pages: 0
@@ -81,7 +89,7 @@ Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `cov
 - **`get_backlinks`** (`src/core/ops/backlinks-paged.ts`): `type`, `limit` (max 500), and `group: "page"` returning `{rows, total, truncated, cursor, coverage}` with a keyset cursor; an unknown `type` or out-of-range `limit` is an error naming the valid values. No new parameters, no change.
 - **`gbrain extract mentions --explain <name|slug> [--page <slug>]`** reports the matched name and origin, or one of 11 reason codes.
 - **Notices and doctor**: a non-complete coverage adds a `[gbrain notice mention_index]` block; `links_extraction_lag` reports mention-due pages; `gbrain post-upgrade` prints an `[AGENT]` catch-up line; `extract --stale --dry-run` reports `mention_due_pages` and `mention_last_pass_at`.
-- **Schema**: migration v201 adds `page_aliases.origin`, `case_sensitive` and `alias_text` (unique key widened to include `origin`) and the `page_mention_state`, `mention_gazetteer_entries` and `mention_index_status` tables. No existing row is rewritten.
+- **Schema**: migration v202 adds `page_aliases.origin`, `case_sensitive` and `alias_text` (unique key widened to include `origin`) and the `page_mention_state`, `mention_gazetteer_entries` and `mention_index_status` tables. No existing row is rewritten.
 - **Config**: `mentions.auto_link` (default on), `mentions.entity_types`, `mentions.ignore`.
 - **Faster private-page filtering for remote callers** (`src/core/search/private-visibility.ts`): the declared-lineage check runs only for pages that carry `derived_from`, so remote reads no longer probe the source's private pages once per candidate row. Results are unchanged.
 - **Server instructions**: wherever `entity` is served, the initialize instructions say: for a brief on an account, person or company, call `entity`, then walk `referenced_by` (or `get_backlinks`, where served) by type. The sentence replaces "several names" guidance on those surfaces; the full contract is 4,607 characters (ceiling 4,628).
@@ -90,7 +98,149 @@ Over MCP, the `entity` card adds `referenced_by`, `referenced_by_count` and `cov
 ### For contributors
 
 - Tests: `test/mentions-*.test.ts`, `test/e2e/mentions-parity.test.ts` (PGLite and Postgres produce the same rows), and a 10,000-link hub gate in `test/entity-card-perf.slow.test.ts`.
-- Catalog, upgrade-replay and doctor goldens regenerated for migration v201 and the pack version.
+- Catalog, upgrade-replay and doctor goldens regenerated for migration v202 and the pack version.
+
+## [0.60.52.0] - 2026-10-04
+
+**A PGLite brain that has saved memory can now move to Postgres with nothing lost: one command shows the plan, one confirmation moves it, and the move proves the copy matches before it switches.**
+
+PGLite is the zero-setup local database a new brain starts on. When a brain outgrows it (thousands of pages, several machines, a hosted server), the next step is Postgres. Until now `gbrain migrate --to postgres` refused almost every real brain: anything an agent had saved through the write coordinator carried history the old copier could not move, such as which saves already happened, which facts you told it to forget, who wrote what, and which keys can get in. Now the move carries all of it, row for row, with the same IDs.
+
+The move locks the old brain so nothing can write to it, finishes saves that are still in flight, copies every table, and then checks the copy: row counts and a fingerprint of every table, a replay of a saved request to show it is not done twice, and a health check on the new brain. Only after that passes does gbrain point at Postgres. The old folder becomes a small "this brain moved" file that tells any gbrain (old or new, including a restarted `gbrain serve`) where the brain went, and the old data is kept beside it. At every moment at most one of the two databases accepts writes, including after a crash; `--resume` picks up from the last finished step.
+
+### How to use it
+
+```bash
+export GBRAIN_TARGET_URL='postgresql://...'                           # the empty Postgres database
+gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --json      # shows the plan, exits 3, changes nothing
+gbrain migrate --to postgres --url-env GBRAIN_TARGET_URL --yes --expect <plan_hash> --json
+gbrain doctor --no-migrate --json
+```
+
+`--status` and `--plan` are read-only. `--resume` continues an interrupted move, and `--rollback-to-source` goes back to PGLite (it refuses once you have withdrawn facts or revoked a key on Postgres, because going back would undo that). Existing access tokens, OAuth clients and local writer credentials keep working on Postgres. Full guide: [Move a PGLite brain to Postgres](docs/guides/move-to-postgres.md). To keep the old copier, run `gbrain config set migrate.graduation false`.
+
+### The numbers that matter
+
+Measured with the history fixture (real write history: requests, withdrawals, versions, takes, tokens, embedded chunks), a resident `gbrain serve` holding the brain, and a local Postgres 16:
+
+| Brain | Commands | Wall time, plan to green doctor | Copy | Verify | Target doctor |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 pages (1,737 requests, 4,702 effects, 1,168 embedded chunks) | 2 plus 1 doctor | 16.4 s | 2.9 s | 4.3 s | no failing check |
+| 10,000 pages (17,344 requests, 46,986 effects, 11,668 embedded chunks) | 2 plus 1 doctor | 47.4 s | 15.9 s | 13.3 s | no failing check |
+
+Search latency, PGLite then Postgres: at 1,000 pages p50 5.3 ms / 8.4 ms and p95 9.0 ms / 9.9 ms; at 10,000 pages p50 37.4 ms / 30.5 ms and p95 41.8 ms / 58.9 ms.
+
+### Things to watch
+
+- A move to a hosted Postgres where the role is not a superuser needs the `vector` extension installed, `BYPASSRLS`, and the row-level-security event trigger owned by the role. The plan names the exact SQL your database admin runs. Supabase's `postgres` role already qualifies.
+- On Windows a brain with write history still cannot move; brains without history keep the old copier.
+- The kept PGLite copy (`<path>.graduated-<run_id>`) still holds private memory and token hashes. `gbrain doctor` reports it; deleting it is your call.
+
+### Behavior changes for scripts and agents
+
+| Area | Before | Now | What to change |
+| --- | --- | --- | --- |
+| `gbrain migrate --to postgres` (or `--to supabase`) on a PGLite brain | copied at once, or exit 1 `writer_coordinator_required` for a brain with write history | exit 3 `confirmation_required` with the plan and `plan_hash`; the move runs with `--yes --expect <plan_hash>` | relay the plan to the user, then run `fix.argv` after they agree; `gbrain config set migrate.graduation false` keeps the old copier |
+| `gbrain serve` started while a move runs | waited on the lock or started status-only | exit 75 `graduation_in_progress` | let the supervisor retry after the move |
+| A CLI or MCP config that still points at a moved PGLite path | opened or recreated the PGLite folder | `engine_graduated` with the one-step fix | run `fix.argv`, restart the MCP client |
+| `doctor` `pglite_scale` fix | `gbrain migrate --to supabase` | `gbrain migrate --to postgres --plan --json` | none |
+
+## To take advantage of v0.60.52.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+   Migration v201 adds the `persistence_graduation` table; no existing rows change.
+2. **Your agent reads `skills/migrations/v0.60.52.0.md` the next time you interact with it.** Nothing moves until you ask for a move and confirm the plan.
+3. **Verify:**
+   ```bash
+   gbrain doctor --json
+   gbrain migrate --status --json
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue: https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+### Itemized changes
+
+#### Engine graduation (`gbrain migrate --to postgres`)
+
+- Every table is classified in one versioned inventory: 94 copied verbatim with IDs, 2 re-checked for this machine (brain identity, worktree host bindings), 2 caches rebuilt, 6 transient or unused tables (PGLite planner statistics, cycle locks, an unused reservation table, rate leases, one-time OAuth codes) dropped. A schema with an unclassified table refuses the move, and a test fails when a migration adds one without a classification.
+- The copy runs with database triggers bypassed for the copy transaction only, so stored attribution, revisions and generations land unchanged; leases on queued jobs and effects are reset so the new database's workers pick them up, and delayed effects keep their schedule.
+- Verify compares row counts (twice: by a plain count and by the batched fingerprint read), a canonical per-table fingerprint computed the same way on both engines, sequence positions, every foreign key, trigger state and the relation set, replays a drained request through admission inside a rolled-back transaction, and runs the target doctor.
+- Custody: the PGLite kernel lock is held from the start of the move until routing flips; an intent marker beside the brain and a database fence on Postgres refuse every other writer; the old folder is renamed and replaced by an exclusive-create tombstone before Postgres takes authority. A stray brain created at the old path by an older gbrain is detected and refused (`graduation_split_brain`).
+- New error codes, each with a reason, an exact fix and a read-only verify command: `graduation_source_writer_held`, `graduation_unclassified_table`, `graduation_embedding_dimension_mismatch`, `graduation_drain_timeout`, `graduation_target_not_empty`, `graduation_foreign_host_binding`, `graduation_verify_failed`, `graduation_interrupted`, `graduation_in_progress`, `graduation_split_brain`, `graduation_rollback_writes_lost`, `graduation_target_auth_failed`, `graduation_target_ddl_unreachable`, `graduation_target_unsupported`, `graduation_unsupported_platform`, `engine_graduated`.
+- `gbrain engine status --json` shows the graduation state; `pglite_leftovers` reports the kept PGLite copy; a dead interrupted move is a doctor failure with the resume command.
+
+#### Tests
+
+- A hand-built legacy brain with independently written expected outcomes, plus 1,000- and 10,000-page history brains, graduate end to end on Postgres 16 and through a transaction-mode PgBouncer.
+- Crash tests kill the move at every step of the move and of rollback, including around the routing flip and the first write on Postgres; a restarted `gbrain serve`, older released binaries against the tombstone, stale CLI and MCP configs, a full target disk and a rotated target password are each tested.
+
+## [0.60.49.0] - 2026-10-04
+
+**Automatic event extraction now records only what happened. On the independent lift eval that failed it, wrong or premature events drop from 1.11 per judged page to 0.07 and 0.11 (gate: 0.20), and recall rises from 35/38 to 38/38.**
+
+`auto_chronicle` wrote plans as if they happened: "board meeting in Austin on May 15" in an April 18 meeting note became a May 15 event, and "back in 2024" became January 1, 2024. Now the extractor is told to return only what happened by the end of the page's day, and two rules hold after it answers, before anything is written: no event after the page's own day (`future_dated`), and no event without a real day (`date_imprecise`). A plan never reaches `gbrain day`, and a vague year is never pinned to January 1.
+
+### The numbers that matter
+
+gbrain-evals `chronicle-lift.ts` (amara-life-v1, 48 judged pages, 38 labeled events on 28 pages, judge `anthropic:claude-sonnet-4-6`), one ON arm per run, scored with the published review rubric:
+
+| | master `5bd9e849` | this release, run 1 | this release, run 2 |
+|---|---|---|---|
+| Recall of labeled events | 35/38 (92.1%) | 38/38 (100%) | 38/38 (100%) |
+| Premature (dated after the page) | 26 | 0 | 0 |
+| False (misdated or unsupported) | 5 | 2 | 3 |
+| **False + premature per judged labeled page** (gate ≤ 0.20) | **1.11** | **0.07** | **0.11** |
+| Slack events dated after their page | 32 | 0 | 0 |
+| Proposals dropped as `date_imprecise` | — | 9 | 6 |
+| Events written | 386 | 303 | 315 |
+| Cost per judged page | $0.0119 | $0.0105 | $0.0106 |
+
+The remaining false events are quarter results ("Q1 revenue came in at $2.1M") dated on the meeting that discussed them; counted strictly, as the published review does. No control page was judged in any run. Method and receipts: `docs/fix-wave-notes/capy-chronicle-date-quality.md`.
+
+### What changed
+
+- **No event after the page's own day.** The page's own day is the latest of its own date (frontmatter `date` or `start`, or an authored effective date), a calendar invite's `end` and a conversation's last message, read in `chronicle.tz`; anything on that day counts, and nothing after today does. Ended calendar invites still produce their meeting event.
+- **No invented days.** The extractor writes a vague past date at its real precision ("2024", "2026-03"); the timeline stores days, so those proposals are dropped instead of pinned to the first of the year or month.
+- **Drops are reported.** The `chronicle` phase result carries `events_dropped` by reason; a page whose every proposal was dropped records `future_dated` or `date_imprecise` on its ledger row instead of `no_events`. Both codes are in the reason table (`docs/guides/life-chronicle.md`) and the `chronicle_skipped` error-code registry.
+- **Re-extraction still cleans up.** A changed page whose new proposals are all dropped retires its previous automatic events like any empty generation.
+
+## To take advantage of v0.60.49.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Nothing else to migrate.** There is no schema change; the rules apply to every extraction from now on. Events already written stay until their page is extracted again.
+3. **Verify the outcome:**
+   ```bash
+   gbrain dream --phase chronicle --json   # events_dropped lists refused proposals by reason
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- `src/core/chronicle/extract-events.ts`: `chronicleJudgeContext` collects the page's dating instants (`pageDates`); `chronicleEventCutoff` and `screenChronicleProposals` drop `future_dated` and `date_imprecise` proposals; `buildChronicleEvents` returns `{ events, dropped }`; the judge prompt extracts only what happened and never invents a day; `runChronicleExtract` reports `events_dropped`.
+- `src/core/chronicle/execute.ts`, `src/core/cycle/chronicle.ts`, `src/core/chronicle/job.ts`, `src/core/chronicle/contract.ts`: drop counts on the row outcome and in `ChronicleRunDetails.events_dropped`; an extracted row with a reason counts as `no_events`.
+- `src/core/chronicle/reasons.ts`, `src/core/error-registry.ts`: `future_dated` and `date_imprecise`.
+
+### For contributors
+
+- `test/chronicle-date-quality.test.ts` (+ `test/e2e/chronicle-date-quality-postgres.test.ts`): a past meeting mentioning a future offsite, "back in 2024", same-day events, ended invites, multi-day conversations, re-extraction cleanup and the cutoff arithmetic across time zones.
 
 ## [0.60.48.0] - 2026-10-04
 
