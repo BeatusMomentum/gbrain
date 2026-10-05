@@ -132,12 +132,33 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
   return carryStatusFields(err, new AITransientError(`${ctxPrefix}${msg}`, err));
 }
 
+/**
+ * HTTP 400 bodies that are a content-policy refusal of the prompt rather than
+ * a malformed request: OpenAI's `invalid_prompt` usage-policy flag, OpenAI and
+ * Azure OpenAI `content_policy_violation` / `content_filter` (Azure's
+ * `ResponsibleAIPolicyViolation`), and DeepSeek's "Content Exists Risk".
+ */
+const CONTENT_POLICY_400_CODES = new Set(['invalid_prompt', 'content_policy_violation', 'content_filter', 'ResponsibleAIPolicyViolation']);
+
+function contentPolicy400Reason(responseBody: string): string | undefined {
+  let error: { code?: unknown; message?: unknown; innererror?: { code?: unknown } } | undefined;
+  try { error = JSON.parse(responseBody)?.error; } catch { return undefined; }
+  for (const code of [error?.innererror?.code, error?.code]) {
+    if (typeof code === 'string' && CONTENT_POLICY_400_CODES.has(code)) return code;
+  }
+  return error?.message === 'Content Exists Risk' ? 'content_exists_risk' : undefined;
+}
+
 /** A provider refusal tied to the prompt, even when the SDK wraps its response. */
 export function providerContentBlockReason(err: unknown): string | undefined {
   for (let depth = 0; depth < 8 && err != null; depth++) {
     try {
       if (typeof err !== 'object') break;
       const value = err as { responseBody?: unknown; statusCode?: unknown; status?: unknown; cause?: unknown };
+      if (typeof value.responseBody === 'string' && (value.statusCode === 400 || value.status === 400)) {
+        const reason = contentPolicy400Reason(value.responseBody);
+        if (reason) return reason;
+      }
       if (typeof value.responseBody === 'string' &&
           (value.statusCode == null || value.statusCode === 200) &&
           (value.status == null || value.status === 200)) {
