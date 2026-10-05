@@ -7,8 +7,8 @@ import { CORE_EDIT_NOTICES_SCHEMA_SQL } from '../core-memory-schema.ts';
 // Always-loaded core memory: remote edits to core pages are recorded here so
 // the owner sees and acknowledges them (src/core/persistence/core-guard.ts).
 // New empty table, so its index builds inline on both engines.
-export const v202: Migration = {
-  version: 202,
+export const v204: Migration = {
+  version: 204,
   name: 'core_edit_notices',
   idempotent: true,
   sql: CORE_EDIT_NOTICES_SCHEMA_SQL,
