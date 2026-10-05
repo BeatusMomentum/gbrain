@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198595,
-    "stdoutSha256": "7d2b43ea2fc64cd07907cc2fd1ecb1fae4812fe23091cd76629a7512ff57de98",
+    "stdoutBytes": 199967,
+    "stdoutSha256": "63566023536131c2ee6a32d5f4ff677cf23fca616e970bbb304219305d61ba9a",
     "toolNames": [
       "remember",
       "entity",
@@ -28,6 +28,7 @@
       "search_modes",
       "search_tune",
       "cache_stats",
+      "rate_answer",
       "search_by_image",
       "add_tag",
       "remove_tag",
@@ -1321,6 +1322,43 @@
           "type": "object"
         },
         "scope": "admin"
+      },
+      {
+        "description": "Rate how useful an answer's retrieved evidence was, so this brain ranks better next time (zero LLM calls). Pass the answer_id from a query/search/think/synthesize/recall response and rating 1-5, or rate single pages with pages: [{ ref: \"source_id:slug\", rating }]. Example: { answer_id: \"ans_01J…\", pages: [{ ref: \"default:people/alice-example\", rating: 1 }] }. Returns a receipt with each weight before/after; it never edits stored facts.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "rate_answer",
+        "parameters": {
+          "answer_id": "string",
+          "pages": "array?",
+          "rating": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "answer_id": {
+              "description": "The ans_… id from the answer you are rating.",
+              "type": "string"
+            },
+            "pages": {
+              "description": "Per-page ratings: [{ ref: \"source_id:slug\", rating: 1-5 }]. Pages only; edges are not touched.",
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "rating": {
+              "description": "Whole-answer rating 1-5 (omit when using pages).",
+              "type": "number"
+            }
+          },
+          "required": [
+            "answer_id"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
       },
       {
         "description": "Image-as-query retrieval. Accepts a local path (CLI), data: URI, or http(s):// URL (SSRF-defended). Returns visually-similar image chunks plus any OCR text they carry. Optional `query` text refinement merges via weighted RRF. Matching images to full-text knowledge needs multimodal indexing (`gbrain reindex --multimodal` + `search.unified_multimodal: true`).",
