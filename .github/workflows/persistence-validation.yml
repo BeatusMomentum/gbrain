@@ -205,6 +205,7 @@ jobs:
           : "${DATABASE_URL:?unit-lane PostgreSQL arms require the explicit test database}"
           case "$SHARD" in
             1) files=(
+                test/attribution-backfill-history.test.ts
                 test/colon-slug-windows-5032.test.ts
                 test/decide/conflict-proposals-managed.test.ts
                 test/declared-lineage-visibility.test.ts
@@ -357,7 +358,7 @@ jobs:
         bun: ['1.4.0', '1.4.2']
         # Pull requests run the primary Bun version; pushes, schedules and
         # manual runs keep every supported version.
-        exclude: ${{ fromJSON(github.event_name == 'pull_request' && '[{"bun":"1.4.0"}]' || '[]') }}
+        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -394,7 +395,7 @@ jobs:
           PGPASSWORD: gbrain_test
           DATABASE_URL: postgres://gbrain_test@127.0.0.1:5432/gbrain_test
           GBRAIN_PGBOUNCER_URL: postgres://gbrain_test@127.0.0.1:55433/gbrain_test
-          ROBOT_SECONDS: ${{ github.event_name == 'pull_request' && '150' || '600' }}
+          ROBOT_SECONDS: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '150' || '600' }}
         run: >-
           bun --no-env-file scripts/persistence/validate.ts --engine=${{ matrix.engine }}
           --schedules=0 --operations=0 --no-crashes --robot-seconds="$ROBOT_SECONDS"

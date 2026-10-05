@@ -574,7 +574,7 @@ try {
     console.log(`[scale] ${r.known_answer === 'pass' ? 'PASS' : 'FAIL'} ${r.op}: p50 ${r.p50_ms} ms${r.plan?.worst_loops ? `, worst nested-loop inner loops ${r.plan.worst_loops.inner_loops}` : ''}${r.detail ? ` (${r.detail})` : ''}`);
   }
   for (const d of report.data) console.log(`[scale] ${d.status === 'pass' ? 'PASS' : 'FAIL'} ${d.check}${d.detail ? ` (${d.detail})` : ''}`);
-  for (const [name, measured] of Object.entries(report.f4d)) console.log(`[scale] F4D ${name}: ${JSON.stringify(measured)}`);
+  for (const [name, measured] of Object.entries(report.f4d ?? {})) console.log(`[scale] F4D ${name}: ${JSON.stringify(measured)}`);
   console.log(`[scale] phases (ms): ${Object.entries(report.phases_ms).map(([k, v]) => `${k}=${v}`).join(' ')}`);
   for (const line of verdictLines(report, verdict, policy)) console.log(line);
   console.log(`[scale] report: ${out}${explain ? ` (EXPLAIN for failures: ${out.replace(/\.json$/, '')}.explain.txt)` : ''}; reproduce with: ${full.reproduce}`);

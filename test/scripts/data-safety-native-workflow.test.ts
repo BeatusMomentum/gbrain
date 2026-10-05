@@ -238,7 +238,7 @@ describe('data-safety native CI coverage', () => {
     const job = persistence.jobs['crash-robot'];
     expect(job.services.pgbouncer?.env?.POOL_MODE).toBe('transaction');
     const step = job.steps.find(entry => entry.run?.includes('scripts/persistence/validate.ts'));
-    expect(step?.env?.ROBOT_SECONDS).toBe("${{ github.event_name == 'pull_request' && '150' || '600' }}");
+    expect(step?.env?.ROBOT_SECONDS).toBe("${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && '150' || '600' }}");
     expect(step?.env?.GBRAIN_PGBOUNCER_URL).toContain(':55433/');
     const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `
       bun() { printf '%s\\n' "$@"; }
