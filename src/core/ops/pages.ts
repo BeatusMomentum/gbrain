@@ -15,6 +15,7 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
+import { projectGetPage } from './get-page-projection.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
@@ -83,6 +84,7 @@ const get_page: Operation = {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy slug match.' },
     include_content: { type: 'boolean', description: 'Full markdown + revision, for editing.' },
+    content_only: { type: 'boolean', description: 'Round-trip fields only.' },
     include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
     include_timeline_entries: { type: 'boolean', description: 'Also return timeline rows.' },
     source_id: { type: 'string', description: "One source, or '__all__'." },
@@ -198,17 +200,13 @@ const get_page: Operation = {
     // Opt-in (include_content: true): get_page is the most-called read op, and
     // `content` roughly duplicates compiled_truth + timeline — always emitting
     // it would double every reader's payload for the round-trip minority.
-    return {
-      ...visibleBody,
-      revision: snapshot!.revision,
-      tags,
-      ...(includeContent ? { content: serializePageToMarkdown(visibleBody as Page, tags) } : {}),
-      ...(includeTimelineEntries
-        ? { timeline_entries: await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) } : {}),
-      ...(resolved_slug ? { resolved_slug } : {}),
-      ...(content_flag ? { content_flag } : {}),
+    const timelineEntries = includeTimelineEntries
+      ? await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) : undefined;
+    return projectGetPage(visibleBody, {
+      revision: snapshot!.revision, tags, includeContent, contentOnly: (p.content_only as boolean) === true, resolved_slug, content_flag,
+      ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}),
-    };
+    });
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'get', positional: ['slug'] },

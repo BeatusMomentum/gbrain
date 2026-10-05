@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 199575,
-    "stdoutSha256": "549e0804d5e73d95d677573d1dcd87c5fc772e723c6be2abcb4a0e2d4d061f5b",
+    "stdoutBytes": 199714,
+    "stdoutSha256": "961f72b106aa1150f888864c865a65a9fe4e2fd391c5ff0e1bed921ece4ea1c9",
     "toolNames": [
       "remember",
       "entity",
@@ -349,6 +349,7 @@
         "mutating": false,
         "name": "get_page",
         "parameters": {
+          "content_only": "boolean?",
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
@@ -359,6 +360,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "content_only": {
+              "description": "Round-trip fields only.",
+              "type": "boolean"
+            },
             "fuzzy": {
               "description": "Fuzzy slug match.",
               "type": "boolean"
@@ -887,7 +892,7 @@
         "scope": "write"
       },
       {
-        "description": "Read your write's receipt by request_id (after write_pending or a lost reply). Poll no faster than retry_after_ms until committed/conflict/failed/cancelled.",
+        "description": "Read your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until committed/conflict/failed/cancelled.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
