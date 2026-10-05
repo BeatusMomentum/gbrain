@@ -851,7 +851,10 @@ export async function dispatchToolCall(
     }
     const result = registration
       ? await withVerifiedLocalRegistration(engine, registration, async verified => {
-        if (!verified.remote) throw new OperationError('permission_denied', 'This registration is not an agent-facing connection.');
+        if (!verified.remote) throw opError('permission_denied', 'This registration is not an agent-facing connection.',
+          `${name} on this stdio connection needs the agent-facing stdio writer registration, which only the user can create in a terminal on the brain host.`,
+          { fix: hostFix(ctx, ['gbrain', 'auth', 'local-writer', 'register', 'stdio', '--dry-run', '--json'],
+            'Previews the agent-facing stdio registration; the user reruns it without --dry-run (with --replace and the complete grant when a registration exists).') });
         return op.handler(ctx, safeParams);
       })
       : await op.handler(ctx, safeParams);

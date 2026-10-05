@@ -1082,8 +1082,8 @@ const assemble_evidence: Operation = {
     if (!Array.isArray(hits) || hits.some(h => typeof h !== 'object' || h === null
       || typeof (h as Record<string, unknown>).source_id !== 'string' || typeof (h as Record<string, unknown>).slug !== 'string'
       || !Number.isInteger((h as Record<string, unknown>).chunk_id))) {
-      throw opError('invalid_params', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
-        'Pass the source_id, slug and chunk_id of each search hit. Example: {"hits": [{"source_id": "default", "slug": "chat/session-0412", "chunk_id": 8812}], "return_unit": "page"}');
+      throw invalidParam(ctx, 'assemble_evidence', 'hits', 'hits must be an array of { source_id: string, slug: string, chunk_id: integer }.',
+        { def: assemble_evidence.params.hits, example: [{ source_id: 'default', slug: 'chat/session-0412', chunk_id: 8812 }] });
     }
     const scope = federatedSearchScope(ctx);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
