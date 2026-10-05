@@ -124,3 +124,32 @@ to LoCoMo:
    arm: `balanced` vs fact keys vs `tokenmax`.
 3. **LongMemEval-M** remains disclosed confirmation against `balanced` only.
    M does not run the `tokenmax` comparison, because of cost.
+
+## Amendment 3 — 2026-10-05 (freeze before any sealed cell)
+
+Recorded before any sealed cell runs.
+
+1. **Outcomes on development data.** Fact keys (F1/F2) failed the `tokenmax`
+   gate on LoCoMo and are removed; the time scope (T1/T2) failed its gate;
+   notes-first reading (R2) showed no gain and was removed. The date frame
+   (R1) is the only mechanism going to held-out data.
+2. **Frozen build.** Candidate gbrain
+   `2815a8368cb38d2bbc8bf23bf2c3d2ca34aa6756`; baseline gbrain
+   `17c5765ba425a724ba92c6563c3b81562c83025e` (the master the candidate
+   contains). Later commits on the branch that change only documentation do
+   not change the frozen build.
+3. **Harness.** gbrain-evals `p0-heldout-harness` at
+   `0dd5b75c20f958c0cb57ea8e47f998c1a64f525a`, `memory-qa` think lane,
+   official judge prompts, the development lane's settings (`balanced`,
+   reranker off, autocut off, top 10, five sessions read). `think` receives
+   the question date as `referenceDate`; LoCoMo questions carry no date, so
+   the reference date is the conversation's latest session date, exactly as
+   in the development measurement. At `0dd5b75c` the harness passes no date
+   for LoCoMo, so the LoCoMo cell runs only with that fallback; a run without
+   it is a deviation and is reported as one.
+4. **Cells and bar.** Primary: LoCoMo sealed (seven conversations; diagnostic
+   evidence per the split's note). Disclosed confirmation: LongMemEval-M
+   sealed, same lane. Default on requires a paired interval excluding zero on
+   judged accuracy, no question category down by more than one question, and
+   `think` p95 latency within +20%. Spec:
+   [`decisions/p6-think-dates-sealed/decision.json`](decisions/p6-think-dates-sealed/decision.json).
