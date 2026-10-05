@@ -1520,6 +1520,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4348: IANA timezone that owns the dream-cycle calendar day (summary
   // bucketing). Unset → host timezone → UTC. Validated at set time.
   'cycle.timezone',
+  // #5363: consolidate phase cosine cluster threshold, (0, 1], default 0.85.
+  // Read in src/core/cycle/phases/consolidate.ts; validated at set time.
+  'cycle.consolidate.cluster_threshold',
   // A11: IANA timezone for offset-less frontmatter datetimes in effective_date.
   // Unset → UTC (date-only values are always UTC calendar dates). Validated at set time.
   'brain.timezone',

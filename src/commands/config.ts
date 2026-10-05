@@ -1088,6 +1088,14 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
 
+    // #5363: the consolidate phase falls back to 0.85 on a malformed value;
+    // refuse it here, where the operator can fix it.
+    if (key === 'cycle.consolidate.cluster_threshold') {
+      const { parseClusterThreshold } = await import('../core/cycle/phases/consolidate.ts');
+      try { parseClusterThreshold(value); }
+      catch (error) { console.error(`[config] ${(error as Error).message}`); process.exit(1); }
+    }
+
     // Validate sources.default at set time. This key is read by
     // source-resolver.ts tier 5 on EVERY unqualified call, and tier 5 calls
     // assertSourceExists — so a syntactically valid but non-existent id set
