@@ -19,16 +19,14 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   the publish transaction), the remote-edit policy and `core_edit_notices`
   rows, and `lockCoreSources`.
 - Lock order for a core-touching publish (`coordinator.ts`): worktree native
-  lock, then `lockCoreBrain` (`persistence_brain` FOR SHARE, the first lock
-  effects take in `guardEffectSource`), then `guardOwnership`
-  (`persistence_worktrees` FOR SHARE), then `lockCoreSources` (`sources` rows
-  FOR UPDATE, `ORDER BY id`, own source plus `default`) in the
-  source-exclusive slot, then `authorizeStoredRequest` (`sources` FOR SHARE),
-  then `lockCounters`. Worktree claims and topology changes hold the brain row
-  FOR UPDATE before worktrees and sources, and every publication share-locks
-  it later through the request and effect triggers, so taking it first keeps
-  the orders agreeing. `put_pages` batch groups skip the per-request source
-  lock, so `groupable()` excludes core-locked writes.
+  lock, then the protocol declaration takes the brain row first
+  (`declareDurablePersistence` in `protocol.ts`, `persistence_brain` FOR
+  SHARE), then `guardOwnership` (`persistence_worktrees` FOR SHARE), then
+  `lockCoreSources` (`sources` rows FOR UPDATE, `ORDER BY id`, own source plus
+  `default`) in the source-exclusive slot, then `authorizeStoredRequest`
+  (`sources` FOR SHARE), then `lockCounters`: the global order `protocol.ts`
+  documents. `put_pages` batch groups skip the per-request source lock, so
+  `groupable()` excludes core-locked writes.
   `test/e2e/core-memory-locks-postgres.test.ts` races core writes against
   topology changes and a claim-shaped transaction on Postgres.
 - `scripts/check-core-guard-coverage.mjs` (`bun run check:core-guard-coverage`,

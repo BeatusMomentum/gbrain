@@ -13,15 +13,12 @@
  *    after `lockCoreSources` serialized every core writer, so concurrent core
  *    writes can never pass the limit together.
  *
- * Lock order: worktree native lock, then `lockCoreBrain` (the
- * `persistence_brain` row FOR SHARE, the same first lock effects take in
- * `guardEffectSource`), then the `persistence_worktrees` FOR SHARE ownership
- * check, then `lockCoreSources` (source rows FOR UPDATE in id order) before
- * `authorizeStoredRequest` (source FOR SHARE), then `lockCounters`. The brain
- * row comes first because every publication share-locks it later through the
- * request and effect protocol triggers, while worktree claims and topology
- * changes hold it FOR UPDATE before they lock sources or worktrees: taking it
- * after a source row would invert that order. So every path takes brain row →
+ * Lock order: worktree native lock, then the protocol declaration takes the
+ * brain row first (protocol.ts: `declareDurablePersistence`, the first
+ * statement of the publish transaction), then the `persistence_worktrees`
+ * FOR SHARE ownership check, then `lockCoreSources` (source rows FOR UPDATE
+ * in id order) before `authorizeStoredRequest` (source FOR SHARE), then
+ * `lockCounters`: the global order protocol.ts documents, brain row →
  * worktree row → source rows (id order) → counters.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -45,11 +42,6 @@ export function coreLockSources(sourceId: string): string[] {
  * FOR UPDATE in id order inside the publish transaction (transaction-scoped,
  * PgBouncer-safe). See the module comment for the global order.
  */
-/** First lock of a core write's publish transaction; see the module comment for the global order. */
-export async function lockCoreBrain(tx: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
-  await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR SHARE');
-}
-
 export async function lockCoreSources(tx: Pick<BrainEngine, 'executeRaw'>, sourceIds: readonly string[]): Promise<void> {
   const ids = [...new Set(sourceIds)].sort();
   if (!ids.length) return;

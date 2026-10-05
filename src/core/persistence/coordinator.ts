@@ -17,7 +17,7 @@ import { clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
-import { lockCoreBrain, lockCoreSources } from './core-guard.ts';
+import { lockCoreSources } from './core-guard.ts';
 import { requestAttribution } from './attribution.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
@@ -274,7 +274,6 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     }
     const done = await engine.transaction(async tx => {
       await declareDurablePersistence(tx);
-      if (prepared.exclusiveSources?.length) await lockCoreBrain(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
       if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);

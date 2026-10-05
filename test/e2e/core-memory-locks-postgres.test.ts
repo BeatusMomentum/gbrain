@@ -1,6 +1,6 @@
 /**
  * Always-loaded core writes on Postgres: the core lock order (core-guard.ts:
- * `persistence_brain` FOR SHARE first, then the worktree ownership check,
+ * the protocol declaration's `persistence_brain` FOR SHARE first, then the worktree ownership check,
  * then `sources` rows FOR UPDATE in id order, own source plus `default`,
  * then the authority FOR SHARE and the counter locks) never deadlocks with
  * core writes in another source, non-core writes in `default`, a concurrent
