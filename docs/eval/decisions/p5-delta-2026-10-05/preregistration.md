@@ -58,6 +58,30 @@ prose pages unchanged; H10's guard removes 48 of 48 false employment starts, and
 wrong closures go 24/72 without the guard to 0/72 with it; H9 at `0a967e5d5` lost 7 of 840 edges (mean −0.008), all
 from the rule removed in amendment 1.
 
+## Amendment 2 (2026-10-05, before set G or any H11 cell was opened)
+
+1. **Delta build re-frozen at `970c3088b`** (was `011bd0b6a`; the remote wanted-rows hook measured by H8 is in it too).
+   The second custodian's held-out set F showed that the `NOT_EMPLOYMENT_ROLE` guard alone made as-of exactness worse
+   (0.553 with the guard, 0.642 without) while cutting wrong closures 23 → 0: link typing still marked a company named
+   only in a dated board or advisory line as `works_at`, so the undated edge stayed live at every date. Two fixes went in
+   without seeing set F:
+   - **Link typing.** Board roles resolve to `invested_in` on a page describing an investor and to `advises` otherwise;
+     observer and investor roles type `invested_in`; "advising" counts as advises. No board, advisory, investor or
+     observer phrasing types `works_at`.
+   - **Temporal cue families** (from the edge-validity plan's set E finding, traps 89/105): onboarding-style starts,
+     leave phrases whose object splits the verb, and exchange moves ("traded [A] for [B]" ends A and starts B), with
+     negative controls ("traded shares of [X]" is not a move). The guard is unchanged.
+2. **H10 re-check** on a fresh set G written by the second custodian: `e5_extra_works_at_starts` = 0, every
+   edge-validity gate noninferior to master at tolerance 0.01, and as-of exactness on set G not below the no-guard arm.
+3. **H11, temporal cue coverage.** The edge-validity plan's E1 gates on set G: traps ≥ 0.99, every other gate
+   noninferior to master at tolerance 0.01. Run by the second custodian.
+4. **H9** now also covers the board/advisory typing change (frozen extractor vs `970c3088b`, same corpus and bar).
+
+Dev numbers at `970c3088b` (dev data only): world-v1 type accuracy 0.774 (0.753 at `011bd0b6a`, 0.767 at the frozen
+build), strict F1 0.196. Edge-validity dev split (seeds 3 and 5, phrasing set A), master `cab092f5c` vs `970c3088b`:
+traps 1.000 / 1.000, as-of exact 0.900 / 0.933, during F1 0.896 / 0.921, live recall 0.842 / 0.871, now recall
+0.842 / 0.867, correction ok 0.867 / 1.000, invariant 1.000 / 1.000, now precision 1.000 / 1.000.
+
 ## Dev disclosures
 
 Dev world-v1 (seeds 1–3 only, never sealed): type accuracy 0.767 at the frozen build, 0.753 at the delta build,
@@ -75,6 +99,8 @@ hides the edge from default reads and `as_of` finds it.
 3. H9: a type-accuracy runner that imports an overlay build's extractor (`--gbrain`) and writes receipt rows.
 4. H10: the temporal-edges set C runner in custodian mode with every edge-validity gate, the E5 wrong-closure probe,
    and a no-guard arm (the delta build with `NOT_EMPLOYMENT_ROLE` removed).
+5. H10 re-check and H11: set G (second custodian) through the temporal-edges custodian mode, scoring every E1 gate,
+   `e5_extra_works_at_starts` and as-of exactness, with master and no-guard arms.
 
 ## Budget
 
