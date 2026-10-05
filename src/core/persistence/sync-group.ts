@@ -45,15 +45,15 @@ async function resolveGrouping(engine: BrainEngine, noBulk: boolean | undefined)
   return { enabled: true, reason: null, size, maxTxnMs };
 }
 /**
- * #5984 lanes: `--lanes N` / `--no-lanes` > `GBRAIN_SYNC_LANES` > `sync.lanes` > 4, then clamped to what the
+ * #5984 lanes: `--lanes N` / `--no-lanes` > `GBRAIN_SYNC_LANES` > `sync.lanes` > 6, then clamped to what the
  * connection pool can hold at once (its long-hold capacity minus 3 for the sync loop, one foreground write and
  * the consumer's control work). Lanes need bulk groups.
  */
 async function resolveLanes(engine: BrainEngine, bulk: BulkSettings, flag: number | undefined): Promise<{ lanes: number; lanesReason: string | null }> {
   if (!bulk.enabled) return { lanes: 1, lanesReason: `bulk groups are off (${bulk.reason})` };
   if (flag !== undefined && (!Number.isInteger(flag) || flag < 1 || flag > 8)) throw new OperationError('invalid_params', `--lanes must be a whole number from 1 to 8; got ${flag}.`,
-    'Pass --lanes 4 (the default), or --no-lanes to publish one group at a time.');
-  const asked = flag ?? await whole(engine, 'GBRAIN_SYNC_LANES', 'sync.lanes', 4, 1, 8);
+    'Pass --lanes 6 (the default), or --no-lanes to publish one group at a time.');
+  const asked = flag ?? await whole(engine, 'GBRAIN_SYNC_LANES', 'sync.lanes', 6, 1, 8);
   if (asked === 1) return { lanes: 1, lanesReason: flag === 1 ? 'disabled by --no-lanes' : 'disabled by sync.lanes=1 (or GBRAIN_SYNC_LANES=1)' };
   const pool = (engine as BrainEngine & { sql?: BudgetPool }).sql;
   const capacity = pool ? poolLongHoldCapacity(pool) - 3 : 1;

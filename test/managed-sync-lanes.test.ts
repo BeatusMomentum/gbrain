@@ -55,9 +55,9 @@ afterAll(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('lane settings follow flag > env > config > 4, clamp to the pool and need bulk groups', async () => {
+test('lane settings follow flag > env > config > 6, clamp to the pool and need bulk groups', async () => {
   if (!engine) return;
-  expect(await resolveBulkSettings(engine, false)).toMatchObject({ enabled: true, lanes: 4, lanesReason: null });
+  expect(await resolveBulkSettings(engine, false)).toMatchObject({ enabled: true, lanes: 6, lanesReason: null });
   expect(await resolveBulkSettings(engine, false, 1)).toMatchObject({ lanes: 1, lanesReason: 'disabled by --no-lanes' });
   expect(await resolveBulkSettings(engine, false, 8)).toMatchObject({ lanes: 8, lanesReason: null });
   expect(await resolveBulkSettings(engine, true, 4)).toMatchObject({ enabled: false, lanes: 1 });

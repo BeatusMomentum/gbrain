@@ -95,7 +95,7 @@ Options:
                        GBRAIN_SYNC_BULK=0; tune with sync.bulk_size and
                        sync.bulk_max_txn_ms.
   --lanes N            Managed Postgres sync: publish up to N bulk groups at
-                       once (1-8, default 4, capped by the connection pool).
+                       once (1-8, default 6, capped by the connection pool).
                        Pages still commit in file order. Persist with
                        'gbrain config set sync.lanes N' or GBRAIN_SYNC_LANES.
   --no-lanes           Same as --lanes 1: one bulk group at a time.
