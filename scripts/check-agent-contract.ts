@@ -140,14 +140,27 @@ function nullishDefaulted(fn: FnLike, name: string): boolean {
 interface Funnel { name: string; index: number }
 export interface FunnelSite { file: string; line: number; funnel: string; texts: string[] | undefined; expr: string }
 
+/** File-level `const NAME = <string literal>` bindings, so a shared suggestion constant counts as literal text. */
+function literalConsts(sf: ts.SourceFile): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const statement of sf.statements) {
+    if (!ts.isVariableStatement(statement) || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const d of statement.declarationList.declarations) {
+      const t = ts.isIdentifier(d.name) && d.initializer ? flatText(d.initializer, sf) : undefined;
+      if (t !== undefined) out.set((d.name as ts.Identifier).text, t);
+    }
+  }
+  return out;
+}
+
 /** Literal texts of a suggestion expression (each branch of a conditional); undefined when any branch is not literal. */
-function suggestionTexts(n: ts.Expression, sf: ts.SourceFile): string[] | undefined {
-  if (ts.isParenthesizedExpression(n)) return suggestionTexts(n.expression, sf);
+function suggestionTexts(n: ts.Expression, sf: ts.SourceFile, consts: Map<string, string>): string[] | undefined {
+  if (ts.isParenthesizedExpression(n)) return suggestionTexts(n.expression, sf, consts);
   if (ts.isConditionalExpression(n)) {
-    const a = suggestionTexts(n.whenTrue, sf); const b = suggestionTexts(n.whenFalse, sf);
+    const a = suggestionTexts(n.whenTrue, sf, consts); const b = suggestionTexts(n.whenFalse, sf, consts);
     return a && b ? [...a, ...b] : undefined;
   }
-  const t = flatText(n, sf);
+  const t = ts.isIdentifier(n) ? consts.get(n.text) : flatText(n, sf);
   return t === undefined ? undefined : [t];
 }
 
@@ -197,6 +210,7 @@ function funnelCallSites(sf: ts.SourceFile, path: string): FunnelSite[] {
   const funnels = fileFunnels(sf);
   if (!funnels.length) return [];
   const out: FunnelSite[] = [];
+  const consts = literalConsts(sf);
   const visit = (n: ts.Node) => {
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
       for (const f of funnels) {
@@ -205,7 +219,7 @@ function funnelCallSites(sf: ts.SourceFile, path: string): FunnelSite[] {
         if (arg && ts.isIdentifier(arg) && enclosingSuggestionParams(n).has(arg.text)) continue;
         out.push({
           file: path, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, funnel: f.name,
-          texts: arg ? suggestionTexts(arg, sf) : undefined, expr: arg ? arg.getText(sf) : '',
+          texts: arg ? suggestionTexts(arg, sf, consts) : undefined, expr: arg ? arg.getText(sf) : '',
         });
       }
     }

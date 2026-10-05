@@ -1003,6 +1003,26 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | A parameter is missing, has the wrong type, or has an invalid value. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 2 | no |
 
+### invalid_receipt
+
+<a id="invalid_receipt"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A company-source ingestion receipt input failed validation inside gbrain; nothing was written. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### invalid_receipt_transition
+
+<a id="invalid_receipt_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An ingestion receipt cannot skip a phase or complete while files failed, writes are pending or verification failed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
 ### invalid_request
 
 <a id="invalid_request"></a>
@@ -1446,6 +1466,46 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The request was rate-limited; retry after the stated delay. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### receipt_conflict
+
+<a id="receipt_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The ingestion receipt changed since it was read. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### receipt_fence_changed
+
+<a id="receipt_fence_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The managed owner, topology or source binding changed while the ingestion ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### receipt_fence_required
+
+<a id="receipt_fence_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Ingestion into a managed or bound source needs the worktree owner's fence. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guides/company-brain-ingestion.md#resume-and-verify)
+
+### receipt_identity_mismatch
+
+<a id="receipt_identity_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The receipt ID is already bound to different approved ingestion metadata. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/company-brain-ingestion.md#agent-and-ci-use](../../docs/guides/company-brain-ingestion.md#agent-and-ci-use)
 
 ### recovery_required
 
