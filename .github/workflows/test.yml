@@ -57,10 +57,12 @@ permissions:
 # github.ref for push/scheduled runs. Mirrors heavy-tests.yml; frees runners
 # and stops a stale-SHA run from reporting a flaky failure on an obsolete commit.
 # Explicit native-only retries use a separate group so full persistence soaks finish.
+# Each diagnostic dispatch (race_hunt, stress_*) gets its own group, so one
+# replay never cancels another or a full run.
 # Event parity (docs/TESTING.md#event-parity): the event suffixes only separate
 # runs that must not cancel each other; they change no job, matrix or parameter.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && '-diagnostic' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && format('-diagnostic-{0}', github.run_id) || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:

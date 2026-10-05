@@ -15,7 +15,7 @@ type Diagnostic = { race_hunt?: boolean; stress_files?: string; stress_base?: st
 function context(event: string, flag?: boolean, diagnostic: Diagnostic = {}) {
   // Dispatch inputs carry their declared defaults; other events have no inputs.
   const inputs = event === 'workflow_dispatch' ? { native_only: flag, race_hunt: false, stress_files: '', stress_base: '', stress_head: '', ...diagnostic } : {};
-  return { github: { workflow: 'Test', event_name: event, ref: 'refs/heads/example', event: { pull_request: event === 'pull_request' ? { number: 123 } : {} } },
+  return { format: (f: string, ...a: unknown[]) => f.replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)])), github: { workflow: 'Test', event_name: event, ref: 'refs/heads/example', run_id: '77', event: { pull_request: event === 'pull_request' ? { number: 123 } : {} } },
     inputs, always: () => true };
 }
 function evaluate(expression: string, event: string, flag?: boolean, diagnostic?: Diagnostic): unknown {
@@ -61,7 +61,7 @@ describe('native-only CI remains separate from full validation', () => {
         expect(runs, `${name} under ${input}`).toBe(expected);
       }
       expect(template(workflow.jobs['test-status'].name!, 'workflow_dispatch', false, diagnostic)).toBe('full-suite-not-run');
-      expect(template(workflow.concurrency.group, 'workflow_dispatch', false, diagnostic)).toBe('Test-refs/heads/example-diagnostic');
+      expect(template(workflow.concurrency.group, 'workflow_dispatch', false, diagnostic)).toBe('Test-refs/heads/example-diagnostic-77');
     }
     // Outside dispatch the gate always runs (and decides "not a PR event" itself); the race hunt runs only on schedule.
     for (const event of ['push', 'pull_request', 'merge_group', 'schedule']) {
