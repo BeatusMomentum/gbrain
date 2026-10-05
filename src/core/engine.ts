@@ -594,7 +594,7 @@ export interface NewFact {
    * set this — leaving it undefined preserves pre-v0.40 behavior.
    */
   event_type?: string | null;
-  /** Speaker attribution (migration v205). Undefined/null → NULL (unavailable). */
+  /** Speaker attribution (migration v206). Undefined/null → NULL (unavailable). */
   attributed_to?: FactAttribution | null;
 }
 
