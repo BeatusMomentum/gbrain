@@ -497,7 +497,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 104/104 public tables",
+          "message": "RLS enabled on 105/105 public tables",
           "name": "rls",
           "status": "ok"
         },
