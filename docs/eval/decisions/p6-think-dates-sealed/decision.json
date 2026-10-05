@@ -10,7 +10,7 @@
   "config": {}
  },
  "baseline": {
-  "gbrain": "github:garrytan/gbrain#17c5765ba425a724ba92c6563c3b81562c83025e",
+  "gbrain": "github:garrytan/gbrain#67c4ff27bd0a5a8a02ccb66cd663d3aa1daf9969",
   "config": {}
  },
  "harness": {

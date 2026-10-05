@@ -20,8 +20,8 @@
   converter.
 - **Full build, not shipped:** branch `capy/p6-time-aware-reading` at
   `5024ec99f4f591227d12b39b38e304d3255de2c5` (migration v209, publication with
-  prepare-then-swap, retirement hook, withdrawal discovery, `gbrain fact-keys`,
-  doctor `retrieval_enrichment`, and a `--fact-extractor pipeline` arm that
+  prepare-then-swap, retirement hook, withdrawal discovery, a `fact-keys` CLI
+  command, doctor `retrieval_enrichment`, and a `--fact-extractor pipeline` arm that
   runs that shipping path). Design: [`docs/designs/FACT_KEYS.md`](../../../designs/FACT_KEYS.md).
 - **Untested follow-up:** fact keys stacked on `tokenmax`, against `tokenmax`
   alone.

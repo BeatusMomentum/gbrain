@@ -135,9 +135,11 @@ Recorded before any sealed cell runs.
    (R1) is the only mechanism going to held-out data.
 2. **Frozen build.** Candidate gbrain
    `2815a8368cb38d2bbc8bf23bf2c3d2ca34aa6756`; baseline gbrain
-   `17c5765ba425a724ba92c6563c3b81562c83025e` (the master the candidate
+   `67c4ff27bd0a5a8a02ccb66cd663d3aa1daf9969` (the master the candidate
    contains). Later commits on the branch that change only documentation do
-   not change the frozen build.
+   not change the frozen build. (Corrected before any sealed cell ran: the
+   first text of this amendment named `17c5765ba` as the baseline, but the
+   master merged into the candidate is `67c4ff27`.)
 3. **Harness.** gbrain-evals `p0-heldout-harness` at
    `0dd5b75c20f958c0cb57ea8e47f998c1a64f525a`, `memory-qa` think lane,
    official judge prompts, the development lane's settings (`balanced`,
