@@ -400,6 +400,7 @@ async function cmdSync(args: string[]): Promise<void> {
       runScaffold({ gbrainRoot, targetWorkspace, skillSlug: slug, dryRun });
       scaffolded.push(slug);
     }
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- targetWorkspace is the local operator's --workspace argument or the auto-detected workspace root, the same root runScaffold just wrote under.
     const registered = dryRun ? [] : registerManifestEntries(join(targetWorkspace, 'skills'), scaffolded);
 
     if (json) {

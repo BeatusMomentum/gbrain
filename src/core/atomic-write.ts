@@ -105,6 +105,7 @@ export function atomicStagingPath(filePath: string): string {
 }
 
 function stagingPrefix(target: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the second segment is a fixed-shape name built from a sha256 hex digest (no separators or ..); dirname is the already-resolved target's own directory.
   return join(dirname(target), `.${createHash('sha256').update(target).digest('hex')}.tmp.`);
 }
 

@@ -154,11 +154,15 @@ export function loadOrDeriveManifest(skillsDir: string): ManifestLoadResult {
  * loader derives the skill set from the walk there. Returns the names added.
  */
 export function registerManifestEntries(skillsDir: string, slugs: readonly string[]): string[] {
+  const unsafe = slugs.find(slug => !slug || slug === '.' || slug.includes('..') || /[\\/]/.test(slug));
+  if (unsafe !== undefined) throw new Error(`refusing to register skill slug ${JSON.stringify(unsafe)}: a slug is one path segment with no separators or '..'`);
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the operator's workspace skills directory; the file name is a constant.
   const manifestPath = join(skillsDir, 'manifest.json');
   if (!slugs.length || !existsSync(manifestPath) || loadOrDeriveManifest(skillsDir).derived) return [];
   const content = JSON.parse(readFileSync(manifestPath, 'utf-8')) as { skills: ManifestEntry[] };
   const known = new Set(content.skills.flatMap(entry => [entry.name, entry.path]));
   const added = slugs.filter(slug => !known.has(slug) && !known.has(`${slug}/SKILL.md`))
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- every slug was checked above to be one segment with no separators or '..'.
     .map(slug => ({ name: parseSkillName(join(skillsDir, slug, 'SKILL.md')) ?? slug, path: `${slug}/SKILL.md` }));
   if (!added.length) return [];
   atomicWriteFileSync(manifestPath, JSON.stringify({ ...content, skills: [...content.skills, ...added] }, null, 2) + '\n');

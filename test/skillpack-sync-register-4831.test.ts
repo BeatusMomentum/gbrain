@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { registerManifestEntries } from '../src/core/skill-manifest.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const dirs: string[] = [];
@@ -48,4 +49,18 @@ describe('skillpack sync registers what it scaffolded (#4831)', () => {
     expect(Array.isArray(report.report.issues)).toBe(true);
     expect(report.report.issues.filter(issue => issue.type === 'orphan_trigger')).toEqual([]);
   }, 300_000);
+});
+
+describe('registerManifestEntries refuses slugs that are not one path segment', () => {
+  test('separators, .. and empty slugs throw before anything is read or written', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'gbrain-4831-slug-'));
+    dirs.push(workspace);
+    mkdirSync(join(workspace, 'skills'), { recursive: true });
+    const manifest = JSON.stringify({ skills: [] }, null, 2);
+    writeFileSync(join(workspace, 'skills', 'manifest.json'), manifest);
+    for (const bad of ['../escape', 'a/b', 'a\\b', '..', '.', '']) {
+      expect(() => registerManifestEntries(join(workspace, 'skills'), [bad])).toThrow('refusing to register skill slug');
+    }
+    expect(readFileSync(join(workspace, 'skills', 'manifest.json'), 'utf8')).toBe(manifest);
+  });
 });
