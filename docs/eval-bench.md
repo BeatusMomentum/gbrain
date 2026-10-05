@@ -1152,6 +1152,15 @@ callable in isolation, and the test harness exercises it via DI stubs.
 bun test test/nightly-quality-probe.test.ts
 ```
 
+**What it measures.** The probe is a synthetic smoke test, not a health
+score for your brain. It answers the 10 committed questions in
+`test/fixtures/longmemeval-nightly.jsonl` from an isolated in-memory
+benchmark brain, with your search mode, reranker and model routes, and has
+three judges grade the answers. A PASS says the retrieval-plus-answer
+pipeline and the judges work end to end tonight; it says nothing about the
+pages in your own brain. The fixture is embedded in the gbrain binary, so
+source checkouts and compiled installs run the same probe.
+
 #### Model routes
 
 The probe runs inside the autopilot daemon, which holds your brain. Right
@@ -1206,7 +1215,7 @@ and checks the result with `gbrain models`).
 Observability:
 - `~/.gbrain/audit/quality-probe-YYYY-Www.jsonl` — one event per run with
   outcome (pass / fail / inconclusive / error / budget_exceeded /
-  rate_limited / no_embedding_key), pass/fail/inconclusive/error counts,
+  no_embedding_key / skipped), pass/fail/inconclusive/error counts,
   est_cost_usd, fixture_sha8. ISO-week rotation (mirrors slug-fallback
   audit). The row also carries the evidence behind its verdict, in the
   optional fields below (rows written by older releases lack them and
@@ -1215,8 +1224,11 @@ Observability:
   - SKIPPED (disabled) — with paste-ready enable command.
   - OK (enabled, no events yet) — autopilot hasn't fired its first run.
   - OK (last 7d all PASS) — with timestamp of latest run.
-  - WARN — any FAIL / ERROR / BUDGET_EXCEEDED in the window, with outcome
-    counts and the latest run's reason (the digest in `detail`).
+  - WARN — any run that did not pass in the window (FAIL, ERROR,
+    INCONCLUSIVE, BUDGET_EXCEEDED, NO_EMBEDDING_KEY or SKIPPED), with
+    outcome counts and the latest run's reason (the digest in `detail`).
+    SKIPPED means the probe could not run (its fixture was unreadable), so
+    it gave no quality signal; it is never reported as OK.
   - The OK and WARN messages name the latest run's judge panel and any
     slot that scored no question (it did not judge). When one model holds
     two or more of the slots that judged, its votes count more than once:
@@ -1225,6 +1237,18 @@ Observability:
     is enough, for example three claude-cli models). Judges from fewer
     than three providers are reported as not cross-modal, as information;
     the check's status does not change.
+- **Collapsed panel → inconclusive.** When one model holds two or more of
+  the slots that judged (for example the sonnet/opus/sonnet panel an
+  Anthropic-only brain gets from the #4636 substitute), or fewer than two
+  models judged, the run is `inconclusive` with `reason: panel_collapsed`,
+  whatever the batch's verdict was: one model voting twice is not a cross
+  check. The `detail` names the model and slots, keeps the batch verdict,
+  and gives the next step (`gbrain config set
+  models.eval.cross_modal.slot_a <model>`, and `slot_b`, `slot_c`).
+- **Receipts.** A run that did not pass keeps its batch summary and
+  LongMemEval output under `~/.gbrain/audit/nightly-probe/<timestamp>/`
+  (newest 7 runs) and names the directory in `receipt_dir`. The fixture is
+  synthetic, so receipts hold no user data.
 
 | Audit field | Written on | Meaning |
 |---|---|---|
@@ -1235,6 +1259,9 @@ Observability:
 | `failures` | fail, inconclusive and error rows from a batch | Up to 10 non-passing questions in summary order: `question_id`, `verdict`, then either `dimensions` (each failing dimension with its `mean`, its per-slot `scores` in slot order, `null` for a slot that gave no score, and its `fail_reason`, `mean_below_7` or `min_below_5`; a dimension name the probe does not ask for reads `unrecognized`) or the `error` text, cut before any raw model output, redacted and cut to 200 characters. An inconclusive question lists the `slot_errors` of the judges that did not score. |
 | `detail` | the same rows | A one-line digest, for example `6/10 questions did not pass (directness mean_below_7 x6); judges: 2 distinct models from 1 provider`. It counts every question that did not pass, also past the 10 listed, and malformed batch rows (`malformed xN`), and names a slot that scored no question. |
 | `chat_calls`, `chat_cost_usd`, `unpriced_chat_calls` | rows of a run that reached its model calls, including a run that failed part-way | The run's metered chat spend: successful chat calls (reader, extractor, judges), their USD cost from canonical pricing, and the calls with no price on file, whose cost is unknown and never counted as 0. |
+| `cap_usd`, `cap_source` | rows of a run that reached its model calls | The run-level cap and where it came from: `user` (a configured `max_usd`) or `default` ($5). |
+| `reason` | skipped, collapsed-panel inconclusive and budget_exceeded rows | `fixture_unavailable`, `panel_collapsed`, or the budget's `cost` / `runtime` / `no_pricing`. |
+| `receipt_dir` | rows of a run that did not pass and got as far as writing output | Where its `summary.json` and `lme-output.jsonl` were kept. |
 
 **Say to your agent:** *"Why did last night's quality probe fail?"* (the
 agent reads the `detail` and `failures` of the latest
@@ -1257,10 +1284,18 @@ Cost: two numbers that cover different calls, so neither bounds the other.
   estimated $2.80; with unpriced judges and a priced reader the metered
   cost can exceed the estimate.
 
-No per-run cap applies to the probe: it passes `--yes`, which skips the
-batch's `--max-usd` refusal, so `autopilot.nightly_quality_probe.max_usd`
-does not bound its spend. The opt-in default keeps the spend from starting
-unasked; watch `chat_cost_usd` on the audit rows.
+**Run cap.** `autopilot.nightly_quality_probe.max_usd` (default $5) caps
+every paid call of a run as one budget: the LongMemEval reader, extractor
+and query embeddings, then the judges. Each call is reserved against the cap
+before it is sent. When the cap runs out the run stops, makes no further
+paid call (no judging when LongMemEval used it up), and records
+`budget_exceeded` with the reason, never `fail`. Pricing follows the
+spend-control rule: under the default cap a model with no price on file
+warns and runs (counted in `unpriced_chat_calls`); once you set `max_usd`
+yourself, an unpriced model is refused with the `no_pricing` guidance, which
+names the `gbrain pricing set` command that registers its rate (or add it to
+`pricing.overrides`). A typical run on priced API models costs well under a
+dollar of metered chat (`chat_cost_usd`), plus query embeddings.
 
 ## Local benchmark scripts
 
