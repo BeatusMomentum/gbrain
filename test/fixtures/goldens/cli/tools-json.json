@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204468,
-    "stdoutSha256": "97c5e339227556a50c8efb05f6740d793148ad1bb18e67172af71788595a563f",
+    "stdoutBytes": 204538,
+    "stdoutSha256": "14baa283cc6c3428ec4ab5205ee7a23660cb9c516c8bea96dbb84f8e421d5f3c",
     "toolNames": [
       "remember",
       "entity",
@@ -6254,7 +6254,7 @@
               "type": "number"
             },
             "max_cost_usd": {
-              "description": "Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing.",
+              "description": "Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing. Remote callers must pass a positive value; 0 (uncapped) is host-only.",
               "type": "number"
             },
             "no_mutate": {
