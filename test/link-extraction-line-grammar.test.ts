@@ -25,11 +25,6 @@ describe('typed relation lines', () => {
     ]);
   });
 
-  test('a mention of a target the page also links with a typed edge adds no second edge', async () => {
-    const content = 'Alice mentions [[companies/acme-example]] in passing.\n\n- works_at [[companies/acme-example]] (since 2024)';
-    expect(await types(content)).toEqual([['companies/acme-example', 'works_at']]);
-  });
-
   test('a sentence line keeps inference', async () => {
     expect(await types('- works_at [[companies/acme-example]] since 2024')).toEqual([['companies/acme-example', 'mentions']]);
   });

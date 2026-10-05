@@ -969,15 +969,11 @@ function dedupeCandidates(candidates: LinkCandidate[]): LinkCandidate[] {
   // (link_source) and link_type, and the audit trail (which kind of reference
   // created the edge) is worth more than collapsing them. graph-query callers
   // that want a unique target set dedup on to_slug themselves.
-  // A mention of a target this page also links with a typed verb (same link
-  // source) adds nothing: the typed edge already states the relationship.
-  const edgeKey = (c: LinkCandidate) => `${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkSource ?? ''}`;
-  const typed = new Set(candidates.filter(c => c.linkType !== 'mentions').map(edgeKey));
   const seen = new Set<string>();
   const result: LinkCandidate[] = [];
   for (const c of candidates) {
     const key = `${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}\u0000${c.canonicalAttendance ?? false}`;
-    if (seen.has(key) || (c.linkType === 'mentions' && typed.has(edgeKey(c)))) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     result.push(c);
   }
