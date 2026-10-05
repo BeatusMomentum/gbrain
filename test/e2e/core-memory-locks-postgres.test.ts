@@ -60,4 +60,22 @@ describeE2E('core memory ordered source lock (Postgres)', () => {
     const committedCore = results.filter((r, i) => !r.isError && i % 3 !== 2).length;
     expect(core.length).toBe(committedCore);
   }, { databaseUrl: process.env.DATABASE_URL }), 240_000);
+
+  test('a core write and a worktree-claim-shaped transaction (brain row, then source row, both FOR UPDATE) never deadlock', () => managedBrain(async ({ engine }) => {
+    const put = await writer(engine);
+    await put('default', 'core/seed', page('Seed', 'seed core', true));
+    let claimed = false;
+    const claim = engine.transaction(async tx => {
+      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      await new Promise(r => setTimeout(r, 300));
+      await tx.executeRaw("SELECT id FROM sources WHERE id='default' FOR UPDATE");
+      claimed = true;
+    });
+    await new Promise(r => setTimeout(r, 50));
+    const write = put('default', 'core/during-claim', page('During', 'core during a claim', true));
+    const [result] = await Promise.all([write, claim]);
+    expect(claimed).toBe(true);
+    expect(result.text).not.toMatch(/deadlock|40P01/i);
+    expect(result.isError).toBe(false);
+  }, { databaseUrl: process.env.DATABASE_URL }), 120_000);
 });
