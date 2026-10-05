@@ -20,9 +20,11 @@
         "applyForwardReferenceBootstrap",
         "batchLoadEmotionalInputs",
         "batchRetry",
+        "closeRetainingLock",
         "codeEdgesDeps",
         "connect",
         "connectForRestore",
+        "connectWithHeldLock",
         "consolidateFact",
         "countChunklessPagesWithContent",
         "countStaleChunks",
@@ -730,6 +732,7 @@
       "./pglite-lock": [
         "LiveServeLockError",
         "PgliteBusyError",
+        "acquireKernelLockOnly",
         "acquireLock",
         "getPgliteKernelLockPath",
         "getPgliteMigrationLockPath",
@@ -739,6 +742,7 @@
         "isProcessAlive",
         "msSinceLastReap",
         "peekLock",
+        "pgliteLockDirFor",
         "readBootId",
         "readPidNs",
         "releaseLock"

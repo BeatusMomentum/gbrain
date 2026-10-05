@@ -75,6 +75,7 @@ import { buildManifestContext, buildLinkManifest, type ManifestContext } from '.
 import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance } from './dream-provenance.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -1940,6 +1941,8 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         type: 'message',
         role: 'assistant',
         model: modelStr,
+        // A chat_fallback_chain entry answered: judgeSignificance marks the verdict uncacheable.
+        ...(result.fallbackFrom ? { answered_by: result.model } : {}),
         content: [{ type: 'text', text: result.text }],
         stop_reason: result.stopReason === 'length' ? 'max_tokens'
           : result.stopReason === 'tool_calls' ? 'tool_use'
@@ -1992,6 +1995,12 @@ export interface TriageResult {
    * the call was paid whether or not the verdict parsed.
    */
   tokens?: { in: number; out: number };
+  /**
+   * The model that answered when it is not the verdict model (a
+   * chat_fallback_chain hop). Its score is not comparable within the cache
+   * tuple, so runTriagePass uses the verdict for this run without caching it.
+   */
+  answeredBy?: string;
 }
 
 /** Degenerate TriageResult factory — score 0, never cached (unreliable is always set). */
@@ -2116,7 +2125,9 @@ Quote verbatim; never paraphrase inside "quote".`;
     && typeof rawUsage.output_tokens === 'number' && Number.isFinite(rawUsage.output_tokens)
     ? { in: rawUsage.input_tokens, out: rawUsage.output_tokens }
     : undefined;
-  const withTokens = (r: TriageResult): TriageResult => (callTokens ? { ...r, tokens: callTokens } : r);
+  const answeredBy = (msg as { answered_by?: string }).answered_by;
+  const withTokens = (r: TriageResult): TriageResult =>
+    ({ ...r, ...(callTokens ? { tokens: callTokens } : {}), ...(answeredBy ? { answeredBy } : {}) });
   const refused = stopReasonRaw === 'refusal';
   const abnormalStop: TriageResult['unreliable'] | undefined =
     truncated ? 'truncated' : refused ? 'refusal' : undefined;
@@ -2540,16 +2551,20 @@ export async function runTriagePass(
       // #4077: a cancelled cycle must not bank new dream_verdicts rows for
       // work it is abandoning — the next run re-judges from a clean slate.
       throwIfAborted(cfg.signal, '[dream] significance judge');
-      await engine.putDreamVerdict(t.filePath, t.contentHash, {
-        worth_processing: triage.worth_processing,
-        reasons: triage.reasons,
-        score: triage.score,
-        content_type: triage.content_type,
-        segments: triage.segments,
-        entities: triage.entities,
-        model: cfg.model,
-        triage_version: TRIAGE_VERSION,
-      });
+      if (triage.answeredBy) {
+        process.stderr.write(`[dream] triage for ${t.basename} came from fallback model ${triage.answeredBy}; not caching in dream_verdicts\n`);
+      } else {
+        await engine.putDreamVerdict(t.filePath, t.contentHash, {
+          worth_processing: triage.worth_processing,
+          reasons: triage.reasons,
+          score: triage.score,
+          content_type: triage.content_type,
+          segments: triage.segments,
+          entities: triage.entities,
+          model: cfg.model,
+          triage_version: TRIAGE_VERSION,
+        });
+      }
       byPath.set(t.filePath, {
         worth_processing: triage.worth_processing,
         reasons: triage.reasons,
@@ -3193,13 +3208,13 @@ async function writeSummaryPage(
 
   const { parseMarkdown } = await import('../markdown.ts');
   const parsed = parseMarkdown(fullMarkdown);
-  if (!maintenance) await engine.putPage(summarySlug, {
+  if (!maintenance) await maintenanceTransaction(engine, tx => tx.putPage(summarySlug, {
     type: parsed.type,
     title: parsed.title,
     compiled_truth: parsed.compiled_truth,
     timeline: parsed.timeline,
     frontmatter: parsed.frontmatter,
-  }, { sourceId });
+  }, { sourceId }));
 
   const fileWriteRaw = (await engine.getConfig('dream.synthesize.summary_file_write'))?.trim().toLowerCase();
   const fileWriteEnabled = !(fileWriteRaw === 'false' || fileWriteRaw === '0' || fileWriteRaw === 'off');

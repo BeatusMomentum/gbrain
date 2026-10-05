@@ -6,8 +6,8 @@
  * Protects (spec 4.5): `auth create` births a unified token; `rescope-token`
  * and `permissions set-takes-holders` stay exact aliases of
  * `rescope --token`; `rescope --client` and `rescope-client` write identical
- * rows and `--sources none` on a client refuses with
- * `client_sources_none_unsupported` (9); `--if-version` mismatch refuses with
+ * rows and `--sources none` and `--takes-holders` on a client succeed
+ * (9); `--if-version` mismatch refuses with
  * the current revision on stdout under --json (8); a bare name that matches a
  * token and a client refuses; `--migrate-legacy --dry-run` writes nothing (10);
  * harness rotation mints a unified token that keeps explicit empty lists (7).
@@ -25,6 +25,7 @@ import { sqlQueryForEngine, executeRawJsonb } from '../src/core/sql-query.ts';
 import { mintHarnessToken } from '../src/core/bootstrap/harness.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { grantFromTokenRow } from '../src/core/grants/model.ts';
+import { resolveGrantProfile } from '../src/core/grants/profiles.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -157,15 +158,38 @@ describe('9. OAuth clients', () => {
     expect(await clientRow(a.clientId)).toMatchObject({ source_id: 'other', federated_read: ['other', 'default'], allowed_operations: ['get_page', 'search'] });
 
     const none = await cli('auth', 'rescope', '--client', a.clientId, '--sources', 'none', '--json');
-    expect(none.exitCode).toBe(1);
-    const body = JSON.parse(none.stdout) as { error: { reasons: string[]; message: string } };
-    expect(body.error.reasons).toEqual(['client_sources_none_unsupported']);
-    expect(body.error.message).toContain(`gbrain auth revoke-client ${a.clientId}`);
-    expect((await clientRow(a.clientId)).source_id).toBe('other');
+    expect(none.exitCode).toBe(0);
+    expect(JSON.parse(none.stdout).principal_grant.sources).toEqual({ kind: 'none' });
+    expect(await clientRow(a.clientId)).toMatchObject({ source_id: null, federated_read: [] });
 
-    const holders = await cli('auth', 'rescope', '--client', a.clientId, '--takes-holders', 'world');
-    expect(holders.exitCode).toBe(1);
-    expect(holders.stderr).toContain('--takes-holders applies to legacy tokens only');
+    const holders = await cli('auth', 'rescope', '--client', a.clientId, '--takes-holders', 'world,brain');
+    expect(holders.exitCode).toBe(0);
+    expect(holders.stdout).toContain('Takes holders: world, brain');
+
+    const reset = await cli('auth', 'rescope', '--client', a.clientId, '--reset-default', 'sources');
+    expect(reset.exitCode).toBe(1);
+    expect(reset.stderr).toContain('--reset-default applies to legacy tokens only');
+  }, 180_000);
+
+  test('--operations all drops a profile snapshot on both client spellings; a token refuses it', async () => {
+    const [a, b] = await withBrain(async engine => {
+      const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const register = (name: string) => provider.registerClientManual(name, ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined,
+        resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }));
+      return [await register('client-all-a-example'), await register('client-all-b-example')];
+    });
+    const grantRow = (id: string) => withBrain(async engine =>
+      (await engine.executeRaw<Record<string, unknown>>('SELECT grant_profile, allowed_operations, scope FROM oauth_clients WHERE client_id = $1', [id]))[0]);
+    expect((await grantRow(a.clientId)).grant_profile).toBe('memory-writer');
+    expect((await cli('auth', 'rescope', '--client', a.clientId, '--operations', 'all')).exitCode).toBe(0);
+    expect((await cli('auth', 'rescope-client', b.clientId, '--allowed-operations', 'all')).exitCode).toBe(0);
+    for (const id of [a.clientId, b.clientId]) expect(await grantRow(id)).toEqual({ grant_profile: null, allowed_operations: null, scope: 'read write' });
+
+    expect((await cli('auth', 'create', 'tok-all')).exitCode).toBe(0);
+    const token = await cli('auth', 'rescope', '--token', 'tok-all', '--operations', 'all');
+    expect(token.exitCode).toBe(1);
+    expect(token.stderr).toContain('--reset-default operations');
+    expect((await tokenRow('tok-all')).allowed_operations).toBeNull();
   }, 180_000);
 
   test('a bare name that matches both a token and a client refuses as ambiguous', async () => {

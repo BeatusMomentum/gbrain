@@ -473,7 +473,8 @@ export class PostgresEngine implements BrainEngine {
     // else: nothing to disconnect (already done or never connected)
   }
 
-  async initSchema(): Promise<void> {
+  /** `embedding` sizes a fresh schema (engine graduation passes the source's layout); a stored identity still wins. */
+  async initSchema(opts: { embedding?: { dimensions: number; model: string } } = {}): Promise<void> {
     // v0.30.1 (X1): route DDL through the direct pool when ConnectionManager
     // is in dual-pool mode. The pooler's 2-min statement_timeout truncates
     // SCHEMA_SQL replays + migrations on Supabase; the direct pool gets
@@ -495,6 +496,7 @@ export class PostgresEngine implements BrainEngine {
       dims = gw.getEmbeddingDimensions();
       model = gw.getEmbeddingModel();
     } catch { /* gateway not yet configured — use defaults */ }
+    if (opts.embedding) ({ dimensions: dims, model } = opts.embedding);
 
     const storedIdentity = await readStoredEmbeddingIdentity(this);
     if (storedIdentity) {

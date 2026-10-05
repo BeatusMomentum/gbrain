@@ -5,8 +5,9 @@
  * Protects: a managed checkout shared by several sources is fast-forwarded only
  * after every accepted write to it drained, never under a moving HEAD, and the
  * refresh converges or refuses with a typed, filled fix.
- * Regression it catches: admission or claiming ignoring the refresh fence (a
- * write publishing onto a checkout whose HEAD is moving), a per-source fence,
+ * Regression it catches: admission, claiming or the consumer's idle probe
+ * ignoring the refresh fence (a write publishing onto a checkout whose HEAD is
+ * moving, or a fenced effect waking the consumer every poll), a per-source fence,
  * a refresh that merges dirty or diverged checkouts, a refresh that leaves the
  * fence up after a refusal, or topology changes racing a refresh.
  * Existing coverage: none; managed sync refused to pull and lane B only
@@ -21,12 +22,13 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
-import { runSourcesRefresh } from '../src/commands/sources-refresh.ts';
+import { parseRefreshArgs, runSourcesRefresh } from '../src/commands/sources-refresh.ts';
 import { claimCoalescedGitEffects, claimPersistenceEffect } from '../src/core/persistence/effect-journal.ts';
 import { localHostId } from '../src/core/persistence/identity.ts';
 import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -64,6 +66,13 @@ const refusedWith = async (promise: Promise<unknown>, code: string) => {
   expect(error!.code).toBe(code);
   return error!;
 };
+test('refresh timer bounds reject overflow and accept the maximum delay', () => each(async f => {
+  await refusedWith(refreshWorktree(f.engine, f.alpha, { fetchTimeoutMs: 2 ** 31 }), 'invalid_params');
+  const drain = parseRefreshArgs([f.alpha, '--wait-drain', String((2 ** 31) / 1000), '--dry-run']).options;
+  expect(drain.waitDrainMs).toBeGreaterThan(2 ** 31 - 1); // the drain wait is a performance.now() deadline, not a timer: still accepted
+  expect((await refreshWorktree(f.engine, f.alpha, drain)).status).toBe('dry_run');
+  expect((await refreshWorktree(f.engine, f.alpha, { fetchTimeoutMs: 2 ** 31 - 1, dryRun: true })).status).toBe('dry_run');
+}));
 /** Requeue a committed git effect so the drain must wait for the consumer to process it again. */
 async function requeueGitEffect(f: RefreshFixture, delayMs: number): Promise<number> {
   const [effect] = await f.engine.executeRaw<{ id: number }>(`SELECT id FROM persistence_effects WHERE worktree_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`, [f.worktreeId]);
@@ -181,6 +190,9 @@ test('8. a queued git effect drains before fenced, and nothing on the worktree i
       await f.engine.executeRaw(`UPDATE persistence_effects SET state='queued',next_attempt_at=now()-interval '1 second' WHERE id=$1`, [effectId]);
       expect(await claimPersistenceEffect(f.engine, localHostId())).toBeNull();
       expect(await claimCoalescedGitEffects(f.engine, localHostId(), f.worktreeId, 5)).toEqual([]);
+      // The idle probe mirrors the claims: a fenced effect is not work, so the consumer keeps backing off.
+      const probe = new PersistenceConsumer(f.engine, {} as never, async () => { throw new Error('no preparation in this probe'); });
+      expect(await (probe as unknown as { hasWork(): Promise<boolean> }).hasWork()).toBe(false);
       // The resident consumer polls too; a claimable effect would leave 'queued' within a few polls.
       await new Promise(resolve => setTimeout(resolve, 1200));
       expect((await f.engine.executeRaw<{ state: string }>('SELECT state FROM persistence_effects WHERE id=$1', [effectId]))[0].state).toBe('queued');
