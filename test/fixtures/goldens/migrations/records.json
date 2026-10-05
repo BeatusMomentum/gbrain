@@ -3072,10 +3072,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "decide_review_proposals",
+        "name": "delta_per_arm_cursor",
         "sql": {
-          "length": 1700,
-          "sha256": "8a20d8dac7096056bb53512bcb34316d15d44582b7d9b0f4f6fff3891c9daac3"
+          "length": 449,
+          "sha256": "7ffafdab8ee63691d5fc45ad459540579285f21ad929e022a79100006e2e11e5"
         },
         "sqlFor": "absent",
         "transaction": "absent",
