@@ -962,8 +962,7 @@ export async function runThink(
 
   return {
     question: opts.question,
-    answer: response.answer,
-    ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
+    answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
     citations: resolved.citations,
     gaps: response.gaps,
     pagesGathered: gather.pages.length,

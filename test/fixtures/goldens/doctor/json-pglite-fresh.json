@@ -510,13 +510,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 207 (latest: 207)",
+          "message": "Version 208 (latest: 208)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "932 column(s) verified against live schema",
+          "message": "957 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
