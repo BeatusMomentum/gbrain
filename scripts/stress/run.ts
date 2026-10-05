@@ -346,11 +346,16 @@ export interface FileResult {
   reason?: string; seedBase: number; firstIteration: number; iterations: IterationResult[]; reproduce: string;
 }
 
+/** Workflows whose dedicated jobs provide prerequisites (agent binaries, native targets) the stress shards lack. */
+const OWNING_WORKFLOWS = ['heavy-tests.yml', 'native-locks.yml', 'macos-validation.yml'];
+
 function skipReason(file: string): string | null {
   const text = readFileSync(join(ROOT, file), 'utf8');
   if (/process\.platform/.test(text)) return `every test skipped on ${process.platform}: platform-only tests, run by their owning native lane; not stressed`;
   const keys = [...new Set([...text.matchAll(/process\.env\.([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET))/g)].map(m => m[1]!))];
   if (keys.length) return `every test skipped without ${keys.join(', ')} (secret not available here); not stressed`;
+  const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
+  if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
   return null;
 }
 

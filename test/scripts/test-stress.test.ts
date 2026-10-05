@@ -78,6 +78,16 @@ describe('test:stress runner', () => {
     expect(r.manifest.not_stressed.map((n: { file: string }) => n.file)).toEqual(['test/platform.test.ts']);
   });
 
+  test('a file that skips without a prerequisite its owning heavy-tests job installs is not stressed', () => {
+    const root = tree({
+      'test/door.serial.test.ts': "import { describe, test } from 'bun:test';\nconst BIN = Bun.which('some-agent-cli-not-installed');\ndescribe.skipIf(!BIN)('door', () => { test('install', () => {}); });\n",
+      '.github/workflows/heavy-tests.yml': 'jobs:\n  door:\n    steps:\n      - run: bun test --timeout=600000 test/door.serial.test.ts\n',
+    });
+    const r = stress(root, 'test/door.serial.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(0);
+    expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed', reason: expect.stringContaining('owning job in .github/workflows/heavy-tests.yml') });
+  });
+
   test('a test that ran in the first iteration and skips later is an unexpected skip', () => {
     const root = tree({ 'test/vanish.test.ts': "import { test } from 'bun:test';\nif (Number(process.env.GBRAIN_TEST_SEED) % 2 === 1) test('sometimes', () => {});\ntest('always', () => {});\n" });
     const r = stress(root, 'test/vanish.test.ts', '--iterations', '2', '--seed', '1');

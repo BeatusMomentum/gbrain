@@ -59,9 +59,10 @@ passed, 1 a failure, 2 a usage or setup error, 130/143 cancelled.
 
 Paid-provider files (`*.live.test.ts`, `test/live/`,
 `scripts/e2e-live-key-only.txt`) are listed as not stressed. A file whose
-every test skips on this platform, or skips without an unavailable secret, is
-listed as not stressed with that reason; any other run with zero executed
-tests fails.
+every test skips on this platform, skips without an unavailable secret, or
+skips without a prerequisite its owning job in `heavy-tests.yml`,
+`native-locks.yml` or `macos-validation.yml` installs, is listed as not
+stressed with that reason; any other run with zero executed tests fails.
 
 ## Isolation and receipts
 
