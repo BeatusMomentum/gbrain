@@ -9,7 +9,8 @@
  *   verifier (sealed revision, selected column, model and hashes), so the
  *   effect commits with no provider work.
  * - `superseded`: the page was deleted, or a newer revision of the same page
- *   (same page id) owns its own embedding effect; the effect commits with
+ *   (same page id) owns its own embedding effect or has independently
+ *   verified current vectors; the effect commits with
  *   `{ embedding: 'superseded' }`, as the owner's own run would.
  * - `retry_queued`: the owner embeds it. A stale queued effect is re-queued;
  *   a failed one gets the `retry-effects` allowance, or, when that allowance
@@ -121,7 +122,23 @@ export async function settleEmbeddingEffect(engine: BrainEngine, candidate: Pick
         const [replacement] = deleted ? [] : await tx.executeRaw<{ id: string }>(`SELECT id::text FROM persistence_effects
           WHERE kind='embedding' AND source_id=$1 AND source_incarnation=$2::uuid AND revision=$3::uuid AND (data->>'page_id')::int=$4 AND id<>$5 LIMIT 1`,
         [effect.source_id, effect.source_incarnation, snapshot!.revision, snapshot!.page.id, effect.id]);
-        if (!deleted && !replacement) return { outcome: 'blocked', reason: 'no_replacement_obligation' };
+        if (!deleted && !replacement) {
+          // Classic import/embed can advance the canonical revision without
+          // scheduling a replacement outbox obligation. Verify its sealed,
+          // same-page projection under the existing source/page guards; never
+          // grant paid retries for an effect targeting the obsolete revision.
+          const signature = configuredSignature(opts.config);
+          if (!signature) return { outcome: 'blocked', reason: 'no_replacement_obligation' };
+          try {
+            const { pending } = await readEmbeddingEffectProjection(tx, effect, snapshot!, opts.hostId, signature);
+            if (pending.length) return { outcome: 'blocked', reason: 'no_replacement_obligation', pending_chunks: pending.length };
+          } catch (error) {
+            if (error instanceof OperationError && error.code === 'projection_pending') return { outcome: 'blocked', reason: 'no_replacement_obligation' };
+            throw error;
+          }
+          return await commit({ embedding: 'superseded', reason: 'current_vectors_verified', verified_revision: snapshot!.revision })
+            ? { outcome: 'superseded', reason: 'current_vectors_verified' } : { outcome: 'changed_since_preview' };
+        }
         const settled = await commit(deleted ? { embedding: 'superseded', reason: 'page_deleted' }
           : { embedding: 'superseded', reason: 'revision_changed', replaced_by: replacement.id });
         return settled ? { outcome: 'superseded', reason: deleted ? 'page_deleted' : 'revision_changed' } : { outcome: 'changed_since_preview' };
