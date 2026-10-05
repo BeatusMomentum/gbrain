@@ -1,8 +1,9 @@
 # RLS and you
 
 Short version: every table in your gbrain's `public` schema needs Row Level
-Security enabled. If one doesn't, `gbrain doctor` now fails, not warns, and the
-process exits 1.
+Security enabled. If one doesn't and the schema may be reachable with an anon
+key (Supabase, or PostgREST roles on the database), `gbrain doctor` fails and
+the process exits 1. On a plain Postgres with no such exposure it warns.
 
 This guide explains why, what to do when you hit the check, and the escape hatch
 for the cases where you really do want a table to stay readable by the anon key.
@@ -256,14 +257,21 @@ running and will flag any table that came over without RLS.
 ## Self-hosted Postgres
 
 If you're running Postgres without PostgREST in front, the anon-key exposure
-doesn't apply. But gbrain still fails the check on missing RLS, because:
+doesn't apply. Doctor looks for an exposure signal before it fails the check:
+the PostgREST role names (`anon`, `authenticated`, `authenticator`,
+`service_role`) in `pg_roles`, or a Supabase database URL. With neither, a
+table without RLS is a `warn`:
 
-- The framing is "RLS on all public tables" is a gbrain security invariant,
-  not a Supabase-specific workaround.
-- The `ALTER TABLE ... ENABLE RLS` fix is harmless on any Postgres: it only
-  constrains non-bypass roles, which gbrain doesn't use.
-- If you ever put PostgREST or a similar tool in front later, the guard is
-  already in place.
+```
+rls: warn — 1 table(s) WITHOUT Row Level Security: local_notes. No PostgREST
+exposure detected (...), so this is a warning: enable RLS before putting
+PostgREST or a similar API in front of the public schema. Fix: ALTER TABLE ...
+```
 
-If this framing doesn't fit your deployment, file an issue with the specifics
-so we can decide whether a self-hosted-exempt mode is justified.
+The fix is still worth running: `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` is
+harmless on any Postgres (it only constrains non-bypass roles, which gbrain
+doesn't use), and the guard is in place if you add PostgREST later. Once one
+of those roles exists, the same table fails the check.
+
+**Say to your agent:** *"Check whether my brain's database tables are protected
+before I expose it."*
