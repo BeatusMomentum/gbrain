@@ -176,8 +176,6 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       details.near_duplicates_shadow_7d = dedup.reduce((n, e) => n + (e.near_duplicate ?? 0), 0);
     } catch { /* heartbeat unreadable — counters stay absent */ }
 
-    const corpusProblem = await corpusBacklogProblem(engine, fileCfg, details).catch(() => null);
-
     // Plane comparison (the dual-write design's promised surfacing): the DB
     // row is authoritative at runtime; a disagreeing file mirror means a
     // failed dual-write, a foreign writer, or another machine's `config set`
@@ -237,6 +235,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
     }
 
     const problems: string[] = [];
+    const corpusProblem = await corpusBacklogProblem(engine, fileCfg, details).catch(() => null);
     if (corpusProblem) problems.push(corpusProblem);
     if (!wb.ttl_valid) {
       problems.push(`memory.auto_writeback_transient_ttl is invalid — using '${wb.transient_ttl}'`);
