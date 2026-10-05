@@ -13,8 +13,8 @@ import { WRITE_ATTRIBUTION_SCHEMA_SQL } from '../persistence/attribution-schema.
 // (v045), so there is no schema.sql mirror. The column is canonical content
 // (attribution-schema.ts), so the write-attribution trigger function is
 // re-created here to include it in the content-change comparison.
-export const v208: Migration = {
-  version: 208,
+export const v209: Migration = {
+  version: 209,
   name: 'facts_attributed_to',
   idempotent: true,
   sql: `

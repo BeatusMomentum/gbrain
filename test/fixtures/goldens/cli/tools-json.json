@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203079,
-    "stdoutSha256": "3f2a347db6f4a41890023a83565e4a811e9fb1127b881fad419a24f3365f3d21",
+    "stdoutBytes": 203404,
+    "stdoutSha256": "9d5496a3414f87f61aee89a341fcaf495ef6b489cb30005837a27f2ace158401",
     "toolNames": [
       "remember",
       "entity",
@@ -1094,6 +1094,8 @@
           "detail": "string?",
           "embedding_column": "string?",
           "expand": "boolean?",
+          "explain": "boolean?",
+          "explain_target": "string?",
           "fields": "string?",
           "image": "string?",
           "image_mime": "string?",
@@ -1149,6 +1151,14 @@
             "expand": {
               "description": "Default true; false skips the LLM expansion.",
               "type": "boolean"
+            },
+            "explain": {
+              "description": "Per-row score_details.",
+              "type": "boolean"
+            },
+            "explain_target": {
+              "description": "Expected page (slug or source:slug): why it is missing.",
+              "type": "string"
             },
             "fields": {
               "description": "lean (remote default) or full.",
