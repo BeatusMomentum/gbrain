@@ -483,6 +483,9 @@ CREATE TABLE IF NOT EXISTS session_context_state (
   surfaced_slugs      JSONB NOT NULL DEFAULT '[]'::jsonb,
   checkpoint_manifest JSONB NOT NULL DEFAULT '[]'::jsonb,
   last_wake_at        TIMESTAMPTZ,
+  facts_cursor_at     TIMESTAMPTZ,
+  facts_cursor_id     BIGINT,
+  degraded_wakes      INTEGER NOT NULL DEFAULT 0,
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, client_id, session_id)
 );
