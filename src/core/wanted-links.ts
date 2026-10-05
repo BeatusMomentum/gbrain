@@ -85,3 +85,9 @@ export async function isWantedPagesEnabled(engine: Pick<BrainEngine, 'getConfig'
   const value = await engine.getConfig('wanted_pages.enabled').catch(() => null);
   return value == null || !['false', '0', 'no', 'off'].includes(value.trim().toLowerCase());
 }
+
+/** `wanted_pages.remote` (default off; needs `wanted_pages.enabled`): the remote `links` effect records missing mention targets. */
+export async function isRemoteWantedPagesEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
+  const value = await engine.getConfig('wanted_pages.remote').catch(() => null);
+  return value != null && ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase()) && await isWantedPagesEnabled(engine);
+}

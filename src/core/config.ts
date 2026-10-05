@@ -1589,6 +1589,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // when the target appears (src/core/wanted-links.ts). On by default; the
   // off switch is `gbrain config set wanted_pages.enabled false`.
   'wanted_pages.enabled',
+  // Remote writes (the persistence `links` effect) record missing mention targets too. Off until its held-out verdict.
+  'wanted_pages.remote',
   // Line grammar (src/core/line-grammar.ts): typed relation lines on by default;
   // undeclared relation types fall back to inference unless allowed.
   'line_grammar.enabled',
