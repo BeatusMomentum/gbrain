@@ -12,7 +12,7 @@ it. Sealed runs are executed by the custodian only; the custodian pins the delta
 | Validity ranges on typed relation lines stored as dated edge transitions (producer `inline`, `src/core/link-effective.ts`) | `line_grammar.effective_ranges` | on | off (ships off) |
 | Wanted rows recorded on the remote `put_page` write path (link-effect hook) | added with the hook; ships off | on | off |
 | Temporal-evidence lexicon: an advisory, board or investor role ("Took an advisory role with [X]", "Became an advisor at [X]") is not an employment start (`NOT_EMPLOYMENT_ROLE` guard on the `took … role` and `became … at/of` alternatives of `EMPLOYMENT.start` in `src/core/link-temporal-evidence.ts`) | none (evidence derivation) | kept | reverted before landing |
-| Link typing changes made when the edge-validity schema merged: the verb is read at the link's own position in the window; links joined only by commas or conjunctions share the verb before the first; a `mentions` edge to a target the page also links with a typed edge is dropped | none (extraction behavior) | kept | reverted to the frozen build's typing before landing |
+| Link typing changes made when the edge-validity schema merged: the verb is read at the link's own position in the window; links joined only by commas or conjunctions share the verb before the first; a verb followed by a preposition and the next link belongs to that link | none (extraction behavior) | kept | reverted to the frozen build's typing before landing |
 
 ## Hypotheses, metrics and bars
 
@@ -27,22 +27,42 @@ by more than 1 point; pages with no ranges produce identical `link_transitions` 
 write order, withheld-entity variant. Metric: withheld-entity recall in `wanted_pages`, edges recovered once targets
 appear. Bars: recall ≥ 0.95, within 0.02 of the local arm, non-entity noise 0 (exact).
 
-**H9, typing changes.** Frozen build `21befeb5b` extractor vs delta build extractor, the same pages. Corpus: held-out
-world-v1 seeds (not 1–3) and the temporal-edges held-out set. Metrics: `anyTypeMatch` per gold edge and live-
+**H9, typing changes.** Frozen build `21befeb5b` extractor vs delta build extractor, the same pages. Corpus: the
+seeded relation-line-variants world (world-v1 rendered with relation lines, held-out generator seeds outside 1–3) and
+the temporal-edges held-out set. Metrics: `anyTypeMatch` per gold edge and live-
 relationship accuracy. Bars: noninferior at tolerance 0.01 on both.
 
 **H10, temporal-evidence lexicon.** The edge-validity plan's temporal-edges held-out set C (custodian mode), run as a
 noninferiority guard on every gate that plan preregistered, plus the retrieval-feedback plan's E5 wrong-closure probe
 (pages with one long employment stint and a later dated "Took an advisory role with [X]" or "Became an advisor at
-[X]" line on a page that also asserts works_at to X). Arms: the delta build vs the same build with the guard removed. Bars: 0 wrong closures on the
-E5 probe (exact); every edge-validity gate noninferior at tolerance 0.01. Run by the custodian (P0).
+[X]" line on a page that also asserts works_at to X). Arms: the delta build vs the same build with the guard removed. Gate: `e5_extra_works_at_starts`,
+delta vs no-guard on set C, bar 0 (exact); every edge-validity gate noninferior at tolerance 0.01. Report, not gate:
+`e5_wrong_closures` on the retrieval-feedback plan's build with and without the guard, once that plan's PR is on
+master (its single-value rule lives there). Run by the custodian (P0).
 
 Guardrails: LongMemEval-S `recall_all@5` noninferior (tolerance 0.01); N4 resolver no new wrong merge (exact).
+
+## Amendments (2026-10-05, before any sealed cell of this run or the remaining first-run cells was opened)
+
+1. **Delta build re-frozen at `011bd0b6a`** (was `0a967e5d5`). The rule that dropped a `mentions` edge next to a typed
+   edge to the same target is removed: the custodian's dev H9 run traced all 7 lost edges of 840 (mean −0.008 against
+   the 0.01 tolerance) to it, and its only benefit was strict F1. Keeping it would have put the other three typing
+   changes at risk of reversion on a narrow margin.
+2. **H10 gate.** `e5_extra_works_at_starts`, delta vs no-guard on set C, bar 0. The delta build declares no single-value
+   rule (`cardinality` lives on the retrieval-feedback plan's branch), so wrong closures are reported, not gated, on
+   that plan's build with and without the guard once it is on master.
+3. **H9 corpus.** "Held-out world-v1 seeds" means the seeded relation-line-variants world.
+
+Custodian dev numbers recorded before freezing (dev data only): H7 as-of accuracy on range pages 0.175 → 1.000 with
+prose pages unchanged; H10's guard removes 48 of 48 false employment starts, and on the retrieval-feedback build
+wrong closures go 24/72 without the guard to 0/72 with it; H9 at `0a967e5d5` lost 7 of 840 edges (mean −0.008), all
+from the rule removed in amendment 1.
 
 ## Dev disclosures
 
 Dev world-v1 (seeds 1–3 only, never sealed): type accuracy 0.767 at the frozen build, 0.753 at the delta build,
-0.747 on master with the edge-validity schema; strict F1 0.195, 0.217 and 0.188. The 0.014 drop comes from two
+0.747 on master with the edge-validity schema; strict F1 0.195, 0.191 and 0.188 (0.217 at `0a967e5d5`, before
+amendment 1 removed the mention-drop rule). The 0.014 type-accuracy drop comes from two
 edges on one page ("advisor at [A], [B], and [C]") that the coordination rule types `advises` while world-v1's gold,
 built from the generator's ledger, says `invested_in`. H7 dev: `test/link-effective.test.ts` shows an ended range
 hides the edge from default reads and `as_of` finds it.

@@ -45,7 +45,7 @@ lines; decoy lines whose stated type reaches the graph, candidate minus baseline
 templates not used in dev): recall >= 0.98; decoy types added by the grammar = 0.
 
 **H3 — junk stays out.** False-positive audit: grammar lines minted per 1,000 list lines and precision on 300
-held-out list lines labeled by two judge models with human adjudication. Corpora: LongMemEval-S haystack sessions as
+held-out minted lines (sampled from the lines the grammar reads, `--frame minted`) labeled by two judge models with human adjudication. Corpora: LongMemEval-S haystack sessions as
 markdown, LoCoMo transcripts, a permissively licensed public notes vault. Bar: precision >= 0.95; zero lines minted
 from timecodes, task markers, citations, dates or machine-written sections. gbrain's own docs and skills,
 amara-life-v1, transcript-distill-v1 and world-v1 were read in development and are dev data only.
@@ -60,7 +60,7 @@ targets; share of wanted targets that are not entity-shaped. Bar: zero edges los
 name; metrics: recall@3 of the true page per mention family, and the hint rate on no-referent names. Bar: recall@3 >=
 0.9 on lexically detectable families (exact name, exact slug, typo, initials, declared alias, changed name); hint rate
 on no-referent names <= 10% (the held-out set needs at least 50 no-referent names). (b) Agent loop, Claude Sonnet 5.5
-and GPT-6 sol, "save these notes" tasks with 30% existing entities under variant names and 20% similar-but-different
+and `gpt-6.1-sol`, "save these notes" tasks with 30% existing entities under variant names and 20% similar-but-different
 entities, no tool-result caps: duplicate-page rate down >= 25% relative and wrong-merge rate up <= 1 point.
 
 **H6 — typed lines help answers.** Agents ingest amara-life-v1 conversations and write the brain: arm A is master with
@@ -77,6 +77,12 @@ Guardrail: N4 resolver outcomes (`n4-entity-resolution` in `decision.json`): cor
 
 Cap $1,300. H1, H2, H4, H5a are deterministic ($0). H3 ≈ $20 in judge labels. H5b ≈ $300. H6 ≈ $700–1,000.
 LME-S guardrail ≈ $24 per run.
+
+## Amendments (2026-10-05, before any remaining sealed cell was opened)
+
+1. **H5b model.** The GPT arm is `gpt-6.1-sol`.
+2. **H3 sampling.** The 300 labeled lines are sampled from minted lines (`--frame minted`): lines the grammar reads as
+   relation or fact lines, so precision is measured on what the feature produces.
 
 ## Dev disclosures
 
