@@ -1525,8 +1525,8 @@
           "details": {
             "answers_recorded": 0,
             "docs": "docs/guides/retrieval-feedback.md",
-            "enabled": true,
-            "implicit": true,
+            "enabled": false,
+            "implicit": false,
             "influence": 0.1,
             "last_rating_at": null,
             "learn": true,
@@ -1536,7 +1536,7 @@
             "weights": 0,
             "weights_off_neutral": 0
           },
-          "message": "Retrieval feedback on (λ=0.1): 0 answers recorded, 0 ratings, 0 pages/edges learned. Inspect with `gbrain feedback status`.",
+          "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
           "name": "retrieval_feedback_health",
           "status": "ok"
         },
