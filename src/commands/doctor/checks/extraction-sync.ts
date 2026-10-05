@@ -646,6 +646,38 @@ async function latestFullCycleEvidence(
   }
 }
 
+/** #5028: a backlog source whose extract_atoms stamp is older than this is stale. */
+const EXTRACT_ATOMS_PHASE_WARN_HOURS = 48;
+
+/**
+ * #5028: backlog sources with no recent `last_extract_atoms_at` stamp (written
+ * by stampExtractAtomsRun after the phase actually runs, from a dream cycle
+ * or an auto-drain). The 48h window allows for the auto-drain's one slot per
+ * UTC day. Fail-open: an unreadable sources table returns null (no warn).
+ */
+async function sourcesWithStaleExtractAtomsRun(
+  engine: BrainEngine,
+  bySource: Array<{ source_id: string; backlog: number }>,
+  nowMs = Date.now(),
+): Promise<Array<{ source_id: string; backlog: number; last_extract_atoms_at: string | null }> | null> {
+  try {
+    const { LAST_EXTRACT_ATOMS_AT_KEY } = await import('../../../core/cycle/extract-atoms.ts');
+    const rows = await engine.executeRaw<{ id: string; stamp: string | null }>(
+      `SELECT id, config->>$2 AS stamp FROM sources WHERE id = ANY($1::text[])`,
+      [bySource.map((row) => row.source_id), LAST_EXTRACT_ATOMS_AT_KEY],
+    );
+    const stamps = new Map(rows.map((r) => [r.id, r.stamp]));
+    return bySource
+      .map((row) => ({ ...row, last_extract_atoms_at: stamps.get(row.source_id) ?? null }))
+      .filter((row) => {
+        const t = row.last_extract_atoms_at ? new Date(row.last_extract_atoms_at).getTime() : NaN;
+        return !Number.isFinite(t) || nowMs - t > EXTRACT_ATOMS_PHASE_WARN_HOURS * 3_600_000;
+      });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * #4576 review fix: can this brain's shape produce per-source
  * last_full_cycle_at stamps at all? Two lanes write them:
@@ -768,7 +800,37 @@ export async function computeExtractAtomsBacklogCheck(
           },
         };
       }
-      // Pack runs it AND a cycle completed recently (or the backlog is small,
+      // #5028: a recent cycle is not evidence that THIS phase ran: the
+      // autopilot daemon's per-source cycles run only the freshness phases
+      // yet stamp last_full_cycle_at. Require each backlog source's own
+      // last_extract_atoms_at stamp to be recent.
+      if (evidence && evidence.state === 'fresh') {
+        const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
+        const phaseStale = backlogBySource ? await sourcesWithStaleExtractAtomsRun(engine, backlogBySource) : null;
+        if (phaseStale && phaseStale.length > 0) {
+          const drain = buildExtractAtomsDrainCommand(phaseStale);
+          const ids = phaseStale.map((row) => row.source_id).join(', ');
+          return {
+            name, status: 'warn',
+            message:
+              `${backlog} page(s) pending and cycles run, but extract_atoms has not run in the last ` +
+              `${EXTRACT_ATOMS_PHASE_WARN_HOURS}h for source(s) ${ids} (routine autopilot cycles run only the ` +
+              `freshness phases; the daily auto-drain needs autopilot on Postgres and a backlog above ` +
+              `autopilot.auto_drain.threshold). Drain now: ${drain}`,
+            details: {
+              backlog,
+              backlog_by_source: backlogBySource ?? undefined,
+              pack_declares_phase: true,
+              cycle_evidence: 'fresh',
+              phase_evidence: 'stale',
+              phase_stale_sources: phaseStale,
+              fix_hint: drain,
+              known_approximation: approx,
+            },
+          };
+        }
+      }
+      // Pack runs it AND the phase ran recently (or the backlog is small,
       // or evidence is unreadable — fail-open). Informational.
       return {
         name, status: 'ok',

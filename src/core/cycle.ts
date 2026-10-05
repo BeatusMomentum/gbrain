@@ -2423,6 +2423,10 @@ export async function runCycle(
           signal: xaSignal?.signal,
         }), 'extract_atoms').finally(() => xaSignal?.dispose());
         result.duration_ms = duration_ms;
+        if (!dryRun) {
+          const { stampExtractAtomsRun } = await import('./cycle/extract-atoms.ts');
+          await stampExtractAtomsRun(engine, xaSourceId, result);
+        }
         phaseResults.push(result);
         progress.finish();
       }

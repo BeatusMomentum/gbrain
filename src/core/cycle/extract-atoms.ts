@@ -684,6 +684,26 @@ export async function resolveExtractAtomsModel(engine: BrainEngine): Promise<str
  * discoverTranscripts + discoverExtractablePages (both lazy-imported
  * to avoid circular module loads and to keep PGLite-only tests fast).
  */
+/** #5028: sources.config key stamped after a pass of extract_atoms that ran. */
+export const LAST_EXTRACT_ATOMS_AT_KEY = 'last_extract_atoms_at';
+
+/**
+ * #5028: record that extract_atoms actually ran for a source, so doctor can
+ * judge the phase's own freshness instead of `last_full_cycle_at` (which
+ * freshness-only cycles stamp without running this phase). Counts a pass
+ * that finished ok, or warned with at least one item processed; a pass where
+ * every item failed, or a skip, does not stamp; callers skip dry runs.
+ * Best-effort.
+ */
+export async function stampExtractAtomsRun(engine: BrainEngine, sourceId: string, result: PhaseResult): Promise<void> {
+  const d = (result.details ?? {}) as Record<string, unknown>;
+  const processed = Number(d.transcripts_processed ?? 0) + Number(d.pages_processed ?? 0);
+  const ran = result.status === 'ok' || (result.status === 'warn' && processed > 0);
+  if (!ran) return;
+  try { await engine.updateSourceConfig(sourceId, { [LAST_EXTRACT_ATOMS_AT_KEY]: new Date().toISOString() }); }
+  catch { /* the stamp is evidence only; never fail the phase over it */ }
+}
+
 export async function runPhaseExtractAtoms(
   engine: BrainEngine,
   opts: ExtractAtomsOpts = {},

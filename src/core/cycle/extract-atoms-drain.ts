@@ -457,7 +457,7 @@ export async function runExtractAtomsDrainForSource(
   opts: DrainForSourceOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const { withRefreshingLock } = await import('../db-lock.ts');
-  const { runPhaseExtractAtoms, countExtractAtomsBacklog } = await import('./extract-atoms.ts');
+  const { runPhaseExtractAtoms, countExtractAtomsBacklog, stampExtractAtomsRun } = await import('./extract-atoms.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
 
   const { MaintenanceWriteWait } = await import('../persistence/maintenance-wait.ts');
@@ -480,6 +480,7 @@ export async function runExtractAtomsDrainForSource(
           stopSignal,
           attempt,
         });
+        await stampExtractAtomsRun(engine, extractionSourceId, r);
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
         // (partial success — leave the drain's existing ok/no_progress path
