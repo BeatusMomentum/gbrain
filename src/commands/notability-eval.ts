@@ -265,6 +265,7 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
       system,
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 200,
+      allowFallback: false,
     });
     const text = result.text.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
     const parsed = JSON.parse(text) as { tiers?: string[] };

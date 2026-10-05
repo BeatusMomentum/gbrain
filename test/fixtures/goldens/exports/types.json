@@ -1524,6 +1524,7 @@
         "kind": "interface",
         "members": [
           "abortSignal?: AbortSignal | undefined",
+          "allowFallback?: boolean | undefined",
           "cacheSystem?: boolean | undefined",
           "maxTokens?: number | undefined",
           "messages: ChatMessage[]",
@@ -1541,6 +1542,7 @@
         "kind": "interface",
         "members": [
           "blocks: ChatBlock[]",
+          "fallbackFrom?: string | undefined",
           "model: string",
           "providerId: string",
           "providerMetadata?: Record<string, any> | undefined",
@@ -1713,6 +1715,7 @@
         "members": [
           "abortSignal?: AbortSignal | undefined",
           "acquireTurnPermit?: (() => Promise<TurnPermit>) | undefined",
+          "allowFallback?: boolean | undefined",
           "cacheSystem?: boolean | undefined",
           "initialMessages: ChatMessage[]",
           "maxTokens?: number | undefined",
@@ -7118,6 +7121,7 @@
       {
         "kind": "interface",
         "members": [
+          "allowFallback?: boolean | undefined",
           "allowedSources?: string[] | undefined",
           "anchor?: string | undefined",
           "calibrationHolder?: string | undefined",
@@ -7193,7 +7197,7 @@
         "kind": "variable",
         "name": "__thinkAdapter",
         "signature": [
-          "{ tryBuildGatewayClient: (modelUsed: string, opts?: { explicitModel?: boolean; }) => Promise<ThinkLLMClient | null>; chatResultToMessage: (result: ChatResult, modelStr: string) => { id: string; type: \"message\"; role: \"assistant\"; model: string; content: Array<{ type: \"text\"; text: string; }>; usage: { input_tokens: number; output_tokens: number; }; stop_reason: \"end_turn\" | \"max_tokens\" | \"tool_use\" | \"stop_sequence\"; }; mapStopReason: (s: ChatResult[\"stopReason\"]) => \"end_turn\" | \"max_tokens\" | \"tool_use\" | \"stop_sequence\"; buildGracefulMessage: (modelStr: string, err?: AIConfigError) => { id: string; type: \"message\"; role: \"assistant\"; model: string; content: Array<{ type: \"text\"; text: string; }>; usage: { input_tokens: number; output_tokens: number; }; stop_reason: \"end_turn\"; }; hasAnthropicKey: () => boolean; }"
+          "{ tryBuildGatewayClient: (modelUsed: string, opts?: { explicitModel?: boolean; allowFallback?: boolean; }) => Promise<ThinkLLMClient | null>; chatResultToMessage: (result: ChatResult, modelStr: string) => { id: string; type: \"message\"; role: \"assistant\"; model: string; content: Array<{ type: \"text\"; text: string; }>; usage: { input_tokens: number; output_tokens: number; }; stop_reason: \"end_turn\" | \"max_tokens\" | \"tool_use\" | \"stop_sequence\"; }; mapStopReason: (s: ChatResult[\"stopReason\"]) => \"end_turn\" | \"max_tokens\" | \"tool_use\" | \"stop_sequence\"; buildGracefulMessage: (modelStr: string, err?: AIConfigError) => { id: string; type: \"message\"; role: \"assistant\"; model: string; content: Array<{ type: \"text\"; text: string; }>; usage: { input_tokens: number; output_tokens: number; }; stop_reason: \"end_turn\"; }; hasAnthropicKey: () => boolean; }"
         ]
       },
       {
