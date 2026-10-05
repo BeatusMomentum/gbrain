@@ -1,22 +1,19 @@
 /**
- * think reads in a date frame and can take notes before answering.
+ * think reads in a date frame.
  *
  * Protects: (1) the reader sees the current/reference date and each page's
  * content date, never a fallback row timestamp; (2) relative dates in a page
- * render in the brain's timezone; (3) notes-first reading puts its notes in
- * `reading_notes`, never in the answer or the persisted body, and raises the
- * output allowance; (4) invalid reference dates are refused.
+ * render in the brain's timezone; (3) invalid reference dates are refused.
  * Regression it catches: a reader answering "last month" questions with no
- * idea what today is, or notes leaking into saved syntheses.
- * Existing coverage: think-pipeline/think-pages-block tests never assert dates
- * or a notes field.
+ * idea what today is.
+ * Existing coverage: think-pipeline/think-pages-block tests never assert dates.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runThink, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { renderPagesBlock } from '../src/core/think/gather.ts';
-import { buildThinkSystemPrompt, buildThinkUserMessage, THINK_READING_NOTES_INSTRUCTION } from '../src/core/think/prompt.ts';
+import { buildThinkSystemPrompt, buildThinkUserMessage } from '../src/core/think/prompt.ts';
 import { pageContentDate, parseReferenceDate, ReferenceDateError } from '../src/core/think/temporal-context.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
@@ -99,15 +96,14 @@ describe('prompt shape', () => {
       calibration: { holder: 'garry', patternStatements: [], activeBiasTags: [] },
     });
     expect(calibrated).toContain('Current date: 2026-10-04 (UTC)\nQuestion: q?');
-    const system = buildThinkSystemPrompt({ currentDate: true, readingNotes: true });
+    const system = buildThinkSystemPrompt({ currentDate: true });
     expect(system).toContain('date="YYYY-MM-DD"');
-    expect(system).toContain(THINK_READING_NOTES_INSTRUCTION);
     expect(system).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 });
 
 describe('runThink reading', () => {
-  test('reference date and page date reach the reader; notes stay off by default', async () => {
+  test('reference date and page date reach the reader', async () => {
     const cap: { system?: string; user?: string; maxTokens?: number } = {};
     const result = await runThink(engine, {
       question: 'What does the enterprise plan cost at acme-example?',
@@ -116,63 +112,7 @@ describe('runThink reading', () => {
     });
     expect(cap.user).toContain('Current date: 2026-10-01 (UTC)');
     expect(cap.user).toContain('date="2026-09-15"');
-    expect(cap.system).not.toContain(THINK_READING_NOTES_INSTRUCTION);
     expect(result.temporal).toEqual({ reference_date: '2026-10-01', time_zone: 'UTC' });
-    expect(result.reading_notes).toEqual({ mode: 'off', notes: null });
-  });
-
-  test('notes-first reading: notes come back separately, never in the answer, with extra output allowance', async () => {
-    const offCap: { maxTokens?: number } = {};
-    await runThink(engine, {
-      question: 'What does the enterprise plan cost at acme-example?',
-      client: stub(JSON.stringify({ answer: 'a', citations: [], gaps: [] }), offCap),
-      withTrajectory: false, remote: false, readingNotes: 'off',
-    });
-    const cap: { system?: string; maxTokens?: number } = {};
-    const result = await runThink(engine, {
-      question: 'What does the enterprise plan cost at acme-example?',
-      client: stub(JSON.stringify({ notes: '[meetings/acme-example-pricing] 2026-09-15: enterprise = 125 credits/month', answer: '125 credits per month.', citations: [], gaps: [] }), cap),
-      withTrajectory: false, remote: false, readingNotes: 'on',
-    });
-    expect(cap.system).toContain(THINK_READING_NOTES_INSTRUCTION);
-    expect(cap.maxTokens).toBe((offCap.maxTokens ?? 0) + 512);
-    expect(result.answer).toBe('125 credits per month.');
-    expect(result.answer).not.toContain('2026-09-15');
-    expect(result.reading_notes?.mode).toBe('on');
-    expect(result.reading_notes?.notes).toContain('125 credits/month');
-  });
-
-  test('think.reading_notes=auto turns notes on for temporal questions only', async () => {
-    await engine.setConfig('think.reading_notes', 'auto');
-    try {
-      const temporalCap: { system?: string } = {};
-      await runThink(engine, {
-        question: 'When did the team ship the invoice flow?',
-        client: stub(JSON.stringify({ answer: 'a', citations: [], gaps: [] }), temporalCap),
-        withTrajectory: false, remote: false,
-      });
-      expect(temporalCap.system).toContain(THINK_READING_NOTES_INSTRUCTION);
-      const plainCap: { system?: string } = {};
-      await runThink(engine, {
-        question: 'What does the enterprise plan cost at acme-example?',
-        client: stub(JSON.stringify({ answer: 'a', citations: [], gaps: [] }), plainCap),
-        withTrajectory: false, remote: false,
-      });
-      expect(plainCap.system).not.toContain(THINK_READING_NOTES_INSTRUCTION);
-    } finally {
-      await engine.setConfig('think.reading_notes', 'off');
-    }
-  });
-
-  test('a truncated notes-first response is not a successful synthesis', async () => {
-    const result = await runThink(engine, {
-      question: 'What does the enterprise plan cost at acme-example?',
-      client: stub('{"notes": "[meetings/acme-example-pricing] enterprise plan costs 125 cre', {}, 'max_tokens'),
-      withTrajectory: false, remote: false, readingNotes: 'on',
-    });
-    expect(result.synthesisOk).toBe(false);
-    expect(result.warnings).toContain('READING_NOTES_TRUNCATED');
-    expect(result.answer).not.toContain('enterprise plan costs');
   });
 
   test('a future reference date is refused before any model call', async () => {

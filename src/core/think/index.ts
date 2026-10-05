@@ -147,21 +147,11 @@ export interface RunThinkOpts {
    * question date. Invalid or future values throw ReferenceDateError.
    */
   referenceDate?: string;
-  /** Per-call notes-first reading override; default `think.reading_notes`. */
-  readingNotes?: ThinkReadingNotesMode;
 }
 
-export type ThinkReadingNotesMode = 'on' | 'off' | 'auto';
-const THINK_READING_NOTES_CONFIG_KEY = 'think.reading_notes';
-/** Shipped default until the held-out think-lane verdict sets it. */
-const DEFAULT_THINK_READING_NOTES: ThinkReadingNotesMode = 'off';
-/** Output-token allowance added when notes are on, so notes never crowd out the answer. */
-const READING_NOTES_OUTPUT_ALLOWANCE = 512;
 
 /** Structured response from the LLM (matches the schema declared in prompt.ts). */
 export interface ThinkResponse {
-  /** Notes-first reading scratch work; never part of the answer or persisted. */
-  notes?: string;
   answer: string;
   citations: Array<{ page_slug: string; row_num: number | null; citation_index?: number }>;
   gaps: string[];
@@ -239,8 +229,6 @@ export interface ThinkResult {
   abstained?: ThinkAbstention;
   /** The date frame the synthesis read in (reference date + brain timezone). */
   temporal?: { reference_date: string; time_zone: string };
-  /** Reading mode applied and the model's notes (null when off or absent). Never persisted. */
-  reading_notes?: { mode: 'on' | 'off'; notes: string | null };
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
@@ -750,9 +738,8 @@ export async function runThink(
 
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);
-  const readingNotes = await resolveReadingNotes(engine, opts, gather.pages.length);
   const systemPrompt = buildThinkSystemPrompt({
-    currentDate: true, readingNotes, intent, willSave: opts.save, withCalibration: !!calibrationBlockOpts,
+    currentDate: true, intent, willSave: opts.save, withCalibration: !!calibrationBlockOpts,
     ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
     ...(opts.since !== undefined ? { since: opts.since } : {}),
     ...(opts.until !== undefined ? { until: opts.until } : {}),
@@ -846,7 +833,7 @@ export async function runThink(
     try {
       created = await client.create({
         model: modelUsed,
-        max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)) + (readingNotes ? READING_NOTES_OUTPUT_ALLOWANCE : 0),
+        max_tokens: maxOutputTokensFor(normalizeModelId(modelUsed)),
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
       });
@@ -892,7 +879,6 @@ export async function runThink(
         const stop = (created as { stop_reason?: string }).stop_reason;
         if (stop === 'max_tokens') {
           warnings.push('LLM_OUTPUT_TRUNCATED');
-          if (readingNotes) warnings.push('READING_NOTES_TRUNCATED');
           synthesisStatus = 'output_truncated';
         } else {
           warnings.push('LLM_OUTPUT_NOT_JSON');
@@ -984,35 +970,17 @@ export async function runThink(
       graphHits: gather.diagnostics.graphHits,
     },
     temporal: { reference_date: temporal.referenceDate, time_zone: temporal.timeZone },
-    reading_notes: { mode: readingNotes ? 'on' : 'off', notes: readingNotes ? response.notes ?? null : null },
   };
 }
 
-/** Normalizes the model's parsed JSON envelope; `notes` survives only as a non-empty string. */
+/** Normalizes the model's parsed JSON envelope. */
 function toThinkResponse(r: Partial<ThinkResponse>): ThinkResponse {
   return {
-    ...(typeof r.notes === 'string' && r.notes.trim() ? { notes: r.notes.trim() } : {}),
     answer: typeof r.answer === 'string' ? r.answer : '',
     citations: Array.isArray(r.citations) ? (r.citations as ThinkResponse['citations']) : [],
     gaps: Array.isArray(r.gaps) ? (r.gaps as string[]).filter(g => typeof g === 'string') : [],
   };
 }
-
-/**
- * Notes-first reading for this call: per-call override, then
- * `think.reading_notes`, then the shipped default. `auto` turns notes on for
- * temporal / knowledge-update questions and for large gathers, where reading
- * across many pages is the hard part.
- */
-async function resolveReadingNotes(engine: BrainEngine, opts: RunThinkOpts, pagesGathered: number): Promise<boolean> {
-  const configured = (await engine.getConfig(THINK_READING_NOTES_CONFIG_KEY).catch(() => null))?.trim().toLowerCase();
-  const mode = opts.readingNotes
-    ?? (configured === 'on' || configured === 'off' || configured === 'auto' ? configured : DEFAULT_THINK_READING_NOTES);
-  if (mode === 'auto') return classifyIntent(opts.question) !== 'other' || pagesGathered >= READING_NOTES_AUTO_MIN_PAGES;
-  return mode === 'on';
-}
-
-const READING_NOTES_AUTO_MIN_PAGES = 8;
 
 /**
  * Strip a "## Gaps" section from an answer body.

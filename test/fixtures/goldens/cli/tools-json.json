@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 197396,
-    "stdoutSha256": "bab9dd03319eebafdc9dad4120ae80519e7d200b71f661e14b1811ad280fabdc",
+    "stdoutBytes": 197062,
+    "stdoutSha256": "daf41a4dbbcc2aabd577c1e0b5fcbdd877bb7dcdcd3e57f3f3726bfe36838083",
     "toolNames": [
       "remember",
       "entity",
@@ -3608,7 +3608,6 @@
           "anchor": "string?",
           "model": "string?",
           "question": "string",
-          "reading_notes": "string?",
           "reference_date": "string?",
           "rounds": "number?",
           "save": "boolean?",
@@ -3629,15 +3628,6 @@
             },
             "question": {
               "description": "The question to think about",
-              "type": "string"
-            },
-            "reading_notes": {
-              "description": "Notes-first reading for this call (default: think.reading_notes). Notes return in reading_notes, never in the answer.",
-              "enum": [
-                "on",
-                "off",
-                "auto"
-              ],
               "type": "string"
             },
             "reference_date": {

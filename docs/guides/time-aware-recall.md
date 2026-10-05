@@ -4,8 +4,6 @@
 timezone, it sees the content date of each page it reads, and it resolves
 relative time words against the right one: "last month" in your question
 against today, "yesterday" inside a meeting note against that note's date.
-It can also take brief reading notes before answering, which helps when the
-answer is spread across several dated pages.
 
 ## Say to your agent
 
@@ -13,9 +11,6 @@ answer is spread across several dated pages.
   `gbrain think "What did I decide about pricing last month?"`; the answer is
   grounded in today's date and each page's date.
 - *"Answer as if today were March 1, 2024."* — `gbrain think "…" --reference-date 2024-03-01`.
-- *"Show me your reading notes."* — `gbrain think "…" --reading-notes on --json`;
-  the notes come back in `reading_notes.notes`.
-- *"Always read with notes for date questions."* — `gbrain config set think.reading_notes auto`.
 
 ## What the reader sees
 
@@ -35,22 +30,13 @@ answer is spread across several dated pages.
   `effective_date_source`, so an agent reading `search` or `query` output
   directly can apply the same rule.
 
-## Reading notes
+## Measured effect
 
-| Setting | Behavior |
-|---|---|
-| `think.reading_notes off` (default) | The reader answers directly. |
-| `think.reading_notes on` | The reader first writes brief notes (the facts and dates each relevant page gives, under 150 words), then answers. |
-| `think.reading_notes auto` | Notes only for time and knowledge-update questions, or when think gathered 8 or more pages. |
-
-Per call: `gbrain think "…" --reading-notes on|off|auto`, or MCP
-`think { reading_notes: "on" }`. Notes add up to 512 output tokens, so they
-cost a little more and take a little longer. They return in
-`reading_notes: { mode, notes }` and never appear in `answer`, citations or a
-saved synthesis (`--save`). If the model's output is cut off before the
-answer, the call reports `synthesis_status: output_truncated` with the warning
-`READING_NOTES_TRUNCATED`, saves nothing, and can be retried with
-`--reading-notes off`.
+On the LongMemEval-S development sample, `think` answered 90.0% of questions
+correctly with the date frame against 80.7% without it (+9.3 points, 95% CI
+[+4.0, +15.3]); on the LoCoMo development conversations, 89.1% against 76.7%.
+Retrieval is unchanged. Results:
+[`docs/eval/TIME_AWARE_RETRIEVAL_RESULTS.md`](../eval/TIME_AWARE_RETRIEVAL_RESULTS.md).
 
 ## Measuring it
 

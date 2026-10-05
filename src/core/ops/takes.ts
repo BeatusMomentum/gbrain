@@ -218,7 +218,6 @@ const think: Operation = {
     since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM)' },
     until: { type: 'string', description: 'End of temporal window' },
     reference_date: { type: 'string', description: 'YYYY-MM-DD the question\'s relative time words resolve against (default: today in brain.timezone).' },
-    reading_notes: { type: 'string', enum: ['on', 'off', 'auto'], description: 'Notes-first reading for this call (default: think.reading_notes). Notes return in reading_notes, never in the answer.' },
   },
   // Local CLI can persist with save/take; remote/MCP callers are forced
   // read-only below before runThink/persistSynthesis sees those flags.
@@ -252,7 +251,6 @@ const think: Operation = {
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       ...(typeof p.reference_date === 'string' ? { referenceDate: p.reference_date } : {}),
-      ...(p.reading_notes === 'on' || p.reading_notes === 'off' || p.reading_notes === 'auto' ? { readingNotes: p.reading_notes } : {}),
       takesHoldersAllowList: readHolders(ctx),
       ...thinkScope,
       excludePrivate: (await readPolicyOpts(ctx)).excludePrivate,

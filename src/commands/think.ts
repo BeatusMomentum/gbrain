@@ -65,9 +65,6 @@ Options:
   --reference-date YYYY-MM-DD
                            Date the question's relative time words ("last month")
                            resolve against (default: today in brain.timezone)
-  --reading-notes on|off|auto
-                           Notes-first reading for this call (default:
-                           think.reading_notes config); notes print with --json only
   --with-calibration       Inject the active calibration profile (anti-bias rewrite)
   --calibration-holder <h> Holder whose calibration profile to use (default: self)
   --json                   Output as JSON
@@ -92,7 +89,7 @@ prints what would have been the input (exit 0).
   // #4508: --source and --calibration-holder were MISSING here — the flag and
   // its value joined the positional question, so `think "q" --source X`
   // echoed `# --source X q` and silently ignored the scope.
-  const flagNames = ['--anchor', '--rounds', '--model', '--since', '--until', '--source', '--calibration-holder', '--reference-date', '--reading-notes'];
+  const flagNames = ['--anchor', '--rounds', '--model', '--since', '--until', '--source', '--calibration-holder', '--reference-date'];
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -116,12 +113,6 @@ prints what would have been the input (exit 0).
   const since = flagValue(args, '--since');
   const until = flagValue(args, '--until');
   const referenceDate = flagValue(args, '--reference-date');
-  const readingNotesFlag = flagValue(args, '--reading-notes');
-  if (readingNotesFlag !== undefined && !['on', 'off', 'auto'].includes(readingNotesFlag)) {
-    console.error(`--reading-notes must be on, off or auto (got "${readingNotesFlag}").`);
-    process.exit(1);
-  }
-  const readingNotes = readingNotesFlag as 'on' | 'off' | 'auto' | undefined;
   // v0.36.1.0 (E1, D22) — anti-bias rewrite mode. Off by default (no
   // regression for existing think users). When on, the active calibration
   // profile gets injected per D22 placement (after retrieval, before question).
@@ -166,7 +157,6 @@ prints what would have been the input (exit 0).
     const raw = await callRemoteTool(cfg!, 'think', {
       question, anchor, rounds, model, since, until,
       ...(referenceDate ? { reference_date: referenceDate } : {}),
-      ...(readingNotes ? { reading_notes: readingNotes } : {}),
       // save/take intentionally NOT forwarded — server would ignore them;
       // we surface the intent above so users know what they lose.
     }, { timeoutMs: 180_000 });
@@ -203,7 +193,6 @@ prints what would have been the input (exit 0).
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
         ...(referenceDate ? { referenceDate } : {}),
-        ...(readingNotes ? { readingNotes } : {}),
         // Fail-closed trust: local CLI must say so explicitly, or trajectory
         // injection degrades to visibility='world' rows.
         remote: false,

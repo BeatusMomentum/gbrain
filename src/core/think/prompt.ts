@@ -41,12 +41,7 @@ export interface ThinkSystemPromptOpts {
    * the system text is stable across days (prompt caching).
    */
   currentDate?: boolean;
-  /** Notes-first reading: the model writes brief per-page notes before the answer. */
-  readingNotes?: boolean;
 }
-
-/** The notes-first output contract appended when reading notes are on. */
-export const THINK_READING_NOTES_INSTRUCTION = `Reading notes: before answering, write brief notes in a "notes" string field placed FIRST in the JSON object, before "answer". For each page that bears on the question, note the facts and dates it gives (with its [slug]); skip pages that do not. Keep the notes under 150 words total, then reason from them to the answer. The notes are scratch work: they are never shown as the answer, so the "answer" field must stand on its own.`;
 
 export const THINK_SYSTEM_PROMPT_BASE = `You are gbrain's synthesis engine. You answer questions by reasoning across the user's personal knowledge brain. Your inputs are wrapped in structural tags:
 
@@ -98,9 +93,6 @@ export function buildThinkSystemPrompt(opts: ThinkSystemPromptOpts = {}): string
   }
   if (opts.currentDate) {
     lines.push(`\nDates: the user message gives the current date. A <page date="YYYY-MM-DD"> attribute is the date that page's content is about or was written. Resolve relative time words in a page ("yesterday", "last week", "two months ago") against that page's date, and relative time words in the question against the current date. A page without a date attribute has no known content date.`);
-  }
-  if (opts.readingNotes) {
-    lines.push(`\n${THINK_READING_NOTES_INSTRUCTION}`);
   }
   if (opts.withCalibration) {
     lines.push(

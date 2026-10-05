@@ -10,7 +10,7 @@ code is removed.
 | ID | Mechanism | Where it runs |
 |---|---|---|
 | R1 | `think` date frame: current date line + content dates on page blocks | product (on) |
-| R2 | `think` notes-first reading (`think.reading_notes`) | product (default set by the verdict) |
+| R2 | `think` notes-first reading | development arm (removed after its development result) |
 | F1 | Fact keys, benchmark user-turn fact prompt (replication of key expansion) | eval arm `--fact-keys … --fact-extractor paper` |
 | F2 | Fact keys, gbrain's production facts extractor as shipped | eval arm `--fact-extractor production` |
 | F3 | Fact keys merged into the keyword index instead of embeddings | eval probe |

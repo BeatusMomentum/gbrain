@@ -7104,7 +7104,6 @@
           "model?: string | undefined",
           "modelExplicit?: boolean | undefined",
           "question: string",
-          "readingNotes?: ThinkReadingNotesMode | undefined",
           "referenceDate?: string | undefined",
           "remote?: boolean | undefined",
           "rounds?: number | undefined",
@@ -7128,19 +7127,11 @@
         "name": "ThinkLLMClient"
       },
       {
-        "kind": "type",
-        "name": "ThinkReadingNotesMode",
-        "signature": [
-          "\"on\" | \"off\" | \"auto\""
-        ]
-      },
-      {
         "kind": "interface",
         "members": [
           "answer: string",
           "citations: { page_slug: string; row_num: number | null; citation_index?: number; }[]",
-          "gaps: string[]",
-          "notes?: string | undefined"
+          "gaps: string[]"
         ],
         "name": "ThinkResponse"
       },
@@ -7159,7 +7150,6 @@
           "modelUsed: string",
           "pagesGathered: number",
           "question: string",
-          "reading_notes?: { mode: \"on\" | \"off\"; notes: string | null; } | undefined",
           "rounds: number",
           "savedSlug?: string | undefined",
           "synthesisOk?: boolean | undefined",

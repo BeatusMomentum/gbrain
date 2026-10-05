@@ -191,7 +191,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "docs/guides/time-aware-recall.md",
         description:
-          "Time-aware recall in `gbrain think`: the current date in brain.timezone (or `--reference-date`), content dates on each page block, and notes-first reading (`think.reading_notes off|on|auto`, per-call `--reading-notes`); notes never enter the answer or a saved synthesis.",
+          "Time-aware recall in `gbrain think`: the current date in brain.timezone (or `--reference-date`) and content dates on each page block, with the measured accuracy gain.",
         path: "docs/guides/time-aware-recall.md",
         includeInFull: false,
       },
