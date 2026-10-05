@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 197167,
-    "stdoutSha256": "2e1d875b8209c6db39a492e119f2862c60d4b7eb50422f130b23c3af084c3b98",
+    "stdoutBytes": 197318,
+    "stdoutSha256": "e66502f5ea29ac4cf4a04cb3a3d2e0d66f9213ef4494ece7616393ad40a8176d",
     "toolNames": [
       "remember",
       "entity",
@@ -358,6 +358,7 @@
         "mutating": false,
         "name": "get_page",
         "parameters": {
+          "content_only": "boolean?",
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
@@ -368,6 +369,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "content_only": {
+              "description": "Round-trip fields only.",
+              "type": "boolean"
+            },
             "fuzzy": {
               "description": "Fuzzy slug match.",
               "type": "boolean"
