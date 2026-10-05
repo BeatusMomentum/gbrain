@@ -1023,7 +1023,7 @@ function checkAborted(signal?: AbortSignal): void {
 // going through runCycle's full setup cost.
 export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: BrainEngine | null, signal?: AbortSignal, sourceId?: string): Promise<PhaseResult> {
   try {
-    const { runLintCore, cycleLintFixEnabled } = await import('../commands/lint.ts');
+    const [{ runLintCore }, { cycleLintFixEnabled }] = await Promise.all([import('../commands/lint.ts'), import('./cycle/lint-fix-setting.ts')]);
     // issue #1678: pass the cycle's live engine so lint's content-sanity
     // DB-plane lift REUSES it instead of creating + disconnecting a
     // competing module-style engine that nulls the shared db singleton
@@ -1046,7 +1046,7 @@ export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: B
       summary: dryRun
         ? `${issues} issue(s) found (dry-run, no writes)`
         : lintFix ? `${fixed} fix(es) applied, ${remaining} remaining` : `${issues} issue(s) found (report-only: cycle.lint_fix=false)`,
-      details: { issues, fixed, pages_scanned: result.pages_scanned, dryRun, lint_fix: lintFix, write_path: result.write_path, fix_pending: result.fix_pending, ...(result.pending_issues.length ? { pending: result.pending_issues } : {}) },
+      details: { issues, fixed, pages_scanned: result.pages_scanned, dryRun, lint_fix: lintFix, write_path: result.write_path, fix_pending: result.fix_pending, ...(result.pending_issues?.length ? { pending: result.pending_issues } : {}) },
     };
   } catch (e) {
     return {

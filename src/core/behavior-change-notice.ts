@@ -55,8 +55,8 @@ import { mergedProviderEnv } from './ai/provider-env.ts';
 
 /** The first release that carries this notice. Set once, here, at ship time. */
 export const BEHAVIOR_NOTICE_SINCE: string = VERSION;
-/** The measured re-ingest multiplier for (c), as prose. */
-export const TRANSCRIPT_REINGEST_MULTIPLIER = 'about 6x';
+/** The measured re-ingest page multiplier for (c), as prose (scripts/measure-transcript-split-cost.ts: 4 → 27 pages on a 1 MB session). */
+export const TRANSCRIPT_REINGEST_MULTIPLIER = 'about 6.75x';
 export const BEHAVIOR_NOTICE_CODE = 'behavior_changes';
 export const BEHAVIOR_NOTICE_ID = `${BEHAVIOR_NOTICE_CODE}@${BEHAVIOR_NOTICE_SINCE}`;
 /** A brain created this recently, with no recorded baseline, counts as a fresh install. */
@@ -220,7 +220,7 @@ export function behaviorChangesNotice(chain: ChainDisclosure | null, opts: { rem
       ' Removing the chain is optional; ask the user (gbrain doctor --only chat_fallback_chain has the per-plane steps).');
   }
   items.push('On a managed brain, autopilot\'s lint phase now writes its repairs instead of only reporting them; `gbrain config set cycle.lint_fix false` turns that off.');
-  items.push(`Transcript re-ingest now splits transcripts into smaller parts (46,080-byte target, previously about 300 KB), ${TRANSCRIPT_REINGEST_MULTIPLIER} as many parts, and re-embeds each re-ingested transcript once.`);
+  items.push(`Transcript re-ingest now splits transcripts into smaller parts (45,000-byte target, previously 300,000 bytes): ${TRANSCRIPT_REINGEST_MULTIPLIER} as many part pages and about 9% more embedding tokens (measured on a 1 MB session), and each re-ingested transcript re-embeds once.`);
   items.push('The mention linker rebuilds its gazetteer resume state once, so the first mention-extraction run after upgrading rescans pages.');
   const why = `gbrain v${BEHAVIOR_NOTICE_SINCE} changed ${items.length} behaviors on this brain. All stay on; this is a one-time disclosure, not a request for consent. ` +
     items.map((t, i) => `(${i + 1}) ${t}`).join(' ') +

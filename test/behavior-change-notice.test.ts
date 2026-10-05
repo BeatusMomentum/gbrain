@@ -142,7 +142,7 @@ for (const backend of testBackends()) {
         const plain = (await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'no-chain' }))!;
         expect(plain.why).not.toContain('chat_fallback_chain is live');
         expect(plain.why).toContain('cycle.lint_fix false');
-        expect(plain.why).toContain('about 6x');
+        expect(plain.why).toContain('about 6.75x');
         expect(plain.why).toContain('mention linker');
         expect(plain.why).toContain('not a request for consent');
         expect(plain.fix?.argv).toEqual(['gbrain', 'doctor', '--only', 'behavior_changes', '--json']);
