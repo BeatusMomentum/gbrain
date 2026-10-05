@@ -44,15 +44,16 @@ export function applyThinkingOff(
 }
 
 /**
- * Output cap for a `thinking: 'off'` call: the requested cap where thinking
- * really turns off (or the model never thinks), else at least `headroom`.
+ * A call's output cap: the requested cap, unless `thinking: 'off'` was asked
+ * of a thinking-by-default model (`offOnThinkingModel`) whose route has no
+ * switch, which gets at least `headroom`.
  */
 export function thinkingOffMaxOutputTokens(
   modelStr: string,
   requested: number,
-  thinksByDefault: boolean,
+  offOnThinkingModel: boolean,
   headroom: number,
 ): number {
-  if (!thinksByDefault || thinkingOffNamespace(modelStr)) return requested;
+  if (!offOnThinkingModel || thinkingOffNamespace(modelStr)) return requested;
   return Math.max(requested, headroom);
 }

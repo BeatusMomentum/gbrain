@@ -380,8 +380,6 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
       messages: [{ role: 'user', content: data.prompt }],
       maxTokens: args.maxOutputTokens,
       abortSignal: callSignal,
-      // The sub-budget above is this call's whole bound; without it the
-      // gateway's 300 s default backstop would cut a longer budget short.
       timeoutMs: budgetMs,
       // cacheSystem marks the system block as a cache breakpoint. Note:
       // ONESHOT_SYSTEM alone is under Anthropic's ~1024-token cache minimum,

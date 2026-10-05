@@ -1271,9 +1271,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'agent.use_gateway_loop',
   // #2778: per-turn output-token cap for the subagent loop (default 8192).
   'agent.max_output_tokens',
-  // #4921: per-turn chat timeout for subagent jobs (default 1800000, the
-  // 30-min subagent budget; minions/handler-timeouts.ts). Replaces the 300 s
-  // gateway backstop for those turns only.
+  // #4921: subagent per-turn chat timeout (minions/handler-timeouts.ts, default 30 min).
   'ai.chat.per_turn_timeout_ms',
   // File-plane bootstrap hook-lane keys (routed to ~/.gbrain/config.json by
   // `config set` — engine-free hook/push children read loadConfigFileOnly).

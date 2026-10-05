@@ -3464,10 +3464,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const requestedMaxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
-  const maxOutputTokens = opts.thinking === 'off'
-    ? thinkingOffMaxOutputTokens(modelStrEarly, requestedMaxOutputTokens, isThinkingModel(modelStrEarly), THINKING_MODEL_MAX_OUTPUT_TOKENS)
-    : requestedMaxOutputTokens;
+  const maxOutputTokens = thinkingOffMaxOutputTokens(modelStrEarly, opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly), opts.thinking === 'off' && isThinkingModel(modelStrEarly), THINKING_MODEL_MAX_OUTPUT_TOKENS);
   const chatRecord = { requestedModelId: modelStrEarly, purpose: opts.purpose, label: 'gateway.chat' };
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,

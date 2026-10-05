@@ -1599,6 +1599,8 @@
           "responseSchema?: { name: string; description?: string; schema: Record<string, unknown>; } | undefined",
           "system?: string | undefined",
           "temperature?: number | undefined",
+          "thinking?: \"off\" | undefined",
+          "timeoutMs?: number | undefined",
           "tools?: ChatToolDef[] | undefined"
         ],
         "name": "ChatOpts"
@@ -1796,7 +1798,8 @@
           "replayState?: ToolLoopReplayState | undefined",
           "system?: string | undefined",
           "toolHandlers: Map<string, ToolHandler>",
-          "tools: ChatToolDef[]"
+          "tools: ChatToolDef[]",
+          "turnTimeoutMs?: number | undefined"
         ],
         "name": "ToolLoopOpts"
       },
