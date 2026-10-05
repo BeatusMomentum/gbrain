@@ -6,6 +6,15 @@ and the revision of each page it read. When your agent rates an answer, the
 weights of those pages move a little, and later searches rank them up or down.
 It costs no LLM calls: a rating is a small database update.
 
+Retrieval feedback is **off by default**. Turn it on with
+`gbrain config set feedback.enabled true`; ratings are then explicit only, and
+`gbrain config set feedback.implicit true` also learns from `think` citations.
+Held-out tests with consistent ratings showed a gain on entity-centric brains
+(people, companies, deals: +2.0 NDCG@10, CI [+1.0, +3.3]) and no gain on
+chat-history brains (−0.1, CI [−1.0, +0.6]); results:
+[`docs/eval/decisions/p3-retrieval-feedback/VERDICTS.md`](../eval/decisions/p3-retrieval-feedback/VERDICTS.md).
+
+**Say to your agent:** *"Turn on retrieval feedback for this brain."*
 **Say to your agent:** *"That last answer used the wrong page; rate it down."*
 **Say to your agent:** *"The second page was the one that helped. Tell the brain."*
 **Say to your agent:** *"Show me which pages the brain has learned to distrust."*
@@ -25,7 +34,7 @@ It costs no LLM calls: a rating is a small database update.
   the fused score. A brain with no ratings ranks exactly as before.
 - When `think` or `synthesize` produces a real answer for the brain owner
   (CLI or stdio MCP), each cited page counts as a rating of 4 at half the
-  learning rate (`feedback.implicit`). Uncited pages are left alone.
+  learning rate (`feedback.implicit`, off by default). Uncited pages are left alone.
 - A rating applies only to the revision the answer read. If the page changed
   since, that page is skipped (`stale_revision`): a corrected page is never
   penalized for its old text. A page edited after it was rated reads at half
@@ -71,16 +80,17 @@ an answer: fix the page itself when it is wrong.
 gbrain feedback status                 # counts, weight spread, lowest-weighted pages with a next step
 gbrain feedback reset --page notes/old-renewal-plan
 gbrain feedback reset --source default
+gbrain config set feedback.enabled true    # on (default off): recording, ratings and the ranking effect
 gbrain config set feedback.enabled false   # off: no recording, no ratings, no ranking effect
 gbrain config set feedback.learn false     # keep learned weights, stop learning
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `feedback.enabled` | true | Recording, ratings, `answer_id` and the ranking effect. |
+| `feedback.enabled` | false | Recording, ratings, `answer_id` and the ranking effect. |
 | `feedback.learn` | true | Write new learning. Off keeps applying learned weights. |
 | `feedback.influence` | 0.1 | λ: the ranking multiplier stays within `[1 - λ, 1 + λ]` (max 0.5). |
-| `feedback.implicit` | true | Learn from `think`/`synthesize` citations for the brain owner. |
+| `feedback.implicit` | false | Learn from `think`/`synthesize` citations for the brain owner. |
 | `feedback.alpha` | 0.1 | Learning rate; the citation signal uses half. |
 | `feedback.max_ratings_per_hour` | 120 | Rating calls per client per hour. |
 | `feedback.event_retention_days` | 30 | How long answers stay rateable. |

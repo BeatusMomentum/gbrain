@@ -14,6 +14,7 @@ import {
 } from '../src/core/feedback/record.ts';
 import { __listDrainerNamesForTest } from '../src/core/background-work.ts';
 import { _resetFeedbackSettingsCacheForTests } from '../src/core/feedback/settings.ts';
+import { retrievalFeedbackUpgradeNotice } from '../src/core/feedback/upgrade-notice.ts';
 
 let engine: PGLiteEngine;
 
@@ -55,8 +56,22 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM retrieval_weights');
   await engine.executeRaw('DELETE FROM retrieval_events');
   await engine.executeRaw('DELETE FROM config WHERE key LIKE $1', ['feedback.%']);
+  await engine.setConfig('feedback.enabled', 'true');
+  await engine.setConfig('feedback.implicit', 'true');
   _resetFeedbackSettingsCacheForTests();
   _resetFeedbackRecordingForTests();
+});
+
+describe('defaults', () => {
+  test('a brain that never set feedback.enabled records nothing and returns no answer id', async () => {
+    await engine.executeRaw('DELETE FROM config WHERE key LIKE $1', ['feedback.%']);
+    _resetFeedbackSettingsCacheForTests();
+    expect(await recordAnswer(localCtx(), { op: 'query', pages: [{ slug: 'people/alice-example' }] })).toBeNull();
+    const notice = await retrievalFeedbackUpgradeNotice(engine);
+    expect(notice?.join('\n')).toContain('gbrain config set feedback.enabled true');
+    await engine.setConfig('feedback.enabled', 'false');
+    expect(await retrievalFeedbackUpgradeNotice(engine)).toBeNull();
+  });
 });
 
 describe('answer ids', () => {

@@ -35,6 +35,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
           'SELECT content_hash FROM pages WHERE slug = $1 AND source_id = $2', [slug, SOURCE]);
         hashes.set(slug, row!.content_hash);
       }
+      await engine.setConfig('feedback.enabled', 'true');
       _resetFeedbackSettingsCacheForTests();
     }, 60_000);
 

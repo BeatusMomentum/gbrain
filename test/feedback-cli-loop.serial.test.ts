@@ -1,6 +1,6 @@
 /**
- * Retrieval feedback through the real CLI on a keyless PGLite brain:
- * search prints an answer id, `gbrain rate` records the rating, and the next
+ * Retrieval feedback through the real CLI on a keyless PGLite brain: off by
+ * default (no answer id); once enabled, search prints an answer id, `gbrain rate` records the rating, and the next
  * `search --explain` shows the feedback multiplier on the rated pages.
  *
  * Serial: spawns the CLI against a temporary GBRAIN_HOME.
@@ -33,6 +33,11 @@ afterAll(() => {
 });
 
 test('search → rate → search --explain shows the learned boost', async () => {
+  const off = await cli(['search', 'widget', '--json']);
+  expect(off.exitCode).toBe(0);
+  expect(off.stdout).not.toContain('answer_id');
+  expect((await cli(['config', 'set', 'feedback.enabled', 'true'])).exitCode).toBe(0);
+
   const before = await cli(['search', 'widget', '--explain']);
   expect(before.exitCode).toBe(0);
   expect(before.stdout).not.toContain('feedback ×');

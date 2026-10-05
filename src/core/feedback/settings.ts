@@ -22,10 +22,10 @@ export interface FeedbackSettings {
 }
 
 export const FEEDBACK_DEFAULTS: FeedbackSettings = Object.freeze({
-  enabled: true,
+  enabled: false,
   learn: true,
   influence: 0.1,
-  implicit: true,
+  implicit: false,
   alpha: 0.1,
   maxRatingsPerHour: 120,
   eventRetentionDays: 30,

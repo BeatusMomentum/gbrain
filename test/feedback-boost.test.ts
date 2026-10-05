@@ -51,6 +51,7 @@ afterAll(async () => {
 beforeEach(async () => {
   await engine.executeRaw('DELETE FROM retrieval_weights');
   await engine.executeRaw('DELETE FROM config WHERE key LIKE $1', ['feedback.%']);
+  await engine.setConfig('feedback.enabled', 'true');
   _resetFeedbackSettingsCacheForTests();
 });
 
