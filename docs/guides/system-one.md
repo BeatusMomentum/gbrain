@@ -283,16 +283,22 @@ site, calibration and qualification:
 | `duplicate_page` | `decide.slots.conflict.review_duplicate_page` | page pairs the page-duplicate detector queued | runs the registered merge or link action, or records your verdict |
 | `duplicate_entity` | `decide.slots.conflict.review_duplicate_entity` | entity pairs deterministic entity dedup left ambiguous | same as `duplicate_page` |
 
-Each switch is off by default. A kind proposes only when its calibration for
-call site `review_<kind>` is qualified for action precision
+`withdraw` is on by default: its held-out qualification passed (action
+precision lower bound 0.970, end-to-end recall 0.977), and the binary ships
+that reference calibration for TypeSafe `jev-1.13.0`, so it proposes wherever
+the contradiction slot is on with a TypeSafe key. Turn it off with
+`gbrain config set decide.slots.conflict.review_withdraw false`. The duplicate
+kinds are off by default. A kind proposes only when its calibration for call
+site `review_<kind>` is qualified for action precision
 (`decide.slots.conflict.min_action_precision`, default 0.90); until then it
 does not call the provider at all. An operator `decide.slots.conflict.threshold`
-override does not count as a qualification for review kinds.
+override does not count as a qualification for review kinds. To qualify a kind
+on your own data:
 
 ```bash
-gbrain decide calibrate --slot conflict --call-site review_withdraw --dataset withdraw.jsonl
-gbrain decide qualify --slot conflict --call-site review_withdraw --dataset withdraw.jsonl
-gbrain config set decide.slots.conflict.review_withdraw true
+gbrain decide calibrate --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
+gbrain decide qualify --slot conflict --call-site review_duplicate_page --dataset pairs.jsonl
+gbrain config set decide.slots.conflict.review_duplicate_page true
 ```
 
 Work is queued in the same transaction as the event that creates it: a

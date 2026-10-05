@@ -28,6 +28,7 @@ import { hasTypesafeKey, runDecide } from './index.ts';
 import { packShape } from './pack.ts';
 import { resolveSlotPolicy, type SlotPolicy } from './policy.ts';
 import { writeReceipts } from './receipts.ts';
+import { reviewWithdrawOn } from '../../facts/withdrawal.ts';
 import { flushDecideWrites, hmacRef, listCalibrations, receiptSalt, recentResolvedModels } from './store.ts';
 import { DecideError, type ChoiceAnswer, type DecideQuestion, type EvidenceItem } from './types.ts';
 
@@ -74,8 +75,10 @@ export interface ReviewLaneResult {
 
 const truthy = (v: string | undefined | null) => ['true', 'on', '1', 'yes'].includes((v ?? '').trim().toLowerCase());
 
+/** `withdraw` is on unless turned off (held-out qualification passed); the duplicate kinds stay opt-in. */
 export function reviewKindEnabled(snapshot: Record<string, string | undefined> | null, kind: ReviewKind): boolean {
-  return truthy(snapshot?.[REVIEW_CONFIG_KEYS[kind]]);
+  const raw = snapshot?.[REVIEW_CONFIG_KEYS[kind]];
+  return kind === 'withdraw' ? reviewWithdrawOn(raw) : truthy(raw);
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,16 @@ export function registerWithdrawalInvalidation(fn: WithdrawalInvalidation): void
 /** The DB-plane switch for overnight semantic withdrawal review (decide review lane). */
 export const REVIEW_WITHDRAW_KEY = 'decide.slots.conflict.review_withdraw';
 
+/**
+ * `decide.slots.conflict.review_withdraw`: on unless explicitly turned off. The
+ * held-out qualification passed (docs/eval/decisions/p8/SEALED_VERDICTS.md); the
+ * lane still proposes only where the conflict slot is on with a decision provider.
+ */
+export function reviewWithdrawOn(raw: string | null | undefined): boolean {
+  const v = (raw ?? '').trim().toLowerCase();
+  return v === '' || ['true', 'on', '1', 'yes'].includes(v);
+}
+
 export async function recordFactWithdrawal(
   engine: BrainEngine, id: number, sourceId: string, worldOnly = false,
   opts: { requestId?: string; semanticReview?: boolean } = {},
@@ -61,7 +71,7 @@ export async function recordFactWithdrawal(
     if (!inserted.length) return { withdrawn: false, pages: [] };
     // Overnight semantic review (decide review lane): queued with the ledger row so a late commit is never skipped.
     // Not queued when the caller opted out (`semantic_review: false`, also used by review-accepted withdrawals).
-    if (opts.semanticReview !== false && ['true', 'on', '1', 'yes'].includes(((await tx.getConfig(REVIEW_WITHDRAW_KEY)) ?? '').trim().toLowerCase())) {
+    if (opts.semanticReview !== false && reviewWithdrawOn(await tx.getConfig(REVIEW_WITHDRAW_KEY))) {
       await tx.executeRaw(`INSERT INTO decide_review_queue(kind,source_id,a_ref) VALUES ('withdraw',$1,$2) ON CONFLICT DO NOTHING`, [sourceId, String(id)]);
     }
     // Logical revision and projection invalidation commit with the withdrawal.

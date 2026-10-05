@@ -7,7 +7,7 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 |---|---|---|---|---|
 | Write cost (section 2) | commit-path generative attempts = 0 in both arms | 0 in the extraction-on and extraction-off arms | PASS | Guard on; cost published |
 | Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6% | FAIL | `think.quote_verify` and `dream.quote_verify` off by default (opt-in) |
-| Semantic withdrawal review (section 3) | precision LB ≥ 0.90, end-to-end recall ≥ 0.60, zero proposals on corrected values, N5 unchanged | pending (paraphrase sourcing amended 2026-10-05) | — | `review_withdraw` off |
+| Semantic withdrawal review (section 3) | precision LB ≥ 0.90, end-to-end recall ≥ 0.60, zero proposals on corrected values, N5 unchanged | precision LB 0.970 (124/124 eval families, 248 actions), end-to-end recall 0.977, 0 proposals on corrected values, N5 contracts pass | PASS | `review_withdraw` on (proposes where the conflict slot is on with a TypeSafe key); reference calibration shipped |
 | Advertised tool surface (section 7) | pooled success ≥ control − 3 pts, no leak rise, hidden-tool family ≥ control − 5 pts | pending | — | new installs advertise `full` |
 | HTTP graph freshness (report-only) | remote `put_page`: timeline row at commit; mention links after the `links` effect; typed edges only after extract | as stated, on PGLite (`test/remote-graph-freshness.test.ts`) | REPORT | no switch |
 | Duplicate review kinds (section 4) | per kind, as section 3 | not run until P1/P5 enqueue candidates | — | off |
@@ -48,3 +48,17 @@ no brain or source row lock (the `remember.replaces` target-fact lock lives insi
 the review queue row commits inside the withdrawal transaction, and attribution is async context only), so there
 is no inverted order. The P8 Postgres E2E and #6025's links-effect E2E pass together on direct Postgres and through
 transaction-mode PgBouncer.
+
+## Semantic withdrawal review
+
+Held-out record: gbrain-evals `docs/benchmarks/2026-10-05-heldout-verdicts/p8-withdraw-heldout-2026-10-05.json`
+(build 6c958d6e2, reviewer TypeSafe `jev-1.13.0`). 240 families with disjoint name and value pools: 66 paraphrase
+pairs written by Google Gemini and checked one by one by the custodian (7 rewritten, 0 dropped; the 2026-10-05
+amendment), 414 model restatements, and 240 each of corrected values, negations, past-tense versions, compound
+claims and independent facts. Calibrated on the 116-family half (threshold 0.62, precision and recall 1.0);
+qualified on the 124-family half: 124/124 families correct over 248 withdraw actions (Wilson lower bound 0.970).
+Retrieval at the 0.80 cosine floor finds 97.7% of restatements (model 404/414, custodian-checked 65/66).
+
+Default: `decide.slots.conflict.review_withdraw` is on unless turned off, and the binary ships the held-out
+calibration as reference `conflict-review-withdraw-jev-1.13.0-2026-10-05`, so the lane proposes wherever the
+conflict slot is on with a TypeSafe key. It never withdraws on its own: every proposal needs the owner's accept.

@@ -136,11 +136,13 @@ afterEach(async () => {
 });
 
 describe('queueing and the forget response', () => {
-  test('a withdrawal queues review only when the kind is on and the caller did not opt out', async () => {
+  test('a withdrawal queues review unless the kind is turned off or the caller opted out (on by default)', async () => {
+    await setConfig({ 'decide.slots.conflict.review_withdraw': 'false' });
     const a = await remember('[g1] Alice Example prefers tea.');
     await forget(a);
     expect(await queue()).toEqual([]);
     await setConfig(BASE);
+    await engine.unsetConfig('decide.slots.conflict.review_withdraw');
     const b = await remember('[g2] Alice Example lives in Lisbon.');
     await forget(b);
     const c = await remember('[g3] Alice Example dislikes flying.');

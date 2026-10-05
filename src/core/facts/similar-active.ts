@@ -10,7 +10,7 @@ import { loadConfigSnapshot } from '../config-snapshot.ts';
 import { readDecideConfig, providerKind } from '../ai/decide/config.ts';
 import { hasTypesafeKey } from '../ai/decide/index.ts';
 import { CONFLICT_MIN_COSINE } from '../ai/decide/conflict.ts';
-import { REVIEW_WITHDRAW_KEY } from './withdrawal.ts';
+import { REVIEW_WITHDRAW_KEY, reviewWithdrawOn } from './withdrawal.ts';
 
 export const SIMILAR_ACTIVE_LIMIT = 5;
 
@@ -26,7 +26,7 @@ export interface SimilarActive {
 async function reviewState(engine: BrainEngine, optedOut: boolean): Promise<SemanticReviewState> {
   if (optedOut) return 'opted_out';
   const snapshot = await loadConfigSnapshot(engine);
-  if (!['true', 'on', '1', 'yes'].includes((snapshot?.[REVIEW_WITHDRAW_KEY] ?? '').trim().toLowerCase())) return 'off';
+  if (!reviewWithdrawOn(snapshot?.[REVIEW_WITHDRAW_KEY])) return 'off';
   const cfg = readDecideConfig(snapshot, { typesafeKey: hasTypesafeKey() });
   if (cfg.slots.conflict.mode === 'off') return 'off';
   const kind = providerKind(cfg.slots.conflict.provider);
