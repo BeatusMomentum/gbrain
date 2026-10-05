@@ -123,6 +123,14 @@ suite('client capability grants — Postgres and admin HTTP', () => {
     expect(after.scopes).toEqual(before.scopes);
     const [row] = await engine.executeRaw('SELECT allowed_operations, grant_profile FROM oauth_clients WHERE client_id = $1', [created.clientId]);
     expect(row.allowed_operations).toBeNull(); expect(row.grant_profile).toBeNull();
+    // W-C6: the listing marks the unbounded grant and names the re-pin command.
+    const env = keylessBrainEnv(process.env, home, { DATABASE_URL: databaseUrl, GBRAIN_DATABASE_URL: databaseUrl, GBRAIN_BRAIN_ID: undefined, GBRAIN_MCP_URL: undefined });
+    const listing = Bun.spawn(['bun', '--no-env-file', 'run', resolve('src/cli.ts'), 'auth', 'clients', '--json'], { cwd: home, env: env as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, exitCode] = await Promise.all([new Response(listing.stdout).text(), listing.exited]);
+    expect(exitCode).toBe(0);
+    const listed = (JSON.parse(stdout) as any).clients.find((c: any) => c.client_id === created.clientId);
+    expect(listed).toMatchObject({ operations: 'all', operations_state: 'all', includes_future_operations: true, revoked: false });
+    expect(listed.fix.argv.slice(0, 6)).toEqual(['gbrain', 'auth', 'rescope', '--client', created.clientId, '--operations']);
   });
 
   test('admin credential delivery can be recovered without another grant or secret rotation', async () => {

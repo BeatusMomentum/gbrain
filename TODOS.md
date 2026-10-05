@@ -1,5 +1,10 @@
 # TODOS
 
+## Contributor audit fix wave follow-ups (filed 2026-10-05)
+
+- [ ] **P2 — List the operations an unbounded OAuth client gained after an upgrade.**
+  **What:** `gbrain auth clients` marks a client with no operation snapshot `operations: "all"` with `includes_future_operations: true` (#6008 visibility), but it cannot say which operations became reachable since the client's last regrant: the server knows only today's operation set. **Why:** an operator reviewing an unbounded client after an upgrade sees "all", not "these five are new". **Fix:** a versioned operation inventory (operation name → first release that shipped it, generated at build time from `operations.ts`), plus the release each client was last granted under, so `auth clients` and doctor can list operations added since then; reuse the legacy-token `--refresh-operations` preview shape. **Effort:** M. **Priority:** P2.
+
 ## Test, eval and CI fix wave follow-ups (filed 2026-10-04, GBRA-47)
 
 Context: `.github/nightly-known-red.tsv` rows point here; nightly-watch keeps their incidents open until the row is deleted. Scale-tier evidence: per-batch `vectors` lines and the phase watchdog in `scripts/scale/`.
