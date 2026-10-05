@@ -133,6 +133,8 @@ export interface ServeOptions {
   // without booting the real OAuth server. Type-only reference to
   // serve-http.ts — erased at compile time, so the lazy runtime import stays.
   runServeHttp?: (typeof import('./serve-http.ts'))['runServeHttp'];
+  /** `--http` recovery from status-only mode: the listener the status server already bound (serve-http-status.ts). */
+  adoptServer?: import('./serve-http-listen.ts').AdoptableServer;
   // Test seam (#4281): replaces installLoopStallWatchdog.
   installStallWatchdog?: (o: LoopStallWatchdogOpts) => WatchdogHandle;
   // Test seam (#4281) for the loop-stall threshold in ms; 0 = off. Defaults
@@ -318,7 +320,7 @@ export async function runServe(
     }
 
     try {
-      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface });
+      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface, adoptServer: opts.adoptServer });
     } finally {
       stallWatchdog?.dispose();
     }
