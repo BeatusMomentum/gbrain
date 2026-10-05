@@ -17,9 +17,8 @@ jobs:
       matrix:
         engine: [pglite, postgres]
         bun: ['1.4.0', '1.4.2']
-        # Pull requests run the primary Bun version; pushes, schedules and
-        # manual runs keep every supported version.
-        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -58,9 +57,8 @@ jobs:
       fail-fast: false
       matrix:
         bun: ['1.4.0', '1.4.2']
-        # Pull requests run the primary Bun version; pushes, schedules and
-        # manual runs keep every supported version.
-        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -176,9 +174,8 @@ jobs:
       matrix:
         shard: [1, 2]
         bun: ['1.4.0', '1.4.2']
-        # Pull requests run the primary Bun version; pushes, schedules and
-        # manual runs keep every supported version.
-        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -241,9 +238,8 @@ jobs:
       matrix:
         engine: [pglite, postgres]
         bun: ['1.4.0', '1.4.2']
-        # Pull requests run the primary Bun version; pushes, schedules and
-        # manual runs keep every supported version.
-        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -261,8 +257,9 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
-      # Pull requests run a 2,500-write soak; pushes to master and manual runs keep
-      # the full 10,000-write gate, whose PGLite run alone takes 15-28 minutes.
+      # Named exception (docs/TESTING.md#event-parity): pull requests and merge-queue
+      # runs soak 2,500 writes; pushes to master, the nightly Test schedule and manual
+      # runs cover the full 10,000-write gate, whose PGLite run alone takes 15-28 minutes.
       - name: Execute 1000 schedules, eight SIGKILL boundaries and the process-separated write soak
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
@@ -294,9 +291,8 @@ jobs:
       matrix:
         engine: [pglite, postgres]
         bun: ['1.4.0', '1.4.2']
-        # Pull requests run the primary Bun version; pushes, schedules and
-        # manual runs keep every supported version.
-        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -328,6 +324,9 @@ jobs:
           bun-version: ${{ matrix.bun }}
       - run: bun install --frozen-lockfile --ignore-scripts
       # The service password reaches every client through PGPASSWORD, so the URLs carry none.
+      # Named exception (docs/TESTING.md#event-parity): ROBOT_SECONDS is 150 on pull
+      # requests and merge-queue runs; pushes to master, the nightly Test schedule and
+      # manual runs cover the 600 s budget that crashes every seam.
       - name: Crash every reachable seam of the generated sequences
         env:
           PGPASSWORD: gbrain_test
@@ -369,9 +368,8 @@ jobs:
       matrix:
         engine: [pglite, postgres]
         bun: ['1.4.0', '1.4.2']
-        # Pull requests run the primary Bun version; pushes, schedules and
-        # manual runs keep every supported version.
-        exclude: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '[{"bun":"1.4.0"}]' || '[]') }}
+        # Event parity: every event, pull requests and merge-queue runs
+        # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
       postgres:
         image: pgvector/pgvector:pg16
