@@ -96,6 +96,8 @@ CHECKS=(
   # `bun run test` keeps it.
   "check:bootstrap-templates"
   "check:skill-brain-first"
+  # A-NEW-3: bundled SKILL.md files pass the shared-skill publication parser.
+  "check:skill-publication"
   "check:conversation-parser"
   "check:resolver"
   "check:privacy"
