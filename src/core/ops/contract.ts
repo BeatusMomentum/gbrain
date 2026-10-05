@@ -229,6 +229,8 @@ export interface ParamDef {
   items?: ParamDef;
   /** Object members (O-DX-3); a member with `required: true` lands in the schema's `required`. */
   properties?: Record<string, ParamDef>;
+  /** Advertised on the full MCP surface only (keeps the starter tool list inside its size budget). */
+  fullSurfaceOnly?: boolean;
 }
 
 export interface Logger {
