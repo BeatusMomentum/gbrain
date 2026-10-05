@@ -20,7 +20,10 @@ import { CHRONICLE_DEFAULTS, CHRONICLE_EXTRACTOR_VERSION, type ChronicleLedgerRo
 import type { ChronicleReasonCode } from './reasons.ts';
 import type { ChronicleSettings } from './config.ts';
 import { isChronicleEligible } from './eligibility.ts';
-import { buildChronicleEvents, chronicleJudgeContext, isValidProposal, type ChronicleJudge, type ChronicleJudgeResult } from './extract-events.ts';
+import {
+  allDroppedReason, buildChronicleEvents, chronicleJudgeContext, isValidProposal,
+  type ChronicleDropCounts, type ChronicleJudge, type ChronicleJudgeResult,
+} from './extract-events.ts';
 import { RETIRE_REASONS, reserveChronicleSlot } from './ledger.ts';
 import { pinDepth, publishChronicleGeneration, type ChronicleDepthPin } from './publish.ts';
 
@@ -43,7 +46,7 @@ export type ChronicleRowOutcome =
   | { kind: 'waiting'; reason: string }
   | { kind: 'deferred'; reason: 'daily_limit' }
   | { kind: 'done'; state: ChronicleLedgerRow['state']; reason: string | null; judged: boolean;
-      written: number; retired: number; costUsd: number | null; unpriced: boolean };
+      written: number; retired: number; costUsd: number | null; unpriced: boolean; dropped: ChronicleDropCounts };
 
 const CONFIG_BLOCKED = new Set(['judge_llm_unavailable', 'no_pricing']);
 const LEASE_MS = 15 * 60_000;
@@ -121,7 +124,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   const { engine, settings } = ctx;
   const now = ctx.now?.() ?? new Date();
   const done = (state: ChronicleLedgerRow['state'], reason: string | null, extra: Partial<Extract<ChronicleRowOutcome, { kind: 'done' }>> = {}): ChronicleRowOutcome =>
-    ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, ...extra });
+    ({ kind: 'done', state, reason, judged: false, written: 0, retired: 0, costUsd: 0, unpriced: false, dropped: {}, ...extra });
 
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || Number(snapshot.page.id) !== Number(row.page_id)) {
@@ -204,25 +207,26 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
   }
 
   const proposals = result?.events ?? [];
+  const { events, dropped } = buildChronicleEvents(proposals, judgeCtx,
+    { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now });
   let generation;
   try {
     generation = await publishChronicleGeneration(engine, {
-      sourceId: row.source_id, pin, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal,
-      events: buildChronicleEvents(proposals, judgeCtx, { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, ctx.tz),
+      sourceId: row.source_id, pin, decisionRequestId: row.request_id, maintenance: ctx.maintenance, signal: ctx.signal, events,
     });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') throw error;
     console.warn(`[chronicle] ${row.slug}: publishing events failed (${error instanceof Error ? error.message : String(error)}); the row retries with backoff. Run now: gbrain dream --phase chronicle`);
     await finish(engine, row, { state: 'failed', reason: 'publish_error', nextAttemptAt: backoff(attempts, now), ...spend });
-    return done('failed', 'publish_error', judged);
+    return done('failed', 'publish_error', { ...judged, dropped });
   }
   if (generation.superseded) {
     await finish(engine, row, { state: 'skipped', reason: 'superseded', nextAttemptAt: null, events: generation.written, ...spend });
-    return done('skipped', 'superseded', { ...judged, written: generation.written.length });
+    return done('skipped', 'superseded', { ...judged, written: generation.written.length, dropped });
   }
-  const reason = proposals.length === 0 ? 'no_events' : null;
+  const reason = events.length > 0 ? null : proposals.length === 0 ? 'no_events' : allDroppedReason(dropped);
   await finish(engine, row, { state: 'extracted', reason, nextAttemptAt: null, events: generation.written, ...spend });
-  return done('extracted', reason, { ...judged, written: generation.written.length, retired: generation.retired.length });
+  return done('extracted', reason, { ...judged, written: generation.written.length, retired: generation.retired.length, dropped });
 }
 
 export type { ChronicleDepthPin };

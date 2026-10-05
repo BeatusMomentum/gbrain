@@ -68,7 +68,7 @@ const remember: Operation = {
     fact: { type: 'string', description: 'One claim.' },
     items: {
       type: 'array',
-      description: 'Up to 20 facts in one call (e.g. before compaction) instead of fact: [{fact, entity?, kind?, ttl?, provenance?}].',
+      description: 'Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]',
       items: { type: 'object' },
     },
     provenance: {

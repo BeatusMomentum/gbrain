@@ -564,7 +564,8 @@ async function assembleDelta(
     overflow: boolean;
     facts: TurnContextFact[];
     threads: EntityOpenThread[];
-  } = { pages: [], overflow: false, facts: [], threads: [] };
+    failedArms: ('pages' | 'facts')[];
+  } = { pages: [], overflow: false, facts: [], threads: [], failedArms: [] };
   const deadlineAt =
     typeof opts.deadlineMs === 'number' && opts.deadlineMs > 0 ? Date.now() + opts.deadlineMs : null;
 
@@ -601,6 +602,7 @@ async function assembleDelta(
         }));
       } catch {
         acc.pages = [];
+        acc.failedArms.push('pages');
       }
     }
     // Facts arm: query the store DIRECTLY by recording time (pre-landing
@@ -636,6 +638,7 @@ async function assembleDelta(
           }));
       } catch {
         acc.facts = [];
+        acc.failedArms.push('facts');
       }
     }
 
@@ -657,7 +660,8 @@ async function assembleDelta(
     }
   })();
 
-  const degradedReason = await raceDeadline(build, opts.deadlineMs);
+  const deadlineReason = await raceDeadline(build, opts.deadlineMs);
+  const degradedReason = [deadlineReason, ...acc.failedArms].filter(Boolean).join(',') || undefined;
   // Snapshot copies — same post-deadline mutation hazard as assemblePack.
   const pages = [...acc.pages];
   const facts = [...acc.facts];

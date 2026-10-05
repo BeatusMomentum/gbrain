@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 197118,
-    "stdoutSha256": "ce99e077240ea4576ae5892cf07f8af2e7a5b37fec963ab6bdaf1d06e4abf122",
+    "stdoutBytes": 197248,
+    "stdoutSha256": "70b1cc805f611c564a2306620c81d42ed3c2f968caf760f7821416b593214696",
     "toolNames": [
       "remember",
       "entity",
@@ -207,7 +207,7 @@
               "type": "boolean"
             },
             "items": {
-              "description": "Up to 20 facts in one call (e.g. before compaction) instead of fact: [{fact, entity?, kind?, ttl?, provenance?}].",
+              "description": "Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]",
               "items": {
                 "type": "object"
               },
@@ -355,6 +355,7 @@
         "mutating": false,
         "name": "get_page",
         "parameters": {
+          "content_only": "boolean?",
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
@@ -365,6 +366,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "content_only": {
+              "description": "Round-trip fields only.",
+              "type": "boolean"
+            },
             "fuzzy": {
               "description": "Fuzzy slug match.",
               "type": "boolean"
