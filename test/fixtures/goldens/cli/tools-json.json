@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198727,
-    "stdoutSha256": "1bd62e59ff08b005f7796f8bb9ad92de5526d41a67a00f95811b3e7a4ec2d8c8",
+    "stdoutBytes": 198716,
+    "stdoutSha256": "bd7322fce920c952cc0f01e8a84e9cc9c773791f710891b68e024b0043a931be",
     "toolNames": [
       "remember",
       "entity",
@@ -348,6 +348,7 @@
         "mutating": false,
         "name": "get_page",
         "parameters": {
+          "content_only": "boolean?",
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
@@ -358,6 +359,10 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "content_only": {
+              "description": "Round-trip fields only.",
+              "type": "boolean"
+            },
             "fuzzy": {
               "description": "Fuzzy slug match.",
               "type": "boolean"
@@ -1643,7 +1648,6 @@
               "type": "boolean"
             },
             "as_of": {
-              "description": "YYYY-MM-DD",
               "type": "string"
             },
             "slug": {
@@ -1655,7 +1659,6 @@
               "type": "string"
             },
             "status": {
-              "description": "Default live.",
               "enum": [
                 "live",
                 "all"
@@ -1709,7 +1712,6 @@
               "type": "boolean"
             },
             "as_of": {
-              "description": "YYYY-MM-DD",
               "type": "string"
             },
             "depth": {
@@ -1738,7 +1740,6 @@
               "type": "string"
             },
             "status": {
-              "description": "Default live.",
               "enum": [
                 "live",
                 "all"
