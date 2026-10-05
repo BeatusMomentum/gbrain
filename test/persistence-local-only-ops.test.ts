@@ -1,6 +1,7 @@
 /**
  * #5864: the trusted local CLI reaches the four localOnly skill-administration
- * operations while a serve owns the PGLite brain. Authoring gate: (1) protects
+ * operations, and `gbrain takes remove` (#5167), while a serve owns the PGLite
+ * brain. Authoring gate: (1) protects
  * the delegated route for get_skill_retention, prune_skill_revisions,
  * retain_skill_revision and import_skill_proposal, and keeps remote callers
  * refused; (2) fails when the resident owner answers `unknown_tool` to the
@@ -27,9 +28,9 @@ import { withEnv } from './helpers/with-env.ts';
 
 const LOCAL_ONLY_IPC = ['get_skill_retention', 'import_skill_proposal', 'prune_skill_revisions', 'retain_skill_revision'];
 
-test('the localOnly operations on persistence IPC are the four skill-admin ops plus the provider-served transcript read', () => {
+test('the localOnly operations on persistence IPC are the four skill-admin ops, takes_remove and the provider-served transcript read', () => {
   const ipc = new Set<string>(PERSISTENCE_IPC_OPERATIONS);
-  expect(operations.filter(op => op.localOnly && ipc.has(op.name)).map(op => op.name).sort()).toEqual([...LOCAL_ONLY_IPC, 'get_recent_transcripts'].sort());
+  expect(operations.filter(op => op.localOnly && ipc.has(op.name)).map(op => op.name).sort()).toEqual([...LOCAL_ONLY_IPC, 'takes_remove', 'get_recent_transcripts'].sort());
 });
 
 describe('localOnly skill administration through a resident owner', () => {
@@ -91,8 +92,37 @@ describe('localOnly skill administration through a resident owner', () => {
     }, 60_000);
   }
 
+  const cli = async (args: string[]) => {
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), ...args], {
+      cwd: dir,
+      env: { ...process.env, GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKIP_UPGRADE_CHECK: '1',
+        GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      stdout: 'pipe', stderr: 'pipe',
+    });
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 30_000);
+    try {
+      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      return { stdout, stderr, code, output: stdout + stderr };
+    } finally { clearTimeout(timeout); }
+  };
+
+  test('gbrain takes remove (#5167) removes a row through the resident owner', async () => {
+    const slug = 'notes/ipc-takes-remove';
+    expect((await call('put_page', { slug, content: '---\ntitle: IPC takes remove\ntype: note\n---\nAbout the remove path.\n' })).code).toBe(0);
+    for (const claim of ['Keep one', 'Drop two']) {
+      expect((await call('takes_add', { slug, claim, kind: 'take', holder: 'world' })).code).toBe(0);
+    }
+    const removed = await cli(['takes', 'remove', slug, '--row', '2', '--json']);
+    expect(removed.output).not.toContain('unknown_tool');
+    expect(removed.code).toBe(0);
+    expect(JSON.parse(removed.stdout)).toMatchObject({ row_num: 2, removed: true });
+    const indexed = await engine.executeRaw<{ row_num: number; claim: string }>(
+      'SELECT t.row_num, t.claim FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.slug=$1 ORDER BY t.row_num', [slug]);
+    expect(indexed.map(row => [row.row_num, row.claim])).toEqual([[1, 'Keep one']]);
+  }, 120_000);
+
   test('remote callers are still refused', async () => {
-    for (const operation of LOCAL_ONLY_IPC) {
+    for (const operation of [...LOCAL_ONLY_IPC, 'takes_remove']) {
       const http = await dispatchToolCall(engine, operation, {}, { remote: true, transport: 'http' });
       expect(http.isError).toBe(true);
       expect(http.content[0]!.text).toContain('unknown_tool');
