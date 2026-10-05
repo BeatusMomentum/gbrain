@@ -725,7 +725,7 @@ describe('runNightlyQualityProbe: panel, failures and digest on the audit row (#
 describe('runNightlyQualityProbe: metered chat spend (#5506)', () => {
   const usage = { input_tokens: 1000, output_tokens: 500 };
   const PRICED = 'anthropic:claude-haiku-4-5';
-  const UNPRICED = 'claude-cli:claude-opus-5-5';
+  const UNPRICED = 'acme:unpriced-model-9000';
   const pricedCost = () => estimateChatCostUsd(PRICED, usage)!;
 
   test('calls in both stages are metered: priced cost summed, unpriced counted apart', async () => {
