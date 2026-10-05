@@ -10,6 +10,133 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.73.0] - 2026-10-05
+
+**A managed Postgres brain far from its database now catches up a sync backlog at about 150 pages a minute: a 10,000-file backlog takes about 1.2 hours instead of 5.4 (#5984).**
+
+`gbrain sync` on a managed brain already saved pages in groups and queued the next group while one was saving, but only one group could save at a time. Now up to six groups save at once, each on its own database connection, and they still commit in file order, so nobody ever sees a later page without the earlier ones. Every page keeps its own write receipt, a failed page still stops the run before anything after it is published, and your agent's own writes still go first.
+
+### The numbers that matter
+
+| 57 ms to the database | Before (v0.60.58.0) | Now |
+| --- | --- | --- |
+| Pages per minute once the catch-up is running | about 29 | 150 to 153 |
+| 10,000-file backlog (300-word pages) | about 5.4 h | about 1.2 h |
+| A foreground write while catching up (p95) | 15.1 s (14.9 s idle) | 15.8 s (14.1 s idle), no failures |
+| Same backlog next to the database | 545 pages/min | 741 pages/min |
+
+### How to use it
+
+Nothing to do: lanes are on by default for managed Postgres syncs. `--lanes N` (1 to 8) or `gbrain config set sync.lanes N` changes the count; `--no-lanes` saves one group at a time. The count is capped by the connection pool (a pool of 10 allows 6; raise `GBRAIN_POOL_SIZE` for more). The final JSON reports `drain.bulk.lanes`: how many ran, why fewer when they did, and how many groups overlapped.
+
+### Things to watch
+
+- A lock or statement timeout in a lane costs one lane for the rest of that run (`step_down` in the JSON says why).
+- The first minute or so of a catch-up still runs at the old speed: discovery and already-deleted files are handled one at a time before the groups start.
+- Finish a running catch-up before downgrading gbrain, as with v0.60.58.0.
+
+## To take advantage of v0.60.70.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Nothing else to migrate.** There is no schema change; the next `gbrain sync` uses lanes.
+3. **Verify the outcome:**
+   ```bash
+   gbrain sync --source <id> --no-pull --json
+   ```
+   `drain.bulk.lanes.effective` is the number of groups that saved at once.
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- **Lane claims** (`sync-lanes.ts`, `claimNextLaneHead` in `journal.ts`, consumer `claimLanes`): the drain opens a lane run for its worktree; this process's consumer claims the next admitted group head while earlier groups of the same run still publish, up to the effective lane count. Any other unfinished request (a foreground write, a recovering request, another run) still blocks it, and other processes claim lane rows under the ordinary FIFO.
+- **Shared worktree lock** (`worktree-lease.ts`, `acquireWorktreeShared`): lanes share this process's native worktree lock. Every exclusive `acquireWorktree` first makes the lanes step aside; a lease stops taking new lanes after 30 s of continuous holding so other processes get a turn.
+- **Ordered commit** (`awaitLaneBegin`, `awaitLaneTurn`): lane transactions begin and commit in manifest order; a lane commits only after its predecessor (`intent.after`) committed. A failed predecessor cancels the later groups; a requeued or not-yet-admitted one makes them give back their claims; a wounded lease or 60 s rolls them back. Publication validation accepts a lane group whose predecessor is still publishing.
+- **Admit-ahead with lanes**: the drain keeps twice the lane count of groups admitted ahead, admits them in order and stops at the first failed admission.
+- **Step-down and reporting**: lock and statement timeouts lower the lane count (`stepDownLanes`); `drain.bulk.lanes` reports `configured`, `effective`, `reason`, `step_down`, `overlapped_groups` and `fallbacks`.
+- **Settings**: `--lanes N` / `--no-lanes` > `GBRAIN_SYNC_LANES` > `sync.lanes` > 6, clamped to the pool's long-hold capacity minus 3; lanes need bulk groups.
+
+### For contributors
+
+- `test/managed-sync-lanes.test.ts` (Postgres; laned in CI) covers lane settings, the shared lease, the commit-order wait, a lane drain, a failure mid-run and a cross-linked corpus built the same with and without lanes. Results are in `docs/eval/managed-sync-catchup.md` ("Parallel lanes").
+
+## [0.60.72.0] - 2026-10-05
+
+**`ci:ubicloud` VMs carry their owner's name, an interrupted run destroys every VM it asked for, and no run destroys another owner's VMs.**
+
+VMs are named `ubirun-<owner>-<epoch>-<suffix>`, where the owner is `UBI_OWNER` or a per-machine id. Before, nothing showed which thread a VM belonged to, and every `up` destroyed any `ubirun-*` VM older than 12 hours, whoever started it. That sweep is now off unless `UBI_GC_HOURS` is set, and even then it only destroys the caller's own VMs. `ubi-runner.sh gc HOURS` runs the same sweep by hand.
+
+A run stopped with SIGTERM while VMs were still provisioning used to tear down before their create requests finished. Those VMs appeared afterwards and leaked (three `standard-16` VMs sat idle for 84 minutes). SIGHUP, which a dropped terminal or a cancelled background operation sends, was not handled at all, so the run died with every VM still up (14 leaked VMs on 2026-10-04). Now SIGINT, SIGTERM, SIGHUP and SIGQUIT all take the same teardown path, and a second signal can't cut it short. Each name is recorded before its create is sent. An interrupted `up` finishes its create request and destroys its own VM. Teardown then polls every recorded name until it is confirmed gone. Mock-API tests reproduce both old leaks (SIGTERM left two of three VMs behind, SIGHUP all three) and pass with the fix.
+
+`ubi-runner.sh list --mine` lists your VMs, and `ubi-runner.sh usage` shows VMs and vCPUs per owner across the project. A create refused for vCPU quota now says how many vCPUs it needed, how many the project uses and the maximum, followed by that per-owner table.
+
+## To take advantage of v0.60.72.0
+
+- Run `UBI_OWNER=<your-thread-code> bun run ci:ubicloud`. You no longer need `UBI_GC_HOURS=0`.
+- In a multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only the integrator runs the full gate. One full gate takes 64 of the project's 256 vCPUs.
+
+## [0.60.71.0] - 2026-10-05
+
+**Turning off contextual retrieval no longer serves vectors built from an old title.**
+
+If a page switches from title or synopsis context to plain text, its previous
+text vectors are cleared in the same database operation as the mode change.
+This prevents an old title-aware result from being treated as a plain-text
+match. Pages marked to skip embedding keep their retained vectors; switching
+mode does not start a paid re-embed.
+
+### How to use it
+
+Run `gbrain upgrade` to get the fix. If you deliberately switch a source to
+plain-text embeddings, run `gbrain embed --stale` after reviewing its expected
+cost to replace any cleared vectors.
+
+| Page state | After the change |
+| --- | --- |
+| Title or synopsis mode switches to `none` | Previous active text vectors are cleared immediately, before search can use them as plain text. |
+| Legacy `none` page with an unverified vector | A later projection rebuild clears the vector; re-embedding is opt-in. |
+| Pre-contextual page with no stored mode | Its legacy raw vectors remain grandfathered when the text and model still match. |
+
+### Itemized changes
+
+- The shared page-state writer clears active vectors and their completion stamps atomically on a contextual-to-`none` transition, in both PGLite and PostgreSQL.
+- Projection rebuilds no longer accept an unstamped vector on an explicit `none` page as proof that it came from raw text; they still preserve verified current inputs and grandfather pre-contextual NULL-mode pages.
+- Markdown re-import cannot reinstate an unstamped title vector after the mode switch or race a concurrent contextual update. Repair and contextual reindex record raw provenance when they move a pre-contextual NULL-mode page to `none`, so a later rebuild does not discard retained raw vectors.
+
+## [0.60.69.0] - 2026-10-05
+
+**Korean entity names stop linking from inside longer words: mention precision on Hangul goes from 7% to 86%, and 65 of 74 real name mentions still link.**
+
+The mention linker required a Hangul name to start a word but let anything follow it, because Korean particles attach directly to names (지원에게). On 7.3M characters of public Korean text, 39% of all Hangul matches were the name sitting inside another word: 지원 in 지원하는 ("supporting"), 우리 in 우리나라. A name now has to end at a non-Hangul character or at an attached title, particle or copula form (지원씨는, 지원 대표가, 지원이었다).
+
+Measured with the real matcher over 30 Korean name-like titles, every match labeled in context ([method](docs/designs/hangul-mention-boundaries.md)):
+
+| | Before | Now |
+| --- | --- | --- |
+| Word-internal matches (지원하는, 우리나라) | 1,041 | 11 |
+| Real name mentions linked | 74 | 65 |
+| Precision over name + word-internal matches | 7% | 86% |
+
+A name that is also an everyday word (우리, "we") still links where that word stands alone; `mentions.ignore` stops it.
+
+**Existing brains rescan their mentions once.** The mention extractor version moved to 2 (and the `extract links --by-mention` resume fingerprint to `hangul-boundaries-v2`), so the next mention pass rescans every page and removes plain mention links the old rule made. It is local work with no paid calls.
+
+Also: `docs/architecture/key-files/` gains a `src/core/by-mention.ts` entry and an up-to-date `src/core/enrichment-service.ts` entry, and the Chinese mention fixtures use placeholder names.
+
+## To take advantage of v0.60.69.0
+
+`gbrain upgrade` does this automatically. The one-time mention rescan runs on the next autopilot cycle; to run it now: `gbrain extract --stale`.
+
 ## [0.60.68.0] - 2026-10-05
 
 **`delta` no longer skips changes after a failed read, and the 21 contributor fixes merged on 2026-10-05 are brought up to the house bar.**
