@@ -92,8 +92,9 @@ ends the relationship even if the company page still lists them under `key_peopl
 | `as_of: "2022-06-30"` | what was true on that day |
 | `during: "2022"` | true at any point in a period (`2022`, `2022-03`, `2021..2023-06`) |
 
-`get_links` takes all of them plus `link_type`; `get_backlinks` and `traverse_graph`
-take `status` (`live`, `all`) and `as_of`. When a default read leaves relationships
+`get_links` takes all of them plus `link_type`; `get_backlinks` takes `status` (`live`,
+`all`) and `as_of`; `traverse_graph` walks live relationships (read history with
+`get_links` or `get_backlinks`). When a default read leaves relationships
 out, the response carries a `former_relationships_hidden` notice with the exact call
 that shows them, and `gbrain.temporal` response metadata with the count.
 

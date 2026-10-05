@@ -22,8 +22,8 @@ export const TEMPORAL_EDGE_PARAMS: Record<'status' | 'as_of' | 'during', ParamDe
 
 
 /** Starter-surface (budgeted) forms: live is the default; `all` = history. */
-export const STARTER_STATUS_PARAM: ParamDef = { type: 'string', enum: ['live', 'all'] };
-export const STARTER_AS_OF_PARAM: ParamDef = { type: 'string' };
+export const STARTER_STATUS_PARAM: ParamDef = { type: 'string', enum: ['live', 'all'], description: 'Default live.' };
+export const STARTER_AS_OF_PARAM: ParamDef = { type: 'string', description: 'YYYY-MM-DD' };
 
 /** Validate the temporal params and resolve the effective policy for this call. */
 export async function resolveEdgeTemporal(ctx: OperationContext, p: Record<string, unknown>, opName: string): Promise<EdgeTemporalOpts> {

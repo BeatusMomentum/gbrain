@@ -456,8 +456,6 @@ const traverse_graph: Operation = {
     depth: { type: 'number', description: `Max depth (cap ${TRAVERSE_DEPTH_CAP}).` },
     link_type: { type: 'string', description: 'Follow only this link type.' },
     direction: { type: 'string', description: 'Remote default both.', enum: ['in', 'out', 'both'] },
-    status: STARTER_STATUS_PARAM,
-    as_of: STARTER_AS_OF_PARAM,
     source_id: LINK_SOURCE_ID_PARAM,
     all_sources: LINK_ALL_SOURCES_PARAM,
   },
