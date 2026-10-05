@@ -20,6 +20,10 @@
 #   GBRAIN_VERIFY_TIMEOUT       per-check wallclock cap, seconds (default 120)
 #   GBRAIN_VERIFY_LOG_DIR       where to write per-check logs (default tempdir,
 #                               removed on success and kept on failure)
+#   GBRAIN_VERIFY_TYPECHECK_COVERED_BY
+#                               macOS only: record typecheck as a skip naming
+#                               the job that covers it (see below); refused on
+#                               every other OS
 #   GBRAIN_TEST_RECEIPT_DIR     also write the verify receipt (X2): one JUnit
 #                               testcase per check with its real outcome
 #
@@ -223,6 +227,19 @@ fi
 
 TIMEOUT="${GBRAIN_VERIFY_TIMEOUT:-120}"
 
+# macOS 26 validation (#6056): tsc output does not depend on the OS and
+# test.yml's Linux verify job gates typecheck on every PR and push, but a cold
+# tsc takes 110-142 s alone on the 3-core arm64 macOS runner, past the 120 s
+# cap. That workflow names the covering job here; typecheck is then recorded
+# as a skip (never a pass). Any other OS refuses it, so it cannot spread.
+TYPECHECK_COVERED_BY="${GBRAIN_VERIFY_TYPECHECK_COVERED_BY:-}"
+if [ -n "$TYPECHECK_COVERED_BY" ] && [ "$(uname -s)" != "Darwin" ]; then
+  echo "ERROR: GBRAIN_VERIFY_TYPECHECK_COVERED_BY is honored on macOS only (this is $(uname -s)): typecheck must run here." >&2
+  echo "Why: the skip exists because the macOS 26 runner cannot finish a cold tsc within the 120 s cap; other platforms can." >&2
+  echo "Next: unset GBRAIN_VERIFY_TYPECHECK_COVERED_BY and re-run bun run verify. Docs: docs/operations/verify-and-nightly-e2e.md#macos-typecheck-skip" >&2
+  exit 2
+fi
+
 # Per-check temp dir. Each check gets its own subdir so writes can't race
 # on shared scratch state (the checks themselves are read-only — they grep
 # the working tree — but defense-in-depth.)
@@ -278,7 +295,10 @@ spawn_check() {
   EXIT_FILE="$LOG_DIR/$safe.exit"
   (
     started=$(date +%s)
-    if [ -n "$TIMEOUT_BIN" ]; then
+    if [ "$c" = "typecheck" ] && [ -n "$TYPECHECK_COVERED_BY" ]; then
+      echo "GBRAIN_CHECK_SKIPPED: typecheck covered by $TYPECHECK_COVERED_BY (tsc output is OS-independent; a cold tsc exceeds the 120 s cap on this macOS runner)" > "$LOG_FILE"
+      rc=0
+    elif [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
       rc=$?
     else
@@ -405,6 +425,13 @@ if [ -n "$SKIP_REPORT" ]; then
     echo "[verify-parallel] $SKIP check(s) self-skipped (recorded as skip, not pass):"
     printf '%s' "$SKIP_REPORT"
   } >&2
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      echo "### bun run verify: $SKIP check(s) skipped (not passed)"
+      echo
+      printf '%s' "$SKIP_REPORT" | sed 's/^  /- /'
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
 fi
 
 receipt_begin primary all "" "" "" verify

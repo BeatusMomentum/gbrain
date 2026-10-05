@@ -36,6 +36,20 @@ about 3.7 GB with ceilings of 3,800, 4,096 or 6,144 MB, and wall time is the
 same. If tsc reaches the ceiling, find what grew the program (the
 `Files`/`Memory used` lines of `--extendedDiagnostics`) before raising it.
 
+## macOS typecheck skip
+
+The macOS 26 validation job (`macos-validation.yml`) runs `bun run verify`
+with `GBRAIN_VERIFY_TYPECHECK_COVERED_BY` naming `test.yml`'s Linux verify
+job, so `typecheck` is recorded as a skip with that reason in
+`outcomes.tsv`, the receipt and the step summary. tsc output does not depend
+on the OS, the Linux verify job gates it on every PR and push, and a cold tsc
+takes 110-142 s alone on the 3-core arm64 runner (no swap, memory 57-76%
+free), past the 120 s per-check cap. A day-old incremental cache does not
+help: one edit to a widely imported file costs a 124 s recheck. The runner
+refuses the variable on any other OS (exit 2 with the next step), and
+`test/scripts/run-verify-parallel.test.ts` pins that only this workflow sets
+it.
+
 ## Full-corpus report states
 
 `coverage-full-report` in `.github/workflows/e2e.yml` first runs
@@ -59,4 +73,5 @@ does, so a push to master does not cancel the nightly full corpus.
 ## Changelog
 
 - 2026-10-05: created (green master wave, lane C): solo verify phase,
-  typecheck heap ceiling, full-corpus shard classification (#6040, #6056).
+  typecheck heap ceiling, full-corpus shard classification, macOS typecheck
+  skip (#6040, #6056).
