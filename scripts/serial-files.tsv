@@ -26,7 +26,6 @@ test/attendance-repair-cli.serial.test.ts	global-state	global-state: R3: constru
 test/audit-parser-probe.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/audit-slug-fallback.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/audit-synopsis.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
-test/audit/connection-audit.serial.test.ts	global-state	global-state: connection-audit.ts freezes its audit dir on the first connection event in a process (no reset), so any earlier Postgres-engine test in the same bun process redirects its writes
 test/auth-rescope-token.serial.test.ts	global-state	global-state: binds local servers/ports
 test/autopilot-cycle-connector.serial.test.ts	R2	R2: mock.module(../src/core/cycle.ts) replaces modules for every file in the process
 test/autopilot-fanout-clamp.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
@@ -234,6 +233,7 @@ test/migrate-quiet-replay.serial.test.ts	R1	R1: mutates process.env (GBRAIN_MIGR
 test/migration-in-process.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/migration-v0-29-1.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/migrations-fresh-install-audit.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
+test/minions-spend-authorization.serial.test.ts	R2	R2: mock.module replaces the enrich core for the enrich-handler exhaustion case
 test/minions/delegated-execution.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests
 test/model-config.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_MODEL, OPENAI_API_KEY)
 test/models-newer-hint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_MODEL)
@@ -297,6 +297,7 @@ test/seed-pglite.serial.test.ts	global-state	global-state: R3: constructs PGLite
 test/self-upgrade-checkonly.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/serve-http-mcp-dispatch-context.serial.test.ts	R2	R2: mock.module(../src/mcp/dispatch.ts) replaces modules for every file in the process
 test/serve-http-run-teardown.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/serve-http-status-mode.serial.test.ts	R1	R1: sets process.env.GBRAIN_HOME for the status marker reads; binds local servers/ports
 test/serve-idle-sweep-source.serial.test.ts	R2	R2: mock.module(../src/core/sweep.ts) replaces modules for every file in the process
 test/serve-source-guard.serial.test.ts	R1	R1: mutates process.env (GBRAIN_SOURCE)
 test/serve-status-mode.serial.test.ts	global-state	global-state: binds local servers/ports

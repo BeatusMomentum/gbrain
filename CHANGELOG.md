@@ -10,6 +10,127 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.61.0] - 2026-10-05
+
+**Background paid jobs ask before they spend and stay inside the amount the user approved, an agent on MCP gets the same setup tips a person at the terminal gets, every install gives the agent the same tool set, and a shared HTTP server that can't open its brain explains why instead of dying.**
+
+Paid background work had a hole. `gbrain enrich --background` put paid jobs in the queue before it asked anyone, and the dollar cap you approved for `book-mirror` was never enforced on the jobs it queued. Now both ask first, store the approval on every job they queue, and the worker stops a command's jobs at the total the user agreed to. An agent talking to gbrain over MCP never saw tips like "your search data is stale"; now they arrive next to the tool call they affect, at most two per session. Depending on how gbrain was installed, the agent got 7, about 30 or about 130 tools; every install path now registers the same middle set, and the agent can widen it in one call. And every refusal gbrain returns now names its own next step.
+
+### The numbers that matter
+
+| What we measured | Before | Now |
+| --- | --- | --- |
+| `enrich --background` queueing paid jobs before consent | always | never: exit 3 with the consent payload, nothing queued |
+| Queued `book-mirror` chapters held to the approved cap | 0 (cap never enforced) | every chapter, one shared total per command |
+| Refusal sites with no next step (scanner baseline) | 74 rows; about 210 sites counting funnel call sites | 0, zero-tolerance |
+| Tool sets registered by different install paths | 3 (verbs, full, bare) | 1 (`starter`) |
+| Agent tasks solved, `starter` surface (Opus 5.5, GPT-6.1 Sol, Sonnet 5.5, Fable 5.1; 10 tasks each) | n/a | 40/40, 7.9M tokens |
+| Same tasks on `full` | n/a | 40/40, 12.3M tokens (+55%) |
+| Same tasks on `verbs` | n/a | 37/40 |
+| A losing `serve --http` when another process holds the brain | exits | stays up on its port, recovers within 5 s of the brain opening |
+
+The surface eval is a ceiling result: every model scored 100% on both `starter` and `full`, so it shows `starter` loses nothing on these tasks while costing a third fewer tokens.
+
+### How to use it
+
+```bash
+gbrain enrich --background --max-usd 5           # approve the spend up front
+gbrain jobs list --group <spend-group> --json    # every job one command queued
+gbrain jobs cancel --group <spend-group>         # stop them together
+gbrain doctor --only legacy_job_authority --json # queued paid jobs and old workers
+curl -i http://127.0.0.1:<port>/health           # 503 + Retry-After while status-only
+gbrain config set mcp.allow_session_widen false  # forbid request_tools session widening
+```
+
+### Things to watch
+
+- Restart every worker after upgrading. Only upgraded workers claim jobs that carry a spend approval; an older worker stops at the first one in its queue.
+- `book-mirror` and `enrich` jobs queued before the upgrade run under a $5 cap. A chapter on an expensive model can stop; rerunning the command skips completed chapters.
+- New stdio registrations use `starter`. A skill that needs a tool outside it gets the `unknown_tool` hint whose fix is one `request_tools` call. Existing registrations keep their surface; OpenClaw's manifest is not pinned yet.
+- Container health checks that relied on `serve --http` exiting when its brain is unavailable need `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1`.
+
+## To take advantage of v0.60.61.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.60.61.0.md` the next time you interact with it.** Migration v205 adds the spend-approval columns to the job queue. Restart every worker, `gbrain serve` and autopilot so queued paid jobs are claimed under the new rules.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor --only legacy_job_authority,harness_wiring --json
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Behavior changes for scripts and agents
+
+| Area | Before | Now | What to change |
+| --- | --- | --- | --- |
+| `gbrain enrich --background` | queued jobs, then each job asked or ran | asks before queueing; without `--yes`, `--max-usd`, a preapproval or `spend.posture=tokenmax`, exit 3 with the consent payload and nothing queued; `--dry-run` needs none | relay the estimate, run `fix.argv` after the user agrees |
+| `gbrain jobs submit enrich\|subagent` | queued with no consent | same consent gate (exit 3 without authorization); the approval is stored on the job | as above |
+| Jobs queued by `book-mirror` and `enrich --background` | no stored approval; cap not enforced on queued jobs | every job carries the approval; all of a command's jobs share one approved total, enforced on every provider attempt | none |
+| A queued job whose group total is spent | ran on | dies with `derived_cap_exhausted` or `cost_cap_exceeded`; `result.spend_refusal` carries the group amounts and a rerun fix with twice the cap; when sibling jobs fill the group, it is delayed (no attempt burned) up to 6 times | read `result.spend_refusal`, ask the user before rerunning with a higher cap |
+| An unpriced model in a queued paid job | not checked | warns and runs under a derived or default cap; stops with `no_pricing` under a user cap | register the rate, or ask the user |
+| `book-mirror`/`enrich` jobs queued before this release | ran under the configured budget | run as `legacy_default` under $5 (enrich: its own `--max-usd` when set) | rerun the command if a chapter stops; completed chapters are skipped |
+| Workers older than this release | claimed every job | cannot claim spend-authorized jobs and stop at the first one in their queue | restart every worker after upgrading |
+| `gbrain jobs` | no group view | `jobs list --group <id>`, `jobs cancel --group <id>`; `jobs get --json` adds `spend_basis`, `spend_why`, `spend_group` | none |
+| `gbrain serve --http` whose brain is locked, missing, damaged or unconfigured | exited | stays up status-only: `/health` 503 with `Retry-After: 5`, `/mcp` lists only `gbrain_status`, OAuth/admin routes 503 `serve_status_only`, `reason` always `unavailable` over HTTP; opens the brain on the same port within 5 s of the fix | `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1` keeps the exit |
+| An HTTP client after status-only recovery | n/a | no `tools/list_changed` over HTTP; a client that connected during status mode gets 401 with `WWW-Authenticate` | re-list tools or reconnect; sign in again on 401 |
+| `gbrain serve --http` with a configured PGLite brain whose data dir is missing | created the brain | answers status-only `missing_brain` | run `gbrain init` or fix the config |
+| Doctor `harness_wiring` while a status-only HTTP server runs | "start `gbrain serve --http`" | `serve_status_only` (`transport: http`) with the reason's fix; stale `serve-http-status-<port>.json` markers are removed | follow `fix` |
+| Thin clients against a status-only host | generic error | code `serve_status_only` with the host-admin fix, from OAuth discovery or `/token` | relay the fix to the brain host's operator |
+| New stdio registrations (readiness fix, init quickstart, `bootstrap hooks` for Claude Code, Codex and opencode, plugins) | `verbs`, `full` or bare `serve` depending on the command | `--surface starter`; `bootstrap hooks` keeps a matching entry and a replaced entry keeps its pinned surface; `--surface` on `bootstrap hooks` and `init` picks another | none |
+| Stdio `serve` and `GBRAIN_SURFACE` | ignored on direct registrations | honoured (env > `--surface` > config > full); an invalid value is ignored with a stderr line and one `surface_env_invalid` notice; `serve --http` ignores it and says so; whoami, capabilities and `gbrain_status` report `surface` and `surface_source` | none |
+| `request_tools {surface}` on stdio | listed tools only | widens the current session (`tools/list_changed`, returns the new schemas, writes nothing); `mcp.allow_session_widen=false` turns it off; the `unknown_tool` hint's fix is that call (`next: run`) | call `fix.mcp` |
+| Stdio MCP sessions | no onboarding notices | onboarding coaching notices on calls whose results show the gap (`onboard_stale_chunks`, `onboard_link_coverage`, `onboard_timeline_coverage`, `onboard_no_takes`) and the first-run decisions bundle on the second successful call; HTTP gets neither | relay or mute them |
+| `mute_notice` over stdio | stored, never applied | applies; `first_run_decisions` can be muted; `gbrain notices unmute` clears owner and stdio mutes; `mute_notice` is on the starter surface and its `code` parameter lists no enum | none |
+| Refusals from source and writer administration, owner-delegated embed/extract/reindex/sync, repair, takes, capture, forget, shared skills, company-brain receipts, queued-job authorization, `book-mirror` publication and the write path | some carried only a message | a site-specific `suggestion` and, where a next step exists, a filled `fix`; `code` values are unchanged | follow `fix` |
+| `gbrain errors` | 14 codes returned on the wire were unregistered | `cache_quota_exceeded`, `catalog_capacity_exceeded`, `follow_approval_required`, `invalid_acknowledgment`, `invalid_receipt`, `invalid_receipt_transition`, `membership_inactive`, `membership_not_found`, `receipt_conflict`, `receipt_fence_changed`, `receipt_fence_required`, `receipt_identity_mismatch`, `skill_unavailable`, `stale_unavailable` are in the registry | none |
+
+Rolling the binary back leaves queued spend-authorized jobs unclaimable; cancel them first with `gbrain jobs cancel --group <id>`.
+
+### Itemized changes
+
+#### Spend approval on queued paid jobs
+
+- `enrich --background` runs the consent gate before it queues anything, single- and multi-source, with the estimate over all sources; the exit-3 fix carries `--yes --max-usd <derived>` (`src/commands/enrich.ts`, `test/enrich-background-consent.test.ts`).
+- Migration v205 adds the spend columns and group index to `minion_jobs`. `src/core/minions/spend-record.ts` holds the stored record (effects, cap, cap source, producer argv) with a strict parser; `src/core/minions/spend-authorization.ts` (`runWithJobSpend`) runs both handler seams (worker and child executor) inside `withAIInvocationGuard`, nested in delegated spend.
+- `src/core/minions/budget-meter.ts` gains `reserveGroup`: a `group:<id>` key with a lifetime window, a typed `GroupBudgetRefusal` (exhausted or pressure), reservations capped at remaining headroom, and holds past their deadline counted as spent. The OAuth-client daily path is unchanged.
+- Claims stamp the fence token and `legacy_default` on pre-upgrade `book-mirror`/`enrich` rows; a trigger fences spend-authorized rows from older workers; children advertise `spend-enforcement-v1` and a parent never hands an authorized row to a child without it.
+- `book-mirror` queues one group per run; `jobs submit enrich|subagent` asks for consent; each producer prints a submit summary. Doctor `legacy_job_authority` reports the queued-spend census and warns on long-waiting authorized rows while a registered worker is alive.
+
+#### MCP onboarding and one registration surface
+
+- `src/core/onboard/mcp-onboarding.ts` emits onboarding coaching on stdio calls whose results show the gap, under the coaching budget and mute rules, and stays silent on an empty brain; the first-run decisions bundle arrives on the second successful call. Init's nudge counting is shared and byte-identical.
+- `src/core/mcp-registration.ts` builds every stdio registration gbrain writes with `REGISTRATION_SURFACE = starter`; readiness, init, `bootstrap hooks` and the plugin generator use it. Stdio `serve` resolves its surface from `GBRAIN_SURFACE`, `--surface`, config, then full, and reports the source. `request_tools {surface}` widens a stdio session; `hidden-tool-hint.ts` points at it.
+- Stdio `mute_notice` reads its own store in dispatch, so mutes apply. New notice codes: `onboard_stale_chunks`, `onboard_link_coverage`, `onboard_timeline_coverage`, `onboard_no_takes`, `first_run_decisions_muted`, `surface_env_invalid`. New config key `mcp.allow_session_widen` (default true).
+- The starter surface eval cell (Cat 40 loop, 10 tasks x 4 models x 3 surfaces) is preregistered and recorded in gbrain-evals.
+
+#### Status-only `serve --http`
+
+- `src/commands/serve-http-status.ts` serves the status-only app on the normal listener; `runStatusModeServe` and `reprobe` are shared with stdio, the re-probe is single-flight every 5 s, and recovery swaps the request handler on the same socket. A per-port marker (`src/core/serve-http-status-marker.ts`) feeds doctor, readiness and `mcp expose`.
+- `src/core/engine-connect.ts` (`connectEngineForServe`) is the throw-only host connect, including the graduation connect gate; `src/cli.ts` wraps it with the CLI exits and shrinks by 25 lines.
+- `src/core/mcp-client.ts` and `src/core/remote-mcp-probe.ts` render the 503 `serve_status_only` envelopes.
+
+#### Refusals name their next step
+
+- Every `opError`/`OperationError`/funnel site carries a site-specific suggestion; `invalid`, `fail`, `deny`, `usage` and `conflict` funnels require one per call site. `scripts/agent-contract-baselines/suggestionless-operation-error.tsv` is deleted, so `suggestionless-operation-error` is zero-tolerance.
+- `scripts/check-agent-contract.ts` adds `defaulted-suggestion` (a defaulted or optional suggestion parameter on a function that builds an error) and `generic-suggestion` (whole-text boilerplate such as "see --help"), both with zero hits and guard self-test fixtures.
+
+### For contributors
+
+- The plan and review record live in `docs/designs/AGENT_OPERATOR_FOLLOWUP_WAVE.md`.
+- `test/mcp-schema-budget.test.ts` caps the starter `tools/list` JSON at 26,450 characters (26,402 measured with `mute_notice` on starter); the model-visible list stays under 25,000.
+- Size ceilings moved with rationale in `scripts/module-size-limits.tsv`: `src/cli.ts` down to 3,184; `worker.ts`, `jobs.ts`, `queue.ts`, `init.ts`, `config.ts`, `serve-http.ts` up by the lines this release adds.
+
 ## [0.60.60.0] - 2026-10-05
 
 **Ask your brain a question that chains relationships, like "who founded the companies Alice invested in?", and search now walks those links step by step and returns the founders with the path that connects them.**

@@ -836,7 +836,7 @@ CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
 -- Use-attributed retrieval feedback (src/core/feedback/): answers record the
 -- pages (with the retrieved revision's content_hash) and relational-path edges
 -- they used; ratings move per-element weights (neutral 0.5) that the search
--- ranking stage reads. No query text is stored. Mirrors migration v205.
+-- ranking stage reads. No query text is stored. Mirrors migration v206.
 CREATE TABLE IF NOT EXISTS retrieval_events (
   id          TEXT PRIMARY KEY,
   client_id   TEXT NOT NULL DEFAULT 'local',
@@ -1675,6 +1675,9 @@ BEGIN
   ELSIF NEW.status = 'active' AND (OLD.status <> 'active' OR NEW.lock_token IS DISTINCT FROM OLD.lock_token) THEN
     IF NEW.submission_authority IS NULL OR NEW.claim_generation IS DISTINCT FROM OLD.claim_generation + 1 THEN
       RAISE EXCEPTION 'Minion queue protocol 1 required: old workers cannot claim upgraded queue jobs';
+    END IF;
+    IF NEW.spend_authorization IS NOT NULL AND NEW.spend_claim_token IS DISTINCT FROM NEW.claim_generation THEN
+      RAISE EXCEPTION 'Minion spend protocol 1 required: only upgraded workers can claim spend-authorized jobs; restart workers on the upgraded binary';
     END IF;
   ELSIF NEW.claim_generation IS DISTINCT FROM OLD.claim_generation THEN
     RAISE EXCEPTION 'Minion queue claim generation may advance only with a claim';

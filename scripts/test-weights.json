@@ -128,6 +128,7 @@
   "test/audit/audit-writer.test.ts": 5,
   "test/audit/batch-retry-audit.test.ts": 6,
   "test/audit/batch-retry-redaction.test.ts": 2,
+  "test/audit/connection-audit.test.ts": 13,
   "test/audit/content-sanity-audit.test.ts": 3,
   "test/audit/lock-renewal-audit.test.ts": 5,
   "test/audit/pool-recovery-audit.test.ts": 17,

@@ -3033,10 +3033,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "retrieval_feedback",
+        "name": "minion_spend_authorization",
         "sql": {
-          "length": 2490,
-          "sha256": "d1e3de98a671e85253ee73b0e67ccf297ba16c663832560c20f88788c1c43600"
+          "length": 2517,
+          "sha256": "2cbd58159c902a81c6364652154e2b09995714dfbd380d035eb3bdfc889c002b"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -46,7 +46,8 @@ function pickPort(): number {
 
 async function spawnServer(): Promise<ServeProc> {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-admin-embed-'));
-  mkdirSync(join(home, '.gbrain'), { recursive: true });
+  // serve never creates a configured PGLite brain that is missing (status-only `missing_brain`); the data dir exists, empty.
+  mkdirSync(join(home, '.gbrain', 'brain.pglite'), { recursive: true });
   writeFileSync(
     join(home, '.gbrain', 'config.json'),
     JSON.stringify({

@@ -1,5 +1,5 @@
 /**
- * test/audit/connection-audit.serial.test.ts — src/core/connection-audit.ts
+ * test/audit/connection-audit.test.ts — src/core/connection-audit.ts
  * (the ddl/bulk pool acquire/release/error JSONL trail).
  *
  * SERIAL (own bun process), for two reasons:
@@ -243,6 +243,21 @@ describe('connection-audit — setAuditEnabled', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]!.caller).toBe('enabled.write');
     });
+  });
+});
+
+describe('connection-audit — audit dir follows GBRAIN_HOME', () => {
+  test('a write after one under another home lands in the current home', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'gbrain-connaudit-other-'));
+    await withEnv({ GBRAIN_HOME: other }, async () => {
+      logConnectionEvent({ pool: 'ddl', op: 'acquire', caller: 'home.other' });
+    });
+    const now = new Date();
+    await withEnv(env, async () => {
+      logConnectionEvent({ pool: 'ddl', op: 'acquire', caller: 'home.current' });
+    });
+    expect(readLines(fileFor(now)).some(e => e.caller === 'home.current')).toBe(true);
+    expect(readLines(join(other, '.gbrain', 'audit', computeIsoWeekFilename('connection-events', now))).map(e => e.caller)).toEqual(['home.other']);
   });
 });
 
