@@ -850,9 +850,8 @@ by the engines and by `migrate.ts`, so an import back up is an ESM cycle that
 can fail with a temporal-dead-zone error at module load. Take the executor as a
 parameter and import types from `src/core/engine.ts`; migration helpers live in
 `schema-migrations/helpers.ts` and the `Migration` type in
-`schema-migrations/types.ts`. Persistence is the write commit path, which never
-calls a generative model: it embeds through `src/core/embedding.ts` and queues
-derived model work as effects or jobs. Fixtures:
+`schema-migrations/types.ts`. Persistence, the write commit path, never calls a
+generative model: it embeds via `src/core/embedding.ts` and queues model work. Fixtures:
 `test/fixtures/guards/check-layering.ts/`; forms are driven in
 `test/scripts/layering.test.ts`.
 
@@ -862,10 +861,10 @@ derived model work as effects or jobs. Fixtures:
 `bun run verify`) fails when a file under `src/` or `scripts/` outside
 `scripts/ai-sdk-importers.allowlist` imports a provider SDK (`ai`, `@ai-sdk/*`,
 `@anthropic-ai/sdk`, `openai`) as a runtime value, in any import form.
-Type-only imports pass. An allowlist line whose file no longer imports an SDK
-fails, so the list only shrinks. Every model call then routes through
-`invokeAI` (`src/core/ai/invocation-guard.ts`), which admission guards, the
-write-inference tests and `GBRAIN_AI_CALL_LOG` observe. Fixtures:
+Type-only imports pass. A stale allowlist line fails, so the list only
+shrinks. Every model call routes through `invokeAI`
+(`src/core/ai/invocation-guard.ts`), which the write-inference tests and
+`GBRAIN_AI_CALL_LOG` observe. Fixtures:
 `test/fixtures/guards/check-ai-sdk-importers.ts/`; forms are driven in
 `test/scripts/ai-sdk-importers.test.ts`.
 
@@ -874,21 +873,15 @@ write-inference tests and `GBRAIN_AI_CALL_LOG` observe. Fixtures:
 Every mutating operation has a write-inference class
 (`src/core/ops/write-inference.ts`: inline `writeInference`, else
 `OP_WRITE_INFERENCE`, else `none`). `test/write-path-zero-llm.serial.test.ts`
-runs each covered write surface (MCP `put_page` local and remote, `capture`,
-`edit_page`, links, tags, timeline, takes, `remember`, `forget`, delete/restore,
-`importFromContent`) on PGLite with chat and embedding keys configured and
-asserts zero generative model calls before commit, keyword-queryability at
-commit, zero generative calls after commit with `facts.extraction_enabled`
-false, and, with it true, that every generative call is attributed to facts
-extraction for the originating write request. It prints the zero-generative
-operations that have no runtime case. `test/write-path-no-egress.serial.test.ts`
-runs real CLI writes (`put`, `remember`, `link`, `timeline-add`, `import`, a
-git-source `sync`) on a keyless brain with `HTTP(S)_PROXY` pointed at a local
-recorder and asserts zero connections; its first case proves the recorder sees
-a child process that does reach for the network. Helper:
-`test/helpers/ai-tripwire.ts` (records every model call and blocks outbound
-fetches; tests assert on the records, since best-effort catch blocks would
-swallow a throw).
+runs each covered write surface on PGLite with chat and embedding keys set and
+asserts no generative call before commit, keyword-queryability at commit, none
+after commit with `facts.extraction_enabled` false, and, with it true, that
+every generative call is attributed to facts extraction for the originating
+request. It prints zero-generative operations that lack a runtime case.
+`test/write-path-no-egress.serial.test.ts` runs real CLI writes on a keyless
+brain behind a recording `HTTP(S)_PROXY` and asserts zero connections (its
+first case proves the recorder works). Helper: `test/helpers/ai-tripwire.ts`
+records model calls and blocks outbound fetches; tests assert on the records.
 
 #### Durable-flush guard
 
