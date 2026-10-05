@@ -497,7 +497,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 108/108 public tables",
+          "message": "RLS enabled on 110/110 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -509,7 +509,7 @@
         },
         {
           "category": "meta",
-          "message": "917 column(s) verified against live schema",
+          "message": "907 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1657,21 +1657,6 @@
           "status": "ok"
         },
         {
-          "category": "brain",
-          "details": {
-            "bad_config": [],
-            "chars_limit": 4000,
-            "chars_used": 0,
-            "compiled": [],
-            "docs": "docs/guides/core-memory.md",
-            "enabled": true,
-            "pages": 0
-          },
-          "message": "No core pages. Start one with gbrain core init, then fill it in with the user.",
-          "name": "core_memory",
-          "status": "ok"
-        },
-        {
           "category": "ops",
           "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
           "name": "search_mode",
@@ -1940,13 +1925,13 @@
         },
         {
           "category": "meta",
-          "message": "Active pack gbrain-base-v2@1.2.0+6c7be06e is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.3.0+a50a67b9 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "0 distinct typed values (pack declares 19)",
+          "message": "0 distinct typed values (pack declares 20)",
           "name": "type_proliferation",
           "status": "ok"
         },

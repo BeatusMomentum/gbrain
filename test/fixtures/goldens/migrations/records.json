@@ -3046,10 +3046,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "core_edit_notices",
+        "name": "entity_mention_index",
         "sql": {
-          "length": 721,
-          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
+          "length": 2442,
+          "sha256": "c76f74797f3bcc52158c7d8be80ab16bbbd2820d1732203aeaa796f4fec339b6"
         },
         "sqlFor": "absent",
         "transaction": "absent",

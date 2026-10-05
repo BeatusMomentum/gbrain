@@ -42,7 +42,7 @@ notice). User guide: [core memory](../../guides/core-memory.md).
 - `src/core/remember-batch.ts`: `remember` with `items[]` (all-or-none
   validation, deterministic child request ids, per-item status).
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
-  (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v206.
+  (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v207.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,
   `test/core-cli.test.ts`, `test/compile-context-core.serial.test.ts`,
   `test/context-pressure.test.ts`, `test/remember-batch.test.ts`,

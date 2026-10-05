@@ -206,7 +206,8 @@ import { v202 } from './v202-legacy-token-grant-conversion.ts';
 import { v203 } from './v203-oauth-client-grant-axes.ts';
 import { v204 } from './v204-links-temporal-state.ts';
 import { v205 } from './v205-minion-spend-authorization.ts';
-import { v206 } from './v206-core-edit-notices.ts';
+import { v206 } from './v206-entity-mention-index.ts';
+import { v207 } from './v207-core-edit-notices.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -412,4 +413,5 @@ export const MIGRATIONS: Migration[] = [
   v204,
   v205,
   v206,
+  v207,
 ];

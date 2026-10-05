@@ -63,6 +63,29 @@ describe('F1 generated instructions', () => {
     expect(GBRAIN_MCP_INSTRUCTIONS).toContain('call `volunteer_context` when the conversation shifts topic');
   });
 
+  test('entity recall brief: on every surface serving entity; get_backlinks named only where callable', () => {
+    const brief = 'For a brief on an account, person or company, call `entity`, then walk `referenced_by`';
+    for (const surface of SURFACES) {
+      const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
+      const text = buildMcpInstructions({ tools: { callable: n => listed.has(n) } });
+      expect({ surface, brief: text.includes(brief) }).toEqual({ surface, brief: listed.has('entity') });
+      expect({ surface, backlinks: text.includes('or `get_backlinks` by type.') }).toEqual({ surface, backlinks: listed.has('entity') && listed.has('get_backlinks') });
+      expect(text).not.toContain('appear under several names');
+    }
+    const noEntity = buildMcpInstructions({ tools: { callable: n => n !== 'entity' } });
+    expect(noEntity).not.toContain(brief);
+    expect(noEntity).toContain('People and companies appear under several names');
+  });
+
+  test('recorded tail-free instruction sizes per surface', () => {
+    const recorded = { verbs: 2_243, starter: 4_546, full: 4_607 };
+    for (const surface of SURFACES) {
+      const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
+      const size = buildMcpInstructions({ tools: { callable: n => listed.has(n) } }).length;
+      expect({ surface, fits: size <= recorded[surface] }).toEqual({ surface, fits: true });
+    }
+  });
+
   test('readiness tail: top two gaps only, never a by-choice state; budget holds', () => {
     const e = (capability: ReadinessEntry['capability'], state: ReadinessEntry['state'], why: string): ReadinessEntry =>
       ({ capability, state, reason: 'x', why, tier: 'config', http_visible: true });

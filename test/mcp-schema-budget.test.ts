@@ -28,6 +28,12 @@
  * the rows the merge raised are the annotation bytes (+22 to +36) plus the
  * F10 template text that brought sub-60-character descriptions up to
  * purpose + next step + scope, and query's key-dependence sentence.
+ * Entity recall: entity +140 (referenced_by, backlink_count scope, the
+ * previews-are-not-evidence rule) and get_backlinks +250 (type, group, limit,
+ * cursor) are paid by equal budget cuts: query -150 and search -90 (shorter
+ * descriptions and parameter text; every pinned phrase kept), recall -50,
+ * remember -40, get_page -30, list_pages -30 (slack). Served starter list
+ * after: 24,324 model-visible characters, 5,471 tokens, 25,959 JSON characters.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -54,11 +60,11 @@ const PARAM_DESCRIPTION_HARD_CAP = 200;
  */
 const TOOL_BUDGETS: Record<string, number> = {
   add_timeline_entry: 640, cancel_job: 270, cancel_write_request: 350, capture: 1250, context_pack: 760,
-  delete_skill: 810, delta: 830, edit_page: 1090, entity: 460, find_anomalies: 520, forget: 560, get_agent_job: 270,
-  get_backlinks: 550, get_ingest_log: 280, get_page: 930, get_recent_salience: 660, get_skill: 910,
+  delete_skill: 810, delta: 830, edit_page: 1090, entity: 470, find_anomalies: 520, forget: 560, get_agent_job: 270,
+  get_backlinks: 770, get_ingest_log: 280, get_page: 930, get_recent_salience: 660, get_skill: 910,
   get_skill_asset: 790, get_write_request: 330, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
-  list_link_sources: 220, list_pages: 1090, list_skills: 670, list_write_requests: 450, put_page: 1320,
-  mute_notice: 460, put_skill: 1420, query: 3250, recall: 1590, remember: 1500, request_tools: 560, resolve_slugs: 410, search: 1760,
+  list_link_sources: 220, list_pages: 1060, list_skills: 670, list_write_requests: 450, put_page: 1320,
+  mute_notice: 460, put_skill: 1420, query: 3100, recall: 1540, remember: 1500, request_tools: 560, resolve_slugs: 410, search: 1670,
   submit_agent: 750, sync_brain_skills: 770, synthesize: 550, traverse_graph: 810, whoami: 230,
 };
 
