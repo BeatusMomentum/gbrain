@@ -344,6 +344,14 @@ export interface Recipe {
   tier: 'native' | 'openai-compat';
   /** Maps to the gateway's implementation switch. */
   implementation: Implementation;
+  /**
+   * How the provider bills. `subscription`: calls draw on a flat-rate plan
+   * (claude-cli), so the operator may price every model of the provider at
+   * once with a `<provider>:*` key in `pricing.overrides`. Unset means per
+   * token, where a provider wildcard is refused (one rate cannot be right
+   * for every model of a per-token API).
+   */
+  billing?: 'subscription';
   /** For openai-compatible tier: default base URL. May be overridden by env or wizard. */
   base_url_default?: string;
   /** Env var name(s) for auth; first is required, rest are optional. */

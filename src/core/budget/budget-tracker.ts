@@ -41,6 +41,7 @@ import { EMBEDDING_PRICING } from '../embedding-pricing.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 import {
   canonicalPricingKey,
+  isAllowedPricingOverrideKey,
   reservationCostUsd,
   usageCostUsd,
   type BudgetKind,
@@ -129,7 +130,9 @@ export interface BudgetTrackerOpts {
  * Parse the raw `pricing.overrides` config value (JSON string or object) into
  * a normalized PricingOverrides map. Invalid entries are DROPPED (the model
  * stays unpriced → the TX2 fail-closed contract still applies to it); a
- * wholly-unparseable value yields undefined. Never throws.
+ * provider wildcard on a per-token provider and a bare `*` are invalid keys
+ * (isAllowedPricingOverrideKey). A wholly-unparseable value yields undefined.
+ * Never throws.
  */
 export function parsePricingOverrides(raw: unknown): PricingOverrides | undefined {
   let value: unknown = raw;
@@ -148,7 +151,7 @@ export function parsePricingOverrides(raw: unknown): PricingOverrides | undefine
   const out: PricingOverrides = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     const key = k.trim().toLowerCase();
-    if (!key) continue;
+    if (!isAllowedPricingOverrideKey(key)) continue;
     if (isRate(v)) {
       out[key] = { input: v, output: v };
       continue;
