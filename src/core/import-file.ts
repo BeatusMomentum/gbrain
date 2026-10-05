@@ -1485,7 +1485,7 @@ export async function importCodeFile(
       await tx.deleteChunks(slug, txOpts);
     }
     await tx.executeRaw('UPDATE pages SET chunker_version = $1 WHERE source_id = $2 AND slug = $3',
-      [hasProtectedBody(storageContent) ? -1 : MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
+      [MARKDOWN_CHUNKER_VERSION, txOpts.sourceId, slug]);
     await sealPageTextProjection(tx, slug, txOpts.sourceId);
     if (opts.prepare) await installCodeChunkEdges(tx, slug, txOpts.sourceId, code);
   };

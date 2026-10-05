@@ -20,15 +20,6 @@ export function protectedBodyFilter(alias: string): string {
 }
 
 /** A body-only write cannot certify old fragments, even after fence removal. */
-/**
- * A code page whose body carries a facts/takes fence marker. The code chunker
- * keeps source text verbatim, so such a page is never sealed safe: remote
- * reads withhold it, and re-seal, repair and doctor leave it alone.
- */
-export function protectedCodeFilter(alias: string): string {
-  return `(${alias}.page_kind = 'code' AND ${protectedBodyFilter(alias)})`;
-}
-
 export function bodyWriteChunkVersion(compiledTruth: string, timeline: string): string {
   return `CASE WHEN pages.compiled_truth IS NOT DISTINCT FROM ${compiledTruth}
     AND pages.timeline IS NOT DISTINCT FROM ${timeline} THEN pages.chunker_version
