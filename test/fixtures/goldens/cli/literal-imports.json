@@ -71,9 +71,6 @@
       "extract-conversation-facts": [
         "./commands/extract-conversation-facts.ts"
       ],
-      "fact-keys": [
-        "./commands/fact-keys.ts"
-      ],
       "features": [
         "./commands/features.ts"
       ],

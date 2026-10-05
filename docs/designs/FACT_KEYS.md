@@ -1,16 +1,19 @@
 # Fact keys in chunk embeddings — design note
 
-Status: **built behind `search.fact_keys` (default off until the held-out
-verdict).** Revision 4 of this note passed three engineering review rounds
-(approve with changes, folded in). The "As built" section records where the
-code is simpler than the reviewed text; where they differ, it wins. This note
-covers obligations 1–9 from the preregistered plan
+Status: **killed by the preregistered gate (2026-10-05); no product code
+ships.** Fact keys under `balanced` did not beat `tokenmax` synopses on the
+LoCoMo development conversations, which the gate requires, and did not beat
+`balanced` there either. The full build described below (migration v209
+`page_fact_keys` + `content_chunks.fact_keys`, publication, retirement,
+withdrawal discovery, `gbrain fact-keys`, doctor `retrieval_enrichment`) is
+preserved in branch history at `5024ec99f4f591227d12b39b38e304d3255de2c5`.
+Results and the decision record:
+[`docs/eval/TIME_AWARE_RETRIEVAL_RESULTS.md`](../eval/TIME_AWARE_RETRIEVAL_RESULTS.md),
+[`docs/eval/decisions/p6-fact-keys/`](../eval/decisions/p6-fact-keys/).
+This note covers obligations 1–9 from the preregistered plan
 ([`docs/eval/TIME_AWARE_RETRIEVAL_PREREG.md`](../eval/TIME_AWARE_RETRIEVAL_PREREG.md)).
-Development results are in
-[`docs/eval/TIME_AWARE_RETRIEVAL_RESULTS.md`](../eval/TIME_AWARE_RETRIEVAL_RESULTS.md).
-File references are relative to `src/core/` on master.
 
-## As built
+## As built (at `5024ec99f`, not shipped)
 
 - **Only `title`-mode pages are keyed.** Keys exist only in the title-tier
   embedding input (the `balanced` default). Pages in `none` or

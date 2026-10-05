@@ -152,7 +152,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
   // D3: post-connect records whose handler answers --help before the engine; run through the table.
-  advisor: true, anomalies: true, feedback: true, 'fact-keys': true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
+  advisor: true, anomalies: true, feedback: true, backfill: true, 'book-mirror': true, 'edges-backfill': true, embed: true, features: true,
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true,
 };
@@ -3036,7 +3036,6 @@ TOOLS
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
-  fact-keys <status|refresh|clear>   facts merged into chunk embeddings (search.fact_keys)
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
                                      See also: autopilot --install (continuous daemon).

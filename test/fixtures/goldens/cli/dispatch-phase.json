@@ -793,13 +793,6 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
-      "fact-keys": {
-        "hasSwitchCase": true,
-        "phase": "post-connect",
-        "preConnectRules": [],
-        "thinClient": "refuse",
-        "thinClientRoutedSubcommands": []
-      },
       "facts": {
         "hasSwitchCase": false,
         "phase": "pre-connect-own-engine",

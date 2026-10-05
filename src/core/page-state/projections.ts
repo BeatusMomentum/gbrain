@@ -13,7 +13,6 @@ import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { belowSafeChunkFence } from '../search/safe-chunks.ts';
-import { retireStaleFactKeys } from '../facts/fact-keys-retire.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, isContextualMode, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 
@@ -175,7 +174,6 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });
     if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
-      await retireStaleFactKeys(tx, sourceId, slug);
       await tx.executeRaw(`UPDATE pages SET chunker_version=$3
         WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
       await sealPageTextProjection(tx, slug, sourceId, current!);
@@ -215,12 +213,6 @@ export async function installPageEmbeddings(engine: BrainEngine, prepared: Proje
     // so resolving again could send these vectors to a different model's column.
     const column = context.column;
     const tier = built?.tier ?? plainEmbeddingTier(current.page.contextual_retrieval_mode);
-    // v209: a title-tier vector is current only when it was built from the
-    // stored fact keys (the chunk's own when the caller carried them, else the
-    // prepared row the caller embedded from).
-    const preparedKeys = new Map(prepared.chunks.map(chunk => [chunk.chunk_index, chunk.fact_keys ?? null]));
-    if (tier === 'title' && chunks.some(chunk => (chunk.embedding || chunk.embedding_image)
-      && (chunk.fact_keys !== undefined ? chunk.fact_keys ?? null : preparedKeys.get(chunk.chunk_index) ?? null) !== (byIndex.get(chunk.chunk_index)!.fact_keys ?? null))) return false;
     const provenance = embeddingInputContext(context, current.page.title,
       built?.corpusGeneration !== undefined ? built.corpusGeneration : context.corpusGeneration, stored);
     // This is deliberately UPDATE-only: a late embed can never replace text,

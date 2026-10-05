@@ -97,7 +97,6 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('op_checkpoints', 'operational', 'Resumable operation checkpoints.'),
     carry('open_loops', 'user_data', 'Open loops and their status.'),
     carry('page_aliases', 'user_data', 'Page aliases.'),
-    carry('page_fact_keys', 'user_data', 'Fact-key occurrence rows: paid extraction output per page revision; the carried vectors were built from them, so withdrawal must still find them.'),
     carry('page_generation_clock', 'operational', 'Page generation clock (derived side table, verified equal).'),
     carry('page_mention_state', 'operational', 'Entity mention index: per-page mention watermark; without it every page is due for a rescan.'),
     carry('page_projection_jobs', 'operational', 'Pending page projection work (derived side table, verified equal).'),

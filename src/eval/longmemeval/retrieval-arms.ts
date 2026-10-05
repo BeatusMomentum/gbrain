@@ -8,10 +8,7 @@
  * the benchmark's published user-turn fact prompt; `production` — gbrain's
  * own facts extractor, 8,000-char input as shipped), merged into the
  * embedding input of that session's chunks (src/core/fact-keys.ts), and the
- * chunks are re-embedded in place. `pipeline` runs the shipping path instead:
- * `search.fact_keys on`, then the facts backstop on each imported page, which
- * extracts and publishes keys exactly as a page write does
- * (src/core/facts/fact-keys-publish.ts); its extractions are not cached. `chunk_text` is untouched, so retrieval
+ * chunks are re-embedded in place. `chunk_text` is untouched, so retrieval
  * still returns the raw session. Extractions are cached on disk by
  * content hash so arms and reruns never pay twice.
  *
@@ -41,7 +38,7 @@ import type { DayRange } from '../../core/temporal-grammar.ts';
 import { resolveModel } from '../../core/model-config.ts';
 import { rawSessionId, scoreRecall, type SlugToRawMap } from './metrics.ts';
 
-export type FactExtractor = 'paper' | 'production' | 'pipeline';
+export type FactExtractor = 'paper' | 'production';
 
 const FACT_EXTRACT_CONCURRENCY = 8;
 
@@ -172,7 +169,6 @@ export async function applyFactKeyArm(
   arm: FactKeyArm,
   spend: FactKeySpend,
 ): Promise<FactKeyArmResult> {
-  if (arm.extractor === 'pipeline') return applyPipelineFactKeys(engine, pages, arm, spend);
   const col = await resolveActiveEmbeddingColumnFromEngine(engine);
   const column = quoteIdentifier(col.name);
   const cast = vectorCastSuffix(col);
@@ -265,11 +261,10 @@ export const LME_RETRIEVAL_ARM_FLAGS: Array<{ name: string; arg?: string; help: 
       'input of its chunks (chunk = each fact on its best-matching chunk; page =',
       'all facts on every chunk) and re-embed. Retrieval still returns raw sessions.'],
     apply: (o, v) => { if (v !== 'chunk' && v !== 'page') throw new Error(`--fact-keys must be chunk|page (got: ${v})`); o.arms.factKeys = v; } },
-  { name: '--fact-extractor', arg: 'paper|production|pipeline', help: [
+  { name: '--fact-extractor', arg: 'paper|production', help: [
       'Fact source for --fact-keys: paper = the benchmark\'s published user-turn',
-      'fact prompt; production = gbrain\'s facts extractor as shipped (default: paper);',
-      'pipeline = the shipping path (search.fact_keys on, facts backstop per page; chunk only).'],
-    apply: (o, v) => { if (v !== 'paper' && v !== 'production' && v !== 'pipeline') throw new Error(`--fact-extractor must be paper|production|pipeline (got: ${v})`); o.arms.factExtractor = v; } },
+      'fact prompt; production = gbrain\'s facts extractor as shipped (default: paper).'],
+    apply: (o, v) => { if (v !== 'paper' && v !== 'production') throw new Error(`--fact-extractor must be paper|production (got: ${v})`); o.arms.factExtractor = v; } },
   { name: '--fact-keys-model', arg: 'MODEL', help: ['Extraction model for --fact-keys (default: the utility tier, haiku).'],
     apply: (o, v) => { o.arms.factKeysModel = v; } },
   { name: '--fact-keys-max-usd', arg: 'N', help: ['Spend cap for uncached fact extraction (default 20). Cached extractions are free.'],
@@ -294,38 +289,10 @@ export function armPins(o: RetrievalArmOptions): { retrieval_arms?: Record<strin
 
 export async function resolveFactKeyArm(o: RetrievalArmOptions, client: ThinkLLMClient): Promise<{ arm: FactKeyArm; spend: FactKeySpend } | null> {
   if (!o.factKeys) return null;
-  if (o.factExtractor === 'pipeline' && o.factKeys !== 'chunk') throw new Error('--fact-extractor pipeline ships chunk assignment only; use --fact-keys chunk');
-  const model = o.factExtractor !== 'paper' && !o.factKeysModel
+  const model = o.factExtractor === 'production' && !o.factKeysModel
     ? await resolveModel(null, { configKey: 'facts.extraction_model', tier: 'reasoning', fallback: 'anthropic:claude-sonnet-4-6' })
     : await resolveModel(null, { cliFlag: o.factKeysModel, tier: 'utility', fallback: 'haiku' });
   return { arm: { assignment: o.factKeys, extractor: o.factExtractor, model, client, maxUsd: o.factKeysMaxUsd }, spend: new FactKeySpend(o.factKeysMaxUsd) };
-}
-
-/**
- * The shipping configuration: facts extraction on page write publishes the
- * keys. Facts default to world visibility here, the single-principal posture
- * a bootstrapped brain uses, so a user's own conversations can key their pages.
- */
-async function applyPipelineFactKeys(engine: BrainEngine, pages: ReadonlyArray<{ slug: string }>, arm: FactKeyArm,
-  spend: FactKeySpend): Promise<FactKeyArmResult> {
-  const { runFactsBackstop } = await import('../../core/facts/backstop.ts');
-  await engine.setConfig('search.fact_keys', 'on');
-  await engine.setConfig('facts.default_visibility', 'world');
-  const queue = [...pages];
-  await Promise.all(Array.from({ length: Math.min(FACT_EXTRACT_CONCURRENCY, queue.length) }, async () => {
-    for (let next = queue.shift(); next; next = queue.shift()) {
-      const page = await engine.getPage(next.slug);
-      if (!page) continue;
-      spend.calls++;
-      await runFactsBackstop({ slug: page.slug, type: page.type, compiled_truth: page.compiled_truth, frontmatter: (page.frontmatter ?? {}) as Record<string, unknown> },
-        { engine, sourceId: 'default', sessionId: null, source: 'mcp:put_page', mode: 'inline', notabilityFilter: 'all', model: arm.model });
-    }
-  }));
-  const [row] = await engine.executeRaw<{ pages: number; chunks: number; items: number }>(`SELECT
-    (SELECT count(DISTINCT page_id) FROM content_chunks WHERE fact_keys IS NOT NULL)::int AS pages,
-    (SELECT count(*) FROM content_chunks WHERE fact_keys IS NOT NULL)::int AS chunks,
-    (SELECT count(*) FROM page_fact_keys)::int AS items`);
-  return { pages_keyed: Number(row.pages), chunks_keyed: Number(row.chunks), items: Number(row.items) };
 }
 
 /** Row fields for a time-scope run: the decision, plus the unscoped top-k's recall from the same pool. */

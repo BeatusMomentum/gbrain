@@ -128,9 +128,6 @@
       "open_loops.open_loops_status_check": "c CHECK ((status = ANY (ARRAY['open'::text, 'done'::text, 'dropped'::text, 'stale'::text])))",
       "page_aliases.page_aliases_pkey": "p PRIMARY KEY (id)",
       "page_aliases.page_aliases_uniq": "u UNIQUE (source_id, alias_norm, slug)",
-      "page_fact_keys.page_fact_keys_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
-      "page_fact_keys.page_fact_keys_pkey": "p PRIMARY KEY (page_id, page_revision, ordinal)",
-      "page_fact_keys.page_fact_keys_visibility_check": "c CHECK ((visibility = ANY (ARRAY['private'::text, 'world'::text])))",
       "page_generation_clock.page_generation_clock_id_check": "c CHECK ((id = 1))",
       "page_generation_clock.page_generation_clock_pkey": "p PRIMARY KEY (id)",
       "page_projection_jobs.page_projection_jobs_pkey": "p PRIMARY KEY (source_incarnation, slug)",
@@ -429,9 +426,6 @@
       "page_aliases": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
-      "page_fact_keys": [
-        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-      ],
       "page_generation_clock": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -719,8 +713,6 @@
       "page_aliases_pkey": "CREATE UNIQUE INDEX page_aliases_pkey ON public.page_aliases USING btree (id)",
       "page_aliases_slug_idx": "CREATE INDEX page_aliases_slug_idx ON public.page_aliases USING btree (source_id, slug)",
       "page_aliases_uniq": "CREATE UNIQUE INDEX page_aliases_uniq ON public.page_aliases USING btree (source_id, alias_norm, slug)",
-      "page_fact_keys_pkey": "CREATE UNIQUE INDEX page_fact_keys_pkey ON public.page_fact_keys USING btree (page_id, page_revision, ordinal)",
-      "page_fact_keys_withdrawal_idx": "CREATE INDEX page_fact_keys_withdrawal_idx ON public.page_fact_keys USING btree (source_id, item_fingerprint, visibility, subject)",
       "page_generation_clock_pkey": "CREATE UNIQUE INDEX page_generation_clock_pkey ON public.page_generation_clock USING btree (id)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
       "page_versions_pkey": "CREATE UNIQUE INDEX page_versions_pkey ON public.page_versions USING btree (id)",
@@ -972,16 +964,15 @@
           "9 embedded_at timestamp with time zone/timestamptz NULL",
           "10 embedded_text_hash text/text NULL",
           "11 embedding_input_hash text/text NULL",
-          "12 fact_keys text/text NULL",
-          "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "14 language text/text NULL",
-          "15 symbol_name text/text NULL",
-          "16 symbol_type text/text NULL",
-          "17 start_line integer/int4 NULL",
-          "18 end_line integer/int4 NULL",
-          "19 modality text/text NOT NULL DEFAULT 'text'::text",
-          "20 embedding_image USER-DEFINED/vector NULL",
-          "21 embedding_multimodal USER-DEFINED/vector NULL"
+          "12 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "13 language text/text NULL",
+          "14 symbol_name text/text NULL",
+          "15 symbol_type text/text NULL",
+          "16 start_line integer/int4 NULL",
+          "17 end_line integer/int4 NULL",
+          "18 modality text/text NOT NULL DEFAULT 'text'::text",
+          "19 embedding_image USER-DEFINED/vector NULL",
+          "20 embedding_multimodal USER-DEFINED/vector NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -1626,20 +1617,6 @@
           "3 alias_norm text/text NOT NULL",
           "4 slug text/text NOT NULL",
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
-        ],
-        "flags": "relkind=r rls=false force_rls=false"
-      },
-      "page_fact_keys": {
-        "columns": [
-          "1 page_id integer/int4 NOT NULL",
-          "2 source_id text/text NOT NULL",
-          "3 page_revision text/text NOT NULL",
-          "4 ordinal integer/int4 NOT NULL",
-          "5 item_text text/text NOT NULL",
-          "6 item_fingerprint text/text NOT NULL",
-          "7 subject text/text NOT NULL",
-          "8 visibility text/text NOT NULL",
-          "9 extractor_version text/text NOT NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

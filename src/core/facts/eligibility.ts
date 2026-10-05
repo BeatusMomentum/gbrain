@@ -44,7 +44,7 @@ export type EligibilityResult = { ok: true } | { ok: false; reason: string };
  * legacy default) still extracts because the directory tells us it's
  * conversation-shape.
  */
-export const RESCUE_SLUG_PREFIXES = ['meetings/', 'personal/', 'daily/'] as const;
+const RESCUE_SLUG_PREFIXES = ['meetings/', 'personal/', 'daily/'] as const;
 
 // v0.41.22 (T21, codex F-ELIGIBLE finding): UNION of gbrain-base's hardcoded
 // types AND gbrain-base-v2's canonical extractable types. Pre-rebase plan
@@ -71,7 +71,7 @@ export const RESCUE_SLUG_PREFIXES = ['meetings/', 'personal/', 'daily/'] as cons
 // Pack-aware async lookup via extractableTypesFromPack(pack) deferred to
 // v0.43+ once an async eligibility-check signature is feasible across all
 // call sites (operations.ts + import-file.ts + others).
-export const ELIGIBLE_TYPES: PageType[] = [
+const ELIGIBLE_TYPES: PageType[] = [
   // gbrain-base (legacy) types
   'note', 'meeting', 'slack', 'email', 'calendar-event', 'source', 'writing',
   // gbrain-base-v2 canonical types declared extractable in the pack
@@ -79,7 +79,7 @@ export const ELIGIBLE_TYPES: PageType[] = [
   'media', 'tweet', 'analysis',
 ];
 
-export const MIN_BODY_CHARS = 80;
+const MIN_BODY_CHARS = 80;
 
 export function isFactsBackstopEligible(
   slug: string,
@@ -99,12 +99,4 @@ export function isFactsBackstopEligible(
   if (!typeOk && !slugOk) return { ok: false, reason: `kind:${parsed.type}` };
 
   return { ok: true };
-}
-
-/** The same predicate over a `pages` row alias, for counting eligible pages in SQL. */
-export function factsBackstopEligibleSql(p: string): string {
-  const quote = (v: string) => `'${v.replace(/'/g, "''")}'`;
-  return `(${p}.slug NOT LIKE 'wiki/agents/%' AND COALESCE(${p}.frontmatter->>'dream_generated','') <> 'true'
-    AND length(btrim(${p}.compiled_truth)) >= ${MIN_BODY_CHARS}
-    AND (${p}.type IN (${ELIGIBLE_TYPES.map(quote).join(',')}) OR ${RESCUE_SLUG_PREFIXES.map(prefix => `${p}.slug LIKE ${quote(prefix + '%')}`).join(' OR ')}))`;
 }

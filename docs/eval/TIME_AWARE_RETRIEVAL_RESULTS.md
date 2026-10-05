@@ -49,7 +49,14 @@ inside the parsed range, and 39 of 135 gold sessions fall outside it (for
 example "last Saturday" questions whose evidence spans several Saturdays, or
 preference questions about "this weekend" whose evidence predates it).
 
-### Fact keys
+### Fact keys — killed by the `tokenmax` gate
+
+Fact keys win on LongMemEval-M but lose the preregistered gate on LoCoMo:
+under `balanced` they do not beat `tokenmax` synopses, and on LoCoMo they do
+not beat `balanced` either. No product code ships
+([decision record](decisions/p6-fact-keys/); the full build stays in branch
+history at `5024ec99f`).
+
 
 | Arm | Benchmark | Strict R@5 | NDCG@5 Δ (95% CI) | Wins / losses (NDCG) |
 |---|---|---:|---:|---:|
@@ -81,6 +88,32 @@ session's chunks look alike and pushes gold sessions down. The published
 prompt extracts 404 facts per question against 174 for gbrain's extractor,
 which reads the first 8,000 characters of a page and keeps notable facts.
 
+**The gate, on LoCoMo development conversations** (conv-44, conv-47, conv-48;
+464 questions without the adversarial category; strict recall_all@5 over
+sessions, `--reranker on --autocut off`, paired bootstrap over questions, 10,000
+draws). A = `balanced`; B = `balanced` + chunk keys from gbrain's extractor
+(Haiku 4.5); C = `tokenmax` with production per-chunk synopses (Haiku 4.5):
+
+| Comparison | Strict R@5 | Δ (95% CI) | Wins / losses | NDCG@5 Δ (95% CI) |
+|---|---:|---:|---:|---:|
+| B vs C (the gate) | 86.4% vs 87.5% | −1.1 pts [−2.4, 0.0] | 1 / 6 | −0.009 [−0.020, +0.001] |
+| B vs A | 86.4% vs 86.0% | +0.4 pts [−0.7, +1.7] | 5 / 3 | +0.001 [−0.005, +0.007] |
+| C vs A | 87.5% vs 86.0% | +1.5 pts [+0.2, +2.8] | 8 / 1 | +0.010 [+0.001, +0.020] |
+
+By category (strict R@5, A / B / C): single-hop 256 / 255 / 259 of 263,
+multi-hop 31 / 36 / 35 of 71, temporal 92 / 92 / 92 of 100, open-domain
+20 / 18 / 20 of 30. Keys help only multi-hop questions, where synopses gain
+the same. The bootstrap resamples questions and ignores clustering within
+three conversations, so the intervals are optimistic. Development spend:
+$45 of synopses plus about $6 of extraction, embedding and reranking.
+
+Side by side: fact keys add +3.2 points over `balanced` on LongMemEval-M
+(500-session haystacks) and nothing on LoCoMo (one conversation per
+haystack), where `tokenmax` adds +1.5. The M comparison against `tokenmax`
+was not run because of cost (preregistration amendment 2).
+
+Follow-up, untested: fact keys stacked on `tokenmax`, against `tokenmax` alone.
+
 ### Notes-first reading — no gain, removed
 
 Same build with the date frame on, notes on vs off
@@ -99,9 +132,10 @@ structured answer with citations and gaps.
 
 ## Deviations
 
-- The preregistered comparison against the `tokenmax` contextual-synopsis
-  bundle was not run: the benchmark harness does not generate per-chunk
-  synopses at import, so `--mode tokenmax` measured the same embeddings as
-  `balanced`.
+- The `tokenmax` comparison moved from LongMemEval-M to LoCoMo
+  (preregistration amendment 2): production per-chunk synopses for M project
+  to about $4,280. The harness now builds production synopses for
+  `--mode tokenmax`; LoCoMo converts to the LongMemEval format with
+  `scripts/locomo-to-longmemeval.ts`.
 - The reading-arm think lane passed each question's date as the reference
   date through a local harness change pending in gbrain-evals.

@@ -58,7 +58,6 @@ import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { resolveImportContextualMode } from './import-contextual-mode.ts';
 import { runGuardrails } from './guardrails.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
-import { retireStaleFactKeys } from './facts/fact-keys-retire.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -906,7 +905,6 @@ export async function importFromContent(
     // above admitted carry over; a new seal otherwise inherits nothing from an
     // older index, whose contextual vector may have included a private sibling.
     await tx.deleteChunks(slug, txOpts);
-    await retireStaleFactKeys(tx, txOpts.sourceId, slug);
     if (chunks.length > 0) {
       const embeddingColumn = await stampEmbeddingInputs(tx, chunks, null,
         { title: parsed.title, tier: effectiveCRMode === 'title' ? 'title' : 'none', corpusGeneration });
@@ -1668,7 +1666,6 @@ async function applyImportTransaction(tx: BrainEngine, spec: ImportTransactionSp
   }
   if (spec.chunks !== undefined) {
     await tx.deleteChunks(spec.slug, txOpts);
-    await retireStaleFactKeys(tx, spec.sourceId ?? 'default', spec.slug);
     if (spec.chunks.length > 0) {
       await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
     } else {

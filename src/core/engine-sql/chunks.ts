@@ -157,7 +157,7 @@ export async function upsertChunksOnce(
     // #4246: embedded_text_hash records md5(chunk_text) AT EMBED TIME so a
     // later text rewrite that keeps the vector is detectable as content
     // drift (invalidateContentDriftEmbeddings). NULL when no embedding lands.
-    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, fact_keys, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
+    const cols = `(page_id, chunk_index, chunk_text, chunk_source, ${writeColId}, model, token_count, embedded_at, embedded_text_hash, embedding_input_hash, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)`;
     let resolvedModel: string | null = null;
     try {
       // Keep the gateway lazy so module-load failure remains inside this soft
@@ -193,7 +193,6 @@ export async function upsertChunksOnce(
         token_count: chunk.token_count || null,
         // #5553: embedding-input provenance travels only with the vector it describes.
         embedding_input_hash: embedding ? chunk.embedding_input_hash ?? null : null,
-        fact_keys: chunk.fact_keys ?? null,
         language: chunk.language || null,
         symbol_name: chunk.symbol_name || null,
         symbol_type: chunk.symbol_type || null,
@@ -245,16 +244,16 @@ export async function upsertChunksOnce(
        SELECT ${pageId}::int, c.chunk_index, c.chunk_text, c.chunk_source, c.embedding${trustedSql(writeCast)}, c.model, c.token_count,
          CASE WHEN c.embedding IS NULL THEN NULL ELSE now() END,
          CASE WHEN c.embedding IS NULL THEN NULL ELSE md5(c.chunk_text) END,
-         c.embedding_input_hash, c.fact_keys, c.language, c.symbol_name, c.symbol_type, c.start_line, c.end_line,
+         c.embedding_input_hash, c.language, c.symbol_name, c.symbol_type, c.start_line, c.end_line,
          c.parent_symbol_path, c.doc_comment, c.symbol_name_qualified, c.modality, c.embedding_image::vector
        FROM jsonb_to_recordset(${JSON.stringify(incoming)}::text::jsonb) AS c(chunk_index int, chunk_text text, chunk_source text,
-         embedding text, model text, token_count int, embedding_input_hash text, fact_keys text, language text, symbol_name text, symbol_type text,
+         embedding text, model text, token_count int, embedding_input_hash text, language text, symbol_name text, symbol_type text,
          start_line int, end_line int, parent_symbol_path text[], doc_comment text, symbol_name_qualified text, modality text, embedding_image text)
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
          ${col} = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text OR EXCLUDED.fact_keys IS DISTINCT FROM content_chunks.fact_keys THEN EXCLUDED.${col}
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.${col}
            WHEN content_chunks.${col} IS NULL THEN EXCLUDED.${col}
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
@@ -262,7 +261,7 @@ export async function upsertChunksOnce(
            ELSE content_chunks.${col}
          END,
          model = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text OR EXCLUDED.fact_keys IS DISTINCT FROM content_chunks.fact_keys THEN EXCLUDED.model
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.model
            WHEN content_chunks.${col} IS NULL THEN EXCLUDED.model
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
@@ -271,7 +270,7 @@ export async function upsertChunksOnce(
          END,
          token_count = EXCLUDED.token_count,
          embedded_at = CASE
-           WHEN (EXCLUDED.chunk_text != content_chunks.chunk_text OR EXCLUDED.fact_keys IS DISTINCT FROM content_chunks.fact_keys) AND EXCLUDED.${col} IS NULL THEN NULL
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.${col} IS NULL THEN NULL
            WHEN content_chunks.${col} IS NULL AND EXCLUDED.${col} IS NOT NULL THEN EXCLUDED.embedded_at
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
@@ -279,7 +278,7 @@ export async function upsertChunksOnce(
            ELSE content_chunks.embedded_at
          END,
          embedded_text_hash = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text OR EXCLUDED.fact_keys IS DISTINCT FROM content_chunks.fact_keys THEN EXCLUDED.embedded_text_hash
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedded_text_hash
            WHEN content_chunks.${col} IS NULL THEN EXCLUDED.embedded_text_hash
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
@@ -287,7 +286,7 @@ export async function upsertChunksOnce(
            ELSE content_chunks.embedded_text_hash
          END,
          embedding_input_hash = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text OR EXCLUDED.fact_keys IS DISTINCT FROM content_chunks.fact_keys THEN EXCLUDED.embedding_input_hash
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash
            WHEN content_chunks.${col} IS NULL THEN EXCLUDED.embedding_input_hash
            WHEN EXCLUDED.embedded_at IS NOT NULL
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
@@ -302,7 +301,6 @@ export async function upsertChunksOnce(
          parent_symbol_path = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.parent_symbol_path ELSE COALESCE(EXCLUDED.parent_symbol_path, content_chunks.parent_symbol_path) END,
          doc_comment = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.doc_comment ELSE COALESCE(EXCLUDED.doc_comment, content_chunks.doc_comment) END,
          symbol_name_qualified = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name_qualified ELSE COALESCE(EXCLUDED.symbol_name_qualified, content_chunks.symbol_name_qualified) END,
-         fact_keys = EXCLUDED.fact_keys,
          modality = EXCLUDED.modality,
          embedding_image = COALESCE(EXCLUDED.embedding_image, content_chunks.embedding_image)`);
     await exec.query(text, params);
@@ -334,7 +332,7 @@ export async function getChunks(
         SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                cc.model, cc.token_count, cc.embedded_at, cc.language,
                cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
-               cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality, cc.fact_keys,
+               cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality,
                (cc.${colId} IS NULL) AS embedding_is_null
                ${embedCol}
         FROM content_chunks cc
