@@ -97,7 +97,7 @@ async function phaseBBackfill(
 
   try {
     // Inline run on both engines for v0.28.0 simplicity. Larger brains can run
-    // `gbrain extract takes --rebuild` later; the migration's job is to get
+    // `gbrain takes rebuild <slug>` later; the migration's job is to get
     // the table populated for upgrade-time doctor checks.
     const { extractTakes } = await import('../../core/cycle/extract-takes.ts');
     const result = await extractTakes(engine, { source: 'db' });
@@ -162,7 +162,7 @@ function phaseCRechunkTodo(opts: OrchestratorOpts): OrchestratorPhaseResult {
       ts: new Date().toISOString(),
       skill: 'skills/migrations/v0.28.0.md',
       reason: 'Pages with pre-v0.28 chunks still contain fenced takes content. Re-chunk so the new chunker strip rule is applied (Codex P0 #3 fix).',
-      command: "gbrain extract takes --rebuild  # forces re-chunk via reimport pipeline; see migration doc for the precise sweep command in your env",
+      command: 'gbrain reindex --markdown  # re-chunks pages below the current chunker version',
       _key: key,
     };
     appendFileSync(pendingHostWorkPath(), JSON.stringify(entry) + '\n');

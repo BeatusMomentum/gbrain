@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203079,
-    "stdoutSha256": "3f2a347db6f4a41890023a83565e4a811e9fb1127b881fad419a24f3365f3d21",
+    "stdoutBytes": 204379,
+    "stdoutSha256": "0a92173c7d03c33fa0d630a5aefacdfc0209b52802129b7b75a761c424aa0bfc",
     "toolNames": [
       "remember",
       "entity",
@@ -102,6 +102,7 @@
       "takes_update",
       "takes_resolve",
       "takes_supersede",
+      "takes_remove",
       "whoami",
       "sources_add",
       "sources_list",
@@ -4197,6 +4198,46 @@
             "slug",
             "row_num",
             "claim"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Remove one take row from a page's takes fence and the takes table together (#5167). Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). CLI: `gbrain takes remove <slug> --row N`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "takes_remove",
+        "parameters": {
+          "local_dir": "string?",
+          "request_id": "string?",
+          "row_num": "number",
+          "slug": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "local_dir": {
+              "description": "Trusted CLI directory hint; must equal the registered source root.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "UUID; retry with it on timeout.",
+              "type": "string"
+            },
+            "row_num": {
+              "description": "Take row number to remove (from takes_list).",
+              "type": "number"
+            },
+            "slug": {
+              "description": "Page slug.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "row_num"
           ],
           "type": "object"
         },
