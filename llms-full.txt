@@ -2841,8 +2841,15 @@ scaffold the bundled skills into it:
 
 ```bash
 cd /path/to/agent/workspace
-gbrain skillpack scaffold --all       # copy the 50+ bundled skills + RESOLVER.md
+gbrain skillpack scaffold --all       # copy the 50+ bundled skills and their shared files
 ```
+
+Scaffold copies each bundled skill plus the shared files the skills depend on
+(`skills/conventions/` and the `skills/_*` files `openclaw.plugin.json` lists
+under `shared_deps`). It does not copy `skills/RESOLVER.md` and leaves your
+workspace's own `RESOLVER.md` / `AGENTS.md` untouched: the skill dispatcher stays
+the bundled `skills/RESOLVER.md`, which a paragraph further down this step tells
+you to read.
 
 Scaffolded skills are first-class files in your repo. Edit freely; re-running scaffold
 refuses to overwrite anything that exists. Use `gbrain skillpack reference <name>` to
@@ -2899,8 +2906,8 @@ even on failure; read the output). Restart opencode afterwards — it reads
 config at session start. Verified against opencode v1.18.18. Full reference:
 [docs/mcp/OPENCODE.md](docs/mcp/OPENCODE.md).
 
-Whether you scaffolded or not, read `skills/RESOLVER.md` (in your workspace, or
-[the published copy](https://github.com/garrytan/gbrain/blob/master/skills/RESOLVER.md)). It's
+Whether you scaffolded or not, read `skills/RESOLVER.md` (the bundled copy in your
+gbrain install, or [the published copy](https://github.com/garrytan/gbrain/blob/master/skills/RESOLVER.md)). It's
 the skill dispatcher — tells you which skill to read for any task. Save this to your
 memory permanently.
 
@@ -10006,6 +10013,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | `schema_pack_consistency`, `schema_pack_source_drift` | the pages or config query, or a source's active schema pack | `gbrain schema lint --with-db` runs the same classification locally; `gbrain schema active` debugs pack resolution |
 
 `bootstrap_push_health` and `gbrain bootstrap status` report only the push record of the workspace named by this machine's bootstrap receipt; another workspace's stale or failed push is listed as such (a warn naming that workspace), never as this workspace's state. `reranker_health` auth warnings are audit-log history (`details.live_probe_performed: false`), not a live check of the key. These warns can appear while every other check reads green; each one names a check that did not run.
+
+<a id="git-convergence"></a>**`gbrain doctor` warns or fails `git_convergence`, or `bootstrap_push_health` warns that a workspace is ahead?** A Git checkout the brain syncs from (a source's `local_path` or `sync.repo_path`) has commits its upstream does not have, or uncommitted changes, so the system of record on the remote is behind the brain (#5063). Commits not on the upstream warn after 6 hours and fail after 24; uncommitted changes older than 6 hours warn. Doctor compares with the local `@{u}` ref and never fetches, so it is only as fresh as the last fetch; checkouts without an upstream and connector sources are skipped. Commit and push the checkout (`gbrain sources push --path <root>` for a bootstrap workspace, `git push` otherwise). `bootstrap_push_health` no longer reports `ok` on a recent successful push while the workspace still has commits not on origin.
 
 **`brain_score` shows a low "timeline density (entity and event pages)"?** The 15-point timeline component grades only linkable pages whose type's active-pack primitive is `entity` or `temporal` (people, companies, meetings, emails, events…); reference documents such as notes, writing and guides have no events and are not graded, so do not stamp "page created" rows onto them. Types the pack does not declare are still graded. Raise the score by giving those entity and event pages real timeline entries (`gbrain extract timeline`).
 

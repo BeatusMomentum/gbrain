@@ -764,6 +764,10 @@ const GBRAIN_ENV_TEMPLATE = `# gbrain daemon environment — sourced by autopilo
 # export OPENAI_API_KEY=sk-...
 # export VOYAGE_API_KEY=pa-...
 #
+# Keep a key off disk: this file is bash, so a command substitution runs at
+# every daemon start and the value is never written here, e.g.
+# export VOYAGE_API_KEY="$(op read 'op://Private/Voyage/credential')"
+#
 # Process-level env that must exist before the daemon boots:
 # export NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem
 # export HTTPS_PROXY=http://proxy:3128
@@ -942,7 +946,8 @@ async function installDaemon(engine: BrainEngine, args: string[]) {
   console.log(
     `API keys: the daemon sources ${join(gbrainHomePath(), 'env')} (plain KEY=value lines, ` +
     `auto-exported) in addition to your shell profile. If LLM phases report no provider, put ` +
-    'ANTHROPIC_API_KEY=... (or your provider\'s key) there and re-run `gbrain autopilot --install`.',
+    'ANTHROPIC_API_KEY=... (or your provider\'s key) there and re-run `gbrain autopilot --install`. ' +
+    'To keep the key off disk, the file is bash: KEY="$(your-secret-manager get KEY)" runs at each daemon start.',
   );
   // A fresh install clears any prior self-disable AND any leaked pause, so a
   // reinstall does not report "disabled" forever or park itself from day one
