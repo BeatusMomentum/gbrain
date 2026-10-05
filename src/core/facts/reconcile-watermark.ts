@@ -3,7 +3,7 @@
  *
  * `page_facts_reconcile` records, per page, the `knowledge_revision` the
  * extract_facts phase last reconciled completely, plus the outcome of the
- * latest attempt. It is a side table on purpose: any `UPDATE pages` fires the
+ * latest attempt. It is a side table on purpose: any update to `pages` fires the
  * statement-level generation-clock trigger and the page row triggers, so
  * stamping a watermark on `pages` would churn every reconcile.
  *

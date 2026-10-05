@@ -28,6 +28,11 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { chat as gatewayChat, isAvailable, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
+// #2163: concept pages route through importFromContent (the same
+// parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
+// so they land in the retrieval surface (content_chunks + embeddings) where
+// source-boost's 1.3× 'concepts/' weighting can actually reach them.
+import { importFromContent } from '../import-file.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
 import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
@@ -452,7 +457,9 @@ export async function runPhaseSynthesizeConcepts(
         }
         // #4416: target the cycle's resolved source, not the 'default' literal.
         baseline = await publishClassicConcept(engine, conceptSlug, opts.sourceId ?? 'default', synthesized(pageVisibility), narrative,
-          baseline, { noEmbed: !isAvailable('embedding'), writeThrough: conceptFiles !== null });
+          baseline, { writeThrough: conceptFiles !== null, importPage: (markdown) => importFromContent(engine, conceptSlug, markdown, {
+            noEmbed: !isAvailable('embedding'), sourceId: opts.sourceId,
+          }) });
       };
       // A publication that lost a revision race or would lose canonical
       // material is recorded and skipped; any other error stops the phase.

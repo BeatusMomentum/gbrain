@@ -17,7 +17,6 @@ import { withCoordinatedWrite } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { acquirePageLock } from '../page-lock.ts';
-import { importFromContent } from '../import-file.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { writeDerivedPageThrough } from './derived-write-through.ts';
 
@@ -173,11 +172,13 @@ async function conceptFile(engine: BrainEngine, slug: string, sourceId: string):
  * frontmatter, so a take or fact appended during synthesis survives. The
  * page's file is rewritten when it already has one (a stale file would
  * otherwise be synced back over the new narrative) or when
- * `cycle.synthesize_concepts.write_through` is on (#5041). Returns the
- * narrative now on the page (the next call's baseline).
+ * `cycle.synthesize_concepts.write_through` is on (#5041). `importPage`
+ * writes the composed markdown to the database. Returns the narrative now on
+ * the page (the next call's baseline).
  */
 export async function publishClassicConcept(engine: BrainEngine, slug: string, sourceId: string,
-  synthesized: Record<string, unknown>, narrative: string, baseline: string, opts: { noEmbed: boolean; writeThrough: boolean }): Promise<string> {
+  synthesized: Record<string, unknown>, narrative: string, baseline: string,
+  opts: { writeThrough: boolean; importPage: (markdown: string) => Promise<unknown> }): Promise<string> {
   const lock = await acquirePageLock(slug, { timeoutMs: 5_000 });
   if (!lock) throw Object.assign(new Error('The concept page is locked by another writer.'), { code: 'revision_conflict' });
   try {
@@ -192,7 +193,7 @@ export async function publishClassicConcept(engine: BrainEngine, slug: string, s
     const markdown = page
       ? composeConceptRepublication({ ...page, ...file }, snapshot!.tags, synthesized, narrative)
       : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
-    await importFromContent(engine, slug, markdown, { noEmbed: opts.noEmbed, sourceId });
+    await opts.importPage(markdown);
     if (file || opts.writeThrough) await writeDerivedPageThrough(engine, slug, sourceId);
     return narrative;
   } finally {
