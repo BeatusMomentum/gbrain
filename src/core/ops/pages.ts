@@ -25,7 +25,7 @@ import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from 
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
-import { invalidParam } from './op-fix.ts';
+import { invalidParam, readFix } from './op-fix.ts';
 import {
   assertExplicitSourceLive,
   enforceSubagentSlugFence,
@@ -308,7 +308,7 @@ const put_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    pageMutationSource(ctx, p, 'put_page');
+    const sourceId = pageMutationSource(ctx, p, 'put_page');
     if (ctx.dryRun) {
       if (typeof p.slug === 'string') {
         validatePageSlug(p.slug);
@@ -317,10 +317,47 @@ const put_page: Operation = {
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }
-    return submitPageMutation(ctx, { operation: 'put_page', params: p });
+    try {
+      return await submitPageMutation(ctx, { operation: 'put_page', params: p });
+    } catch (error) {
+      if (error instanceof OperationError && error.code === 'revision_conflict') await nameRevisionSource(ctx, sourceId, p, error);
+      throw error;
+    }
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
+
+/**
+ * A put_page refused as revision_conflict whose expected_revision is the
+ * current revision of the same slug in another source was almost certainly
+ * read there and written back without its source_id. The refusal then names
+ * that source, and its fix re-reads the page there. Only a source and page
+ * the caller may read are named (grant and page visibility, as get_page
+ * applies them); otherwise the refusal is left exactly as it was.
+ */
+async function nameRevisionSource(ctx: OperationContext, writeSource: string, p: Record<string, unknown>, error: OperationError): Promise<void> {
+  if (typeof p.slug !== 'string' || typeof p.expected_revision !== 'string') return;
+  const slug = p.slug.toLowerCase();
+  const expected = p.expected_revision.toLowerCase();
+  try {
+    const candidates = await ctx.engine.executeRaw<{ source_id: string }>(
+      `SELECT p.source_id FROM pages p JOIN sources s ON s.id = p.source_id
+        WHERE p.slug = $1 AND p.source_id <> $2 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE ORDER BY p.source_id`, [slug, writeSource]);
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    for (const { source_id: other } of candidates) {
+      try { federatedSearchScope(ctx, other); } catch { continue; }
+      const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId: other, excludePrivate });
+      if (!snapshot || snapshot.revision !== expected || (excludePrivate && isPrivatePage(snapshot.page))) continue;
+      error.suggestion = `Page ${slug} is at exactly this expected_revision in source ${other}, so it was probably read there; this write went to source ${writeSource}. `
+        + `Re-read it with source_id ${other}; a write to that page must carry source_id ${other} and the revision get_page returns.`;
+      error.fix = readFix(`Reads page ${slug} from source ${other}, where its revision matches the one this write sent.`,
+        { argv: ['gbrain', 'get', '--source', other, '--', slug], mcp: { tool: 'get_page', arguments: { slug, source_id: other, include_content: true } } });
+      return;
+    }
+  } catch {
+    // The hint is advisory: a failed lookup leaves the refusal unchanged.
+  }
+}
 
 // v0.31.2: isFactsBackstopEligible moved to src/core/facts/eligibility.ts
 // so sync.ts, file_upload, code_import, and runFactsBackstop all share one
