@@ -109,7 +109,10 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
         break;
       case '--sources': out.sources = csvOrNone(value); break;
       case '--takes-holders': out.takesHolders = csvOrNone(value); break;
-      case '--operations': out.operations = csvOrNone(value); break;
+      case '--operations':
+        if (value === 'all') throw new GrantError('invalid_grant', '--operations all applies to OAuth clients; to give a token every operation again, use --reset-default operations');
+        out.operations = csvOrNone(value);
+        break;
       case '--add': out.add = csvOrNone(value); break;
       case '--scopes':
         out.scopes = csvOrNone(value.replaceAll(' ', ','));
