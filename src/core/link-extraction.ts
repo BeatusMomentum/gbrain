@@ -1175,6 +1175,11 @@ function excerpt(s: string, idx: number, width: number): string {
 //   - Possessive time: "his time at", "her time at", "their time at", "my time at".
 //   - Role noun forms: "role at", "tenure as", "stint as", "position at".
 //   - Promoted/staff-engineer forms: "promoted to (staff|senior|principal) engineer at".
+const EMPLOYMENT_ROLE = String.raw`(?:(?:senior|staff|principal|lead|junior|associate|founding|chief|executive|managing|general|deputy|interim|acting) )*(?:software engineer|engineer|developer|designer|programmer|architect|scientist|researcher|analyst|product manager|engineering manager|program manager|project manager|manager|director|officer|counsel|marketer|recruiter|strategist|editor|producer|accountant|controller|specialist|coordinator|administrator|technician|intern|president|chief of staff|cto|ceo|coo|cfo|cmo|cro|cpo|vp|svp|evp|vice president of [a-z]+|head of [a-z]+(?: [a-z]+)?|(?:product|design|engineering|tech|team|growth|sales|marketing|data|research) lead)`;
+const EMPLOYMENT_AREA = String.raw`(?:engineering|product|design|sales|marketing|growth|operations|ops|finance|people|hr|recruiting|platform|infrastructure|infra|data|security|research|partnerships|business development|customer success|support|legal|strategy|the [a-z]+ team)`;
+// Ordinary job titles and functions: "senior designer at [X]", "led engineering at [X]", "joined [X] as CTO",
+// "moved to [X] as head of sales". Board, advisory, investor and observer roles are not in these lists.
+const ROLE_AT_RE = new RegExp(String.raw`\b(?:${EMPLOYMENT_ROLE} at|(?:led|leads|leading|ran|runs|running|managed|manages|managing|headed|heads|heading|oversaw|oversees|overseeing|owned|owns) ${EMPLOYMENT_AREA} at|(?:re-?joined|joined|joins|moved (?:over )?to|moves to|switched to|returned to|came back to|went to|hired (?:by|at|on at)|signed on (?:with|at))\b[^.\n]{0,80}?\bas (?:an? |the |its |their )?${EMPLOYMENT_ROLE})\b`, 'i');
 const WORKS_AT_RE = /\b(?:joined\b[^.\n]{0,80}?\bas (?:an? |the )?(?:senior |staff |principal |lead |founding |chief )?(?:engineer|developer|designer|product manager|engineering manager|manager|director|head of [a-z]+|scientist|researcher|analyst|employee|operator|cto|ceo|coo|cfo|cmo|vp)|CEO of|CTO of|COO of|CFO of|CMO of|CRO of|VP at|VP of|VPs? Engineering|VPs? Product|works at|worked at|working at|employed by|employed at|joined as|joined the team|engineer at|engineer for|director at|director of|head of|heads up .{0,20} at|leads engineering|leads product|leads the .{0,20} (?:team|org) at|manages engineering at|manages product at|running (?:engineering|product|design) at|currently at|previously at|previously worked at|spent .* (?:years|months) at|stint at|stint as|tenure at|tenure as|role at|position at|(?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security) engineer at|promoted to (?:senior|staff|principal|lead) .{0,20} at|(?:his|her|their|my) time at)\b/i;
 
 // Investment context. Order patterns from most-specific to least to keep
@@ -1202,7 +1207,7 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 //     narratives where the direct "advises" verb isn't used.
 //   - Advisor-qualified: "strategic advisor to|at", "technical advisor to|at",
 //     "security advisor to|at", "product advisor to|at", "industry advisor".
-const ADVISES_RE = /\b(?:advises|advised|advising|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
+const ADVISES_RE = /\b(?:advises|advised|(?:started|began|begun|now|currently|is|was|been) advising|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
 // Chinese link type patterns for CJK entity mentions.
 // NOTE: These patterns are Chinese-only (zh). Japanese and Korean link
@@ -1243,7 +1248,7 @@ const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|fro
 const BOARD_RE = /\b(?:board (?:member|director|role|position) (?:of|at|for|with)|(?:join(?:s|ed|ing)?|serves? on|sits? on|named to|appointed to|elected to|seats? on) (?:the )?boards? (?:of|at)|board of directors (?:of|at)|(?:non-executive|independent) director (?:of|at)|chair(?:man|woman|person)? of the board (?:of|at)|as an? (?:board member|board director|independent director|non-executive director))\b/i;
 const BOARD_AFTER_RE = /(?:'s|’s) (?:advisory )?board\b/i;
 const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [FOUNDED_RE, 'founded'], [INVESTED_RE, 'invested_in'], [ADVISES_RE, 'advises'], [BOARD_RE, 'board'], [BOARD_AFTER_RE, 'board'], [WORKS_AT_RE, 'works_at'],
+  [FOUNDED_RE, 'founded'], [INVESTED_RE, 'invested_in'], [ADVISES_RE, 'advises'], [BOARD_RE, 'board'], [BOARD_AFTER_RE, 'board'], [WORKS_AT_RE, 'works_at'], [ROLE_AT_RE, 'works_at'],
   [ZH_FOUNDED_RE, 'founded'], [ZH_INVESTED_RE, 'invested_in'], [ZH_ADVISES_RE, 'advises'], [ZH_WORKS_AT_RE, 'works_at'], [ZH_CITED_RE, 'cited'],
 ];
 

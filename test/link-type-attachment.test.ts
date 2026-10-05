@@ -80,3 +80,25 @@ describe('advisory, board, investor and observer roles are never employment', ()
     expect(await typeOf('Joined the board of [Acme](companies/acme-example)', 'Alice is a general partner at a venture fund.')).toEqual(['invested_in']);
   });
 });
+
+describe('ordinary job roles type works_at (must not regress against master)', () => {
+  const types = async (body: string) => {
+    const r = await extractPageLinks('people/alice-example', `Alice.\n\n${body}`, {}, 'person', { resolve: async () => null } as SlugResolver, {});
+    return r.candidates.map(c => `${c.targetSlug.split('/')[1]}:${c.linkType}`);
+  };
+  const A = '[Acme](companies/acme-example)', B = '[Widget](companies/widget-co)';
+  test('a role before "at" and a join or move ending "as <role>" stay works_at, in prose and on timeline lines', async () => {
+    for (const line of [`Led engineering at ${A}`, `Senior designer at ${A}`, `Product lead at ${A}`, `Runs marketing at ${A}`, `Joined ${A} as CTO`,
+      `Joined ${A} as chief of staff`, `Moved to ${A} as head of sales`, `Switched to ${A} as product lead`, `Rejoined ${A} as COO`, `Returned to ${A} as general counsel`]) {
+      expect(await types(line)).toEqual(['acme-example:works_at']);
+      expect(await types(`## Timeline\n\n- **2024-02-01** | linkedin — ${line}`)).toEqual(['acme-example:works_at']);
+    }
+  });
+  test('a role-before-"at" job keeps works_at when the next line\'s verb belongs to another company', async () => {
+    expect(await types(`## Timeline\n\n- **2019-01-01** | note — Senior designer at ${B}\n- **2023-06-01** | note — Moved to ${A} as head of sales`))
+      .toEqual(['widget-co:works_at', 'acme-example:works_at']);
+  });
+  test('advising work inside a job is not an advisory relationship', async () => {
+    expect(await types(`Solutions engineer advising customers at ${A}`)).not.toContain('acme-example:advises');
+  });
+});

@@ -77,6 +77,22 @@ describe('dated timeline cues', () => {
       expect(works(line)).toEqual(['acme-example:works_at:end:2024-05-01:timeline']);
   });
 
+  test('quitting idioms with a particle or object in the middle end employment', () => {
+    for (const line of [`left ${A} behind`, `moved on from ${A}`, `packed it in at ${A}`, `called time on ${A}`, `bowed out of ${A}`, `walked out of ${A}`,
+      `threw in the towel at ${A}`, `handed in her badge at ${A}`, `gave up her role at ${A}`])
+      expect(works(line)).toEqual(['acme-example:works_at:end:2024-05-01:timeline']);
+  });
+
+  test('a first day or kick-off at [X] starts employment', () => {
+    for (const line of [`first day at ${A}`, `her first week at ${A}`, `day one at ${A}`, `first day as CTO at ${A}`, `kicked off a new role at ${A}`, `kick-off at ${A}`])
+      expect(works(line)).toEqual(['acme-example:works_at:start:2024-05-01:timeline']);
+  });
+
+  test('idiom look-alikes about events are not moves', () => {
+    for (const line of [`first day at the ${A} conference`, `bowed out of the ${A} panel`, `called time on the ${A} deal`, `walked out of a ${A} meeting`])
+      expect(works(line)).toEqual([]);
+  });
+
   test('"traded [A] for [B]" ends A and starts B', () => {
     for (const verb of ['traded', 'swapped', 'exchanged'])
       expect(works(`${verb} ${A} for ${B}`)).toEqual(['acme-example:works_at:end:2024-05-01:timeline', 'widget-co:works_at:start:2024-05-01:timeline']);
