@@ -332,8 +332,14 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   if (r.redactions > 0) lines.push(`redactions: ${r.redactions} secrets/patterns redacted before write`);
   if (r.imperatives > 0) lines.push(`flagged: ${r.imperatives} agent-directed imperative(s) noted in frontmatter`);
   if (r.driftFiles > 0) {
+    const userless = r.files.filter((f) => f.userTurnsMissing).length;
+    const zero = r.driftFiles - userless;
+    const shapes = [
+      zero > 0 ? `${zero} parsed to zero sessions` : '',
+      userless > 0 ? `${userless} parsed to assistant turns with no user turns` : '',
+    ].filter(Boolean).join(', ');
     lines.push(
-      `DRIFT WARNING: ${r.driftFiles} file(s) parsed to zero sessions — the host ` +
+      `DRIFT WARNING: ${r.driftFiles} file(s) drifted (${shapes}) — the host ` +
         `format may have changed; see the adapter SPEC_TARGET runbook`,
     );
   }

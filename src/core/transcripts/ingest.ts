@@ -103,6 +103,8 @@ export interface IngestFileOutcome {
   sessions: IngestSessionOutcome[];
   skippedLines: number;
   drift: boolean;
+  /** E-N4: assistant turns parsed with zero user turns (counted in driftFiles). */
+  userTurnsMissing?: boolean;
   /** Adapter degraded to a bounded read (e.g. codex head+tail) — part of the file was never scanned. */
   truncated: boolean;
   error?: string;
@@ -445,6 +447,16 @@ export async function runTranscriptsIngest(
           // later (torn hermes copy, transient format break) — the shared
           // watermark must not advance past it. expectedEmpty (a grok
           // tool/reasoning-only session) is understood, not drifted.
+          result.cleanScan = false;
+        }
+        if (diag.userTurnsMissing && !fileOutcome.drift) {
+          // E-N4: assistant turns parsed but not one user turn — the shape
+          // #5163 hid behind (a host renamed its user-turn record). The
+          // session still imports, but the file is drift: the watermark holds
+          // so a fixed parser re-reads it.
+          fileOutcome.drift = true;
+          fileOutcome.userTurnsMissing = true;
+          result.driftFiles++;
           result.cleanScan = false;
         }
         if (diag.skippedLines > 0) {
