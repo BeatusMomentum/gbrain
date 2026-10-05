@@ -113,6 +113,48 @@ more than LongMemEval-S holds. The sealed slice size, source and budget are
 decided by the custodian and the user from these numbers and recorded here
 before any sealed cell runs.
 
+## Sealed design (written 2026-10-05, before any sealed cell)
+
+Budget: the eval cap is $2,500 (raised from $1,400 on 2026-10-05 with Garry's
+approval, relayed by the custodian), dev spend included; about $205 is spent on
+development runs.
+
+**Pressure gate (decides `memory.pressure.enabled`).**
+- Gate model: claude-sonnet-5-5. Arms A′ and B; B is this PR's build with the
+  growth-aware trigger, merged with the A′ build.
+- n = 200 questions, window 32k, judge 10x. With the development SD of 0.69,
+  200 questions detect an effect of +13.6 points at 80% power with the 95% CI
+  excluding zero; the development effect was +50.0 [+20.0, +75.0].
+- Source: named by the custodian before the run (proposed: 200 LongMemEval-S
+  questions drawn by the custodian's seed from the 480 that never ran through
+  this harness; the 20 development questions are excluded).
+- Pass bar: B − A′ ≥ +3.0 points with the CI lower bound above 0 and no
+  question category below −2.0 points. Cost: the development run cost +72% per
+  question, so the original "cost ≤ +25%" criterion is replaced, pending the
+  user's confirmation, by "cost per correct answer no higher than A′'s"
+  (development: $3.83 for B against $6.68 for A′).
+- Estimated cost: about $920.
+
+**Report-only slice (decides nothing).** claude-opus-5-5, gpt-6.1-sol and
+claude-fable-5-1, arms A′ and B, on the first 25 of the 200 sealed questions.
+Estimated cost: about $860. Reported after the gate model, with ceilings
+called out.
+
+**Core gate (decides `memory.core.enabled`).** LongMemEval-S cannot exercise
+core (see Power). The gate moves to BEAM-100k `preference_following` and
+`instruction_following` questions on the 14 sealed conversations (56
+questions, clustered by conversation): every arm gets the same question-blind
+page of standing preferences and instructions, written by a fixed model from
+the whole conversation without seeing any question; only arm C marks it core,
+so C − A′ measures always-loaded delivery against retrieval of the same page.
+Pass bar: C − A′ ≥ 0 and neither category below −2.0 points. This arm runs
+only after the harness supports BEAM (one stream per conversation, all its
+questions asked at the end, BEAM rubric judge) and a development check on the
+6 development conversations (about $30) shows the arms run as intended.
+Estimated sealed cost: about $80.
+
+E2 (live delivery, $4 cap) and E3 (latency) run as specified below.
+
 ## Procedure
 
 1. Iterate only on the dev split (this thread). Dev results never move a bar.

@@ -13,6 +13,7 @@ work. They never set a default.
 | A′ | `5c82936a2` (gbrain#6025 head: MCP instructions reordered under the 2,048-char cap) | defaults |
 | B | `73bd681cb` (this PR merged with gbrain#6025) | `memory.core.enabled=false`, `memory.pressure.enabled=true`, `memory.pressure.context_window=32000` |
 | C | `73bd681cb` | `memory.core.enabled=true`, `memory.pressure.enabled=false`; profile page marked core |
+| B (growth trigger) | `cd613d775` (same, plus the growth-aware notice trigger) | as B |
 
 ## Results: claude-sonnet-5-5, 20 questions (seed 42, first 20), judge 10x
 
@@ -21,16 +22,32 @@ work. They never set a default.
 | A′ | 25.0% | 1.67 | 9.2 | 0% | 100% | 0.1 | 0% |
 | B | 21.0% | 2.10 | 10.7 | 95% | 69% | 9.2 | 11% |
 | C | 20.0% | 1.72 | 9.6 | 0% | 100% | 0.2 | 6% |
+| B (growth trigger) | 75.0% | 2.87 | 13.3 | 100% | 28% | 27.4 | 56% |
 
 Paired differences against A′ (question-level bootstrap):
 
 - B − A′: −4.0 points, 95% CI [−20.0, +12.0], per-question SD 0.398, 20% of questions discordant.
 - C − A′: −5.0 points, 95% CI [−25.0, +15.0], per-question SD 0.510, 25% discordant.
 
-Neither difference is distinguishable from zero at n = 20. The pressure notice
+- B (growth trigger) − A′: +50.0 points, 95% CI [+20.0, +75.0], per-question SD 0.688, 70% of questions discordant; cost per question +72%.
+
+The first two differences are not distinguishable from zero at n = 20. The pressure notice
 fires in 95% of conversations but reaches only 31% of compaction segments: a
 whole LongMemEval session (often several thousand tokens) arrives in one turn,
-so fill often jumps from under 80% straight past the compaction point.
+so fill often jumps from under 80% straight past the compaction point. The
+growth-aware trigger (warn when two more turns of the size just seen would
+reach the automatic compaction point) reaches 72% of segments; the agent saves
+three times as many facts, a fact from a gold evidence session in 56% of
+questions, and answers 15 of 20 correctly against A′'s 5.
+
+## Core on LongMemEval-S
+
+The profile page comes from the first session only. In 11 of 500 LongMemEval-S
+questions the earliest session is among the gold evidence sessions, and in 1
+it is the only one, so C − A′ cannot move on this benchmark. Always-loaded
+core needs a workload where a standing fact or preference stated once must be
+honored much later: BEAM's `preference_following` and `instruction_following`
+questions (40 each per size) test exactly that.
 
 ## Cost per cell (one question, one arm, arm A′)
 
@@ -52,4 +69,4 @@ $40,000; on claude-sonnet-5-5 alone about $5,200. The $1,400 cap buys about
 28 questions across three arms and four models, where the 95% CI half-width is
 about ±15 points.
 
-Spend for this pilot, the cost probes and the smoke runs: about $129 (plus $14.95 for the LME-S retrieval guardrail in `p4-dev-2026-10-04`).
+Spend for this pilot, the growth-trigger arm, the cost probes and the smoke runs: about $190 (plus $14.95 for the LME-S retrieval guardrail in `p4-dev-2026-10-04`).
