@@ -113,7 +113,9 @@ const remember: Operation = {
       throw verbError(
         'invalid_params',
         'fact must be a non-empty string.',
-        'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed".',
+        p.fact === undefined && Object.keys(p).length === 0
+          ? 'The call arrived with no arguments; a tool call cut off at your output-token limit looks like this. Pass fact, or items with fewer entries per call.'
+          : 'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed", or several as items: [{fact, provenance}].',
       );
     }
     // v1 contract: an absent provenance is a missing required parameter (invalid_params), an empty one is provenance_required.
