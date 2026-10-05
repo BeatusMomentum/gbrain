@@ -60,9 +60,8 @@ import {
   type BrainstormCostGate,
 } from './cost-gate.ts';
 import { capNotice } from '../budget/cap-flag.ts';
-import { peakRateNote } from '../model-pricing.ts';
 import { pricingSetCommand } from '../budget/no-pricing.ts';
-import type { PricingOverrides } from '../budget/reservation-cost.ts';
+import { peakRateNote, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 
 // ---------------------------------------------------------------------------
@@ -666,10 +665,7 @@ async function _runBrainstormInner(
 
   // ---- Phase 0: cost preview + TTY grace ----
   const { aborted, estimate } = await previewCostAndWait({
-    profile,
-    model: plan.chatModel,
-    pricingOverrides: plan.gate.pricingOverrides,
-    judgeModel: plan.gate.judgeModel,
+    profile, model: plan.chatModel, pricingOverrides: plan.gate.pricingOverrides, judgeModel: plan.gate.judgeModel,
     skip: opts.skipCostPreview === true,
     stderrWrite: stderr, capUsd: plan.gate.ceilingUsd ?? undefined,
   });
@@ -889,8 +885,7 @@ async function _runBrainstormInner(
       crossModel = result.model;
       // Mid-run cost guard: if running spend already exceeds the projected
       // ceiling or the strict-budget multiplier, abort the remaining crosses.
-      const runningUsd = chatCostUsd(
-        result.model, totalUsage.input_tokens, totalUsage.output_tokens, plan.gate.pricingOverrides);
+      const runningUsd = chatCostUsd(result.model, totalUsage.input_tokens, totalUsage.output_tokens, plan.gate.pricingOverrides);
       if (maxCostUsd !== null && runningUsd > maxCostUsd) {
         throw new BudgetExhausted(
           `${profile.label}: running cost ${fmtUsd(runningUsd)} exceeded --max-cost ${fmtUsd(maxCostUsd)} mid-run; aborting remaining crosses`,

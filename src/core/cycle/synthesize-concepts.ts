@@ -35,7 +35,7 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
-import { priceFor } from '../budget/reservation-cost.ts';
+import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { pricingSetCommand } from '../budget/no-pricing.ts';
 import { createHash } from 'node:crypto';
@@ -58,6 +58,17 @@ const FALLBACK_PRICING: ModelPricing = canonicalLookup('anthropic:claude-sonnet-
   input: 3.0,
   output: 15.0,
 };
+/** The rate a narrative call meters at: the shared resolver, else the Sonnet fallback, naming each fallback model once. */
+function narrativePricing(model: string, overrides: PricingOverrides | undefined, fallbackModels: Set<string>, budgetUsd: number): ModelPricing {
+  const priced = priceFor(model, 'chat', overrides);
+  if (priced) return priced.pricing;
+  if (!fallbackModels.has(model)) {
+    fallbackModels.add(model);
+    console.error(`[synthesize_concepts] ${model} has no pricing; metering it at Sonnet-tier rates against the $${budgetUsd.toFixed(2)} phase budget. To meter its real price, look it up and register it: ${pricingSetCommand(model, 'chat')}`);
+  }
+  return FALLBACK_PRICING;
+}
+
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
 const TIER_T3_MIN = 2;
@@ -364,14 +375,7 @@ export async function runPhaseSynthesizeConcepts(
           // refresh rate.
           await maybeYield();
           llmHalt.reset();
-          // Price from the model that actually answered, through the shared
-          // resolver. A miss → Sonnet-tier FALLBACK_PRICING (see constant above).
-          const priced = priceFor(result.model, 'chat', pricingOverrides);
-          if (!priced && !pricingFallbackModels.has(result.model)) {
-            pricingFallbackModels.add(result.model);
-            console.error(`[synthesize_concepts] ${result.model} has no pricing; metering it at Sonnet-tier rates against the $${budgetCap.toFixed(2)} phase budget. To meter its real price, look it up and register it: ${pricingSetCommand(result.model, 'chat')}`);
-          }
-          const pricing = priced?.pricing ?? FALLBACK_PRICING;
+          const pricing = narrativePricing(result.model, pricingOverrides, pricingFallbackModels, budgetCap);
           estimatedSpendUsd +=
             (result.usage.input_tokens * pricing.input +
               result.usage.output_tokens * pricing.output) /

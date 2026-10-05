@@ -39,9 +39,8 @@
  */
 
 import { defaultMaxOutputTokens } from '../ai/gateway.ts';
-import { priceFor, reservationCostUsd, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { peakRateNote, priceFor, reservationCostUsd, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { noPricingGuidance, noPricingMessage, type NoPricingGuidance } from '../budget/no-pricing.ts';
-import { peakRateNote } from '../model-pricing.ts';
 import { skilloptOutputCap } from './output-cap.ts';
 import { JUDGE_SITE_MAX_TOKENS } from './score.ts';
 import { VALIDATION_RUNS_PER_TASK } from './types.ts';

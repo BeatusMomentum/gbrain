@@ -292,8 +292,7 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
     throw errorFor({
       class: 'BudgetExhausted',
       code: 'no_pricing',
-      message: preflightResult.abort_reason ?? 'no pricing for a model under the cost cap',
-      hint: 'No model call was made. Register the rate with the command above and retry, or pass --max-usd off to run uncapped.',
+      message: `${preflightResult.abort_reason} No model call was made; or pass --max-usd off to run uncapped.`,
     });
   }
   if (!preflightResult.proceed) {

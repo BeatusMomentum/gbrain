@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203079,
-    "stdoutSha256": "3f2a347db6f4a41890023a83565e4a811e9fb1127b881fad419a24f3365f3d21",
+    "stdoutBytes": 203176,
+    "stdoutSha256": "c24e422ed04758b5f72cd2af066e7408efa437230f0beb4f26f19b5033136c11",
     "toolNames": [
       "remember",
       "entity",
@@ -6213,7 +6213,7 @@
               "type": "number"
             },
             "max_cost_usd": {
-              "description": "Default 5.00",
+              "description": "Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing.",
               "type": "number"
             },
             "no_mutate": {

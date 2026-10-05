@@ -254,18 +254,3 @@ function canonicalFoldedView(): Record<string, ModelPricing> {
   }
   return _canonicalFoldedView;
 }
-
-/**
- * D3: providers whose rows carry the PEAK rate of a time-of-day price
- * (DeepSeek bills half off-peak). A cap must bound the worst case, so caps
- * and estimates use peak; this labels an estimate so the overstatement is
- * never silent. Router rows (`openrouter:deepseek/...`) are the router's own
- * flat rate and are not labelled.
- */
-const PEAK_RATE_PROVIDERS: ReadonlySet<string> = new Set(['deepseek']);
-
-/** The label an estimate carries when any of its models prices at a peak row, else ''. */
-export function peakRateNote(models: Array<string | null | undefined>): string {
-  const peak = models.some((m) => PEAK_RATE_PROVIDERS.has(splitProviderModelId(m).provider ?? ''));
-  return peak ? ' (DeepSeek at peak rates, an upper bound; off-peak bills half)' : '';
-}
