@@ -284,9 +284,10 @@ Optional response fields; clients must ignore any they do not know.
 
 #### remember items: several facts in one call (additive)
 
-`items` (1 to 20 objects) replaces `fact` for a batch, typically right before
-context compaction. Each item takes `fact` plus optional `entity`, `kind`,
-`ttl`, `visibility`, `provenance` and `infer_entity`; top-level `provenance`,
+`items` (1 to 20) replaces `fact` for a batch, typically right before
+context compaction. Each item is a fact string or an object with `fact` plus
+optional `entity`, `kind`, `ttl`, `visibility`, `provenance` and
+`infer_entity`; top-level `provenance`,
 `kind`, `ttl`, `visibility` and `infer_entity` are the defaults. Passing both
 `fact` and `items` is `invalid_params`.
 
@@ -297,9 +298,11 @@ item index, so replaying the same `request_id` replays each child's outcome and
 writes nothing twice.
 
 Response: `{ protocol_version, request_id, items[], saved, failed, partial,
-next? }`. Each `items[]` entry is the single-fact response plus `index` and its
-child `request_id`, or `{ index, request_id, status: "failed", error: { code,
-message } }`. `partial: true` means some items saved and some failed; resend
+hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
+request_id, status, id?, entity_slug?, warnings?, valid_until?, state? }`
+(`state` and `retry_after_ms` only when the write is not yet committed), or
+`{ index, request_id, status: "failed", error: { code, message } }`. Hints the
+single-fact response would repeat per item appear once in `hints`. `partial: true` means some items saved and some failed; resend
 only the failed items, in a new call with a new `request_id`.
 
 ### entity(name) — read, zero LLM, p99 < 100ms

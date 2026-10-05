@@ -63,3 +63,20 @@ describe('remember items[] batch', () => {
     }
   });
 });
+
+describe('remember items[] shorthand and receipts', () => {
+  test('a bare string item is one fact with the shared provenance', async () => {
+    const { handler, writes } = fakeSingle();
+    const out = await runRememberBatch(ctx, { provenance: 'p', items: ['Prefers tea', { fact: 'Ships Fridays' }] }, handler, ve);
+    expect(out.saved).toBe(2);
+    expect(writes.map(w => w.fact)).toEqual(['Prefers tea', 'Ships Fridays']);
+  });
+
+  test('item receipts are compact: status and id, no full single-fact envelope', async () => {
+    const handler = async (c: OperationContext, p: Record<string, unknown>) => (c.dryRun ? { dry_run: true }
+      : { status: 'inserted', id: '7', entity_slug: null, warnings: ['NO_ENTITY'], hint: 'link it', outcome: { big: 'x'.repeat(500) }, state: 'committed', protocol_version: 1, fact: p.fact });
+    const out = await runRememberBatch(ctx, { provenance: 'p', items: [{ fact: 'a' }, { fact: 'b' }] }, handler, ve) as { items: Array<Record<string, unknown>>; hints: string[] };
+    expect(Object.keys(out.items[0]).sort()).toEqual(['entity_slug', 'id', 'index', 'request_id', 'status', 'warnings']);
+    expect(out.hints).toEqual(['link it']);
+  });
+});
