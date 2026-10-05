@@ -1401,7 +1401,6 @@
   "unit:test/doctor-calibration-checks.test.ts": 359,
   "unit:test/doctor-categories.test.ts": 132,
   "unit:test/doctor-cause-rank.test.ts": 122,
-  "unit:test/doctor-chat-fallback-chain.test.ts": 334,
   "unit:test/doctor-child-orphans.test.ts": 312,
   "unit:test/doctor-cli-smoke.test.ts": 5126,
   "unit:test/doctor-conversation-facts-backlog.test.ts": 1320,

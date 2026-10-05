@@ -213,6 +213,7 @@ jobs:
                 test/harness-skills-epoch.test.ts
                 test/links-attendance-blocked.test.ts
                 test/managed-cycle-pull-upstream.test.ts
+                test/managed-lint.test.ts
                 test/managed-maintenance-links.test.ts
                 test/managed-sync-drain.test.ts
                 test/pack-relation-direction-engine.test.ts
