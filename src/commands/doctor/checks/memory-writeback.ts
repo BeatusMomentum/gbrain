@@ -357,7 +357,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         for (const e of failures) counts.set(e.reason ?? 'error', (counts.get(e.reason ?? 'error') ?? 0) + 1);
         const [topReason, topN] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
         problems.push(`${failures.length}/${finished} writeback harvests failed in ${COUNTER_WINDOW_DAYS}d (top: ${topReason} x${topN}); `
-          + 'failed turns wait for a corpus sweep (gbrain sweep --once) that an HTTP serve never runs and a stdio serve\'s short sweeps cannot finish with a slow model; '
+          + 'failed turns wait for the next serve sweep or corpus drain; clear them now with gbrain sweep --once --budget-ms 600000; '
           + 'serve\'s stderr names the first failure of each reason');
       }
     } catch { /* heartbeat unreadable — counters stay absent */ }

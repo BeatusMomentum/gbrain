@@ -129,21 +129,23 @@ bank remains harmless — the target serve's own DB gate decides.
    days and more than 20% of them failed. A failed turn keeps its file and
    waits for a corpus sweep.
 
-   **Under `gbrain serve --http`, or with a slow extraction model, schedule
-   that sweep yourself.** An HTTP serve never sweeps on its own, and a stdio
-   serve's startup and idle sweeps run on budgets of 5 and 3 seconds, which
-   stop a slow model's extraction mid-call. Turns the serve could not extract
-   (failed, over the per-session cap, or banked while the serve was down)
-   then wait until something runs `gbrain sweep --once`. Run it from the
-   brain host's scheduler (cron, launchd) every 15 to 30 minutes, with a
-   budget above your extraction model's slowest call: the default 5000 ms
-   budget stops an extraction mid-call too, so with `claude-cli` (often 8 to
-   25 seconds per turn) use something like
-   `gbrain sweep --once --budget-ms 120000`.
+   **A failed turn is swept on its own.** `gbrain serve --http` runs a
+   corpus drain every 10 minutes while any corpus file is still unextracted
+   (a sweep with a 60-second budget), and a stdio serve sweeps at startup
+   and after 10 minutes idle. A sweep's budget stops it between files, never
+   mid-extraction, so a slow model (`claude-cli` often takes 8 to 25 seconds
+   per turn) still finishes the file it started. Turns the serve could not
+   extract (failed, over the per-session cap, or banked while the serve was
+   down) are picked up by the next drain or sweep. To clear a backlog
+   sooner, run `gbrain sweep --once --budget-ms 600000` on the brain host.
+   A corpus file nothing has extracted is kept for three times
+   `dream.synthesize.corpus_retention_days` (90 days by default), and
+   `gbrain doctor` warns in `memory_writeback` once one is past plain
+   retention. `GBRAIN_SWEEP=0` turns every serve sweep and drain off.
 
    **Say to your agent:** *"Make sure the turns my brain could not extract
-   are swept."* (the agent schedules `gbrain sweep --once
-   --budget-ms <n>` on the brain host) or *"Why are my writeback harvests
+   are swept."* (the agent runs `gbrain sweep --once --budget-ms 600000` on
+   the brain host) or *"Why are my writeback harvests
    failing?"* (the agent reads `gbrain doctor` `memory_writeback` and the
    `writeback` heartbeat reasons).
 
