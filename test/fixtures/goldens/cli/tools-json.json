@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198857,
-    "stdoutSha256": "ef37ddc34736248fba6d360976da8f8217d1a9674eaca8d44fd29243cc76377e",
+    "stdoutBytes": 198851,
+    "stdoutSha256": "8c117022be2e87213495611e5bbb289452fda938e08888844b81b9c29346b65e",
     "toolNames": [
       "remember",
       "entity",
@@ -177,7 +177,7 @@
           "infer_entity": "boolean?",
           "items": "array?",
           "kind": "string?",
-          "provenance": "string",
+          "provenance": "string?",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -225,7 +225,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Where the fact came from (max 500 chars).",
+              "description": "Where the fact came from (max 500 chars); per item with items.",
               "type": "string"
             },
             "request_id": {
@@ -249,9 +249,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "provenance"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "write"
