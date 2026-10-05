@@ -66,7 +66,6 @@ export async function captureOffPath(engine: BrainEngine): Promise<Record<string
       // keyless corpus) are additive and pinned in test/mcp-notice-channels.test.ts; the off path compares the rest.
       const content = res.content.filter(c => !c.text.startsWith('[gbrain notice '));
       const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
-      if (Array.isArray(_notices) && _notices.length) console.error(`[evidence-fixture] mcp-${name} notices: ${JSON.stringify((_notices as Array<{ code?: string; kind?: string }>).map(n => `${n.code}:${n.kind}`))}`);
       out[`mcp-${name}`] = JSON.stringify({ ...res, content, ...(res._meta ? { _meta: meta } : {}) });
     }
   });
