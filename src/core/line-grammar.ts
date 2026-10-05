@@ -332,10 +332,12 @@ export async function lineGrammarOptions(engine: { getConfig(key: string): Promi
     allowUndeclaredTypes: allow != null && ['true', '1', 'yes', 'on'].includes(allow.trim().toLowerCase()) };
 }
 
-/** `line_grammar.effective_ranges` (default off; needs the grammar on): store relation-line ranges on edges (core/link-effective.ts). */
+/** `line_grammar.effective_ranges` (default on; needs the grammar on): store relation-line ranges on edges (core/link-effective.ts). */
 export async function effectiveRangesEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
-  const ranges = await engine.getConfig('line_grammar.effective_ranges').catch(() => null);
-  return ranges != null && ['true', '1', 'yes', 'on'].includes(ranges.trim().toLowerCase()) && (await lineGrammarOptions(engine)).enabled;
+  const read = (key: string) => engine.getConfig(key).catch(() => null);
+  const [ranges, enabled] = await Promise.all([read('line_grammar.effective_ranges'), read('line_grammar.enabled')]);
+  const on = (value: string | null) => value == null || !FALSY.has(value.trim().toLowerCase());
+  return on(ranges) && on(enabled);
 }
 
 /**

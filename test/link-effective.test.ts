@@ -1,7 +1,7 @@
 /**
  * Validity ranges on typed relation lines (`- works_at @effective[a,b) [[x]]`)
  * stored as dated edge transitions (producer 'inline', core/link-effective.ts)
- * when `line_grammar.effective_ranges` is on.
+ * (`line_grammar.effective_ranges`, on by default).
  *
  * Protects: an ended range hides the edge from default graph reads and shows
  * it to as_of reads; an open range keeps it live; editing the range replaces
@@ -42,15 +42,16 @@ beforeAll(async () => {
 afterAll(async () => { await engine.disconnect(); resetGateway(); });
 
 describe('line_grammar.effective_ranges', () => {
-  test('off by default: a range is parsed but nothing is stored', async () => {
+  test('turned off: a range is parsed but nothing is stored', async () => {
+    await engine.setConfig('line_grammar.effective_ranges', 'false');
     await put('people/alice-example', 'type: person\ntitle: Alice',
       '- works_at @effective[2021-03,2024-06) [[companies/acme-example]]\n- works_at @effective[2024-06,) [[companies/widget-co]]');
     expect(await inline()).toEqual([]);
     expect(await worksAt()).toEqual(['companies/acme-example', 'companies/widget-co']);
   });
 
-  test('on: an ended range hides the edge from default reads; as_of finds it', async () => {
-    await engine.setConfig('line_grammar.effective_ranges', 'true');
+  test('on by default: an ended range hides the edge from default reads; as_of finds it', async () => {
+    await engine.executeRaw("DELETE FROM config WHERE key = 'line_grammar.effective_ranges'");
     await put('people/alice-example', 'type: person\ntitle: Alice',
       'Alice.\n\n- works_at @effective[2021-03,2024-06) [[companies/acme-example]]\n- works_at @effective[2024-06,) [[companies/widget-co]]');
     expect(await inline()).toEqual([

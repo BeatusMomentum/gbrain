@@ -1596,7 +1596,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'line_grammar.enabled',
   'line_grammar.allow_undeclared_types',
   // Validity ranges on typed relation lines stored as dated edge transitions
-  // (core/link-effective.ts). Off until its held-out verdict.
+  // (core/link-effective.ts). On by default (held-out verdict H7).
   'line_grammar.effective_ranges',
   // put_page "did you mean an existing page?" advisory on creates (core/similar-pages.ts).
   'put_page.similar_pages',
