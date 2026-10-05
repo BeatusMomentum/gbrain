@@ -52,6 +52,7 @@ import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.t
 import type { FactsBackstopCtx } from './facts/backstop.ts';
 import type { CapabilityReport } from './capability.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
+import { managedPersistenceEnabled } from './persistence/ownership.ts';
 
 /** Delay before the serve-startup sweep fires (post-connect settle). */
 export const STARTUP_SWEEP_DELAY_MS = 3_000;
@@ -480,7 +481,22 @@ async function runLinksTimelinePass(
 
   // Engine batch primitives self-retry; default auditSite labels apply
   // (BATCH_AUDIT_SITES is a closed enum owned by retry.ts).
-  if (tlBatch.length > 0) {
+  // A managed brain refuses raw timeline inserts (managed_writer_guard): each page publishes through the coordinator.
+  const timelineUnsettled = new Set<string>();
+  if (tlBatch.length > 0 && await managedPersistenceEnabled(engine)) {
+    const { publishManagedPageTimeline } = await import('../commands/extract-timeline-db.ts');
+    for (const slug of new Set(tlBatch.map(row => row.slug))) {
+      if (overBudget()) { skip('budget_exhausted:timeline'); timelineUnsettled.add(slug); continue; }
+      try {
+        const added = await publishManagedPageTimeline(engine, slug, sourceId);
+        if (added === 'unsettled') timelineUnsettled.add(slug);
+        else report.timelineExtracted += added;
+      } catch {
+        skip('timeline_publish_failed');
+        timelineUnsettled.add(slug);
+      }
+    }
+  } else if (tlBatch.length > 0) {
     report.timelineExtracted += await maintenanceTransaction(engine, tx => tx.addTimelineEntriesBatch(tlBatch)); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]
   }
 
@@ -493,7 +509,7 @@ async function runLinksTimelinePass(
   // contain frontmatter candidates and deleting them would clobber valid
   // edges. 'manual' and 'mentions' are never touched. A page whose reconcile
   // fails (or is cut by budget) is left unstamped so the next sweep retries.
-  const stampable = new Set(processedRefs.map(r => r.slug));
+  const stampable = new Set(processedRefs.map(r => r.slug).filter(slug => !timelineUnsettled.has(slug)));
   if (linksEnabled) {
     const desiredBySlug = new Map<string, LinkBatchInput[]>(
       processedRefs.map(r => [r.slug, []]),
