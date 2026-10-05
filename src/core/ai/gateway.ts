@@ -37,6 +37,7 @@ export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from 
 import { BudgetTracker, type BudgetKind } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
+import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -3059,6 +3060,13 @@ export interface ChatOpts {
   /** Caller purpose (`skillopt.judge`, …) stamped on the BudgetTracker ledger row. */
   purpose?: string;
   /**
+   * `'off'` turns thinking off for this call on routes with a per-call switch
+   * (native Anthropic, DeepSeek, OpenRouter DeepSeek), replacing a configured
+   * thinking object; elsewhere a thinking-by-default model keeps thinking and
+   * gets the thinking output headroom instead (see `thinking-off.ts`).
+   */
+  thinking?: 'off';
+  /**
    * `false` pins the call to its own model: `chat_fallback_chain` is not
    * consulted (see `chat-fallback.ts`). Judge, critic and eval call sites set
    * it so a verdict or score always comes from the model they named.
@@ -3450,7 +3458,10 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
+  const requestedMaxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
+  const maxOutputTokens = opts.thinking === 'off'
+    ? thinkingOffMaxOutputTokens(modelStrEarly, requestedMaxOutputTokens, isThinkingModel(modelStrEarly), THINKING_MODEL_MAX_OUTPUT_TOKENS)
+    : requestedMaxOutputTokens;
   const chatRecord = { requestedModelId: modelStrEarly, purpose: opts.purpose, label: 'gateway.chat' };
 
   // TX5: reserve BEFORE the provider call. Throws BudgetExhausted on cost,
@@ -3559,6 +3570,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
   // Call-scoped options merge last so they win over configured siblings.
   providerOptions = deepMergeRecords(providerOptions, opts.providerOptions);
+  if (opts.thinking === 'off') applyThinkingOff(providerOptions, `${recipe.id}:${modelId}`);
 
   // Derive ONE canonical cache-control value AFTER config merging and reuse
   // it for every breakpoint (system block, last tool def, call-level). If
@@ -3631,7 +3643,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     system: systemParam,
     messages: toModelMessages(repairToolPairing(opts.messages)) as any,
     tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-    maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+    maxOutputTokens,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     output: out,
     // v0.42.20.0 — default a chat timeout (composes with the caller's signal,

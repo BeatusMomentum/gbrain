@@ -129,6 +129,7 @@ async function callOneModel(
       maxTokens: 2000,
       abortSignal,
       allowFallback: false,
+      thinking: 'off',
     });
     try {
       const parsed = parseModelJSON(result.text);

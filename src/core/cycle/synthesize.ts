@@ -1902,15 +1902,10 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         maxTokens: params.max_tokens,
         // DeepSeek v4 thinks by default and bills reasoning as OUTPUT tokens
         // against max_tokens (recipe thinking_by_default, #4172) — same for
-        // OpenRouter's DeepSeek hosts (#4758). The judge wants only the small
-        // JSON verdict, so pin thinking off per-call — the openai-compatible
-        // adapter spreads providerOptions[recipe.id] into the wire body,
-        // where `thinking` is DeepSeek's documented knob.
-        ...(v.parsed.providerId === 'deepseek'
-          || (v.parsed.providerId === 'openrouter'
-            && v.parsed.modelId.trim().toLowerCase().startsWith('deepseek/'))
-          ? { providerOptions: { [v.parsed.providerId]: { thinking: { type: 'disabled' } } } }
-          : {}),
+        // OpenRouter's DeepSeek hosts (#4758) and a configured Anthropic
+        // thinking mode. The judge wants only the small JSON verdict, so it
+        // turns thinking off per call (#5331; per-route mapping in thinking-off.ts).
+        thinking: 'off',
         // #4077: a cancelled cycle tears down the in-flight judge call too.
         abortSignal: options?.signal,
       });
