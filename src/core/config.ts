@@ -1350,6 +1350,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.expansion_variant_budget',
   // Ranker wave (R1): relational-arm rows re-pinned above reranked text rows (mode.ts reads; `off` | 0..10).
   'search.relational_rerank_pin',
+  // Multi-hop planner (mode.ts reads; boolean) and typed one-hop orientation (boolean; unset follows the planner).
+  'search.relational_planner',
+  'search.relational_orient_onehop',
+  // Multi-hop chain slots: chain rows leading page 1 when a chain fired (mode.ts reads; 0..10).
+  'search.relational_chain_slots',
   // Ranker wave (Phase E2): keyword-arm confidence floor — weak keyword arm fuses at half weight (mode.ts reads; `off` | (0, 1]).
   'search.keyword_arm_confidence_floor',
   // Ranker wave (Phase E3): metadata boost gate — `lexical` skips post-fusion metadata boosts when the vector arm was the only voter (mode.ts reads; `always` | `lexical`).

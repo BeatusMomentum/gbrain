@@ -1882,14 +1882,14 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 Easiest path: `bun run ci:local` runs the full CI gate inside Docker (gitleaks,
 guards + typecheck, then 4-shard parallel unit + E2E against four pgvector
 containers plus a transaction-mode PgBouncer; unit phase keeps `DATABASE_URL`
-unset) and tears down. Use `bun run ci:local:diff` for the
-diff-aware subset during fast iteration on a focused branch. Requires Docker
+unset) and tears down. `bun run ci:local:diff` checks a doc-only diff in
+seconds (gitleaks plus the doc checks) and runs the full gate otherwise. Requires Docker
 (Docker Desktop / OrbStack / Colima) and `gitleaks` (`brew install gitleaks`).
 
 Fastest path, with a Ubicloud token (`UBICLOUD_API_KEY` or
 `UBICLOUD_API_TOKEN`): `bun run ci:ubicloud` runs the same gate across ten
 ephemeral VMs in about five minutes, uncommitted edits included
-(`ci:ubicloud:diff` for the diff-aware subset). See "Ubicloud fan-out" in
+(`ci:ubicloud:diff` for the doc-only fast path). See "Ubicloud fan-out" in
 [`docs/TESTING.md`](./docs/TESTING.md).
 
 Manual path: `bun test` plus the E2E lifecycle described in `./CLAUDE.md` (spin
@@ -2027,11 +2027,10 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   reverse-writes on the composite key; `validateSourceId` before any `source_id` path join.
 - **One canonical chat-pricing table.** All paid-cloud chat/completion prices live ONCE in
   `src/core/model-pricing.ts` (`CANONICAL_PRICING` + `canonicalLookup`). Every other table
-  (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, `takes-quality-eval/pricing.ts`'s
-  `MODEL_PRICING`, the contradictions/cross-modal/skillopt cost views) is a DERIVED view, never
-  a hand-copied duplicate — so cross-table price drift is structurally impossible. Update a
-  price in `model-pricing.ts` only; each consumer keeps its own key allowlist + miss policy
-  (fail-closed vs warn-only vs null), not its own numbers. Pinned by `test/model-pricing.test.ts`
+  (`anthropic-pricing.ts`'s `ANTHROPIC_PRICING`, the contradictions/cross-modal/skillopt cost
+  views) is a DERIVED view, never a hand-copied duplicate — so cross-table price drift is
+  structurally impossible (takes-quality reads `pricing.overrides`, then canonical). Update a
+  price in `model-pricing.ts` only; each consumer keeps its own miss policy, not its own numbers. Pinned by `test/model-pricing.test.ts`
   (drift guard asserts each view equals canonical). Embeddings price separately in
   `embedding-pricing.ts` (different unit).
 - **Module-size ratchet.** `scripts/module-size-limits.tsv` pins per-file line ceilings
@@ -4229,7 +4228,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "validate frontmatter", "check frontmatter", "fix frontmatter", "frontmatter audit", "brain lint" | `skills/frontmatter-guard/SKILL.md` |
 | "what search mode", "is my cache hot", "tune my retrieval", "compare search modes", "clear search overrides" | `gbrain search modes/stats/tune` directly. See `skills/conventions/search-modes.md` |
 | "turn on System One", "enable Jev", "TypeSafe decide", "why is the evidence gate inactive", "turn System One off" | `gbrain decide probe/status/enable/disable` directly (brain host only). See `docs/guides/system-one.md` |
-| "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `gbrain eval run-all` / `gbrain eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
+| "eval results", "search benchmark", "haters-immune methodology", "regression check on retrieval" | `gbrain eval longmemeval <dataset.jsonl> --mode <mode> --record` per mode, `gbrain eval run-all` (BrainBench), then `gbrain eval compare`. See `docs/eval/SEARCH_MODE_METHODOLOGY.md` |
 | "bulk delete", "wipe the", "rm -rf", "purge the", "bulk forget" | `skills/data-loss-gate/SKILL.md` |
 | "fact check", "fact-check", "verify the facts", "check the claims" | `skills/fact-check/SKILL.md` |
 | "resolve before asking", "before asking the user", "unidentified contact", "unknown relationship" | `skills/resolve-before-asking/SKILL.md` |
@@ -11150,7 +11149,7 @@ safe ones."* or *"After the upgrade my notes source was blocked by one broken
 file. Get it syncing again."*
 
 The session below is real output (volatile ids, hashes and times shown as
-`<id>`, `<hash>`, `<time>`; `test/held-files-walkthrough.serial.test.ts` runs
+`<id>`, `<hash>`, `<time>`; `test/held-files-walkthrough.test.ts` runs
 these commands and checks every line shown). Before the upgrade, a generator
 committed three notes to the `notes` source: `notes/standup.md` with a title
 that continues on an unquoted line, a new `notes/digest.md` with `title:`

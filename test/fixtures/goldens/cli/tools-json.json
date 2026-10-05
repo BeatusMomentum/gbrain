@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 201277,
-    "stdoutSha256": "e8bcc29a6c49a893186e6ec00819734105c0e89eb9c6521e87496e9ff7952c34",
+    "stdoutBytes": 201809,
+    "stdoutSha256": "4c55031c6c5cafb895a97fbdfd92034de6e9ce7accc89ade34dd049fb031c0ec",
     "toolNames": [
       "remember",
       "entity",
@@ -892,7 +892,7 @@
         "scope": "write"
       },
       {
-        "description": "Read your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until it is final.",
+        "description": "Read your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until final.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -1771,6 +1771,7 @@
           "all_sources": "boolean?",
           "depth": "number?",
           "direction": "string?",
+          "hops": "array?",
           "link_type": "string?",
           "slug": "string",
           "source_id": "string?"
@@ -1794,6 +1795,23 @@
                 "both"
               ],
               "type": "string"
+            },
+            "hops": {
+              "description": "≤3 typed hops, e.g. [{\"link_type\":\"founded\",\"toward\":\"subject\"}]; toward: object|subject.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "link_type": {
+                    "type": "string"
+                  },
+                  "toward": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "type": "array"
             },
             "link_type": {
               "description": "Follow only this link type.",

@@ -32,9 +32,9 @@ type Phase = 'admission' | 'claim' | 'prepare' | 'recovery_record' | 'publicatio
 const CRITICAL: Phase[] = ['admission', 'claim', 'prepare', 'recovery_record', 'publication', 'completion'];
 
 /**
- * Per-phase statement budgets, about 10% above the measured counts (#6007
- * measured admission 25, claim 5, prepare 19, recovery record 6, publication
- * 46, completion 6: 107 on the critical path, and an 8-statement receipt; the
+ * Per-phase statement budgets, about 10% above the measured counts (#6007 on
+ * v0.60.60.0 measured admission 27, claim 5, prepare 19, recovery record 6,
+ * publication 47, completion 6: 110 on the critical path, and an 8-statement receipt; the
  * code before #6007 measured 29, 5, 21, 9, 61, 10: 135, and 10). The claim
  * counts only the transaction that claimed this write; another tick's empty
  * claim attempt is a consumer scan.

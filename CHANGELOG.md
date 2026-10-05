@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.59.0] - 2026-10-05
+## [0.60.61.0] - 2026-10-05
 
 **An agent connected to a remote brain can now save a stack of long pages in under a minute, and gbrain tells it how.**
 
@@ -23,12 +23,12 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 | | Before | Now |
 | --- | --- | --- |
 | 25 pages, one `put_page` at a time, with polling | nearly 5 minutes (about 11 s a page) | not needed |
-| 25 pages, 4 `put_pages` calls sent one after another | not available | 51 s, no polling |
+| 25 pages, 4 `put_pages` calls sent one after another | not available | 48 s, no polling |
 | One 60 KB `put_page` | 7.2 s reply saying "pending", then polls (about 11 s total) | committed in about 6 s, in the reply |
-| SQL statements on one page's publish path | 135 | 107 |
+| SQL statements on one page's publish path | 135 | 110 |
 | Backlinks between the pages you just wrote | about 30 manual `add_link` calls | built automatically after the commit |
 
-## To take advantage of v0.60.59.0
+## To take advantage of v0.60.61.0
 
 `gbrain upgrade` should do this automatically. Remote agents pick up the new instructions the next time they connect.
 
@@ -66,6 +66,159 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 ### For contributors
 - New e2e coverage: Postgres statement budgets per write phase, two-connection page-guard tests, grouped `put_page` publication (happy path and per-member failure), and the remote links effect on both engines.
 - The initialize-instructions and served-schema budgets grew for the write guidance; a new test pins the prompt-critical lines inside the first 2,048 characters.
+
+## [0.60.60.0] - 2026-10-05
+
+**Ask your brain a question that chains relationships, like "who founded the companies Alice invested in?", and search now walks those links step by step and returns the founders with the path that connects them.**
+
+Until now, search understood one relationship per question. "Who invested in Acme?" worked. "Who founded the companies Alice invested in?" did not: it needs two steps (Alice's investments, then each company's founders), and search would hand back pages that merely mentioned Alice. Now a question that chains two or three relationships (founded, invested in, advises, works at, attended) is read into a short plan and answered by walking the typed links in your brain. Each answer arrives with the chain of links that supports it, and the pages along the way come with it. No AI model is involved: the reading is a fixed grammar, so the same question always gets the same plan.
+
+### How to use it
+
+It is on by default in the `balanced` and `tokenmax` search modes. Ask in plain English through `search`, `query`, `recall` or `think`. To name the chain yourself, use `gbrain graph-query <slug> --hop invested_in:object --hop founded:subject`, or the `hops` parameter of the `traverse_graph` tool. To turn the planner off: `gbrain config set search.relational_planner false`.
+
+### The numbers that matter
+
+Measured on a held-out set of 125 chained questions the planner was never developed on, run by an independent custodian:
+
+| What we measured | Before | Now |
+| --- | --- | --- |
+| Chained questions where every needed page is in the top 10 | 0% (eval settings), 1.1% (shipped defaults) | 27.0%, 28.1% |
+| Questions better / worse | | 24 better, 0 worse |
+| Answers the chain returns that are correct | | 83% |
+| Wrong pages ranked above the first right one | 3.31 per question | 0.09 |
+| Ordinary questions that set it off by mistake | | 0 of 627 |
+
+### Things to watch
+
+| Change | What to do |
+| --- | --- |
+| Reworded questions are often not recognized: the planner read 70% of plainly worded chained questions and 21% of reworded ones | when a chained question comes back without `relational_plan`, call `traverse_graph` with explicit `hops` |
+| Chains walk relationships that are true today: an advisory role or job that ended is skipped | ask "formerly advised" or "used to work at" to walk ended ones |
+| Search cache keys for `balanced` and `tokenmax` change | cached results refill on their own |
+| Added search time on a chained question | about 15 ms on a 240-page brain, up to about 55 ms on a 100,000-link graph |
+
+## To take advantage of v0.60.60.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+2. **Nothing else to migrate.** There is no schema change; the planner turns on through the search mode defaults.
+3. **Verify:**
+   ```bash
+   gbrain search modes --json | grep relational_planner
+   gbrain search "Who founded the companies that <a person in your brain> invested in?" --json
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+- **Planner** (`src/core/search/relational-plan.ts`): `parseRelationalPlan` turns a 2-3 relation question into anchor-outward typed hops, or returns `not_applicable` (single relation, left to `parseRelationalQuery`) or `unsupported` with a reason (coordination, negation, dates, counting, quoted names, more than one entity). Tense markers before a relation that can end set that hop's status ("formerly advised" walks ended roles).
+- **Executor** (`src/core/search/relational-chain.ts`, `readChainHop` in `src/core/search/read-enrichment.ts`, `BrainEngine.relationalChainHop`): one bounded query per hop (50 frontier pages, 100 links per page, 10 paths per page), links oriented by each relation's page-type signature, read scope applied to every endpoint, origin and degree contributor, the temporal-edge validity predicate on every hop, path-local cycles cut, hub weighting at half-degree 32 (`src/core/search/hub-dampening.ts`).
+- **Search**: chain rows carry a `relational` field (role, seed, hop, path count, up to three evidence edges) through fusion, lean rows and recall; up to `search.relational_chain_slots` (default 10) chain rows lead page 1; `meta.relational_plan` and a `relational_chain` notice report the outcome; a chain error is audited and falls back to the one-hop path.
+- **Agent surface**: `traverse_graph` takes optional `hops` (full MCP surface only, so the starter list stays inside its size budget); `gbrain graph-query --hop link_type:toward`.
+- **Config**: `search.relational_planner` (on in `balanced` and `tokenmax`), `search.relational_orient_onehop` (off; one-hop walks that also read links written on the other page), `search.relational_chain_slots`.
+- **Records**: `docs/eval/decisions/p7-heldout-2026-10-05/` (held-out verdict), `docs/eval/decisions/p7-dev-2026-10-04/` (development verdict), `docs/guides/multi-hop.md`.
+
+## [0.60.59.0] - 2026-10-05
+
+**Every test CI claims to run now proves it ran, by name; red nightly runs open an issue instead of going unseen; PR CI goes green about 30% sooner on about 20% less compute; and `gbrain eval run-all` stops reporting success for work it skipped.**
+
+This is a test, eval and CI fix wave. For you it makes two eval commands honest. For anyone changing gbrain, CI stops crying wolf: flaky tests are fixed at the root, red nightly runs open an issue instead of going unseen, coverage that never executed now executes, and pull-request CI is faster.
+
+### What changes for you
+
+- **`gbrain eval run-all` tells the truth.** A bare run runs only the suites it can run (BrainBench). Naming a suite it does not run (`--suites longmemeval,replay`) exits 1 with `eval_suite_unwired` and the per-suite commands as the fix, and a failed suite exits 1 instead of 0.
+- **`gbrain eval takes-quality` prices every model the canonical pricing table knows.** The private six-model allowlist is gone. An unpriced model warns and runs; under a `--budget-usd` cap it refuses with `no_pricing` and the `gbrain pricing set` command to register its rate.
+
+
+### What changes for contributors
+
+| Pull-request CI (`test.yml` + `e2e.yml`) | Before | Now |
+| --- | --- | --- |
+| Time to green | 1010-1067 s | 696-874 s (median 743 s) |
+| Ubicloud vCPU-minutes per run | 899-940 | 739-755 |
+| Critical path | Selected E2E | a unit shard (Test) |
+| Selected E2E shard max / mean | 904 / 721 s (4 workers) | 365-451 / 323-345 s (8 workers) |
+| Unit shard max / mean | 762 / 542 s | 614-732 / 544-567 s |
+| Tests that ran in no lane | 55 PostgreSQL arms and 12 dead opt-in gates (the compile smoke among them) | 0 (one allowlisted arm with a TODO) |
+
+Before: the three baseline runs of the master tree on 2026-10-04. Now: the three acceptance runs of this branch on the re-mined weights. Both sets of run ids are in `docs/test-audit/2026-10-04/baseline.md`, and every run executes the baseline's test identities or declares the change in `expected-deltas.tsv`.
+
+### Things to watch
+
+| Change | What to do |
+| --- | --- |
+| Test opt-ins under the old names stop the run with the rename command | `GBRAIN_BASH32_REQUIRE` → `GBRAIN_TEST_BASH32_REQUIRE`, `GBRAIN_PERF_BUDGET_MULTIPLIER` → `GBRAIN_TEST_PERF_BUDGET_MULTIPLIER`, `GBRAIN_SKIP_SUBPROCESS_TESTS` → `GBRAIN_TEST_SKIP_SUBPROCESS`, `GBRAIN_REQUIRE_LAUNCHD` → `GBRAIN_TEST_REQUIRE_LAUNCHD`, `GBRAIN_SKIP_LAUNCHD_E2E` → `GBRAIN_TEST_SKIP_LAUNCHD`, `GBRAIN_ENFORCE_E5_BUDGET` → `GBRAIN_TEST_ENFORCE_E5_BUDGET`, `GBRAIN_REQUIRE_COMPILE` → `GBRAIN_TEST_REQUIRE_COMPILE`. Under the old names the test preload deleted them, so they never worked. |
+| A new `*.serial.test.ts` file needs a row in `scripts/serial-files.tsv` | run `bash scripts/check-test-isolation.sh --as-parallel <file>` first; if it passes and the file touches no process-wide state, name it `*.test.ts` instead |
+| A test file with a `DATABASE_URL`-gated arm needs a Postgres lane | `bun run check:postgres-lanes` names the file and the workflow list to add it to |
+| A stale generated artifact fails `verify` | `bun run regen:all` regenerates everything and lists what changed |
+| `docs/TESTING.md` has a 120 KB cap that only goes down | move subsystem detail next to its code instead of growing the file |
+| E2E narrowing is retired | doc-only changes skip E2E; every other change runs the whole E2E corpus |
+| Removed modules | `src/core/chunkers/semantic.ts`, `src/core/chunkers/llm.ts`, `src/core/search/keyword.ts` and `src/core/search/vector.ts` had no importer (use `src/core/search/hybrid.ts`); the forward-reference bootstrap facade (import `src/core/engine-sql/bootstrap.ts`); `scripts/check-exports-count.sh` (`test/public-exports.test.ts` owns the contract); the skillopt judge and reflect evals |
+| The eval ledger `.gbrain-evals/eval-results.jsonl` is local | it is gitignored; `--record` modes keep appending to your local copy |
+
+## To take advantage of v0.60.59.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+2. **Nothing else to migrate.** There is no schema change.
+3. **Verify:**
+   ```bash
+   gbrain doctor --json
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+#### Fixes
+
+- `gbrain eval run-all`: bare runs run wired suites only; `eval_suite_unwired` (exit 1, with `gbrain errors eval_suite_unwired`); a failed suite exits 1.
+- `gbrain eval takes-quality`: canonical pricing for every model, registered overrides first; unpriced models warn and run; `no_pricing` under a user cap.
+- Scale harness: the `find_orphans` known answer reads the op's maximum page and compares with `total_orphans`.
+
+#### Flakes fixed at the root
+
+- `test/physical-root-walk.test.ts` pins the `sources add` walk against a subdirectory vanishing mid-walk, with a two-brain `.git` reservation case (B1); a leaked `check-update --refresh-cache` child in the self-upgrade breadcrumb test; facts-queue tests wait on queue counters instead of fixed sleeps; the child-readiness test requires the confirmed timeout message (tini contract documented); a `persistence-deactivate` race where an `await` inside a `.rejects` matcher let Postgres reject before the handler attached and leaked env into later files; the gateway baseline is restored after `gateway-chat.test.ts`, folded from community PR #5907, contributed by @nezovskii. Thank you.
+- `waitFor` deadlines scale with `GBRAIN_TEST_WAIT_MULTIPLIER` (1 to 4; coverage lanes set 2), capped at 50 s.
+- Verify's fallback watchdog (hosts without `timeout`) no longer leaves orphaned `sleep` processes holding the caller's pipes.
+
+#### Every claimed test now runs
+
+- Executed-test receipts: every Bun invocation in CI writes a receipt and a JUnit report; `scripts/ci-executed-counts.ts` compares runs by (lane, file, test, backend arm) and fails on an undeclared drop or an incomplete run. Verify records each check as pass, fail, timeout or skip (`GBRAIN_CHECK_SKIPPED:`) and keeps its logs on failure. A red job's step summary lists the failing tests with a reproduce command.
+- 55 unit-file PostgreSQL arms that ran in no lane run in persistence-validation's `unit-postgres-arms` job, one Bun process per file; `check:postgres-lanes` keeps it that way.
+- 12 dead opt-in gates renamed under `GBRAIN_TEST_*`; the compiled self-update smoke runs unconditionally; `check:test-env-opt-ins` fails on a test gated on a name the preload strips.
+- The agent-voice recipe's unit suite runs in CI (`bun run test:agent-voice`); `check:jsonb-params` and `check:image-decoders` run in `verify`; scripts/ is typechecked; guard self-test fixtures cover seven more guards; the privacy guard scans `evals/` and `docs/test-audit/`; `test/docs-repo-paths.test.ts` fails on a doc naming a missing repo path; the skill-refs allowlist fails on stale rows.
+- Blind source pins in six suites (each passed with its behavior broken) are replaced by behavioral owners; probes are in `docs/test-audit/2026-10-04/implementation/lane-c.md`.
+
+#### Red nightlies become issues
+
+- `nightly-watch.yml` opens, updates, reopens and closes one `Nightly red: <workflow>` issue per scheduled workflow, with the failing jobs, the last green commit and the next step; `.github/nightly-known-red.tsv` holds at most three known-red or known-skipped rows, each owned by a TODO.
+- A weekly `ci-health.yml` report lists first-attempt pass rates and the most-failing test files.
+- Heavy Tests: the Docker image copies `patches/`; `postinstall.ts` exits 0 without `src/`; every heavy script runs and prints a rerun command per failure; the Claude door runs even when the Codex door fails.
+- Missing provider secrets are a visible warning (Hermes, real-agent doors, publish-template, key-gated E2E), never a silent green.
+- The scale tier runs under an out-of-process phase watchdog that names the stalled phase; the vectors phase prints one line per batch.
+
+#### Faster and cheaper pull-request CI
+
+- E2E selection is one rule: doc-only changes select nothing, everything else selects the whole corpus, read from the pull request files API on a shallow checkout and failing closed on a truncated list. Up to eight Selected E2E workers on 2 vCPU; the E2E backend matrix moves to its own two 4 vCPU shards and stops running a second time in Selected E2E; serial tests on 4 vCPU; the longmemeval slow file joins the unit shards; unit shards stay on 4 vCPU (2 vCPU raised the shard mean from 542 s to 608 s).
+- 92 serial files that pass the isolation lint and touch no process-wide state rejoin the parallel lane; `scripts/serial-files.tsv` lists the remaining serial files with a class and reason.
+- Shorter test waits through production-default seams (connector fixture, maintenance publish wait, effect renewal interval), and `test/helpers/brain-template.ts` clones initialized disk brains instead of replaying migrations.
+- Shard weights re-mined from this branch's green run; `check:weight-coverage` fails on stale entries and warns on unweighted shares.
+- `merge_group` triggers (inert until the merge queue is enabled) use the PR profile; a version-only `package.json` diff no longer widens the native test scope; dependency audit blocks only when dependencies change or on master, schedules and dispatches; Semgrep uploads SARIF weekly.
+
+#### Docs and tooling
+
+- `bun run regen:all` regenerates every generated artifact; `check:regen-all` in verify.
+- `docs/TESTING.md` opens with a quick start, drops the test inventories and moves subsystem detail beside its code (120 KB ratchet cap).
+- Removed: unreferenced chunkers and search modules, the forward-reference facade, dead test seams, finished one-off scripts, a broken benchmark, the skillopt judge and reflect evals, a fixture naming a real person, and the exports-count and pagetype-exhaustive guards.
 
 ## [0.60.58.0] - 2026-10-04
 
