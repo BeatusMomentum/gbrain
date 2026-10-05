@@ -98,7 +98,7 @@ shards.
   never sampled or skipped.
 - **Shards.** Work items (a file's iterations, split when ten exceed the
   budget) pack into the fewest shards whose measured estimates stay under 25
-  minutes. There is no shard-count cap; `max-parallel: 6` keeps a large PR
+  minutes. There is no shard-count cap; `max-parallel: 12` keeps a large PR
   from starving other jobs. Shard jobs record results and exit 0 on test
   failures; the result job decides, so a planned iteration without a receipt
   fails the check as incomplete.

@@ -89,7 +89,7 @@ jobs:
       fail-fast: false
       # Bounded so a large fix-wave PR queues its shards instead of starving
       # every other job of the shared runner quota.
-      max-parallel: 6
+      max-parallel: 12
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     services:
       postgres:
