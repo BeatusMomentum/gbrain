@@ -156,11 +156,7 @@ export interface GBrainConfig {
    * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
-  /**
-   * `false` keeps `chat_fallback_chain` for outages and errors but never sends
-   * a refused request (structural refusal or provider content block) to the
-   * next entry. Default true. Env `GBRAIN_CHAT_FALLBACK_ON_REFUSAL`, file, DB.
-   */
+  /** `false`: the chain still covers errors but never forwards a refused request. Default true (env, file, DB). */
   chat_fallback_on_refusal?: boolean;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;

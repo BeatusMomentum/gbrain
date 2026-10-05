@@ -13,23 +13,27 @@
  * brain's age is set by editing `sources.created_at` between commands.
  */
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 
 const BLOCK = 'why: [behavior_changes]';
 const env = { GBRAIN_CHAT_FALLBACK_CHAIN: undefined, GBRAIN_NO_ONBOARD_NUDGE: '1' };
 
-async function ageBrain(dataDir: string): Promise<void> {
-  const engine = new PGLiteEngine();
-  await engine.connect({ database_path: dataDir });
-  try {
-    await engine.executeRaw(`UPDATE sources SET created_at = now() - interval '3 days'`);
-  } finally {
+/** Backdate the brain's creation in a child process, between CLI commands (the CLI holds the PGLite lock while it runs). */
+async function ageBrain(home: string, dataDir: string): Promise<void> {
+  const script = join(home, 'age-brain.ts');
+  const enginePath = join(import.meta.dir, '..', 'src', 'core', 'pglite-engine.ts');
+  writeFileSync(script, `
+    const { PGLiteEngine: Engine } = await import(${JSON.stringify(enginePath)});
+    const engine = new Engine();
+    await engine.connect({ database_path: ${JSON.stringify(dataDir)} });
+    await engine.executeRaw("UPDATE sources SET created_at = now() - interval '3 days'");
     await engine.disconnect();
-  }
+  `);
+  const child = Bun.spawn([process.execPath, '--no-env-file', script], { stdout: 'pipe', stderr: 'pipe' });
+  expect(await child.exited).toBe(0);
 }
 
 describe('behavior_changes on the CLI', () => {
@@ -44,7 +48,7 @@ describe('behavior_changes on the CLI', () => {
 
     const dataDir = join(home, '.gbrain', 'brain.pglite');
     expect(existsSync(dataDir)).toBe(true);
-    await ageBrain(dataDir);
+    await ageBrain(home, dataDir);
     const fresh = await runCli(['list', '--limit', '1'], opts);
     expect(fresh.exitCode).toBe(0);
     expect(fresh.stderr).not.toContain(BLOCK);

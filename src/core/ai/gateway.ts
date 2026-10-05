@@ -3429,9 +3429,7 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const fallbackChain = opts.allowFallback === false ? undefined : _config?.chat_fallback_chain;
-  if (fallbackChain?.length) {
-    return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: _config?.chat_fallback_on_refusal !== false });
-  }
+  if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: _config?.chat_fallback_on_refusal !== false });
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 
