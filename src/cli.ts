@@ -2313,9 +2313,13 @@ async function routeEngineFreeHelp(command: string, args: string[]): Promise<boo
   // takes-quality replay / whoknows) so each sub's own usage keeps winning;
   // every remaining `eval … --help` form prints the full subcommand usage
   // instead of the old one-line stub (or a "No brain configured" error).
+  // D-N1: a named subcommand (`eval replay --help`) gets its own usage. The
+  // sub always sees `--help` as its first argument, the form every sub's
+  // usage branch answers before it touches the engine.
   if (command === 'eval' && (args.includes('--help') || args.includes('-h'))) {
-    const { runEvalCommand } = await import('./commands/eval.ts');
-    await runEvalCommand(null as never, ['--help']);
+    const sub = args[0] !== undefined && !args[0].startsWith('-') ? args[0] : undefined;
+    const { run } = await import('./cli/commands/eval.ts');
+    await run(null as never, sub ? [sub, '--help'] : ['--help']);
     return true;
   }
 

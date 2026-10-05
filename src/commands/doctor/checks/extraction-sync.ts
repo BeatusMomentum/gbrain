@@ -702,6 +702,7 @@ export async function computeExtractAtomsBacklogCheck(
     }
 
     const { packDeclaresPhase } = await import('../../../core/cycle.ts');
+    const { extractAtomsPhaseStaleWarning } = await import('../../../core/cycle/extract-atoms-stamp.ts');
     let declared = false;
     try { declared = await packDeclaresPhase(engine, 'extract_atoms'); } catch { declared = false; }
 
@@ -768,7 +769,13 @@ export async function computeExtractAtomsBacklogCheck(
           },
         };
       }
-      // Pack runs it AND a cycle completed recently (or the backlog is small,
+      // #5028: a recent cycle does not prove THIS phase ran; check each backlog source's own stamp.
+      if (evidence && evidence.state === 'fresh') {
+        const bySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
+        const phaseWarn = bySource ? await extractAtomsPhaseStaleWarning(engine, backlog, bySource, buildExtractAtomsDrainCommand, approx) : null;
+        if (phaseWarn) return { name, status: 'warn', ...phaseWarn };
+      }
+      // Pack runs it AND the phase ran recently (or the backlog is small,
       // or evidence is unreadable — fail-open). Informational.
       return {
         name, status: 'ok',
