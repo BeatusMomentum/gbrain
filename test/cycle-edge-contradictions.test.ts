@@ -12,6 +12,7 @@ import type { OperationContext } from '../src/core/operations.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import {
   runPhaseEdgeContradictions, applyEdgeProposal, undoEdgeProposal, rejectEdgeProposal, parseEdgeJudgeOutput, type EdgeJudgeFn,
+  isCertifiedApplyModel, loadEdgeContradictionsConfig,
 } from '../src/core/cycle/edge-contradictions.ts';
 import { relationshipFilterSql } from '../src/core/link-validity.ts';
 
@@ -46,6 +47,7 @@ const proposals = () => engine.executeRaw<{ id: number; status: string; close_da
 
 describe('edge_contradictions', () => {
   test('propose mode records a proposal and writes nothing canonical; accept applies; undo reopens', async () => {
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
     await seed(DATED);
     expect(await liveWorksAt()).toEqual(['companies/acme-example', 'companies/widget-co']);
     const r = await runPhaseEdgeContradictions(engine, { judge: conflict });
@@ -121,6 +123,7 @@ describe('edge_contradictions', () => {
   });
 
   test('reject keeps both relationships; mode off skips', async () => {
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
     await seed(DATED);
     await runPhaseEdgeContradictions(engine, { judge: conflict });
     const [p] = await proposals();
@@ -129,5 +132,16 @@ describe('edge_contradictions', () => {
     await engine.setConfig('dream.edge_contradictions.mode', 'off');
     try { expect((await runPhaseEdgeContradictions(engine, { judge: conflict })).status).toBe('skipped'); }
     finally { await engine.setConfig('dream.edge_contradictions.mode', 'propose'); }
+  });
+
+  test('certified models default to apply; others to propose; an explicit mode wins', async () => {
+    expect(isCertifiedApplyModel('anthropic:claude-haiku-4-5-20251001')).toBe(true);
+    expect(isCertifiedApplyModel('openai:gpt-6.1-sol')).toBe(true);
+    expect(isCertifiedApplyModel('claude-opus-5-5')).toBe(true);
+    expect(isCertifiedApplyModel('gpt-5.4-mini')).toBe(false);
+    expect((await loadEdgeContradictionsConfig(engine, 'anthropic:claude-haiku-4-5-20251001')).mode).toBe('apply');
+    expect((await loadEdgeContradictionsConfig(engine, 'openai:gpt-5.4-mini')).mode).toBe('propose');
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+    expect((await loadEdgeContradictionsConfig(engine, 'claude-sonnet-5-5')).mode).toBe('propose');
   });
 });

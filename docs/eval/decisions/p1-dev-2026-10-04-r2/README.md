@@ -78,7 +78,8 @@ minimum of 10), which makes the overall kit verdict `inconclusive`.
    +0.20 (superiority, cluster-bootstrap interval above zero); current-employer and
    live-edge recall non-inferior within 0.02; traps ≥ 0.99; order invariance 1 on every
    item; no guardrail failing. `graph.edge_validity` stays on only if E1 passes.
-2. **E2 and E3** as preregistered in round 1, run on this frozen build after E1.
+2. **E2 and E3** as preregistered in round 1, run on this frozen build after E1. E2
+   passed for all five models: [p1-e2-2026-10-05](../p1-e2-2026-10-05/README.md).
 
 ## Held-out verdicts
 

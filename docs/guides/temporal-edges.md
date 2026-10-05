@@ -133,9 +133,18 @@ whether they can both hold now; date arithmetic decides which one ended and when
 relationship that started earlier ends on the date the other started. Relationships
 without a dated start are never closed; the proposal asks for a date instead.
 
+A certified model passed a held-out run with no wrong closures, so with no explicit mode
+its closures are applied as timeline lines, each undoable. Set
+`dream.edge_contradictions.mode propose` to review every closure first.
+
+The closure date is the newer relationship's start. When someone left one job and
+started the next later, and only the "joined" lines are written, the earlier job closes
+on the later start date: late, not wrong. An explicit end line
+(`Ended works_at [[companies/x]]`) or a "left" line dates it exactly.
+
 | Setting | Default |
 |---|---|
-| `dream.edge_contradictions.mode` | `propose` with a chat model; `apply` only for models that passed the held-out certification; `off` without a chat model |
+| `dream.edge_contradictions.mode` | `apply` for certified models (`claude-haiku-4-5`, the utility default, plus `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`, `gpt-6.1-sol`); `propose` for any other chat model; `off` without one |
 | `models.dream.edge_contradictions` | utility tier |
 | `dream.edge_contradictions.max_subjects` | 200 per cycle |
 | `dream.edge_contradictions.max_usd` | $1.00 per cycle |
