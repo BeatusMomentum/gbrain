@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 201323,
-    "stdoutSha256": "621969c9c8ecc011c59b6448456217b7f46224b6d78e9be75b0dba32d8a6e480",
+    "stdoutBytes": 201277,
+    "stdoutSha256": "e8bcc29a6c49a893186e6ec00819734105c0e89eb9c6521e87496e9ff7952c34",
     "toolNames": [
       "remember",
       "entity",
@@ -397,7 +397,7 @@
         "scope": "read"
       },
       {
-        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[wikilinks]] to existing pages become mention links after commit; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.",
+        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -892,7 +892,7 @@
         "scope": "write"
       },
       {
-        "description": "Read your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until committed/conflict/failed/cancelled.",
+        "description": "Read your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until it is final.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

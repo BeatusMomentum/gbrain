@@ -44,8 +44,8 @@ import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-esti
 
 const SERVED_STARTER_MAX_CHARS = 25_000;
 const SERVED_STARTER_MAX_TOKENS = 5_700;
-/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; 26,030 with #6007's put_page wait_ms param and write guidance). */
-const SERVED_STARTER_MAX_JSON_CHARS = 26_100;
+/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; 26,178 with #6007's put_page wait_ms param and write guidance on top of master's v0.60.57.0 get_backlinks growth). */
+const SERVED_STARTER_MAX_JSON_CHARS = 26_200;
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
 const INSTRUCTIONS_MAX_CHARS = 4_868; // #6007: +240 for the issue-required write guidance (put_pages, wait_ms)
 const DESCRIPTION_HARD_CAP = 1_200;
