@@ -50,13 +50,16 @@ describe('hub_degree_shape', () => {
 });
 
 describe('extraction_date_grounding', () => {
-  test('reports off by default and lists consumers when on', async () => {
-    const [off] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
-    expect(off.message).toContain('is off');
+  test('fact extraction is grounded by default; the other prompts only when set on; false turns it off', async () => {
+    const [byDefault] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
+    expect(byDefault.message).toContain('(the default)');
+    expect(byDefault.message).toContain('unless extraction.date_grounding is set to true');
     await engine.setConfig('extraction.date_grounding', 'true');
     const [on] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
-    expect(on.message).toContain('propose_takes');
-    expect(categorizeCheck('extraction_date_grounding')).toBe(categorizeCheck('graph_coverage'));
+    expect(on.message).toContain('fact extraction and in: life chronicle events');
     await engine.setConfig('extraction.date_grounding', 'false');
+    const [off] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
+    expect(off.message).toContain('is off');
+    expect(categorizeCheck('extraction_date_grounding')).toBe(categorizeCheck('graph_coverage'));
   });
 });

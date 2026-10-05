@@ -109,9 +109,11 @@ export async function getFactsExtractionPromptAppendix(
 }
 
 /**
- * Extraction prompt variants (`extraction.date_grounding`,
- * `facts.attribution`): both default off until a held-out verdict sets them.
- * `true` / `on` enable; anything else (unset included) is off.
+ * Extraction prompt variants. `extraction.date_grounding` defaults ON for fact
+ * extraction (held-out verdict p2-e2-heldout-2026-10-04: unresolved relative
+ * dates in saved facts 8.95% -> 2.05%, QA non-inferior); `false` / `off` / `0`
+ * opt out. `facts.attribution` stays off until its own verdict: `true` / `on`
+ * / `1` enable it.
  */
 export interface ExtractorVariant {
   /** Resolve relative dates against the observation date; emit valid_from. */
@@ -120,12 +122,26 @@ export interface ExtractorVariant {
   attribution?: boolean;
 }
 
+const flagIs = (v: string | null, values: readonly string[]) => v != null && values.includes(v.trim().toLowerCase());
+const FLAG_ON = ['true', 'on', '1'] as const;
+const FLAG_OFF = ['false', 'off', '0'] as const;
+const readFlag = (engine: BrainEngine, key: string) => Promise.resolve().then(() => engine.getConfig(key)).catch(() => null);
+
 export async function getExtractorVariant(engine?: BrainEngine): Promise<ExtractorVariant> {
   if (!engine) return {};
-  const on = (v: string | null) => v != null && ['true', 'on', '1'].includes(v.trim().toLowerCase());
-  const read = (key: string) => Promise.resolve().then(() => engine.getConfig(key)).catch(() => null);
-  const [grounding, attribution] = await Promise.all([read('extraction.date_grounding'), read('facts.attribution')]);
-  return { dateGrounding: on(grounding), attribution: on(attribution) };
+  const [grounding, attribution] = await Promise.all([readFlag(engine, 'extraction.date_grounding'), readFlag(engine, 'facts.attribution')]);
+  return { dateGrounding: !flagIs(grounding, FLAG_OFF), attribution: flagIs(attribution, FLAG_ON) };
+}
+
+/**
+ * Date grounding for the other extraction prompts (life chronicle events,
+ * dream synthesis, extract_atoms, propose_takes): on only when
+ * `extraction.date_grounding` is set on explicitly. The held-out verdict
+ * measured fact extraction; each of these keeps its current prompt until its
+ * own check passes.
+ */
+export async function isConsumerDateGroundingOn(engine?: BrainEngine): Promise<boolean> {
+  return engine ? flagIs(await readFlag(engine, 'extraction.date_grounding'), FLAG_ON) : false;
 }
 
 /**

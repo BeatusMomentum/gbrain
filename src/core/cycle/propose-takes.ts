@@ -38,7 +38,7 @@
  */
 
 import { observationDateLine, observationDateRule, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
-import { getExtractorVariant } from '../facts/extract.ts';
+import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, CYCLE_DEADLINE_RESERVE_MS, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
@@ -425,7 +425,7 @@ export const EXTRACTOR_FAILURE_HALT_STREAK = 5;
 /** Prompt flags read once per phase run: #5425 attribution rules and extraction.date_grounding. */
 async function takesPromptFlags(engine: BrainEngine): Promise<{ attributionRules: boolean; dateGrounding: boolean }> {
   const attributionRules = String(await Promise.resolve(engine.getConfig?.('dream.propose_takes.attribution_rules')).catch(() => null) ?? '').trim() === 'true';
-  return { attributionRules, dateGrounding: (await getExtractorVariant(engine)).dateGrounding === true };
+  return { attributionRules, dateGrounding: await isConsumerDateGroundingOn(engine) };
 }
 
 export async function defaultExtractor(

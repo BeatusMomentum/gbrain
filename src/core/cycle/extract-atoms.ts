@@ -59,7 +59,7 @@
 // which made the NOT EXISTS guard ineffective on federated brains.
 
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
-import { getExtractorVariant } from '../facts/extract.ts';
+import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -904,7 +904,7 @@ export async function runPhaseExtractAtoms(
   // "Keep safe defaults" comment) still leaves extractModel on this default,
   // matching the pre-refactor fail-soft behavior exactly.
   let extractModel = resolveTierDefault('utility');
-  const dateGrounding = (await getExtractorVariant(engine)).dateGrounding === true;
+  const dateGrounding = await isConsumerDateGroundingOn(engine);
   let budgetCap = DEFAULT_BUDGET_USD;
   let explicitBudget = false; // operator SET cycle.extract_atoms.budget_usd
   // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +

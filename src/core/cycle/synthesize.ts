@@ -1,5 +1,5 @@
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
-import { getExtractorVariant } from '../facts/extract.ts';
+import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { postprocessManagedSynthesis, withPublishPending } from './synthesize-postprocess.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
@@ -1753,7 +1753,7 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     budgetUsd: parseBudgetUsd(await engine.getConfig('dream.synthesize.budget_usd'), DEFAULT_SYNTH_BUDGET_USD),
     allowUnpriced: await loadAllowUnpriced(engine),
     attributionRules: (await engine.getConfig('dream.synthesize.attribution_rules'))?.trim() === 'true',
-    dateGrounding: (await getExtractorVariant(engine)).dateGrounding === true,
+    dateGrounding: await isConsumerDateGroundingOn(engine),
     cooldownHours,
     maxPromptTokens,
     maxChunksPerTranscript,

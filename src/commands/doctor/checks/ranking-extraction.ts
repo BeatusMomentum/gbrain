@@ -11,7 +11,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { checkError } from '../check-fix.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../../../core/search/mode.ts';
-import { getExtractorVariant } from '../../../core/facts/extract.ts';
+import { getExtractorVariant, isConsumerDateGroundingOn } from '../../../core/facts/extract.ts';
 
 async function runHubDegreeShape(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
@@ -53,19 +53,22 @@ export const hubDegreeShapeEntry: DoctorEntry = {
   run: runHubDegreeShape,
 };
 
-/** Extraction prompts the `extraction.date_grounding` setting changes. */
-const GROUNDED_CONSUMERS = ['fact extraction (page hook, extract_facts, conversation facts)', 'life chronicle events', 'dream synthesis', 'extract_atoms', 'propose_takes'];
+/** Prompts that follow `extraction.date_grounding` only when it is set on explicitly. */
+const OPT_IN_CONSUMERS = ['life chronicle events', 'dream synthesis', 'extract_atoms', 'propose_takes'];
 
 async function runExtractionDateGrounding(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
-  const variant = await getExtractorVariant(engine);
+  const [variant, consumers] = await Promise.all([getExtractorVariant(engine), isConsumerDateGroundingOn(engine)]);
+  const reextract = 'Facts extracted before this was on keep their original wording; re-extract a source only with the user\'s consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).';
   checks.push({
     name: 'extraction_date_grounding',
     status: 'ok',
-    message: variant.dateGrounding
-      ? `Relative dates resolve against each source's observation date in: ${GROUNDED_CONSUMERS.join(', ')}. Facts extracted before this was enabled keep their original wording; re-extract a source only with the user's consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).`
-      : 'extraction.date_grounding is off: extraction prompts keep relative dates ("last week") as written. Dated pages still store their facts at the page date.',
+    message: !variant.dateGrounding
+      ? 'extraction.date_grounding is off: extraction prompts keep relative dates ("last week") as written. Dated pages still store their facts at the page date.'
+      : consumers
+        ? `Relative dates resolve against each source's observation date in fact extraction and in: ${OPT_IN_CONSUMERS.join(', ')}. ${reextract}`
+        : `Fact extraction resolves relative dates against each source's observation date (the default). ${OPT_IN_CONSUMERS.join(', ')} keep their current prompts unless extraction.date_grounding is set to true. ${reextract}`,
   });
   return checks;
 }
