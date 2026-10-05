@@ -241,6 +241,18 @@ enables RLS too, with a `sqlFor: { pglite: ... }` variant that leaves it out.
 The auto-RLS event trigger and doctor's `rls` check backstop a table that
 slips through on Postgres, but they are the safety net, not the plan.
 
+## Function search_path
+
+Every plpgsql function gbrain installs pins `search_path = pg_catalog, public`,
+so a same-named object in another schema can never change what the function
+reads or writes. The three fact-fingerprint functions
+(`gbrain_fact_fingerprint`, `gbrain_fact_fingerprint_v1`,
+`gbrain_fact_normalize`) are SQL functions that an index expression uses, so
+they call `pg_catalog.`-qualified built-ins instead of pinning a setting (a
+pinned setting would stop Postgres inlining them). Supabase's database linter
+still reports those three under "Function Search Path Mutable"; that warning
+is expected and safe to dismiss for them.
+
 ## PGLite
 
 If you're on PGLite (the zero-config default), doctor skips this check
