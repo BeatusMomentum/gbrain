@@ -221,7 +221,7 @@ describe('release:restamp end to end', () => {
     expect(again.code).toBe(0);
     expect(again.out).toContain('Nothing to change');
     expect(subject(fx.work)).toBe('v0.1.2.0 chore(release): restamp onto master v0.1.1.0');
-  }, 300_000);
+  }, 360_000);
 
   test('repeated restamp after master moves again renumbers and re-stamps once more', () => {
     const fx = fixture();

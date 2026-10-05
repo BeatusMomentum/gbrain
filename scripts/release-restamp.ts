@@ -60,7 +60,7 @@ Docs: ${RESTAMP_DOCS}`;
 
 export const DEFAULT_STEPS: Step[] = [
   { name: 'schema migration registry', argv: ['bun', 'run', 'scripts/build-schema-migrations.ts'] },
-  { name: 'migrations golden (records.json)', argv: ['bun', 'test', 'test/migrations-golden.test.ts'], env: { GBRAIN_TEST_UPDATE_GOLDENS: '1' }, migrationsOnly: true },
+  { name: 'migrations golden (records.json)', argv: ['bun', 'test', '--timeout=60000', 'test/migrations-golden.test.ts'], env: { GBRAIN_TEST_UPDATE_GOLDENS: '1' }, migrationsOnly: true },
   { name: 'bun.lock', argv: ['bun', 'install', '--lockfile-only'] },
   { name: 'bootstrap template repo', argv: ['bun', 'run', 'scripts/generate-template-repo.ts', '--out', 'templates/bootstrap/template-repo'] },
   { name: 'regen:all (plugin trees, llms, registries)', argv: ['bun', 'scripts/regen-all.ts'] },
@@ -254,8 +254,13 @@ function merge(ctx: Ctx, state: State): void {
     ctx.log(`restamp: branch already contains ${state.masterRef}; no merge needed.`);
     return;
   }
-  Bun.spawnSync(['git', 'merge', '--no-ff', '--no-commit', state.masterRef], { cwd: ctx.root, env: { ...ctx.env, GIT_MERGE_AUTOEDIT: 'no' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+  const attempt = Bun.spawnSync(['git', 'merge', '--no-ff', '--no-commit', state.masterRef], { cwd: ctx.root, env: { ...ctx.env, GIT_MERGE_AUTOEDIT: 'no' } as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
   const conflicted = ctx.git('diff', '--name-only', '--diff-filter=U').split('\n').filter(Boolean);
+  if (attempt.exitCode !== 0 && conflicted.length === 0 && !ctx.gitOk('rev-parse', '-q', '--verify', 'MERGE_HEAD')) {
+    stop(state, ctx, `git merge ${state.masterRef} did not start: ${attempt.stderr.toString().trim().split('\n').slice(-3).join(' ')}`,
+      'restamp merges master before allocating numbers; git refused the merge before any conflict resolution.',
+      ['fix what git reports (for example move an untracked file it would overwrite)']);
+  }
   const genuine: string[] = [];
   const stampFiles = new Set(STAMPS.map((s) => s.file));
   for (const f of conflicted) {
