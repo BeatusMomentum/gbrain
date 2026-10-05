@@ -21,6 +21,7 @@
  */
 import { CHRONICLE_RUN_NOW_ARGV, type ChronicleReasonCode } from './reasons.ts';
 import type { Action } from '../agent-output.ts';
+import type { ChronicleDropCounts } from './extract-events.ts';
 
 /** Bump to re-extract every page once (the ledger key includes it). */
 export const CHRONICLE_EXTRACTOR_VERSION = 1;
@@ -40,7 +41,9 @@ export interface ChronicleLedgerRow {
   extractor_version: number;
   slug: string;
   state: ChronicleLedgerState;
-  /** A `ChronicleReasonCode` from reasons.ts (or `no_events` on an extracted row); null on pending/extracted-with-events. */
+  /** A `ChronicleReasonCode` from reasons.ts. An extracted row carries one only when it published no events:
+   *  `no_events`, or `future_dated` / `date_imprecise` when every proposed event was dropped. Null on pending
+   *  and on extracted-with-events. */
   reason: string | null;
   trigger: ChronicleTrigger;
   /** Writer of the decided revision (`persistence_requests.principal_*`); null on unmanaged scans and backfill. */
@@ -88,12 +91,15 @@ export interface ChronicleRunDetails {
   candidates: number;
   judged: number;
   extracted: number;
+  /** Judged rows that published no events (the judge found none, or every proposal was dropped). */
   no_events: number;
   failed: number;
-  /** Count per reason of rows skipped or failed in this run. */
+  /** Count per reason of rows skipped, failed or extracted without events in this run. */
   reasons: Partial<Record<ChronicleReasonCode, number>>;
   events_written: number;
   events_retired: number;
+  /** Proposed events refused before publication, by reason (`future_dated`, `date_imprecise`); never written. */
+  events_dropped: ChronicleDropCounts;
   /** Pending automatic rows left for the next run because the daily limit is used up. */
   deferred_daily_limit: number;
   daily_limit: number;
