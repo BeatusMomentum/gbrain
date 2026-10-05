@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198219,
-    "stdoutSha256": "d9513e1daf3a258ba83bce824567b66f795679878a067a8407b8898dec273e2a",
+    "stdoutBytes": 199791,
+    "stdoutSha256": "4b3b9a5d7ff14bf8a3a92387fbd369dd5cc6dad1153b62d5588779e1fa916bb7",
     "toolNames": [
       "remember",
       "entity",
@@ -1485,7 +1485,9 @@
           "from": "string",
           "link_source": "string?",
           "link_type": "string?",
-          "to": "string"
+          "to": "string",
+          "valid_from": "string?",
+          "valid_until": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -1508,6 +1510,14 @@
             },
             "to": {
               "description": "Slug of the page the link points to, e.g. 'companies/acme-example'.",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "When the relationship started (YYYY-MM-DD), for dated relations such as works_at or invested_in.",
+              "type": "string"
+            },
+            "valid_until": {
+              "description": "When it ended (YYYY-MM-DD, exclusive). Re-run add_link with valid_until to record that a relationship ended.",
               "type": "string"
             }
           },
@@ -1560,15 +1570,19 @@
         "scope": "write"
       },
       {
-        "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
+        "description": "List a page's outgoing links (typed edges to other pages). Use when exploring what a page points at; rows carry status and dates, live relationships by default (status: \"all\" for history, during: \"2022\" for a period). Pass source_id or all_sources to widen. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_links",
         "parameters": {
           "all_sources": "boolean?",
+          "as_of": "string?",
+          "during": "string?",
+          "link_type": "string?",
           "slug": "string",
-          "source_id": "string?"
+          "source_id": "string?",
+          "status": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -1577,12 +1591,33 @@
               "description": "Same as source_id __all__.",
               "type": "boolean"
             },
+            "as_of": {
+              "description": "YYYY-MM-DD.",
+              "type": "string"
+            },
+            "during": {
+              "description": "Period: 2022, 2022-03 or 2021..2023.",
+              "type": "string"
+            },
+            "link_type": {
+              "description": "Only this type.",
+              "type": "string"
+            },
             "slug": {
               "description": "Slug of the page whose outgoing links to list.",
               "type": "string"
             },
             "source_id": {
               "description": "One source, or '__all__'.",
+              "type": "string"
+            },
+            "status": {
+              "description": "Default live (true now).",
+              "enum": [
+                "live",
+                "ended",
+                "all"
+              ],
               "type": "string"
             }
           },
@@ -1601,8 +1636,10 @@
         "name": "get_backlinks",
         "parameters": {
           "all_sources": "boolean?",
+          "as_of": "string?",
           "slug": "string",
-          "source_id": "string?"
+          "source_id": "string?",
+          "status": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -1611,12 +1648,24 @@
               "description": "Same as source_id __all__.",
               "type": "boolean"
             },
+            "as_of": {
+              "description": "YYYY-MM-DD",
+              "type": "string"
+            },
             "slug": {
               "description": "Page slug.",
               "type": "string"
             },
             "source_id": {
               "description": "One source, or '__all__'.",
+              "type": "string"
+            },
+            "status": {
+              "description": "Default live.",
+              "enum": [
+                "live",
+                "all"
+              ],
               "type": "string"
             }
           },
@@ -6312,6 +6361,7 @@
                 "empty_retrieval",
                 "facts_drain_first_run",
                 "features_auto_fix",
+                "former_relationships_hidden",
                 "listing_truncated",
                 "local_transcripts",
                 "onboard_opportunities",
