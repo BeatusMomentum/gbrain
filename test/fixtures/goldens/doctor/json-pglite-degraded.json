@@ -507,13 +507,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 208 (latest: 208)",
+          "message": "Version 209 (latest: 209)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "935 column(s) verified against live schema",
+          "message": "945 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1619,6 +1619,21 @@
           },
           "message": "Every page has its revision; the page revision backfill is complete.",
           "name": "revision_backfill",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "bad_config": [],
+            "chars_limit": 4000,
+            "chars_used": 0,
+            "compiled": [],
+            "docs": "docs/guides/core-memory.md",
+            "enabled": true,
+            "pages": 0
+          },
+          "message": "No core pages. Start one with gbrain core init, then fill it in with the user.",
+          "name": "core_memory",
           "status": "ok"
         },
         {
