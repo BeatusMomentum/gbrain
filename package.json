@@ -120,6 +120,7 @@
     "check:test-env-opt-ins": "bun scripts/check-test-env-opt-ins.ts",
     "check:postgres-lanes": "bun scripts/check-postgres-lane-coverage.ts",
     "check:weight-coverage": "bun scripts/check-weight-coverage.ts",
+    "check:recipe-pricing": "bun scripts/check-recipe-pricing.ts",
     "check:fuzz-purity": "bash scripts/check-fuzz-purity.sh",
     "check:operations-filter-bypass": "bash scripts/check-operations-filter-bypass.sh",
     "check:fixture-privacy": "bash scripts/check-fixture-privacy.sh",
