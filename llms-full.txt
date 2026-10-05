@@ -8811,7 +8811,8 @@ Optional response fields; clients must ignore any they do not know.
 context compaction. Each item is a fact string or an object with `fact` plus
 optional `entity`, `kind`, `ttl`, `visibility`, `provenance` and
 `infer_entity`; top-level `provenance`,
-`kind`, `ttl`, `visibility` and `infer_entity` are the defaults. Passing both
+`kind`, `ttl`, `visibility` and `infer_entity` are the defaults, so top-level
+`provenance` is optional when every item carries its own. Passing both
 `fact` and `items` is `invalid_params`.
 
 Every item is validated before any is written: one invalid item refuses the

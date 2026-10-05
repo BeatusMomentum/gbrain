@@ -154,6 +154,15 @@ describe('remember items[]', () => {
     expect(after).toBe(n);
   });
 
+  test('provenance may be given per item instead of at the top level', async () => {
+    const r = await call('remember', { items: [{ fact: 'Runs on Saturdays', provenance: 'user said' }, { fact: 'Uses Hoka shoes', provenance: 'user said' }] }, true);
+    expect({ isError: r.isError, text: r.text }).toMatchObject({ isError: false });
+    expect(r.body).toMatchObject({ saved: 2, failed: 0 });
+    const missing = await call('remember', { items: [{ fact: 'No source' }] }, true);
+    expect(missing.isError).toBe(true);
+    expect(missing.text).toContain('items[0]');
+  });
+
   test('one invalid item refuses the batch before any write', async () => {
     const bad = await call('remember', { provenance: 'p', items: [{ fact: 'ok' }, { fact: '' }] }, true);
     expect(bad.isError).toBe(true);

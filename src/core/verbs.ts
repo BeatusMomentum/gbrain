@@ -73,8 +73,8 @@ const remember: Operation = {
     },
     provenance: {
       type: 'string',
-      required: true,
-      description: 'Where the fact came from (max 500 chars).',
+      // Required for a single fact (the handler refuses with provenance_required); with items it may be given per item.
+      description: 'Where the fact came from (max 500 chars); per item with items.',
     },
     ttl: {
       type: 'string',
@@ -114,6 +114,14 @@ const remember: Operation = {
         'invalid_params',
         'fact must be a non-empty string.',
         'Pass the claim to remember, e.g. fact: "picked Stripe over Adyen — onboarding speed".',
+      );
+    }
+    // v1 contract: an absent provenance is a missing required parameter (invalid_params), an empty one is provenance_required.
+    if (p.provenance === undefined) {
+      throw verbError(
+        'invalid_params',
+        'Missing required parameter: provenance',
+        'Pass `provenance` as a string (where the fact came from), e.g. provenance: "user told me, 2026-06-12". With items, provenance may be given per item instead.',
       );
     }
     const provenance = typeof p.provenance === 'string' ? p.provenance.trim() : '';
