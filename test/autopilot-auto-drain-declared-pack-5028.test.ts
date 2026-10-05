@@ -19,7 +19,7 @@ import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, packDeclaresPhase } from '
 import { __setPackLocatorForTests, _resetPackLocatorForTests } from '../src/core/schema-pack/load-active.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { stampExtractAtomsRun } from '../src/core/cycle/extract-atoms.ts';
+import { stampExtractAtomsRun } from '../src/core/cycle/extract-atoms-stamp.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;

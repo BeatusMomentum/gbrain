@@ -86,6 +86,7 @@ export const INFRASTRUCTURE_ABORT_REASONS = new Set<string>([
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
+import { releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
 import { readFileSync } from 'fs';
 
 /**
@@ -235,7 +236,7 @@ export class MinionWorker extends EventEmitter {
   private jobsCompleted = 0;
   /** Idempotency latch for gracefulShutdown — per-job and periodic check sites can race. */
   private gracefulShutdownFired = false;
-  private _drainForced = false;
+  drainForced = false; // #5062: the shutdown drain expired and running claims were handed back (`jobs work` exits 17)
   /**
    * Set true when the RSS watchdog (not a normal SIGTERM) initiated the
    * drain. The CLI handler (src/commands/jobs.ts case 'work') reads this
@@ -938,14 +939,12 @@ export class MinionWorker extends EventEmitter {
       } else if (this.executions.size > 0) {
         console.log(`Waiting for ${this.executions.size} in-flight job(s) to finish (30s timeout)...`);
         const pending = Array.from(this.executions.values()).map(f => f.promise);
-        let drainTimer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
           Promise.allSettled(pending),
-          new Promise(resolve => { drainTimer = setTimeout(resolve, 30000); }),
+          new Promise(resolve => setTimeout(resolve, 30000)),
         ]);
-        clearTimeout(drainTimer);
         if (this.configurationError) await this.drainConfiguration();
-        else await this.releaseUndrainedClaims();
+        else this.drainForced = await releaseUndrainedClaims(this.engine, this.executions.values());
       }
 
       // The worker does NOT disconnect the engine: it doesn't own the
@@ -1042,60 +1041,11 @@ export class MinionWorker extends EventEmitter {
     }
   }
 
-  /**
-   * #5062: begin the signal-driven shutdown (SIGTERM / SIGINT, or the CLI's
-   * signal-owner callback for SIGHUP and a broken pipe). Stops claiming and
-   * fires `shutdownSignal` so handlers that own processes (shell) terminate
-   * them; start() then drains in-flight jobs and resolves. Idempotent.
-   */
+  /** #5062: signal-driven shutdown entry (SIGTERM/SIGINT, or the `jobs work` signal owner). Idempotent. */
   requestShutdown(): void {
-    if (this.shutdownAbort.signal.aborted && !this.running) return;
-    console.log('Minion worker shutting down...');
+    if (this.running) console.log('Minion worker shutting down...');
     this.running = false;
-    if (!this.shutdownAbort.signal.aborted) {
-      this.shutdownAbort.abort(new Error('shutdown'));
-    }
-  }
-
-  /**
-   * #5062: true when the shutdown drain timed out and in-flight claims had to
-   * be handed back while their handlers were still running. The CLI exits
-   * with WORKER_EXIT_DRAIN_FORCED so a supervisor never reports `drained`.
-   */
-  get drainForced(): boolean {
-    return this._drainForced;
-  }
-
-  /** #5062: after the 30s shutdown drain, hand every claim still held back to
-   *  the queue (token-fenced, no attempt burned) instead of leaving it active
-   *  until its lease expires and the stall sweep charges a stall. */
-  private async releaseUndrainedClaims(): Promise<void> {
-    const remaining = Array.from(this.executions.values());
-    if (remaining.length === 0) return;
-    this._drainForced = true;
-    for (const execution of remaining) {
-      try {
-        const released = await this.queue.releaseShutdownJob(execution.job.id, execution.lockToken);
-        console.warn(
-          `Job ${execution.job.id} (${execution.job.name}) did not finish within the shutdown drain; ` +
-          (released ? 'handed back to the queue (no attempt burned).' : 'claim already moved on (lock token mismatch).'),
-        );
-      } catch (e) {
-        console.error(`[worker] shutdown release failed for job ${execution.job.id}: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-  }
-
-  private async releaseAfterShutdown(job: MinionJob, lockToken: string, errorText: string): Promise<void> {
-    try {
-      const released = await this.queue.releaseShutdownJob(job.id, lockToken);
-      console.log(
-        `Job ${job.id} (${job.name}) ${released ? 'handed back to the queue' : 'claim already moved on'} ` +
-        `after worker shutdown (${errorText}; no attempt burned)`,
-      );
-    } catch (e) {
-      console.error(`[worker] shutdown release failed for job ${job.id}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    if (!this.shutdownAbort.signal.aborted) this.shutdownAbort.abort(new Error('shutdown'));
   }
 
   /** Stop the worker gracefully. */
@@ -1690,23 +1640,8 @@ export class MinionWorker extends EventEmitter {
         }
         return;
       }
-      if (err instanceof ChildWorkerShutdownError) {
-        if (err.executionStopped === true) {
-          await this.releaseAfterShutdown(job, lockToken, errorText);
-          return;
-        }
-        console.log(
-          `Job ${job.id} (${job.name}) released after worker shutdown (${errorText}); ` +
-          `stall detector will requeue (no attempt burned)`,
-        );
-        return;
-      }
-      // #5062: the handler ended because the worker is shutting down (the
-      // shell handler terminated its process group), not because the job
-      // failed. Hand the claim back instead of burning an attempt.
-      if (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted) {
-        await this.releaseAfterShutdown(job, lockToken, errorText);
-        return;
+      if (err instanceof ChildWorkerShutdownError || (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted)) {
+        return settleShutdownInterruptedJob(this.engine, job, lockToken, errorText, !(err instanceof ChildWorkerShutdownError) || err.executionStopped === true);
       }
       if (err instanceof ChildNotClaimedError) {
         // The child proved the claim is gone (reclaimed/cancelled before the

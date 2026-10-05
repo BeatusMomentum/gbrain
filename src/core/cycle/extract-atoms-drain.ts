@@ -457,7 +457,8 @@ export async function runExtractAtomsDrainForSource(
   opts: DrainForSourceOpts,
 ): Promise<ExtractAtomsDrainResult> {
   const { withRefreshingLock } = await import('../db-lock.ts');
-  const { runPhaseExtractAtoms, countExtractAtomsBacklog, stampExtractAtomsRun } = await import('./extract-atoms.ts');
+  const { countExtractAtomsBacklog } = await import('./extract-atoms.ts');
+  const { runPhaseExtractAtomsStamped } = await import('./extract-atoms-stamp.ts');
   const { cycleLockIdFor } = await import('../cycle.ts');
 
   const { MaintenanceWriteWait } = await import('../persistence/maintenance-wait.ts');
@@ -472,7 +473,7 @@ export async function runExtractAtomsDrainForSource(
     {
       withLock: (work) => withRefreshingLock(engine, lockId, (signal) => work(signal), { ttlMinutes: 5 }),
       runBatch: async ({ signal, stopSignal }) => {
-        const r = await runPhaseExtractAtoms(engine, {
+        const r = await runPhaseExtractAtomsStamped(engine, {
           sourceId: extractionSourceId,
           dryRun: false,
           brainDir: opts.brainDir,
@@ -480,7 +481,6 @@ export async function runExtractAtomsDrainForSource(
           stopSignal,
           attempt,
         });
-        await stampExtractAtomsRun(engine, extractionSourceId, r);
         const d = (r.details ?? {}) as Record<string, unknown>;
         // issue #3218: `r.status` collapses to 'warn' whether ONE item failed
         // (partial success — leave the drain's existing ok/no_progress path

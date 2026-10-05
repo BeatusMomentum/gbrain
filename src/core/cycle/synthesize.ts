@@ -76,7 +76,7 @@ import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance } from './dream-provenance.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { findLegacyCompletion, findSynthV2Completion, partitionCompletedSynthesis } from './synthesize-completion.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -528,24 +528,7 @@ async function runPhaseSynthesizeInner(
       process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
 
-    // #5145: completed synthesis is checked BEFORE the paid triage pass on
-    // every path. Classic brains (no maintenance) and dry runs (maintenance
-    // forced null) used to triage completed transcripts first and only skip
-    // them afterwards, re-buying triage whenever the verdict cache expired.
-    // A dry run on a managed brain reads the source incarnation (read-only)
-    // so its v2 keys match the identity a real run would use.
-    const synthSourceId = opts.sourceId ?? 'default';
-    const managedIncarnation = maintenance
-      ? maintenance.writer.sourceIncarnation
-      : opts.dryRun ? await readManagedSourceIncarnation(engine, synthSourceId) : null;
-    const synthesisIdentity = managedIncarnation !== null ? `${synthSourceId}/${managedIncarnation}` : synthSourceId;
-    const retainedKeys = await loadSuccessfulSynthesisKeys(engine, synthSourceId, 'dream:synth-v2:');
-    const legacyKeys = managedIncarnation !== null ? [] : await loadSuccessfulSynthesisKeys(engine, synthSourceId, 'dream:synth:');
-    const completed = new Set(transcripts.filter(t => {
-      const hash16 = t.contentHash.slice(0, 16);
-      return findLegacyCompletion(legacyKeys, t.filePath, hash16) !== null
-        || findSynthV2Completion(retainedKeys, t.filePath, hash16, synthesisIdentity) !== null;
-    }).map(t => t.filePath));
+    const { completed, successfulLegacyKeys, successfulV2Keys, synthesisIdentity } = await partitionCompletedSynthesis(engine, transcripts, opts.sourceId ?? 'default', maintenance, opts.dryRun);
     const synthesisState = { candidates: transcripts.length - completed.size, already_synthesized: completed.size };
     const pass = await runTriagePass(engine, transcripts.filter(t => !completed.has(t.filePath)), {
       model: config.triage.model,
@@ -557,10 +540,6 @@ async function runPhaseSynthesizeInner(
       signal: opts.signal,
       rescue: rescueConfigOf(config.triage), decide: await resolveTriageDecide(engine),
     }, opts.yieldDuringPhase);
-    // Completed transcripts flow on to the fan-out loop, which records their
-    // already_synthesized skip (classic) or collects their completed children
-    // (managed). They are not screening results: the triage counters below
-    // describe only the candidates that were actually screened.
     pass.reports.push(...transcripts.filter(t => completed.has(t.filePath)).map(t => ({ filePath: t.filePath,
       worth: true, score: null, content_type: null, cached: true, reasons: ['retained_completed_output'] })));
     const verdicts = pass.reports;
@@ -611,9 +590,7 @@ async function runPhaseSynthesizeInner(
     // synthesis. Codex finding #8: --dry-run does NOT mean "zero LLM calls";
     // it means "skip the synthesis model."
     if (opts.dryRun) {
-      const wouldSynthesize = worthProcessing.filter(t => !completed.has(t.filePath)).length;
-      const doneSuffix = completed.size > 0 ? `; ${completed.size} already synthesized` : '';
-      return ok(`dry-run: ${wouldSynthesize} of ${synthesisState.candidates} transcripts would synthesize${doneSuffix}${deferralSuffix}`, {
+      return ok(`dry-run: ${worthProcessing.length - completed.size} of ${synthesisState.candidates} transcripts would synthesize${completed.size ? `; ${completed.size} already synthesized` : ''}${deferralSuffix}`, {
         transcripts_discovered: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
@@ -702,8 +679,6 @@ async function runPhaseSynthesizeInner(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
-    const successfulLegacyKeys = legacyKeys;
-    const successfulV2Keys = retainedKeys;
 
     // Per-source daily submission cap (D2D: default 0 = disabled; opt-in
     // backstop via dream.synthesize.max_submissions_per_source_per_day).
@@ -2959,134 +2934,6 @@ async function collectChildPutPageSlugs(
     const first_write_at = firstWriteAt.get(slug);
     return { slug, source_id: sourceId, ...(raw_source ? { raw_source } : {}), ...(first_write_at ? { first_write_at } : {}) };
   });
-}
-
-/**
- * Load every `completed` subagent job key in one synthesis key family for
- * one source. Called once per phase per family so the submit loop can skip
- * transcripts already synthesized BEFORE building their link manifest:
- *  - D8 legacy `dream:synth:<filePath>:<hash16>[:c<i>of<n>]` (pre-v2 shape;
- *    must not be re-submitted under v2 keys);
- *  - current `dream:synth-v2:<source>:filename:<basename>:<hash16>[:c<i>of<n>]`
- *    (the queue's idempotency dedupe would coalesce these too, but only after
- *    the manifest build, and the coalesced children would re-enter writtenRefs).
- * `dream:synth:%` does not match `dream:synth-v2:` keys.
- *
- * Plain `status = 'completed'` deliberately mirrors the queue-level
- * idempotency semantics the legacy keys relied on: a completed job blocks
- * re-submission regardless of `result.stop_reason` (pinned in
- * test/minions.test.ts). Filtering on stop_reason here would re-pay for
- * transcripts the old code path never re-ran, and reading `result` at all
- * would need the `(result #>> '{}')` double-encoded-jsonb defense.
- *
- * Completed rows that `jobs prune` removed live on in
- * `dream_synthesis_completions` (the prune archives them), so pruning never
- * makes a synthesized transcript eligible again. Loads source-scoped
- * completions once per phase; no repeated history scan per transcript.
- */
-/**
- * #5145: the source incarnation a managed real run would key its synth-v2
- * completions under, read without the write preflight (dry runs never
- * register a writer). Null on a classic brain or when the read fails.
- */
-async function readManagedSourceIncarnation(engine: BrainEngine, sourceId: string): Promise<string | null> {
-  try {
-    if (!await managedPersistenceEnabled(engine)) return null;
-    const [row] = await engine.executeRaw<{ incarnation: string | null }>('SELECT incarnation FROM sources WHERE id = $1', [sourceId]);
-    return row?.incarnation ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function loadSuccessfulSynthesisKeys(
-  engine: BrainEngine,
-  sourceId: string,
-  keyPrefix: 'dream:synth:' | 'dream:synth-v2:',
-): Promise<string[]> {
-  const rows = await engine.executeRaw<{ idempotency_key: string }>(
-    `SELECT idempotency_key
-       FROM minion_jobs
-      WHERE name = 'subagent'
-        AND status = 'completed'
-        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND idempotency_key LIKE $2
-     UNION
-     SELECT idempotency_key FROM dream_synthesis_completions
-      WHERE source_id = $1 AND idempotency_key LIKE $2`,
-    [sourceId, `${keyPrefix}%`],
-  );
-  return rows.map(row => row.idempotency_key);
-}
-
-/**
- * Mirror of findLegacyCompletion for the synth-v2 key family (grammar as
- * produced by the submit loop / parsed by `parseSynthV2Key`): `'single'` when
- * the unchunked key completed, `'chunked'` when a FULL `:c0of<n>`..`:c<n-1>of<n>`
- * set completed, null otherwise (a cancelled row never counts).
- */
-function findSynthV2Completion(
-  successfulKeys: string[],
-  filePath: string,
-  hash16: string,
-  sourceId: string,
-): 'single' | 'chunked' | null {
-  const prefix =
-    `dream:synth-v2:${encodeURIComponent(sourceId)}` +
-    `:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
-  const chunkSets = new Map<number, Set<number>>();
-  for (const key of successfulKeys) {
-    if (key === prefix) return 'single';
-    if (!key.startsWith(prefix + ':c')) continue;
-    const chunk = /:c(\d+)of(\d+)$/.exec(key);
-    if (!chunk) continue;
-    const i = Number(chunk[1]);
-    const n = Number(chunk[2]);
-    if (n < 1 || i < 0 || i >= n) continue;
-    let seen = chunkSets.get(n);
-    if (!seen) chunkSets.set(n, seen = new Set());
-    seen.add(i);
-  }
-  for (const [n, seen] of chunkSets) {
-    if (seen.size === n) return 'chunked';
-  }
-  return null;
-}
-
-/**
- * Match a transcript (by filename + content hash) against completed legacy
- * keys. `'single'` when a `dream:synth:<path>:<hash16>` completion exists;
- * `'chunked'` when a FULL chunk set `:c0of<n>`..`:c<n-1>of<n>` completed
- * (chunk indices are 0-based). Partial chunk sets return null so the
- * transcript gets a fresh v2 synthesis instead of shipping with holes.
- */
-function findLegacyCompletion(
-  successfulKeys: string[],
-  filePath: string,
-  hash16: string,
-): 'single' | 'chunked' | null {
-  const filename = basename(filePath);
-  const hashSuffix = `:${hash16}`;
-  /** total chunk count n → completed 0-based chunk indices */
-  const chunkSets = new Map<number, Set<number>>();
-  for (const key of successfulKeys) {
-    const chunk = /:c(\d+)of(\d+)$/.exec(key);
-    const base = chunk ? key.slice(0, -chunk[0].length) : key;
-    if (!base.endsWith(hashSuffix)) continue;
-    const historicalPath = base.slice('dream:synth:'.length, -hashSuffix.length);
-    if (basename(historicalPath) !== filename) continue;
-    if (!chunk) return 'single';
-    const i = Number(chunk[1]);
-    const n = Number(chunk[2]);
-    if (n < 1 || i < 0 || i >= n) continue;
-    let seen = chunkSets.get(n);
-    if (!seen) chunkSets.set(n, seen = new Set());
-    seen.add(i);
-  }
-  for (const [n, seen] of chunkSets) {
-    if (seen.size === n) return 'chunked';
-  }
-  return null;
 }
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
