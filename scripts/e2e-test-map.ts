@@ -274,6 +274,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/minions-shell-pglite.test.ts",
     "test/e2e/worker-abort-recovery.test.ts",
     "test/e2e/connector-sync-handler-pglite.test.ts",
+    "test/e2e/budget-meter-group.test.ts",
   ],
   // v0.46.31.0 chat-connectors wave (mapped at the test-gap-wave merge —
   // these arrived unclaimed): connector classify/sync core + doctor check.
