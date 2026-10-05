@@ -72,7 +72,7 @@ export async function createPersistenceIpcProvider(engine: BrainEngine, config: 
     }
     const writeWaitMs = boundedWriteWaitMs(request.write_wait_ms);
     const result = await dispatchToolCall(engine, request.operation, params, {
-      config, remote: verified.remote, transport: verified.remote ? 'stdio' : undefined, sourceId, auth,
+      config, remote: verified.remote, transport: verified.remote || localSkillAdministration ? 'stdio' : undefined, sourceId, auth,
       ...(writeWaitMs !== undefined ? { writeWaitMs } : {}),
       ...(unrestricted ? {} : { localFederatedSourceIds: verified.grant.sourceIds }),
     });

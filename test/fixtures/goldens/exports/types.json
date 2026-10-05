@@ -5619,7 +5619,8 @@
           "surface?: string | undefined",
           "surfaceSetBy?: string | undefined",
           "takesHoldersAllowList?: string[] | undefined",
-          "token: string"
+          "token: string",
+          "tokenTtlSeconds?: number | null | undefined"
         ],
         "name": "AuthInfo"
       },

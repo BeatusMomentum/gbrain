@@ -210,6 +210,8 @@ import { v206 } from './v206-entity-mention-index.ts';
 import { v207 } from './v207-retrieval-feedback.ts';
 import { v208 } from './v208-delta-per-arm-cursor.ts';
 import { v209 } from './v209-w9-p-facts-reconcile.ts';
+import { v210 } from './v210-clamp-oauth-token-ttl.ts';
+import { v211 } from './v211-function-search-path.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -418,4 +420,6 @@ export const MIGRATIONS: Migration[] = [
   v207,
   v208,
   v209,
+  v210,
+  v211,
 ];
