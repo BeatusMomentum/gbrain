@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.70.0] - 2026-10-05
+
+**`ci:ubicloud` VMs carry their owner's name, an interrupted run destroys every VM it asked for, and no run destroys another owner's VMs.**
+
+VMs are named `ubirun-<owner>-<epoch>-<suffix>`, where the owner is `UBI_OWNER` or a per-machine id. Before, nothing showed which thread a VM belonged to, and every `up` destroyed any `ubirun-*` VM older than 12 hours, whoever started it. That sweep is now off unless `UBI_GC_HOURS` is set, and even then it only destroys the caller's own VMs. `ubi-runner.sh gc HOURS` runs the same sweep by hand.
+
+A run stopped with SIGTERM while VMs were still provisioning used to tear down before their create requests finished. Those VMs appeared afterwards and leaked (three `standard-16` VMs sat idle for 84 minutes). Now each name is recorded before its create is sent. An interrupted `up` finishes its create request and destroys its own VM. Teardown then polls every recorded name until it is confirmed gone. A mock-API test reproduces the old leak (two of three VMs left behind) and passes with the fix.
+
+`ubi-runner.sh list --mine` lists your VMs, and `ubi-runner.sh usage` shows VMs and vCPUs per owner across the project.
+
+## To take advantage of v0.60.70.0
+
+- Run `UBI_OWNER=<your-thread-code> bun run ci:ubicloud`. You no longer need `UBI_GC_HOURS=0`.
+- In a multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only the integrator runs the full gate. One full gate takes 64 of the project's 256 vCPUs.
+
 ## [0.60.69.0] - 2026-10-05
 
 **Korean entity names stop linking from inside longer words: mention precision on Hangul goes from 7% to 86%, and 65 of 74 real name mentions still link.**
