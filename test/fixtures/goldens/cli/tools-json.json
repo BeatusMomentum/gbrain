@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198957,
-    "stdoutSha256": "df81753969449d759c2ddf8394a3e5bcb477a48de61931c885aaca127b84f6b0",
+    "stdoutBytes": 199213,
+    "stdoutSha256": "317b67b49baa2e64ae6bb158226e75d0f3252faddb38e435b692917cdc06fa39",
     "toolNames": [
       "remember",
       "entity",
@@ -172,11 +172,12 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string",
+          "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
+          "items": "array?",
           "kind": "string?",
-          "provenance": "string",
+          "provenance": "string?",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -205,6 +206,13 @@
               "description": "Default true.",
               "type": "boolean"
             },
+            "items": {
+              "description": "Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]",
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -217,7 +225,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Where the fact came from (max 500 chars).",
+              "description": "Where the fact came from (max 500 chars); per item with items.",
               "type": "string"
             },
             "request_id": {
@@ -241,10 +249,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "fact",
-            "provenance"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "write"
@@ -5258,14 +5263,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): core memory plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string",
+          "entities": "string?",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5278,7 +5283,7 @@
               "type": "number"
             },
             "entities": {
-              "description": "Comma-separated names or slugs (max 8).",
+              "description": "Comma-separated names or slugs (max 8); omit for core only.",
               "type": "string"
             },
             "include_private": {
@@ -5294,9 +5299,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "entities"
-          ],
+          "required": [],
           "type": "object"
         },
         "scope": "read"
