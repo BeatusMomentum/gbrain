@@ -114,7 +114,8 @@ for (const managed of [false, true]) describe(`immutable company approval (${man
         expect(shared.config.federated).toBe(true);
         expect(companyBrainPolicyFingerprint(companyBrainProfile(shared.config)!, request.sourceId)).toBe(approval);
         if (engine.kind === 'pglite') expect(await submitEmbedBackfill(engine, request.sourceId, { reason: 'federation_flip' })).toMatchObject({ status: 'no_worker_surface' });
-        else await expect(submitEmbedBackfill(engine, request.sourceId, { reason: 'federation_flip' })).rejects.toMatchObject({ code: 'source_profile_no_backfill' });
+        else await expect(submitEmbedBackfill(engine, request.sourceId, { reason: 'federation_flip' })).rejects.toMatchObject({ code: 'source_profile_no_backfill',
+          docs: 'docs/guides/company-brain-ingestion.md#what-stays-opt-in', fix: { argv: ['gbrain', 'sources', 'status', request.sourceId, '--json'] } });
         const file = join(request.path, 'people/person-01.md');
         const content = readFileSync(file, 'utf8') + '\nAn explicitly committed update after sharing.\n';
         writeFileSync(file, content); git(request.path, 'add', '.'); git(request.path, 'commit', '-qm', 'Synthetic shared source update');
