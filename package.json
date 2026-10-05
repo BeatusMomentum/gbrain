@@ -87,6 +87,7 @@
     "test:agent-voice": "bash scripts/test-agent-voice.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
     "test:slow": "bash scripts/run-slow-tests.sh",
+    "test:stress": "bun run scripts/stress/run.ts",
     "test:scale": "bun scripts/scale/run.ts",
     "test:heavy": "bash scripts/run-heavy.sh",
     "test:profile": "bash scripts/profile-tests.sh",

@@ -76,23 +76,17 @@ the decision rule is critical path first, vCPU-minutes second.
 `test/scripts/ci-runner-routing.test.ts` pins capacity and platform routing;
 `.github/actionlint.yaml` declares the exact custom runner labels.
 
-### Pull request, master and nightly scope
+### Event parity
 
 Every test file runs on every push to master, on the nightly schedule and on
-manual dispatch. Pull requests and merge-queue runs (`merge_group`, which use
-the PR profile) run every Bun-version cell of the security and persistence
-matrices too; only the rows below are narrower, each a named exception in
-[Event parity](#event-parity):
-
-| Lane | Pull request | Push to master, nightly, manual |
-| --- | --- | --- |
-| Security regressions | Linux, macOS and Windows on Bun 1.4.0 and 1.4.2 | Same |
-| Persistence read latency, deployment matrix, unit-lane PostgreSQL arms, soak, crash robot, reconciliation crashes | Bun 1.4.0 and 1.4.2 | Same |
-| Persistence soak size | 2,500 writes | 10,000 writes |
-| Crash robot budget | 150 s (Postgres skips the lease-waiting seams) | 600 s, every seam |
-| Native writer locks, native paths changed | Every target on Bun 1.4.2, musl, both Windows probes, OpenClaw | Every target, musl and Windows probe on Bun 1.4.0 and 1.4.2, OpenClaw |
-| Native writer locks, other changes | `linux-x64-glibc / Bun 1.4.2` smoke cell (full native step list) | Same as above |
-| `test/export-scale.slow.test.ts` | 10,001 pages | 100,001 pages |
+manual dispatch, and pull requests and merge-queue runs (`merge_group`) run
+every Bun-version cell too. Each narrower PR behavior (soak and crash-robot
+budgets, native-lock scope, export scale, the PR-only stress gate) is a named
+exception whose comment beside the condition names the scheduled run that
+covers it; `test/scripts/ci-pr-scope.test.ts` fails on an unclassified one.
+The table, the dependency-audit rule and the measured cost of parity are in
+[docs/ci-event-parity.md](ci-event-parity.md). Required checks stay keyed on
+the `test-status` and `e2e-status` aggregators.
 
 The `changes` job classifies a pull request's changed files with
 `scripts/ci-native-scope.sh`: native lock sources, the native toolchain, IPC,
@@ -125,73 +119,6 @@ legacy test configuration; ordinary resets preserve that identity.
 
 Shared-skills suites, the old-binary compatibility job and the lifecycle benchmark are described in
 [scripts/shared-skills/README.md](../scripts/shared-skills/README.md#tests-and-ci).
-
-### Event parity
-
-A red that only a push to master can produce is a red no PR could have
-caught. So every event-conditional behavior in the workflows is either
-parity (pull requests and merge-queue runs do the same work) or a named
-exception whose comment, beside the condition, names the scheduled run that
-covers it. A condition with no covering scheduled run defaults to parity;
-anything else needs a new scheduled run or a decision recorded beside the
-condition. `test/scripts/ci-pr-scope.test.ts` fails on an event-conditional
-job or block in a test workflow without that comment, and on a Bun-version
-cell excluded on any event. Required checks stay keyed on the `test-status`
-and `e2e-status` aggregators, never on per-cell matrix names.
-
-| Workflow | Condition | Class | Covered by |
-| --- | --- | --- | --- |
-| `test.yml` | `security-regressions` Bun matrix | Parity: both Bun versions on every OS, every event | — |
-| `test.yml` | `changes` native scope (`smoke`/`primary`/`full`) | Named exception | Every push to master and the nightly Test schedule (`full`) |
-| `test.yml` | `gitleaks` commit range by event | Parity: each event scans the range it introduces | — |
-| `test.yml` | `dependency-audit` blocking scope | Named exception with a rule ([below](#dependency-audit-rule)) | Every push to master and the nightly Test schedule (always blocking) |
-| `test.yml` | `export-scale` pages, 10,001 vs 100,001 | Named exception | Every push to master and the nightly Test schedule |
-| `test.yml` | `stress-changed-tests` file set | Named exception: PR-only gate; succeeds with "not a PR event" elsewhere | Push and nightly runs run every file; the nightly race hunt repeats the Postgres arms |
-| `test.yml` | `race-hunt` | Named exception: schedule and dispatch only, outside `test-status` | Itself (nightly Test schedule) |
-| `test.yml` | `native_only`, `race_hunt`, `stress_*` dispatch inputs; concurrency suffixes | Parity: manual modes and run grouping, never applied to PR, push or schedule events | — |
-| `persistence-validation.yml` | Bun matrix of read latency, deployment matrix, unit-lane PostgreSQL arms, soak, crash robot, reconciliation | Parity: both Bun versions on every event | — |
-| `persistence-validation.yml` | `SOAK_OPERATIONS` 2,500 vs 10,000 | Named exception | Every push to master and the nightly Test schedule |
-| `persistence-validation.yml` | `ROBOT_SECONDS` 150 vs 600 | Named exception | Every push to master and the nightly Test schedule |
-| `native-locks.yml` | `inputs.scope` (OpenClaw, musl, Windows probes, Bun 1.4.0 and cross-target cells) | Named exception | Every push to master and the nightly Test schedule (`full`) |
-| `e2e.yml` | Doc-only pull request selects no E2E file | Named exception | Every push to master (whole corpus) and the nightly E2E schedule |
-| `e2e.yml` | Full-corpus coverage lanes and their `e2e-status` checks | Named exception | Nightly E2E schedule (or a `full_corpus` dispatch) |
-| `heavy-tests.yml` | Label-gated jobs on pull requests | Named exception | Nightly Heavy Tests schedule |
-| `heavy-tests.yml` | `grok-door` (label or input only) | Recorded decision: no scheduled run until the `XAI_API_KEY` secret exists | None yet, by decision |
-| `heavy-tests.yml` | `opencode-door-canary` | Named exception: schedule-only, non-gating canary | Itself |
-| `macos-validation.yml` | Label-gated on pull requests | Named exception | Nightly macOS validation schedule |
-| `scale-tier.yml` | Path- or label-gated 10k on pull requests | Named exception | Nightly Scale tier schedule (10k-50k) |
-| `semgrep.yml` | PR diff scan vs full-tree scan | Named exception | Weekly Semgrep schedule |
-| `osv-scanner.yml` | Pull requests scan only on a manifest change | Named exception | Weekly OSV schedule; `dependency-audit` on every PR |
-| `nightly-watch.yml` | `workflow_run` event guard | Not a test scope: it files issues from qualifying scheduled and push-to-master runs | — |
-| `fix-wave-gate.yml`, `fix-wave-closeout.yml` | Pull-request action and merge state | Not a test scope: merge-process automation | — |
-
-#### Dependency-audit rule
-
-`dependency-audit` blocks on pushes, schedules, manual runs and pull requests
-or merge-queue entries that change a dependency manifest or carry the
-`dependency-audit` label; on other pull requests a new upstream advisory is a
-warning, so one published advisory cannot turn every open PR red at once.
-The red it produces lands on master instead, and is handled like any other:
-a push-to-master red opens the Test `master-red` issue, a scheduled red the
-`nightly-red` issue. The repair PR bumps, overrides, patches or removes the
-dependency. When no fix exists, an ignore entry needs Garry's approval and an
-expiry date.
-
-#### Cost of parity
-
-Measured from the 15 latest green pull-request Test runs before parity (job
-start to finish, PR parameters): the Bun 1.4.0 twins add 14 cells per
-`pull_request` run, 55.9 runner-minutes in total: 233 Ubicloud vCPU-minutes
-(the two unit-lane PostgreSQL arm shards, 19.8 minutes, are the largest share)
-and 2.4 GitHub-hosted minutes (macOS 0.9, Windows 1.5). At the week's 713
-completed PR runs that is about 40,000 runner-minutes a week. Wall time does
-not grow on an idle pool: on the 10 latest push runs, which already run both
-versions, the 1.4.0 cells finished between 2.6 minutes before and 2.1 minutes
-after every other job (median 0.1 minutes before), and the PR critical path
-stays the unit `test` shards (median 13.9 minutes). A `merge_group` run uses
-the same profile and costs the same per run; the merge queue is inert, so it
-adds nothing today. If the added median PR wall time exceeds 15 minutes over
-a week, the agent on release duty records it on the CI health issue.
 
 ### Executed-test receipts
 
@@ -345,21 +272,29 @@ only where a Postgres lane names it. Those lanes are: a workflow step that
 runs with `DATABASE_URL` and names the file, a `test/e2e/` wrapper that
 imports it (`registerPostgresTests`), a `tests/heavy/` script that names it,
 or a row in `scripts/e2e-backend-matrix.txt`. Unit-lane files with no other
-Postgres owner are listed in `test/postgres-unit-arms.txt`, one sorted path
-per line; adding a file is a one-line edit. Three readers share that list:
-`persistence-validation.yml`'s `unit-postgres-arms` job (two shards against a
-pgvector service on both supported Bun versions, balanced by
-`scripts/postgres-arm-weights.json` through `bun scripts/postgres-unit-arms.ts shard <n> <m>`),
-the scheduled [race hunt](#race-hunt) and the lane guard. In the job each file
-runs in its own Bun process, so a failing file cannot leak environment or
-global state into later files, and each failure prints an `::error file=…`
-line with its reproduce command. Refresh the weights from a green run's two
-shard logs with `bun scripts/postgres-unit-arms.ts mine <job.log>…`.
+Postgres owner are listed in `test/postgres-unit-arms.txt` (one sorted path
+per line), read by `persistence-validation.yml`'s `unit-postgres-arms` job (two
+shards balanced by `scripts/postgres-arm-weights.json`, both Bun versions), the
+[race hunt](#race-hunt) and the lane guard. Each file runs in its own Bun
+process and each failure prints an `::error file=…` line with its reproduce command.
 `bun run check:postgres-lanes` (in `verify`) fails on every arm with no lane
-and on a list row that is malformed, duplicated, out of order, missing or has
-no gated arm. An arm deliberately left out is an `ALLOWLIST` row in
+and on a bad list row. An arm deliberately left out is an `ALLOWLIST` row in
 `scripts/check-postgres-lane-coverage.ts` naming its reason and TODO; a row
 for a file that is laned, has no arm or is gone fails.
+### Stress gate
+
+`stress-changed-tests` (in `test-status`) runs every test file a PR adds or
+modifies, plus importers of changed `test/helpers/` files, 10 times with a
+fresh database per iteration; a failure must be root-caused in that PR. The
+local twin is `bun run test:stress [files…] [--iterations N] [--base <ref>]
+[--postgres]`. Profiles, exemptions and replay: [scripts/stress/README.md](../scripts/stress/README.md).
+
+### Race hunt
+
+The nightly `race-hunt` job (outside `test-status`) runs every file in
+`test/postgres-unit-arms.txt` 10 times against Postgres and fails with one
+`test:stress` reproduce line per failing file ([scripts/stress/README.md](../scripts/stress/README.md#race-hunt)).
+
 ### Scale tier
 
 The gate shape and cadence are defined once, by O-CEO-16 (with O-ENG-16 and

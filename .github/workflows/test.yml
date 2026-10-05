@@ -24,6 +24,29 @@ on:
         type: boolean
         default: false
         required: false
+      # Diagnostic modes (docs/TESTING.md#stress-gate, docs/TESTING.md#race-hunt):
+      # either one runs only its lane, never the full suite, and its result never
+      # opens, updates or closes an issue.
+      race_hunt:
+        description: Run only the race hunt (every test/postgres-unit-arms.txt file 10 times); diagnostic
+        type: boolean
+        default: false
+        required: false
+      stress_files:
+        description: Run only the stress gate on these test files (space- or comma-separated test/…/*.test.ts); diagnostic
+        type: string
+        default: ''
+        required: false
+      stress_base:
+        description: Run only the stress gate on the test files changed versus this ref or SHA; diagnostic
+        type: string
+        default: ''
+        required: false
+      stress_head:
+        description: Head ref or SHA for stress_base (default HEAD of the dispatched ref)
+        type: string
+        default: ''
+        required: false
 
 permissions:
   contents: read
@@ -37,7 +60,7 @@ permissions:
 # Event parity (docs/TESTING.md#event-parity): the event suffixes only separate
 # runs that must not cancel each other; they change no job, matrix or parameter.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && '-native-only' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && '-diagnostic' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -106,7 +129,7 @@ jobs:
 
   # Re-run checks for every event. Only dependencies and PGLite snapshots are cached.
   gitleaks:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -159,7 +182,7 @@ jobs:
           gitleaks detect --redact --no-banner --log-opts "$RANGE"
 
   security-regressions:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubicloud-standard-2-ubuntu-2404' || matrix.os }}
     timeout-minutes: 10
     strategy:
@@ -190,13 +213,13 @@ jobs:
   # package.json dependency field (or carry the `dependency-audit` label).
   # Elsewhere a new upstream advisory is a warning, so it cannot turn every
   # open PR red at once; the push and nightly runs still fail on it (B11).
-  # Named exception with its rule (docs/TESTING.md#dependency-audit-rule): a
+  # Named exception with its rule (docs/ci-event-parity.md#dependency-audit-rule): a
   # push-to-master red from a newly published advisory opens the Test master-red
   # issue and a scheduled red the nightly-red issue; the repair PR bumps,
   # overrides, patches or removes the dependency; when no fix exists, an
   # expiring ignore entry needs Garry's approval.
   dependency-audit:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -248,7 +271,7 @@ jobs:
         run: bash scripts/ci-dependency-audit.sh
 
   verify:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     # Pre-test gates: privacy/jsonb/source-id/etc + typecheck + admin-build.
     # Lives in its own runner so the matrix shards aren't carrying ~2-3min
     # of verify work in addition to their test files (the old shape stuffed
@@ -331,7 +354,7 @@ jobs:
           overwrite: true
 
   serial-tests:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     # *.serial.test.ts — one bun process per file (module-registry isolation),
     # POOLED across files by scripts/run-serial-tests.sh (was strictly
     # sequential: an 8.5-minute job whose serialization the quarantine
@@ -365,9 +388,9 @@ jobs:
       # not once per job per run. This job SAVES; verify + matrix + slow jobs
       # restore-only. The key is an approximation on purpose: it only has to
       # be a superset-trigger of real schema changes.
-      # HASH INPUTS HAVE 13 HOMES: 11 legacy keys (five here and six in
-      # e2e.yml) plus two default-profile keys here (slow-brainbench and
-      # brainbench). Edit all together when schema dependencies change;
+      # HASH INPUTS HAVE 14 HOMES: 12 legacy keys (five here, six in
+      # e2e.yml, one in stress.yml) plus two default-profile keys here
+      # (slow-brainbench and brainbench). Edit all together when schema dependencies change;
       # profile names stay distinct, and the serial save reuses its restore key.
       - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         id: snapshot-cache
@@ -421,7 +444,7 @@ jobs:
           overwrite: true
 
   slow-brainbench-e2e:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     # Dedicated runner for the BrainBench CLI e2e file. At 98s mined it was
     # the matrix's single heaviest atom (10% of the whole corpus weight) and
     # the hard floor on shard-count scaling; a Phase-2 rewrite (spawn batching
@@ -496,7 +519,7 @@ jobs:
           overwrite: true
 
   brainbench:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     # BrainBench memory-conformance gate (Cathedral 2). Hermetic: in-memory
     # PGLite, zero API keys, ~15s for the full 141-fixture × 3-harness run.
     # Governance (decision 4): compares HEAD's run against MAIN's committed
@@ -538,7 +561,7 @@ jobs:
           fi
 
   slow-entity-resolve-perf:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     # Dedicated runner for the entity-resolve perf test (~159s, single perf
     # describe with one test that builds 5000+ pages and asserts the NEW
     # tryPrefixExpansion shape is 5x faster than the OLD shape — not
@@ -620,7 +643,7 @@ jobs:
           bun run src/cli.ts protocol conformance --synthesize
 
   test:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     # Pure matrix shard — no verify, no serial. Each shard runs its slice
     # of the unit test set under one `bun test` invocation.
     #
@@ -709,7 +732,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   coverage-report:
     needs: [serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, test]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -765,16 +788,51 @@ jobs:
 
   native-locks:
     needs: [changes]
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     uses: ./.github/workflows/native-locks.yml
     with:
       scope: ${{ needs.changes.outputs.native-scope }}
 
   persistence-validation:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     uses: ./.github/workflows/persistence-validation.yml
 
-  admin-browser:
+  # PR stress gate (docs/TESTING.md#stress-gate): every added or modified test
+  # file, plus direct importers of changed test/helpers/ files by the fan-in
+  # rule, runs 10 times with a fresh database per iteration. Named exception
+  # (docs/TESTING.md#event-parity): outside pull_request and merge_group it
+  # succeeds with "not a PR event", since push and nightly runs execute every
+  # file. Its conclusion is success or failure, never skipped, so test-status
+  # gates on it.
+  stress-changed-tests:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+    uses: ./.github/workflows/stress.yml
+    with:
+      mode: gate
+      stress_files: ${{ inputs.stress_files || '' }}
+      stress_base: ${{ inputs.stress_base || '' }}
+      stress_head: ${{ inputs.stress_head || '' }}
+
+  # Race hunt (docs/TESTING.md#race-hunt): every file in test/postgres-unit-arms.txt
+  # 10 times against Postgres. Named exception (docs/TESTING.md#event-parity):
+  # the nightly Test schedule and a race_hunt dispatch only, and outside
+  # test-status: a red lands in the Test nightly-red issue, one line per file.
+  race-hunt:
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.race_hunt == true) }}
+    permissions:
+      contents: read
+      issues: read
+      actions: read
+    uses: ./.github/workflows/stress.yml
+    with:
+      mode: race-hunt
+
+  admin-browser:
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 12
     steps:
@@ -801,7 +859,7 @@ jobs:
           retention-days: 7
 
   shared-skills-compatibility:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.native_only != true }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -833,7 +891,7 @@ jobs:
   #   bun scripts/ci-executed-counts.ts --base-run <id> --head-run <id>
   executed-receipts:
     needs: [verify, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, test, shared-skills-compatibility]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -871,9 +929,9 @@ jobs:
   # The stable aggregate succeeds only when every required lane ran successfully.
   # Coverage percentages remain advisory until their separate graduation.
   test-status:
-    name: ${{ github.event_name == 'workflow_dispatch' && inputs.native_only == true && 'full-suite-not-run' || 'test-status' }}
-    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, admin-browser, shared-skills-compatibility]
-    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.native_only != true) }}
+    name: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_only == true || inputs.race_hunt == true || inputs.stress_files != '' || inputs.stress_base != '') && 'full-suite-not-run' || 'test-status' }}
+    needs: [gitleaks, security-regressions, dependency-audit, verify, serial-tests, slow-entity-resolve-perf, slow-brainbench-e2e, brainbench, test, native-locks, persistence-validation, admin-browser, shared-skills-compatibility, stress-changed-tests]
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base)) }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -892,9 +950,10 @@ jobs:
           PERSISTENCE="${{ needs.persistence-validation.result }}"
           ADMIN_BROWSER="${{ needs.admin-browser.result }}"
           SKILL_COMPATIBILITY="${{ needs.shared-skills-compatibility.result }}"
+          STRESS="${{ needs.stress-changed-tests.result }}"
           echo "gitleaks=$GITLEAKS  security-regressions=$SECURITY  dependency-audit=$AUDIT  verify=$VERIFY  serial-tests=$SERIAL  slow-entity-resolve-perf=$SLOW_PERF  slow-brainbench-e2e=$SLOW_BRAINBENCH  brainbench=$BRAINBENCH  test=$TEST  native-locks=$NATIVE_LOCKS  persistence=$PERSISTENCE  admin-browser=$ADMIN_BROWSER"
-          echo "shared-skills-compatibility=$SKILL_COMPATIBILITY"
-          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE" "$ADMIN_BROWSER" "$SKILL_COMPATIBILITY"; do
+          echo "shared-skills-compatibility=$SKILL_COMPATIBILITY  stress-changed-tests=$STRESS"
+          for r in "$GITLEAKS" "$SECURITY" "$AUDIT" "$VERIFY" "$SERIAL" "$SLOW_PERF" "$SLOW_BRAINBENCH" "$BRAINBENCH" "$TEST" "$NATIVE_LOCKS" "$PERSISTENCE" "$ADMIN_BROWSER" "$SKILL_COMPATIBILITY" "$STRESS"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated job did not succeed (got $r) — CI fail"
               exit 1

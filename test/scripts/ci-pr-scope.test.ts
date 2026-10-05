@@ -167,13 +167,13 @@ esac
 
   // Every event-conditional behavior in a test workflow is classified beside
   // the condition: parity, or a named exception naming its covering scheduled
-  // run (docs/TESTING.md#event-parity). The native_only dispatch mode is the
-  // documented manual mode and is stripped before scanning.
+  // run (docs/TESTING.md#event-parity). Manual dispatch modes are documented
+  // at test.yml's inputs and stripped before scanning.
   test('every event-conditional job or block in a test workflow carries its event-parity classification', () => {
     const conditional = /github\.event_name|github\.event\.(?:pull_request|merge_group|action)|inputs\.scope|"\$EVENT"|\$EVENT\b/;
-    const dispatchMode = /github\.event_name\s*(?:!=|==)\s*'workflow_dispatch'\s*(?:\|\||&&)\s*inputs\.native_only\s*(?:!=|==)\s*true/g;
+    const dispatchMode = /github\.event_name\s*(?:!=|==)\s*'workflow_dispatch'/g;
     const unclassified: string[] = [];
-    for (const name of ['test', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
+    for (const name of ['test', 'stress', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep']) {
       const lines = readFileSync(join(root, '.github/workflows', `${name}.yml`), 'utf8').split('\n');
       // Blocks: each job (from the comments directly above its key to the next job) and the top-level preamble.
       const starts = lines.flatMap((line, i) => (/^  [\w-]+:\s*$/.test(line) && lines.slice(0, i).some(l => l === 'jobs:') ? [i] : []));
@@ -186,19 +186,20 @@ esac
         const text = lines.slice(block.from, block.to);
         const code = text.filter(l => !/^\s*#/.test(l)).join('\n').replace(dispatchMode, '');
         if (!conditional.test(code)) continue;
-        if (!text.some(l => /^\s*#.*docs\/TESTING\.md#(?:event-parity|dependency-audit-rule)/.test(l) || /^\s*#\s*Event parity/.test(l))) unclassified.push(`${name}.yml › ${block.label}`);
+        if (!text.some(l => /^\s*#.*docs\/(?:TESTING\.md#event-parity|ci-event-parity\.md#dependency-audit-rule)/.test(l) || /^\s*#\s*Event parity/.test(l))) unclassified.push(`${name}.yml › ${block.label}`);
       }
     }
     expect(unclassified).toEqual([]);
   });
 
-  test('the docs event-parity table lists every classified workflow', () => {
-    const docs = readFileSync(join(root, 'docs/TESTING.md'), 'utf8');
-    const section = docs.slice(docs.indexOf('### Event parity'), docs.indexOf('\n### ', docs.indexOf('### Event parity') + 5));
-    for (const name of ['test', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
+  test('the event-parity table lists every classified workflow', () => {
+    expect(readFileSync(join(root, 'docs/TESTING.md'), 'utf8')).toContain('### Event parity');
+    const docs = readFileSync(join(root, 'docs/ci-event-parity.md'), 'utf8');
+    const section = docs.slice(docs.indexOf('## Classification'), docs.indexOf('## Dependency-audit rule'));
+    for (const name of ['test', 'stress', 'persistence-validation', 'native-locks', 'e2e', 'heavy-tests', 'macos-validation', 'scale-tier', 'semgrep', 'osv-scanner', 'nightly-watch']) {
       expect(section, name).toContain(`${name}.yml`);
     }
-    expect(docs).toContain('#### Dependency-audit rule');
+    expect(docs).toContain('## Dependency-audit rule');
   });
 
   test('export scale runs 10,001 pages on pull requests and 100,001 everywhere else', () => {

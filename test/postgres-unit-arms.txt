@@ -69,6 +69,7 @@ test/persistence-sync-holds.test.ts
 test/persistence-writer-fences.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-frontmatter.test.ts
+test/scripts/test-stress-postgres.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts
