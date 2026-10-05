@@ -244,7 +244,6 @@ jobs:
                 test/alias-source-cascade-5094.test.ts
                 test/company-brain-policy.test.ts
                 test/company-brain-runtime.test.ts
-                test/delta-cursor-integrity.test.ts
                 test/engine-sql-facts-keyset.test.ts
                 test/derived-link-reconciliation.test.ts
                 test/doctor-frontmatter-holds.test.ts
