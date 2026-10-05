@@ -35,7 +35,7 @@ import {
 } from '../chronicle/contract.ts';
 import { CHRONICLE_TYPES, RESCUE_SLUG_PREFIXES } from '../chronicle/eligibility.ts';
 import { claimChronicleRow, executeChronicleRow } from '../chronicle/execute.ts';
-import { defaultJudge, type ChronicleJudge } from '../chronicle/extract-events.ts';
+import { defaultJudge, type ChronicleDropReason, type ChronicleJudge } from '../chronicle/extract-events.ts';
 import {
   RETIRE_REASONS, chronicleDailyRemaining, decideChronicle, pruneChronicleReservations, upsertChronicleRow,
 } from '../chronicle/ledger.ts';
@@ -133,7 +133,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   }
   const details: ChronicleRunDetails & Record<string, unknown> = {
     dry_run: dryRun, sources: 0, candidates: 0, judged: 0, extracted: 0, no_events: 0, failed: 0, reasons: {},
-    events_written: 0, events_retired: 0, deferred_daily_limit: 0, daily_limit: settings.dailyLimit,
+    events_written: 0, events_retired: 0, events_dropped: {}, deferred_daily_limit: 0, daily_limit: settings.dailyLimit,
     daily_remaining: 0, spent_usd: 0, unpriced_calls: 0, max_items: maxItems, per_source: {},
     auto_chronicle: enabled ? 'on' : 'off',
   };
@@ -222,12 +222,15 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
       if (outcome.kind === 'waiting') continue;
       if (outcome.judged) { items++; details.judged++; details.per_source[sourceId].judged++; }
       if (outcome.state === 'extracted') {
-        if (outcome.reason === 'no_events') details.no_events++; else details.extracted++;
+        if (outcome.reason) details.no_events++; else details.extracted++;
       }
       if (outcome.state === 'failed') details.failed++;
       if (outcome.state !== 'extracted' || outcome.reason) count(outcome.reason);
       details.events_written += outcome.written;
       details.events_retired += outcome.retired;
+      for (const [reason, n] of Object.entries(outcome.dropped) as Array<[ChronicleDropReason, number]>) {
+        details.events_dropped[reason] = (details.events_dropped[reason] ?? 0) + n;
+      }
       details.spent_usd += outcome.costUsd ?? 0;
       if (outcome.unpriced) details.unpriced_calls++;
     }
