@@ -310,7 +310,7 @@ export function defaultJudge(engine: BrainEngine): ChronicleJudge {
     // extraction.date_grounding: the page date is the observation date; a
     // relative "last Tuesday" resolves against it, never against today.
     const { isConsumerDateGroundingOn } = await import('../facts/extract.ts');
-    const grounded = await isConsumerDateGroundingOn(engine);
+    const grounded = await isConsumerDateGroundingOn(engine, 'chronicle');
     const { observationDateFrom, observationDateLine, observationDateRule } = await import('../ai/date-grounding.ts');
     const dateLine = grounded ? `${observationDateLine(observationDateFrom(input.effectiveDate))}\n` : '';
     let text: string;

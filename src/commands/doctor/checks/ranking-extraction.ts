@@ -53,22 +53,23 @@ export const hubDegreeShapeEntry: DoctorEntry = {
   run: runHubDegreeShape,
 };
 
-/** Prompts that follow `extraction.date_grounding` only when it is set on explicitly. */
-const OPT_IN_CONSUMERS = ['life chronicle events', 'dream synthesis', 'extract_atoms', 'propose_takes'];
+/** Prompts grounded by default with fact extraction, and the ones that need the setting set on explicitly. */
+const DEFAULT_CONSUMERS = 'fact extraction, dream synthesis, extract_atoms and propose_takes';
+const OPT_IN_LABEL = 'life chronicle events';
 
 async function runExtractionDateGrounding(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
-  const [variant, consumers] = await Promise.all([getExtractorVariant(engine), isConsumerDateGroundingOn(engine)]);
+  const [variant, optIn] = await Promise.all([getExtractorVariant(engine), isConsumerDateGroundingOn(engine, 'chronicle')]);
   const reextract = 'Facts extracted before this was on keep their original wording; re-extract a source only with the user\'s consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).';
   checks.push({
     name: 'extraction_date_grounding',
     status: 'ok',
     message: !variant.dateGrounding
       ? 'extraction.date_grounding is off: extraction prompts keep relative dates ("last week") as written. Dated pages still store their facts at the page date.'
-      : consumers
-        ? `Relative dates resolve against each source's observation date in fact extraction and in: ${OPT_IN_CONSUMERS.join(', ')}. ${reextract}`
-        : `Fact extraction resolves relative dates against each source's observation date (the default). ${OPT_IN_CONSUMERS.join(', ')} keep their current prompts unless extraction.date_grounding is set to true. ${reextract}`,
+      : optIn
+        ? `Relative dates resolve against each source's observation date in ${DEFAULT_CONSUMERS}, and in ${OPT_IN_LABEL} (set on explicitly). ${reextract}`
+        : `Relative dates resolve against each source's observation date in ${DEFAULT_CONSUMERS} (the default). ${OPT_IN_LABEL} keep their current prompt unless extraction.date_grounding is set to true. ${reextract}`,
   });
   return checks;
 }

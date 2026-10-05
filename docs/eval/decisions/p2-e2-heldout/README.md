@@ -21,20 +21,39 @@ All 7 conversations improved individually on the primary metric.
 
 ## Default
 
-`extraction.date_grounding` defaults on for fact extraction: the page hook, `extract_facts`, conversation facts and
-the backstop. `false`, `off` or `0` opts out.
-
-The verdict measured fact extraction only. The four other prompts that know the rule stay on their current prompts
-unless the setting is set to `true` explicitly:
-- life chronicle events;
-- dream synthesis;
-- extract_atoms;
-- propose_takes.
-
-The preregistration requires a per-consumer check before any of them changes. `gbrain doctor` (`extraction_date_grounding`)
-reports which mode a brain is in.
+`extraction.date_grounding` defaults on for fact extraction and for the three other prompts that passed their per-consumer
+check. `false`, `off` or `0` turns all of them off. `true` also turns on life chronicle events, the one prompt that did not
+pass. `gbrain doctor` (`extraction_date_grounding`) reports which prompts are grounded on a brain.
 
 Facts extracted before the default changed keep their original wording. Re-extracting a source is an explicit,
 previewed action that needs the user's consent: `gbrain extract-conversation-facts --source-id <id> --dry-run`.
+
+## Per-consumer checks (preregistration amendment 3)
+
+The held-out verdict measured fact extraction. The four other prompts that know the rule were each checked on 30 invented
+dated fixture pages. Each fixture has 3–6 relative time references, a decision, a plan and a prediction, and fixtures were
+written by `google:gemini-3.8-flash` before any prompt ran. Each prompt ran twice per fixture through its own product
+prompt builder (`anthropic:claude-sonnet-5-5`): as today, and grounded. Two measures:
+- unresolved relative phrases in the stored items (the facts lane's check);
+- a blind pairwise judge (`openai:gpt-6-sol`, 10 replicates per fixture, A/B order randomized per replicate).
+
+Pass needs (a) fewer unresolved phrases when grounded, and (b) a judge score (grounded win 1, tie 0.5, loss 0) with a 95%
+bootstrap lower bound of at least 0.45.
+
+| Prompt | Unresolved phrases, current → grounded | Judge score (95% CI) | Verdicts (grounded / tie / current) | Result | Default |
+|---|---|---|---|---|---|
+| dream synthesis | 49 → 1 (475 → 615 items) | 0.813 (0.71, 0.92) | 224 / 40 / 36 | pass | on |
+| extract_atoms | 5 → 0 (66 → 69 items) | 0.973 (0.94, 0.99) | 292 / 0 / 8 | pass | on |
+| propose_takes | 10 → 0 (96 → 99 items) | 0.933 (0.87, 0.99) | 275 / 10 / 15 | pass | on |
+| life chronicle events | 0 → 0 (149 → 155 items) | 0.937 (0.86, 0.99) | 281 / 0 / 19 | fail (a) | opt-in (`true`) |
+
+Life chronicle events fails criterion (a) on a floor: its events already carry an absolute `when` field, so neither arm
+stored an unresolved phrase (0 → 0). The judge preferred the grounded events in 281 of 300 comparisons. The preregistered
+bar is applied as written, so chronicle stays on its current prompt unless the setting is `true`. Changing that would
+need a new preregistered check.
+
+The fixtures, outputs, judgments and the script that produced them are in gbrain-evals at
+`docs/benchmarks/p2-e2-consumers/` (branch `capy/p2-preregistration`). `per-consumer-report.json` here is the summary.
+The budget ledger did not meter this spend, because the calls went to providers directly; the preregistered estimate was $12.
 
 Development record: `../p2-date-grounding-dev/`.

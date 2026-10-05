@@ -52,11 +52,11 @@ describe('hub_degree_shape', () => {
 describe('extraction_date_grounding', () => {
   test('fact extraction is grounded by default; the other prompts only when set on; false turns it off', async () => {
     const [byDefault] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
-    expect(byDefault.message).toContain('(the default)');
-    expect(byDefault.message).toContain('unless extraction.date_grounding is set to true');
+    expect(byDefault.message).toContain('fact extraction, dream synthesis, extract_atoms and propose_takes (the default)');
+    expect(byDefault.message).toContain('life chronicle events keep their current prompt unless extraction.date_grounding is set to true');
     await engine.setConfig('extraction.date_grounding', 'true');
     const [on] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
-    expect(on.message).toContain('fact extraction and in: life chronicle events');
+    expect(on.message).toContain('and in life chronicle events (set on explicitly)');
     await engine.setConfig('extraction.date_grounding', 'false');
     const [off] = (await extractionDateGroundingEntry.run(ctx())) as Check[];
     expect(off.message).toContain('is off');

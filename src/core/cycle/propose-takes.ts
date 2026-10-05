@@ -425,7 +425,7 @@ export const EXTRACTOR_FAILURE_HALT_STREAK = 5;
 /** Prompt flags read once per phase run: #5425 attribution rules and extraction.date_grounding. */
 async function takesPromptFlags(engine: BrainEngine): Promise<{ attributionRules: boolean; dateGrounding: boolean }> {
   const attributionRules = String(await Promise.resolve(engine.getConfig?.('dream.propose_takes.attribution_rules')).catch(() => null) ?? '').trim() === 'true';
-  return { attributionRules, dateGrounding: await isConsumerDateGroundingOn(engine) };
+  return { attributionRules, dateGrounding: await isConsumerDateGroundingOn(engine, 'takes') };
 }
 
 export async function defaultExtractor(

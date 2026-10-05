@@ -904,7 +904,7 @@ export async function runPhaseExtractAtoms(
   // "Keep safe defaults" comment) still leaves extractModel on this default,
   // matching the pre-refactor fail-soft behavior exactly.
   let extractModel = resolveTierDefault('utility');
-  const dateGrounding = await isConsumerDateGroundingOn(engine);
+  const dateGrounding = await isConsumerDateGroundingOn(engine, 'atoms');
   let budgetCap = DEFAULT_BUDGET_USD;
   let explicitBudget = false; // operator SET cycle.extract_atoms.budget_usd
   // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +

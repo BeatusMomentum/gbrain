@@ -14,7 +14,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { configureGateway, resetGateway, __setChatTransportForTests } from '../../src/core/ai/gateway.ts';
 import type { ChatOpts, ChatResult } from '../../src/core/ai/gateway.ts';
-import { buildExtractorSystem, extractFactsFromTurnWithOutcome } from '../../src/core/facts/extract.ts';
+import { buildExtractorSystem, extractFactsFromTurnWithOutcome, getExtractorVariant, isConsumerDateGroundingOn } from '../../src/core/facts/extract.ts';
 import { observationDateRule } from '../../src/core/ai/date-grounding.ts';
 import { segmentObservationDate } from '../../src/commands/extract-conversation-facts.ts';
 import type { Page } from '../../src/core/types.ts';
@@ -103,5 +103,21 @@ describe('segmentObservationDate', () => {
   });
   test('a frontmatter date drives the segment date', () => {
     expect(segmentObservationDate(page({ date: '2025-12-24' }), '2025-12-24T00:00:00Z')).toEqual({ date: '2025-12-24', source: 'caller' });
+  });
+});
+
+describe('defaults from the verdicts', () => {
+  const engineWith = (v: string | null) => ({ getConfig: async (k: string) => (k === 'extraction.date_grounding' ? v : null) }) as never;
+  test('unset: fact extraction, synthesis, atoms and takes grounded; chronicle not', async () => {
+    expect((await getExtractorVariant(engineWith(null))).dateGrounding).toBe(true);
+    for (const c of ['synthesis', 'atoms', 'takes'] as const) expect(await isConsumerDateGroundingOn(engineWith(null), c)).toBe(true);
+    expect(await isConsumerDateGroundingOn(engineWith(null), 'chronicle')).toBe(false);
+  });
+  test('true turns every prompt on; false turns every prompt off', async () => {
+    for (const c of ['chronicle', 'synthesis', 'atoms', 'takes'] as const) {
+      expect(await isConsumerDateGroundingOn(engineWith('true'), c)).toBe(true);
+      expect(await isConsumerDateGroundingOn(engineWith('false'), c)).toBe(false);
+    }
+    expect((await getExtractorVariant(engineWith('off'))).dateGrounding).toBe(false);
   });
 });

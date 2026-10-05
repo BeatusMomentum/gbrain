@@ -134,14 +134,21 @@ export async function getExtractorVariant(engine?: BrainEngine): Promise<Extract
 }
 
 /**
- * Date grounding for the other extraction prompts (life chronicle events,
- * dream synthesis, extract_atoms, propose_takes): on only when
- * `extraction.date_grounding` is set on explicitly. The held-out verdict
- * measured fact extraction; each of these keeps its current prompt until its
- * own check passes.
+ * Date grounding for the other extraction prompts. Each defaulted from its own
+ * per-consumer check (preregistration amendment 3, results in
+ * docs/eval/decisions/p2-e2-heldout/): dream synthesis, extract_atoms and
+ * propose_takes passed and follow the fact-extraction default (on unless the
+ * setting is false/off/0); life chronicle events did not clear the
+ * unresolved-phrase criterion and stays on its current prompt unless the
+ * setting is explicitly true.
  */
-export async function isConsumerDateGroundingOn(engine?: BrainEngine): Promise<boolean> {
-  return engine ? flagIs(await readFlag(engine, 'extraction.date_grounding'), FLAG_ON) : false;
+export type DateGroundingConsumer = 'chronicle' | 'synthesis' | 'atoms' | 'takes';
+const OPT_IN_CONSUMERS: ReadonlySet<DateGroundingConsumer> = new Set(['chronicle']);
+
+export async function isConsumerDateGroundingOn(engine: BrainEngine | undefined, consumer: DateGroundingConsumer): Promise<boolean> {
+  if (!engine) return false;
+  const raw = await readFlag(engine, 'extraction.date_grounding');
+  return OPT_IN_CONSUMERS.has(consumer) ? flagIs(raw, FLAG_ON) : !flagIs(raw, FLAG_OFF);
 }
 
 /**

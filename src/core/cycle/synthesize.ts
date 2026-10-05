@@ -1753,7 +1753,7 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     budgetUsd: parseBudgetUsd(await engine.getConfig('dream.synthesize.budget_usd'), DEFAULT_SYNTH_BUDGET_USD),
     allowUnpriced: await loadAllowUnpriced(engine),
     attributionRules: (await engine.getConfig('dream.synthesize.attribution_rules'))?.trim() === 'true',
-    dateGrounding: await isConsumerDateGroundingOn(engine),
+    dateGrounding: await isConsumerDateGroundingOn(engine, 'synthesis'),
     cooldownHours,
     maxPromptTokens,
     maxChunksPerTranscript,
