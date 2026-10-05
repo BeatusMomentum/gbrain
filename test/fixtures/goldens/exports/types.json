@@ -4819,7 +4819,7 @@
         "kind": "function",
         "name": "inferLinkType",
         "signature": [
-          "(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number) => string"
+          "(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number, pageText?: string) => string"
         ]
       },
       {
