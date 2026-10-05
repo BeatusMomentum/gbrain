@@ -349,6 +349,7 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         // flush_skip_* = the turn IS banked; only the prompt-harvest enqueue
         // was declined (cap/queue policy) — the sweep extracts it later.
         turns_banked: bank.filter((e) => e.reason === 'wb_scheduled' || e.reason === 'wb_banked' || e.reason?.startsWith('flush_skip_')).length,
+        last_ok_at: harvest.filter((e) => e.outcome === 'ok').map((e) => e.ts).sort().at(-1) ?? null,
       };
       const failures = harvest.filter((e) => e.outcome === 'error');
       const finished = failures.length + harvest.filter((e) => e.outcome === 'ok').length;

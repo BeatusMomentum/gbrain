@@ -293,7 +293,7 @@ describe('memory_writeback doctor check', () => {
         ];
         for (const entry of entries) await writeHeartbeat(entry, { trim: false });
         const check = await buildMemoryWritebackCheck(engine);
-        expect(check.details?.backstop_7d).toMatchObject({ failed: c.errors.length });
+        expect(check.details?.backstop_7d).toMatchObject({ failed: c.errors.length, last_ok_at: ts });
         if (c.warn) {
           expect(check.status).toBe('warn');
           expect(check.message).toContain(c.warn);
