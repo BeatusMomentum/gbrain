@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.60.0] - 2026-10-05
+## [0.60.61.0] - 2026-10-05
 
 **Background paid jobs ask before they spend and stay inside the amount the user approved, an agent on MCP gets the same setup tips a person at the terminal gets, every install gives the agent the same tool set, and a shared HTTP server that can't open its brain explains why instead of dying.**
 
@@ -49,7 +49,7 @@ gbrain config set mcp.allow_session_widen false  # forbid request_tools session 
 - New stdio registrations use `starter`. A skill that needs a tool outside it gets the `unknown_tool` hint whose fix is one `request_tools` call. Existing registrations keep their surface; OpenClaw's manifest is not pinned yet.
 - Container health checks that relied on `serve --http` exiting when its brain is unavailable need `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1`.
 
-## To take advantage of v0.60.60.0
+## To take advantage of v0.60.61.0
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
 
@@ -57,7 +57,7 @@ gbrain config set mcp.allow_session_widen false  # forbid request_tools session 
    ```bash
    gbrain apply-migrations --yes
    ```
-2. **Your agent reads `skills/migrations/v0.60.60.0.md` the next time you interact with it.** Migration v205 adds the spend-approval columns to the job queue. Restart every worker, `gbrain serve` and autopilot so queued paid jobs are claimed under the new rules.
+2. **Your agent reads `skills/migrations/v0.60.61.0.md` the next time you interact with it.** Migration v205 adds the spend-approval columns to the job queue. Restart every worker, `gbrain serve` and autopilot so queued paid jobs are claimed under the new rules.
 3. **Verify the outcome:**
    ```bash
    gbrain doctor --only legacy_job_authority,harness_wiring --json
@@ -128,8 +128,64 @@ Rolling the binary back leaves queued spend-authorized jobs unclaimable; cancel 
 ### For contributors
 
 - The plan and review record live in `docs/designs/AGENT_OPERATOR_FOLLOWUP_WAVE.md`.
-- `test/mcp-schema-budget.test.ts` caps the starter `tools/list` JSON at 26,450 characters (`mute_notice` joined starter; `get_page` gained `content_only`; `traverse_graph` gained temporal filters); the model-visible list stays under 25,000.
+- `test/mcp-schema-budget.test.ts` caps the starter `tools/list` JSON at 26,450 characters (26,402 measured with `mute_notice` on starter); the model-visible list stays under 25,000.
 - Size ceilings moved with rationale in `scripts/module-size-limits.tsv`: `src/cli.ts` down to 3,184; `worker.ts`, `jobs.ts`, `queue.ts`, `init.ts`, `config.ts`, `serve-http.ts` up by the lines this release adds.
+
+## [0.60.60.0] - 2026-10-05
+
+**Ask your brain a question that chains relationships, like "who founded the companies Alice invested in?", and search now walks those links step by step and returns the founders with the path that connects them.**
+
+Until now, search understood one relationship per question. "Who invested in Acme?" worked. "Who founded the companies Alice invested in?" did not: it needs two steps (Alice's investments, then each company's founders), and search would hand back pages that merely mentioned Alice. Now a question that chains two or three relationships (founded, invested in, advises, works at, attended) is read into a short plan and answered by walking the typed links in your brain. Each answer arrives with the chain of links that supports it, and the pages along the way come with it. No AI model is involved: the reading is a fixed grammar, so the same question always gets the same plan.
+
+### How to use it
+
+It is on by default in the `balanced` and `tokenmax` search modes. Ask in plain English through `search`, `query`, `recall` or `think`. To name the chain yourself, use `gbrain graph-query <slug> --hop invested_in:object --hop founded:subject`, or the `hops` parameter of the `traverse_graph` tool. To turn the planner off: `gbrain config set search.relational_planner false`.
+
+### The numbers that matter
+
+Measured on a held-out set of 125 chained questions the planner was never developed on, run by an independent custodian:
+
+| What we measured | Before | Now |
+| --- | --- | --- |
+| Chained questions where every needed page is in the top 10 | 0% (eval settings), 1.1% (shipped defaults) | 27.0%, 28.1% |
+| Questions better / worse | | 24 better, 0 worse |
+| Answers the chain returns that are correct | | 83% |
+| Wrong pages ranked above the first right one | 3.31 per question | 0.09 |
+| Ordinary questions that set it off by mistake | | 0 of 627 |
+
+### Things to watch
+
+| Change | What to do |
+| --- | --- |
+| Reworded questions are often not recognized: the planner read 70% of plainly worded chained questions and 21% of reworded ones | when a chained question comes back without `relational_plan`, call `traverse_graph` with explicit `hops` |
+| Chains walk relationships that are true today: an advisory role or job that ended is skipped | ask "formerly advised" or "used to work at" to walk ended ones |
+| Search cache keys for `balanced` and `tokenmax` change | cached results refill on their own |
+| Added search time on a chained question | about 15 ms on a 240-page brain, up to about 55 ms on a 100,000-link graph |
+
+## To take advantage of v0.60.60.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes --no-autopilot-install
+   ```
+2. **Nothing else to migrate.** There is no schema change; the planner turns on through the search mode defaults.
+3. **Verify:**
+   ```bash
+   gbrain search modes --json | grep relational_planner
+   gbrain search "Who founded the companies that <a person in your brain> invested in?" --json
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Itemized changes
+
+- **Planner** (`src/core/search/relational-plan.ts`): `parseRelationalPlan` turns a 2-3 relation question into anchor-outward typed hops, or returns `not_applicable` (single relation, left to `parseRelationalQuery`) or `unsupported` with a reason (coordination, negation, dates, counting, quoted names, more than one entity). Tense markers before a relation that can end set that hop's status ("formerly advised" walks ended roles).
+- **Executor** (`src/core/search/relational-chain.ts`, `readChainHop` in `src/core/search/read-enrichment.ts`, `BrainEngine.relationalChainHop`): one bounded query per hop (50 frontier pages, 100 links per page, 10 paths per page), links oriented by each relation's page-type signature, read scope applied to every endpoint, origin and degree contributor, the temporal-edge validity predicate on every hop, path-local cycles cut, hub weighting at half-degree 32 (`src/core/search/hub-dampening.ts`).
+- **Search**: chain rows carry a `relational` field (role, seed, hop, path count, up to three evidence edges) through fusion, lean rows and recall; up to `search.relational_chain_slots` (default 10) chain rows lead page 1; `meta.relational_plan` and a `relational_chain` notice report the outcome; a chain error is audited and falls back to the one-hop path.
+- **Agent surface**: `traverse_graph` takes optional `hops` (full MCP surface only, so the starter list stays inside its size budget); `gbrain graph-query --hop link_type:toward`.
+- **Config**: `search.relational_planner` (on in `balanced` and `tokenmax`), `search.relational_orient_onehop` (off; one-hop walks that also read links written on the other page), `search.relational_chain_slots`.
+- **Records**: `docs/eval/decisions/p7-heldout-2026-10-05/` (held-out verdict), `docs/eval/decisions/p7-dev-2026-10-04/` (development verdict), `docs/guides/multi-hop.md`.
 
 ## [0.60.59.0] - 2026-10-05
 
