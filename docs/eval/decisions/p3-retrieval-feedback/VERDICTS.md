@@ -1,0 +1,43 @@
+# P3 held-out verdicts
+
+The custodian ran the sealed cells against the preregistration in
+[`PREREGISTRATION.md`](PREREGISTRATION.md) and reported aggregates only. The implementer saw no sealed question,
+phrasing or seed.
+
+## E1: oracle ratings, λ = 0.1, frozen arm gating
+
+| Corpus | ΔNDCG@10 (points) | 95% CI | Better / worse | Notes |
+|---|---|---|---|---|
+| world-v1 relational (72 sealed base questions) | +2.04 | [+1.03, +3.28] | 38 / 5 | beats the exposure-frequency arm (−1.50); cold-start subgroup +1.44; the `advises` category drops 2.0 points (6 rows from 3 base questions) |
+| LoCoMo (7 sealed conversations) | −0.12 | [−1.02, +0.61] | | CI includes 0: **fails**; cold-start subgroup −3.0 (16 rows) |
+
+Exploratory rows: λ = 0.2 gives +5.45 on world-v1 and −2.23 on LoCoMo.
+
+LoCoMo fails E1, so feedback cannot ship on by default under any reading. Whether world-v1 passes depends on whether
+"no category drops more than 1.0 point" is part of E1's pass bar or only of the default-on list; that reading is open
+(see the pull request) and decides between shipping feedback off by default (opt-in, explicit ratings) and removing
+the subsystem.
+
+## E2: implicit citation signal
+
+Not run: preregistered gate (sealed E2 runs only if sealed E1 passes on both corpora). Dev result: at λ = 0.1 a
+citation raises a page's multiplier by about 0.25% per citation, at most 5%, and does not change what `think`
+gathers (gather Recall@5 identical in every arm).
+
+## E3: no-regression guards
+
+LongMemEval-S (all 500 questions, dev by P0's split): identical retrieval lists, mean read latency +0.6 ms.
+
+## E4: relational triplet scoring — fail
+
+The relational arm fired on 17% of held-out phrasings (who-at-topic 3%, portfolio-by-sector 47%, attendees-by-role
+0%) against the ≥ 80% precondition; the effect was +0.39 NDCG@10 points [+0.09, +0.81] against the +2.0 bar.
+`search.triplet_scoring` is removed from the pull request.
+
+### Known gap: relational parser brittleness
+
+The held-out phrasings show that the relational-intent parser (`src/core/search/relational-intent.ts`) keys on exact
+surface forms: "who at X works on Y" fires, "who at X is working on Y" does not, and the attendee and portfolio
+templates miss most rewordings. Any ranking change that acts on the relational arm (triplet scoring included) is
+capped by how often the parser recognizes the question. Measuring the parser's recall on held-out phrasings, and
+widening it, is a prerequisite for re-testing relational ranking ideas.
