@@ -86,11 +86,11 @@ describe('pre-fix member hashes (D-N3 grandfathering)', () => {
   const legacyHash = (input: Atom[]) => createHash('sha256')
     .update(JSON.stringify([MODEL, 'world', input.map((a) => [a.slug, a.title, a.body]).sort((x, y) => x[0].localeCompare(y[0]))]))
     .digest('hex').slice(0, 16);
-  const seedLegacy = async (hash: string) => {
+  const seedLegacy = async (hash: string, body = 'Legacy narrative.') => {
     await importFromContent(engine, 'concepts/flywheel', serializeMarkdown({
       tier: 'T2', synthesis_mode: 'llm', member_hash: hash, synthesized_at: '2026-01-01T00:00:00.000Z',
       synthesized_by: 'synthesize_concepts-v0.41', visibility: 'world',
-    }, 'Legacy narrative.', '', { type: 'concept', title: 'flywheel', tags: [] }), { noEmbed: true, sourceId: 'default' });
+    }, body, '', { type: 'concept', title: 'flywheel', tags: [] }), { noEmbed: true, sourceId: 'default' });
   };
 
   test('unchanged inputs are rehashed without a model call and keep the narrative', async () => {
@@ -105,6 +105,19 @@ describe('pre-fix member hashes (D-N3 grandfathering)', () => {
     expect(page!.frontmatter.member_hash).not.toBe(legacyHash(fenced));
     await run(fenced, calls);
     expect(calls.n).toBe(0);
+  }, 120000);
+
+  test('a rehashed concept with a takes fence keeps one Takes section', async () => {
+    const fenced = atoms().map((a, i) => (i === 0 ? { ...a, body: withTake(a.body) } : a));
+    await seedLegacy(legacyHash(fenced), withTake('Legacy narrative.'));
+    const calls = { n: 0 };
+    const r = await run(fenced, calls);
+    expect(calls.n).toBe(0);
+    expect((r.details as Record<string, unknown>).rehashed).toEqual(['concepts/flywheel']);
+    const page = await concept();
+    expect(page!.compiled_truth.match(/^## Takes\s*$/gm)).toHaveLength(1);
+    expect(parseTakesFence(page!.compiled_truth).takes.map((t) => t.claim)).toEqual(['Flywheels compound']);
+    expect(page!.compiled_truth).toContain('Legacy narrative.');
   }, 120000);
 
   test('changed inputs under a legacy hash re-synthesize', async () => {

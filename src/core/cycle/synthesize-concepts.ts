@@ -358,7 +358,7 @@ export async function runPhaseSynthesizeConcepts(
     let synthesisMode: ConceptSynthesisMode;
     let fallbackWriter: string | undefined;
     if (grandfathered) {
-      narrative = existing!.compiled_truth;
+      narrative = stripFenceSections(existing!.compiled_truth);
       synthesisMode = priorMode as ConceptSynthesisMode;
       rehashed.push(conceptSlug);
     } else if (group.tier === 'T1' || group.tier === 'T2') {
