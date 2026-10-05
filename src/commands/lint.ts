@@ -616,6 +616,11 @@ function changedWhileLinting(sourceId: string, slug: string): OperationError {
     { fix: readFix(`Shows page ${slug} in source ${sourceId} as it is now, with its revision.`, { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] }) });
 }
 
+/** `cycle.lint_fix` (default on): only an explicit falsy value makes the cycle's lint phase report-only; a config read failure keeps the default. */
+export async function cycleLintFixEnabled(engine?: BrainEngine | null): Promise<boolean> {
+  return !/^\s*(false|0|off|no)\s*$/i.test(await engine?.getConfig('cycle.lint_fix').catch(() => null) ?? '');
+}
+
 /**
  * #5180: publish one lint repair through the persistence coordinator, the
  * only writer a managed brain's worktree accepts. Resolves the page's slug

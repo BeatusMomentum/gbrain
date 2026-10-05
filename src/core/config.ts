@@ -1524,8 +1524,6 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4102: off switch for the propose_takes LLM phase (default ON; the
   // phase ships in the default list). Read by src/core/cycle/propose-takes.ts.
   'cycle.propose_takes.enabled',
-  // Off switch for the cycle lint phase's repairs (default ON; false = report-only). Read by src/core/cycle.ts runPhaseLint.
-  'cycle.lint_fix',
   // Content sanity (v0.41)
   'content_sanity.bytes_warn',
   'content_sanity.bytes_block',
