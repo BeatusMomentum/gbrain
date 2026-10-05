@@ -507,7 +507,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 200 (latest: 200)",
+          "message": "Version 201 (latest: 201)",
           "name": "schema_version",
           "status": "ok"
         },

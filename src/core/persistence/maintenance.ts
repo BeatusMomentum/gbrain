@@ -1,6 +1,7 @@
-import { existsSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
-import { acquireLock, releaseLock } from '../pglite-lock.ts';
+import { existsSync, lstatSync, realpathSync, renameSync } from 'node:fs';
+import { flushDirectory } from '../fs-durable.ts';
+import { dirname, join } from 'node:path';
+import { acquireLock, releaseLock, type LockHandle } from '../pglite-lock.ts';
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { SqlEngine } from './model.ts';
@@ -46,4 +47,24 @@ export async function backupUnmanagedPglite(dataDir: string, backupDir: string):
     // release still targets the original stable sibling native lock.
     lock.lockDir = join(backupDir, '.gbrain-lock');
   } finally { await releaseLock(lock); }
+}
+
+/**
+ * Engine graduation: rename a PGLite datastore while this process already
+ * holds its stable sibling kernel lock (`backupUnmanagedPglite` acquires it
+ * itself, which fails while it is held). The lock is never released here; its
+ * metadata dir is retargeted to follow the moved datastore. Used for the
+ * step-7 move-aside and the rollback move-back.
+ */
+export function moveHeldPglite(fromDir: string, toDir: string, lock: LockHandle): void {
+  if (!lock.acquired || !lock.nativeLock || lock.nativeLock.released) throw new Error('Moving a PGLite datastore requires its held kernel lock.');
+  assertManagedFilesystemWrite(fromDir);
+  assertManagedFilesystemWrite(toDir);
+  if (!lstatSync(fromDir).isDirectory()) throw new Error(`${fromDir} is not a PGLite data directory (symlinked datastores are not moved).`);
+  if (lock.lockDir !== join(realpathSync(fromDir), '.gbrain-lock')) throw new Error(`The held kernel lock does not belong to ${fromDir}.`);
+  if (existsSync(toDir)) throw new Error(`${toDir} already exists; inspect before retrying.`);
+  renameSync(fromDir, toDir);
+  lock.lockDir = join(toDir, '.gbrain-lock');
+  if (lock.lockPath) lock.lockPath = join(lock.lockDir, 'lock');
+  flushDirectory(dirname(toDir));
 }

@@ -46,6 +46,8 @@ export async function runResidentProjectionInvocation(engine: BrainEngine, hostI
     { deadlineMs: RESIDENT_PROJECTION_BUDGET_MS, now, retryCooldown: true });
 }
 
+const PARKED_WORKER: Promise<void> = Promise.resolve();
+
 export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal) => Promise<PreparedMutation>;
 export class PersistenceConsumer {
   private stopping = false;
@@ -88,14 +90,20 @@ export class PersistenceConsumer {
   readonly hostId: string;
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
     private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void;
-      onSettled?: (row: WriteRequest) => void } = {}) {
+      onSettled?: (row: WriteRequest) => void;
+      /** Engine graduation drain: claim, recover and publish requests only; effect, projection, topology and maintenance workers never start. */
+      requestsOnly?: boolean } = {}) {
     this.hostId = opts.hostId ?? localHostId();
   }
   private get checkoutObservable(): ((listener: () => void) => () => void) | undefined {
     const engine = this.engine as { onCheckout?: unknown };
     return typeof engine.onCheckout === 'function' ? (engine.onCheckout as (listener: () => void) => () => void).bind(this.engine) : undefined;
   }
-  start(): void { this.stopping = false; this.abort = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs; this.schedule(0); }
+  start(): void {
+    this.stopping = false; this.abort = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs;
+    if (this.opts.requestsOnly) this.projectionWorker = this.effectsWorker = this.topologyWorker = this.maintenanceWorker = PARKED_WORKER;
+    this.schedule(0);
+  }
   /**
    * Work admitted by this process: tick now instead of waiting out the idle
    * backoff. Like a completed publication, it claims at once and leaves scans
