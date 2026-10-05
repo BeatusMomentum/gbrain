@@ -268,6 +268,8 @@ export interface AuthInfo {
   grantRevision?: number;
   grantProfile?: string | null;
   grantRepairReasons?: string[];
+  /** The client's stored access-token lifetime override (`oauth_clients.token_ttl`); null = server default. */
+  tokenTtlSeconds?: number | null;
   delegatedSlugPrefixes?: string[] | null;
   /** Missing grant projection on a profile client is fail-closed. */
   grantProjectionDegraded?: boolean;
