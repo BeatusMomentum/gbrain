@@ -935,12 +935,23 @@ brain surfaces conflicting answers.
 
 ### Recommended nightly cadence
 
+The probe is not part of the dream cycle or autopilot (the cycle only reads
+the latest run), so schedule it yourself (cron, launchd or a systemd timer).
+It needs queries: either write your own list (`--queries-file`, JSONL or one
+query per line; nothing creates `~/.gbrain/queries.jsonl` for you), or turn
+on query capture (`gbrain config set eval.capture true`; capture is off by
+default) and use `--from-capture` once real queries have been recorded.
+
 ```bash
-# Once a day, against your top 50 most-frequent queries:
+# Once a day, against queries you maintain:
 gbrain eval suspected-contradictions \
   --queries-file ~/.gbrain/queries.jsonl \
   --top-k 5 \
   --budget-usd 5 \
+  --output ~/.gbrain/probe-runs/$(date +%Y-%m-%d).json
+
+# Or, with eval.capture on, against captured queries:
+gbrain eval suspected-contradictions --from-capture --top-k 5 --budget-usd 5 \
   --output ~/.gbrain/probe-runs/$(date +%Y-%m-%d).json
 ```
 

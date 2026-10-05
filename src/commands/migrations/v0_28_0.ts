@@ -98,9 +98,9 @@ async function phaseBBackfill(
 
   try {
     // Inline run on both engines for v0.28.0 simplicity. Re-running this
-    // backfill is `gbrain apply-migrations --migration 0.28.0`; the
-    // migration's job is to get the table populated for upgrade-time doctor
-    // checks.
+    // backfill is `gbrain apply-migrations --migration 0.28.0`; one page's
+    // index rebuilds with `gbrain takes rebuild <slug>`. The migration's job
+    // is to get the table populated for upgrade-time doctor checks.
     const { extractTakes } = await import('../../core/cycle/extract-takes.ts');
     const result = await extractTakes(engine, { source: 'db' });
 

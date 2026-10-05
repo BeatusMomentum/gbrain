@@ -197,6 +197,16 @@ gbrain recall projects/offsite-example
 Or ask your agent: *"Remember the offsite date from the email I just pasted,
 and note that it came from that email."*
 
+## Proving an extraction ran
+
+`extract_facts` has no caller-defined binding field such as a `job_binding`
+(#5278). On a managed brain the attestation is the durable write receipt:
+pass your own `request_id` (a UUID you can record against your job), and the
+response carries a `write_request` receipt for it; `get_write_request` with
+the same `request_id` reads it back later, including after a timeout. A brain
+that is not managed runs extraction without a journal, so there is no receipt
+to bind to.
+
 ## Duplicates across lanes
 
 The same claim can arrive twice: the agent saves it with `remember`, and the
