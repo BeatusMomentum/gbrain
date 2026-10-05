@@ -481,7 +481,8 @@ async function admitAhead(engine: BrainEngine, cursor: Cursor, key: string, bulk
   let current = cursor, foregroundChecked = false;
   for (let slot = 0; ; slot++) {
     const window = current.window ?? [];
-    if (slot < window.length) { await admitWindowGroup(engine, current, key, slot); continue; }
+    // A group admits only after the group before it: a failed admission ends this pass (it is retried on the next).
+    if (slot < window.length) { if (!await admitWindowGroup(engine, current, key, slot)) break; continue; }
     if (window.length >= depth) break;
     const start = current.index + current.group!.length + window.reduce((sum, group) => sum + group.length, 0);
     if (start >= current.entries.length) break;
@@ -506,18 +507,19 @@ async function admitAhead(engine: BrainEngine, cursor: Cursor, key: string, bulk
   assertActive();
   return current;
 }
-/** Admits window group `slot` when its requests are missing (a failed admission is retried when it becomes the cursor's group). */
-async function admitWindowGroup(engine: BrainEngine, cursor: Cursor, key: string, slot: number): Promise<void> {
+/** Admits window group `slot` when its requests are missing; false when they are still missing (retried on the next pass, or when it becomes the cursor's group). */
+async function admitWindowGroup(engine: BrainEngine, cursor: Cursor, key: string, slot: number): Promise<boolean> {
   const members = cursor.window![slot]!;
   const principal = cursor.authority.writer.principal;
   const admitted = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
     [principal.kind, principal.id, members.map(member => member.requestId)]);
-  if ((admitted[0]?.n ?? 0) >= members.length) return;
+  if ((admitted[0]?.n ?? 0) >= members.length) return true;
   const rows = await admitGroup(engine, members, cursor, async tx => {
     const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'window'->($3::int)->0->>'requestId' AS request_id FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key, slot]);
     return held?.request_id === members[0]!.requestId;
   }).catch(() => null);
   if (rows) startPersistenceConsumer(engine, loadConfig() ?? { engine: engine.kind }).wake();
+  return rows !== null;
 }
 /**
  * #5984 bulk: admits the cursor's group, waits for it and advances over the

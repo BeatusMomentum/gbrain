@@ -241,7 +241,7 @@ function groupFailure(error: unknown): GroupFailure {
 /**
  * #5984 lanes: a lane group that did not commit. A group whose predecessor ended without committing is
  * cancelled; one whose predecessor committed takes the single path like any FIFO head (null); one whose
- * predecessor still publishes releases its claims so the FIFO head runs first. Lock and statement timeouts
+ * predecessor still publishes, waits in the queue or is not admitted yet releases its claims so it runs first. Lock and statement timeouts
  * cost one lane for the rest of the drain.
  */
 async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: GroupFailure | undefined, run: GroupExecution): Promise<boolean | null> {
@@ -251,7 +251,7 @@ async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: G
   const prior = after ? await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
     [rows[0]!.principal_kind, rows[0]!.principal_id, after]).then(found => found[0]?.state ?? null) : 'committed';
   if (prior === 'committed') return null;
-  if (prior === null || ['failed', 'conflict', 'cancelled'].includes(prior)) {
+  if (prior !== null && ['failed', 'conflict', 'cancelled'].includes(prior)) {
     for (const done of await cancelRows(engine, rows)) run.settled(done);
     return true;
   }

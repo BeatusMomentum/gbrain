@@ -18,6 +18,7 @@ import { WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
 import { acquireShared, leaseDraining, leaseWounded, yieldLease } from '../src/core/persistence/worktree-lease.ts';
 import type { NativeLockHandle } from '../src/core/persistence/native-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { awaitLaneTurn, closeLaneRun, laneOf, openLanes } from '../src/core/persistence/sync-lanes.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-lanes-'));
 let engine: BrainEngine | undefined;
@@ -78,6 +79,20 @@ test('a lease is shared by lanes; an exclusive writer drains and wounds it and g
   await b.release(); expect(released).toBe(1);
   expect(await waiting).toBe(true);
   expect(leaseDraining(path)).toBe(false);
+});
+
+test('a lane waits for its predecessor to commit, yields to a requeued or unadmitted one and stops after a failed one', async () => {
+  openLanes('wt-turn', 'run-turn', 4, null);
+  const state = laneOf({ worktree_id: 'wt-turn', intent: { lane: 'run-turn' } } as never)!;
+  const rows = [{ request_id: 'b', principal_kind: 'local_cli', principal_id: 'p', intent: { after: 'a', lane: 'run-turn' } }] as never;
+  const tx = (states: Array<string | null>) => ({ executeRaw: async () => { const next = states.shift(); return next === null || next === undefined ? [] : [{ state: next }]; } }) as never;
+  await awaitLaneTurn(tx(['running', 'running', 'committed']), state, rows);
+  await expect(awaitLaneTurn(tx(['running', 'queued']), state, rows)).rejects.toMatchObject({ reason: 'predecessor_requeued' });
+  await expect(awaitLaneTurn(tx([null]), state, rows)).rejects.toMatchObject({ reason: 'predecessor_requeued' });
+  await expect(awaitLaneTurn(tx(['running', 'failed']), state, rows)).rejects.toMatchObject({ reason: 'predecessor_failed' });
+  await expect(awaitLaneTurn(tx(['running', 'running', 'running']), state, rows, 60)).rejects.toMatchObject({ reason: 'order_timeout' });
+  closeLaneRun('run-turn');
+  expect(laneOf({ worktree_id: 'wt-turn', intent: { lane: 'run-turn' } } as never)).toBeNull();
 });
 
 test('lanes publish several groups at once and every page still commits, attributed to its own request, in manifest order', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_BULK_SIZE: '4' }, async () => {
