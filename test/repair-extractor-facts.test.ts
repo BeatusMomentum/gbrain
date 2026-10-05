@@ -415,7 +415,8 @@ for (const backend of testBackends()) {
           startPersistenceConsumer(engine, ctx.config);
           const written = await writeSingleFact(engine, 'default', { fact: CLAIM, provenance: 'fixture', entity: ENTITY, kind: 'commitment' });
           expect(written).toMatchObject({ status: 'inserted', entity_slug: ENTITY });
-          expect(embedded).toEqual([CLAIM]);
+          // The keyless consumer's config is the effective config: the claim never reaches the embedder.
+          expect(embedded).toEqual([]);
           const [row] = await engine.executeRaw<{ has_vector: boolean }>('SELECT embedding IS NOT NULL AS has_vector FROM facts WHERE id=$1', [written.id]);
           expect(row.has_vector).toBe(false);
         }, { databaseUrl, setup: async ({ engine, root }) => {
