@@ -133,7 +133,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Worktree refresh requires a trusted CLI registration.');
     const ms = (value: unknown, name: string) => {
       if (value === undefined) return undefined;
-      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw invalid(`${name} must be a non-negative number of milliseconds.`);
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw invalid(`${name} must be a non-negative number of milliseconds.`, 'Pass `--wait-drain <seconds>` or `--fetch-timeout-ms <ms>` to `gbrain sources refresh <source-id>` with a non-negative number, or leave the flag out for its default.');
       return value;
     };
     const waitDrainMs = ms(params.wait_drain_ms, 'wait_drain_ms');
