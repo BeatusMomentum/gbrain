@@ -156,6 +156,12 @@ export interface GBrainConfig {
    * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
+  /**
+   * `false` keeps `chat_fallback_chain` for outages and errors but never sends
+   * a refused request (structural refusal or provider content block) to the
+   * next entry. Default true. Env `GBRAIN_CHAT_FALLBACK_ON_REFUSAL`, file, DB.
+   */
+  chat_fallback_on_refusal?: boolean;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
   /** Optional chat request providerOptions overrides keyed by recipe id or "recipe:modelId". */
@@ -736,6 +742,9 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
       ? { chat_fallback_chain: process.env.GBRAIN_CHAT_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
       : {}),
+    ...(process.env.GBRAIN_CHAT_FALLBACK_ON_REFUSAL?.trim()
+      ? { chat_fallback_on_refusal: !isEnvDisabled(process.env.GBRAIN_CHAT_FALLBACK_ON_REFUSAL) }
+      : {}),
     ...(process.env.GBRAIN_EMBEDDING_MULTIMODAL
       ? { embedding_multimodal: process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true' }
       : {}),
@@ -1229,6 +1238,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'expansion_model',
   'chat_model',
   'chat_fallback_chain',
+  'chat_fallback_on_refusal',
   'provider_base_urls',
   // Integration gates (file-plane, hook-lane)
   'integrations.memorable.enabled',
