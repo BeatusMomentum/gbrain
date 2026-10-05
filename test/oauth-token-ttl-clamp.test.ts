@@ -149,6 +149,15 @@ for (const kind of testBackends()) {
       expect(rescoped.after.tokenTtlSeconds).toBe(NINETY_DAYS);
     }, 60_000);
 
+    test('a token issued at the maximum a few seconds off its created_at is not shortened or marked clamped', async () => {
+      const { clientId } = await machineClient('ttl-at-max-example');
+      await storeTtl(clientId, NINETY_DAYS);
+      const atMax = await seedToken(clientId, 'access', DAY, NINETY_DAYS - DAY + 2);
+      await rerunClamp();
+      expect(await expiryOf(atMax.token)).toBe(atMax.expiresAt);
+      expect(await auditRows(clientId)).toEqual([]);
+    }, 60_000);
+
     test('a token issued after waiting on the client lock expires within the maximum of its own created_at', async () => {
       const { clientId, clientSecret } = await machineClient('ttl-lock-wait-example');
       await storeTtl(clientId, TEN_YEARS);

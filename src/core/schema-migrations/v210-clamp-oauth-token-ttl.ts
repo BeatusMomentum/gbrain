@@ -16,6 +16,14 @@ import type { Migration } from './types.ts';
 // tokens are untouched. Every change writes an oauth_grant_audit row. All
 // client rows are locked first so in-flight issuance commits before tokens
 // are shortened. Re-running finds nothing left to change.
+/**
+ * Older releases stamped created_at at transaction start on the database clock
+ * and expires_at from the application clock after the client lock, so a token
+ * issued at exactly the maximum can read a few seconds over it. Tokens within
+ * this slack were never out of bounds and are left alone (no audit row).
+ */
+const ISSUANCE_CLOCK_SLACK_SECONDS = 300;
+
 export async function clampOAuthTokenTtls(engine: BrainEngine): Promise<void> {
   await engine.transaction(async tx => {
     const sql = sqlQueryForEngine(tx);
@@ -35,7 +43,7 @@ export async function clampOAuthTokenTtls(engine: BrainEngine): Promise<void> {
     }
     const shortened = await sql`UPDATE oauth_tokens
       SET expires_at = FLOOR(EXTRACT(EPOCH FROM created_at))::bigint + ${TOKEN_TTL_MAX_SECONDS}
-      WHERE token_type = 'access' AND expires_at > FLOOR(EXTRACT(EPOCH FROM created_at))::bigint + ${TOKEN_TTL_MAX_SECONDS}
+      WHERE token_type = 'access' AND expires_at > FLOOR(EXTRACT(EPOCH FROM created_at))::bigint + ${TOKEN_TTL_MAX_SECONDS + ISSUANCE_CLOCK_SLACK_SECONDS}
       RETURNING client_id`;
     const perClient = new Map<string, number>();
     for (const row of shortened) perClient.set(String(row.client_id), (perClient.get(String(row.client_id)) ?? 0) + 1);
