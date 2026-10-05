@@ -82,6 +82,27 @@ build), strict F1 0.196. Edge-validity dev split (seeds 3 and 5, phrasing set A)
 traps 1.000 / 1.000, as-of exact 0.900 / 0.933, during F1 0.896 / 0.921, live recall 0.842 / 0.871, now recall
 0.842 / 0.867, correction ok 0.867 / 1.000, invariant 1.000 / 1.000, now precision 1.000 / 1.000.
 
+## Amendment 3 (2026-10-05, cycle 2, before set H was opened)
+
+1. **Delta build re-frozen at `583a851ee`** (was `970c3088b`). Set G (second custodian) passed the guard itself
+   (0 extra employment starts and 0 wrong closures, against 11 and 6 with no guard) but failed H10 and H11:
+   current-employer recall 0.650 → 0.594 and live-edge recall 0.606 → 0.545 against master, and H11 traps 104/113
+   (bar 0.99). Without seeing set G:
+   - **Typing:** an ordinary role before "at" ("senior designer at [X]", "led engineering at [X]") and a join or move
+     ending "as <role>" ("joined [X] as CTO", "moved to [X] as head of sales") type `works_at`. Board, advisory,
+     investor and observer roles keep their types. "advising" counts as advises only as a relationship verb.
+   - **Temporal cues:** quitting idioms with a particle or object in the middle, and starts framed as a first day or
+     kick-off, with event look-alikes as negative controls.
+2. **H10 and H11 retest on a fresh set H** from the second custodian. Bars are the same as amendment 2: H10
+   `e5_extra_works_at_starts` = 0, every edge-validity gate noninferior to master at 0.01, current-employer and
+   live-edge recall noninferior to master at 0.01; H11 traps ≥ 0.99 and every other gate noninferior to master.
+3. **Cycle limit.** This is the second cycle. If set H fails either H10 or H11, the post-freeze link-typing and
+   temporal-lexicon changes are removed before landing and the edge-validity plan's master behavior stands.
+
+Dev numbers at `583a851ee` (dev data only): world-v1 type accuracy 0.774, strict F1 0.196. Edge-validity dev split,
+master `4022fd7c5` vs `583a851ee`: traps 1.000 / 1.000, as-of exact 0.900 / 0.933, during F1 0.896 / 0.921, live
+recall 0.842 / 0.871, now recall 0.842 / 0.867, correction ok 0.867 / 1.000.
+
 ## Dev disclosures
 
 Dev world-v1 (seeds 1–3 only, never sealed): type accuracy 0.767 at the frozen build, 0.753 at the delta build,
