@@ -15,6 +15,10 @@ import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import { acquirePageLock } from '../page-lock.ts';
+import { importFromContent } from '../import-file.ts';
+import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 
 /** Error code for a concept held because republication could lose canonical material. */
 export const CONCEPT_PRESERVATION_CODE = 'concept_preservation_hold';
@@ -134,4 +138,59 @@ function fenceBlock(body: string, begin: string, end: string): string | null {
   if (start === -1) return null;
   const stop = body.indexOf(end, start + begin.length);
   return stop === -1 ? null : body.slice(start, stop + end.length);
+}
+
+/**
+ * A page body without its `## Facts` / `## Takes` sections (each fence block
+ * and its heading): the part of an atom or concept this phase reads as
+ * narrative. The member hash, the synthesis prompt and the concurrent-change
+ * check all use it, so a fact or take added to a page is not a narrative
+ * change.
+ */
+export function stripFenceSections(body: string): string {
+  return stripTakesFence(stripFactsFence(body ?? ''))
+    .split('\n').filter((line) => !/^##\s+(?:facts|takes)\s*$/i.test(line.trim())).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** The body and timeline a fence writer last wrote: the page's file when it has one, else the database row. */
+async function canonicalConceptBody(engine: BrainEngine, slug: string, sourceId: string,
+  page: Pick<Page, 'compiled_truth' | 'timeline'>): Promise<Pick<Page, 'compiled_truth' | 'timeline'>> {
+  if (await isWriteThroughDisabled(engine)) return page;
+  const target = await resolvePageWriteTarget(engine, slug, sourceId);
+  if (!target.ok || !existsSync(target.filePath)) return page;
+  const parsed = parseMarkdown(readFileSync(target.filePath, 'utf-8'), target.filePath);
+  return { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline };
+}
+
+/**
+ * Publish one concept page on an unmanaged brain (D-N3). Under the page lock
+ * the fence writers take, the page is re-read: when its narrative changed
+ * since `baseline` (the narrative the synthesis started from) or another
+ * writer took it over, nothing is written and the concept is deferred
+ * (`revision_conflict`) to the next run. Otherwise the new narrative is
+ * composed with the latest `## Facts` / `## Takes` fences, timeline, tags and
+ * frontmatter, so a take or fact appended during synthesis survives. Returns
+ * the narrative now on the page (the next call's baseline).
+ */
+export async function publishClassicConcept(engine: BrainEngine, slug: string, sourceId: string,
+  synthesized: Record<string, unknown>, narrative: string, baseline: string, noEmbed: boolean): Promise<string> {
+  const lock = await acquirePageLock(slug, { timeoutMs: 5_000 });
+  if (!lock) throw Object.assign(new Error('The concept page is locked by another writer.'), { code: 'revision_conflict' });
+  try {
+    const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+    const page = snapshot?.page ?? null;
+    if (stripFenceSections(page?.compiled_truth ?? '') !== stripFenceSections(baseline)
+      || (page && !String(page.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts'))) {
+      throw Object.assign(new Error('The concept narrative changed during synthesis.'), { code: 'revision_conflict' });
+    }
+    const title = slug.split('/').pop()!.replace(/-/g, ' ');
+    const markdown = page
+      ? composeConceptRepublication({ ...page, ...await canonicalConceptBody(engine, slug, sourceId, page) }, snapshot!.tags, synthesized, narrative)
+      : serializeMarkdown(synthesized, narrative, '', { type: 'concept', title, tags: [] });
+    await importFromContent(engine, slug, markdown, { noEmbed, sourceId });
+    return narrative;
+  } finally {
+    await lock.release();
+  }
 }
