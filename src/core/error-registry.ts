@@ -350,6 +350,7 @@ export const NOTICE_CODES = {
   post_upgrade: { kind: 'safety', summary: 'gbrain was upgraded; behavior for scripts and agents changed — read the behavior table once.' },
   facts_drain_first_run: { kind: 'info', summary: 'The automatic facts drain is about to process its first backlog on this brain: the queued page count, the estimated spend, the caps and the opt-out.' },
   facts_drain_deferred: { kind: 'degraded', summary: 'The automatic facts drain left queued pages waiting (no key, a spend cap, an unpriced model under a user cap); the fix is the next step.' },
+  relational_chain: { kind: 'degraded', summary: 'A typed relationship chain found no complete answer (start page not visible, no typed edges, an empty hop) or hit a cap; the notice names the hop and the next call.' },
   held_files: { kind: 'degraded', summary: 'Sync holds files in the read scope it cannot import: held new files are missing and pages whose newer file is held are stale; the fix is the repair preview on the brain host.' },
   recovered_frontmatter: { kind: 'coaching', summary: 'Files imported only after quoting unquoted frontmatter values; the generator writing them should quote values (the fix is the repair preview).' },
 } as const satisfies Record<string, NoticeEntry>;

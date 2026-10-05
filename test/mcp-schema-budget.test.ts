@@ -40,7 +40,7 @@ import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-esti
 
 const SERVED_STARTER_MAX_CHARS = 25_000;
 const SERVED_STARTER_MAX_TOKENS = 5_700;
-/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; 26,121 with P1's temporal link params and P8's remember.replaces + forget.semantic_review). */
+/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; traverse_graph's `hops` is full-surface-only, 25,941 measured; 26,121 with P8's remember.replaces + forget.semantic_review). */
 const SERVED_STARTER_MAX_JSON_CHARS = 26_150;
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
 const INSTRUCTIONS_MAX_CHARS = 4_628;
@@ -138,7 +138,7 @@ describe('per-tool schema budgets', () => {
     expect(starter.map(o => o.name).sort()).toEqual(Object.keys(TOOL_BUDGETS).sort());
   });
 
-  for (const op of operations.filter(o => STARTER_OPS.has(o.name))) {
+  for (const op of filterOpsForSurface(operations, 'starter')) {
     test(`${op.name} fits its budget and the hard caps`, () => {
       const [def] = buildToolDefs([op]);
       expect(JSON.stringify(def).length).toBeLessThanOrEqual(TOOL_BUDGETS[op.name]);
