@@ -871,6 +871,27 @@ frozen development split only.
 | `--time-scope-pool N` | 50 | Pool depth for `--time-scope`; rows carry `time_scope` and the same pool's unscoped top-k (`unscoped_recall_all_hit`), a paired control inside one run |
 
 Active arms fold into `retrieval_config_hash` as `retrieval_arms`.
+
+`--mode tokenmax` builds the vectors production builds for that mode
+(`src/eval/longmemeval/synopsis-tier.ts`): after import, every session is
+re-embedded at the per-chunk synopsis tier through the production
+contextual-retrieval service with the backfill's synopsis model. Rows carry
+`contextual_synopsis`; the model, prompt version, document cap and output cap
+fold into `retrieval_config_hash` and `run_config.contextual_synopsis`.
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--synopsis-max-usd N` | 20 | Cap on uncached synopsis spend; at the cap the run stops after the current question and exits 1 |
+| `--synopsis-concurrency N` | 8 | Sessions synopsized in parallel per question (chunks within a session follow `GBRAIN_CONTEXTUAL_CHUNK_CONCURRENCY`) |
+| `--synopsis-cache FILE` | `~/.cache/gbrain-eval/synopsis-<model>.jsonl` | Synopsis cache keyed by the service's cache-key shape |
+
+LoCoMo runs through the same harness after
+`bun scripts/locomo-to-longmemeval.ts --input locomo10.json --conversations <ids> --output <file>`
+(`src/eval/longmemeval/locomo.ts`): one question per non-adversarial QA, the
+conversation's sessions as the haystack, evidence dialog ids mapped to gold
+sessions. There is no default conversation list, and the sealed split is
+converted only with `--custodian`.
+
 Kill gates, sealed bars and budgets are fixed in
 [`docs/eval/TIME_AWARE_RETRIEVAL_PREREG.md`](eval/TIME_AWARE_RETRIEVAL_PREREG.md).
 
