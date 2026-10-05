@@ -76,6 +76,7 @@ import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { stampDreamProvenance } from './dream-provenance.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -527,11 +528,26 @@ async function runPhaseSynthesizeInner(
       process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
 
-    const synthesisIdentity = maintenance ? `${opts.sourceId ?? 'default'}/${maintenance.writer.sourceIncarnation}` : opts.sourceId ?? 'default';
-    const retainedKeys = maintenance ? await loadSuccessfulSynthesisKeys(engine, opts.sourceId ?? 'default', 'dream:synth-v2:') : [];
-    const retained = new Set(transcripts.filter(t => maintenance && findSynthV2Completion(retainedKeys, t.filePath,
-      t.contentHash.slice(0, 16), synthesisIdentity)).map(t => t.filePath));
-    const pass = await runTriagePass(engine, transcripts.filter(t => !retained.has(t.filePath)), {
+    // #5145: completed synthesis is checked BEFORE the paid triage pass on
+    // every path. Classic brains (no maintenance) and dry runs (maintenance
+    // forced null) used to triage completed transcripts first and only skip
+    // them afterwards, re-buying triage whenever the verdict cache expired.
+    // A dry run on a managed brain reads the source incarnation (read-only)
+    // so its v2 keys match the identity a real run would use.
+    const synthSourceId = opts.sourceId ?? 'default';
+    const managedIncarnation = maintenance
+      ? maintenance.writer.sourceIncarnation
+      : opts.dryRun ? await readManagedSourceIncarnation(engine, synthSourceId) : null;
+    const synthesisIdentity = managedIncarnation !== null ? `${synthSourceId}/${managedIncarnation}` : synthSourceId;
+    const retainedKeys = await loadSuccessfulSynthesisKeys(engine, synthSourceId, 'dream:synth-v2:');
+    const legacyKeys = managedIncarnation !== null ? [] : await loadSuccessfulSynthesisKeys(engine, synthSourceId, 'dream:synth:');
+    const completed = new Set(transcripts.filter(t => {
+      const hash16 = t.contentHash.slice(0, 16);
+      return findLegacyCompletion(legacyKeys, t.filePath, hash16) !== null
+        || findSynthV2Completion(retainedKeys, t.filePath, hash16, synthesisIdentity) !== null;
+    }).map(t => t.filePath));
+    const synthesisState = { candidates: transcripts.length - completed.size, already_synthesized: completed.size };
+    const pass = await runTriagePass(engine, transcripts.filter(t => !completed.has(t.filePath)), {
       model: config.triage.model,
       maxChars: config.triage.maxChars,
       maxTokens: config.triage.maxTokens,
@@ -541,9 +557,12 @@ async function runPhaseSynthesizeInner(
       signal: opts.signal,
       rescue: rescueConfigOf(config.triage), decide: await resolveTriageDecide(engine),
     }, opts.yieldDuringPhase);
-    pass.reports.push(...transcripts.filter(t => retained.has(t.filePath)).map(t => ({ filePath: t.filePath,
+    // Completed transcripts flow on to the fan-out loop, which records their
+    // already_synthesized skip (classic) or collects their completed children
+    // (managed). They are not screening results: the triage counters below
+    // describe only the candidates that were actually screened.
+    pass.reports.push(...transcripts.filter(t => completed.has(t.filePath)).map(t => ({ filePath: t.filePath,
       worth: true, score: null, content_type: null, cached: true, reasons: ['retained_completed_output'] })));
-    pass.cacheHits += retained.size;
     const verdicts = pass.reports;
 
     // Read-time gate: retuning dream.triage.threshold (or the rescue knobs)
@@ -592,12 +611,15 @@ async function runPhaseSynthesizeInner(
     // synthesis. Codex finding #8: --dry-run does NOT mean "zero LLM calls";
     // it means "skip the synthesis model."
     if (opts.dryRun) {
-      return ok(`dry-run: ${worthProcessing.length} of ${transcripts.length} transcripts would synthesize${deferralSuffix}`, {
+      const wouldSynthesize = worthProcessing.filter(t => !completed.has(t.filePath)).length;
+      const doneSuffix = completed.size > 0 ? `; ${completed.size} already synthesized` : '';
+      return ok(`dry-run: ${wouldSynthesize} of ${synthesisState.candidates} transcripts would synthesize${doneSuffix}${deferralSuffix}`, {
         transcripts_discovered: transcripts.length,
         transcripts_processed: 0,
         pages_written: 0,
         verdicts,
         triage: triageDetails,
+        synthesis_state: synthesisState,
         dryRun: true,
       });
     }
@@ -619,6 +641,7 @@ async function runPhaseSynthesizeInner(
         pages_written: 0,
         verdicts,
         triage: triageDetails,
+        synthesis_state: synthesisState,
       });
     }
 
@@ -679,8 +702,8 @@ async function runPhaseSynthesizeInner(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
-    const successfulLegacyKeys = maintenance ? [] : await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth:');
-    const successfulV2Keys = maintenance ? retainedKeys : await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth-v2:');
+    const successfulLegacyKeys = legacyKeys;
+    const successfulV2Keys = retainedKeys;
 
     // Per-source daily submission cap (D2D: default 0 = disabled; opt-in
     // backstop via dream.synthesize.max_submissions_per_source_per_day).
@@ -1032,6 +1055,7 @@ async function runPhaseSynthesizeInner(
         skips: skipReports,
         verdicts,
         triage: triageDetails,
+        synthesis_state: synthesisState,
       });
     }
 
@@ -1312,6 +1336,7 @@ async function runPhaseSynthesizeInner(
           skips: skipReports,
           verdicts,
           triage: triageDetails,
+          synthesis_state: synthesisState,
           synthesis: {
             jobs: childIds.length,
             max_turns_config: config.maxTurns,
@@ -1370,6 +1395,7 @@ async function runPhaseSynthesizeInner(
       summary_slug: summarySlug,
       verdicts,
       triage: triageDetails,
+      synthesis_state: synthesisState,
       synthesis: {
         jobs: childIds.length,
         max_turns_config: config.maxTurns,
@@ -2958,6 +2984,21 @@ async function collectChildPutPageSlugs(
  * makes a synthesized transcript eligible again. Loads source-scoped
  * completions once per phase; no repeated history scan per transcript.
  */
+/**
+ * #5145: the source incarnation a managed real run would key its synth-v2
+ * completions under, read without the write preflight (dry runs never
+ * register a writer). Null on a classic brain or when the read fails.
+ */
+async function readManagedSourceIncarnation(engine: BrainEngine, sourceId: string): Promise<string | null> {
+  try {
+    if (!await managedPersistenceEnabled(engine)) return null;
+    const [row] = await engine.executeRaw<{ incarnation: string | null }>('SELECT incarnation FROM sources WHERE id = $1', [sourceId]);
+    return row?.incarnation ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function loadSuccessfulSynthesisKeys(
   engine: BrainEngine,
   sourceId: string,
