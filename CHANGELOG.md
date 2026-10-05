@@ -128,7 +128,7 @@ Rolling the binary back leaves queued spend-authorized jobs unclaimable; cancel 
 ### For contributors
 
 - The plan and review record live in `docs/designs/AGENT_OPERATOR_FOLLOWUP_WAVE.md`.
-- `test/mcp-schema-budget.test.ts` caps the starter `tools/list` JSON at 26,300 characters (`mute_notice` joined starter; `get_page` gained `content_only`); the model-visible list stays under 25,000.
+- `test/mcp-schema-budget.test.ts` caps the starter `tools/list` JSON at 26,450 characters (`mute_notice` joined starter; `get_page` gained `content_only`; `traverse_graph` gained temporal filters); the model-visible list stays under 25,000.
 - Size ceilings moved with rationale in `scripts/module-size-limits.tsv`: `src/cli.ts` down to 3,184; `worker.ts`, `jobs.ts`, `queue.ts`, `init.ts`, `config.ts`, `serve-http.ts` up by the lines this release adds.
 
 ## [0.60.57.0] - 2026-10-05
