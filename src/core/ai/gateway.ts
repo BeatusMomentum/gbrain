@@ -3031,6 +3031,12 @@ export interface ChatOpts {
   temperature?: number;
   abortSignal?: AbortSignal;
   /**
+   * Replaces the default chat backstop (`GBRAIN_AI_CHAT_TIMEOUT_MS`, 300 s)
+   * for this call; `abortSignal` still composes (shorter wins). Set by
+   * callers that own a longer budget, such as a subagent turn (#4921).
+   */
+  timeoutMs?: number;
+  /**
    * Per-call provider options keyed by recipe id, deep-merged LAST — after
    * the derived cache markers and configured `provider_chat_options` — so a
    * call site can pin provider behavior it depends on (e.g. the triage judge
@@ -3649,7 +3655,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
     // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
     // Fresh signal per attempt so the schemaless retry gets its own timeout.
-    abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
+    abortSignal: withDefaultTimeout(opts.abortSignal, opts.timeoutMs ?? AI_CHAT_TIMEOUT_MS),
     providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
     ...(requestHeaders ? { headers: requestHeaders } : {}),
   });
@@ -3810,6 +3816,8 @@ export interface ToolLoopOpts {
   purpose?: string;
   /** Forwarded to every `chat()` turn; see `ChatOpts.allowFallback`. */
   allowFallback?: boolean;
+  /** Forwarded to every `chat()` turn as `ChatOpts.timeoutMs`. */
+  turnTimeoutMs?: number;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -3960,6 +3968,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         cacheSystem: opts.cacheSystem,
         purpose: opts.purpose,
         allowFallback: opts.allowFallback,
+        timeoutMs: opts.turnTimeoutMs,
       });
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
