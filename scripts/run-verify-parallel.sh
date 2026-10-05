@@ -263,6 +263,7 @@ for c in "${CHECKS[@]}"; do
   LOG_FILE="$LOG_DIR/$safe.log"
   EXIT_FILE="$LOG_DIR/$safe.exit"
   (
+    started=$(date +%s)
     if [ -n "$TIMEOUT_BIN" ]; then
       "$TIMEOUT_BIN" "${TIMEOUT}s" bun run "$c" > "$LOG_FILE" 2>&1
       rc=$?
@@ -293,6 +294,7 @@ for c in "${CHECKS[@]}"; do
       kill "$cap_pid" 2>/dev/null
       wait "$cap_pid" 2>/dev/null
     fi
+    echo "$(( $(date +%s) - started ))" > "$LOG_DIR/$safe.seconds"
     echo "$rc" > "$EXIT_FILE"
   ) &
   PIDS+=($!)
@@ -317,7 +319,7 @@ FAIL_NAMES=()
 SKIP_REPORT=""
 FAIL_REPORT=""
 OUTCOMES="$LOG_DIR/outcomes.tsv"
-printf 'check\toutcome\trc\tdetail\n' > "$OUTCOMES"
+printf 'check\toutcome\trc\tdetail\tseconds\n' > "$OUTCOMES"
 xml_escape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'; }
 JUNIT_CASES=""
 
@@ -329,6 +331,8 @@ for i in "${!CHECKS[@]}"; do
 
   rc=1
   [ -f "$EXIT_FILE" ] && rc=$(cat "$EXIT_FILE" 2>/dev/null || echo 1)
+  secs=""
+  [ -f "$LOG_DIR/$safe.seconds" ] && secs=$(cat "$LOG_DIR/$safe.seconds" 2>/dev/null)
   skip_reason=""
   if [ "$rc" = "0" ] && [ -f "$LOG_FILE" ]; then
     skip_reason=$(sed -n 's/^GBRAIN_CHECK_SKIPPED:[[:space:]]*//p' "$LOG_FILE" | head -1 | tr '\t' ' ')
@@ -338,16 +342,16 @@ for i in "${!CHECKS[@]}"; do
   if [ "$rc" = "0" ] && [ -n "$skip_reason" ]; then
     SKIP=$((SKIP + 1))
     SKIP_REPORT+="  $c: $skip_reason"$'\n'
-    printf '%s\tskip\t0\t%s\n' "$c" "$skip_reason" >> "$OUTCOMES"
+    printf '%s\tskip\t0\t%s\t%s\n' "$c" "$skip_reason" "$secs" >> "$OUTCOMES"
     JUNIT_CASES+="    <testcase name=\"$c\" classname=\"verify\" file=\"verify\"><skipped message=\"$(printf '%s' "$skip_reason" | xml_escape)\" /></testcase>"$'\n'
   elif [ "$rc" = "0" ]; then
     PASS=$((PASS + 1))
-    printf '%s\tpass\t0\t\n' "$c" >> "$OUTCOMES"
+    printf '%s\tpass\t0\t\t%s\n' "$c" "$secs" >> "$OUTCOMES"
     JUNIT_CASES+="    <testcase name=\"$c\" classname=\"verify\" file=\"verify\" />"$'\n'
   else
     outcome=fail
     [ "$rc" = "124" ] && outcome=timeout
-    printf '%s\t%s\t%s\t%s\n' "$c" "$outcome" "$rc" "$LOG_FILE" >> "$OUTCOMES"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$c" "$outcome" "$rc" "$LOG_FILE" "$secs" >> "$OUTCOMES"
     JUNIT_CASES+="    <testcase name=\"$c\" classname=\"verify\" file=\"verify\"><failure message=\"$outcome rc=$rc\" /></testcase>"$'\n'
     FAIL=$((FAIL + 1))
     FAIL_NAMES+=("$c")
@@ -362,6 +366,10 @@ for i in "${!CHECKS[@]}"; do
     fi
   fi
 done
+
+SLOWEST=$(tail -n +2 "$OUTCOMES" | awk -F'\t' '$5 != "" { print $5 "\t" $1 }' | sort -rn | head -5 |
+  awk -F'\t' '{ printf "%s%s %ss", (NR > 1 ? ", " : ""), $2, $1 }')
+[ -z "$SLOWEST" ] || echo "[verify-parallel] slowest checks (wall seconds, see outcomes.tsv): $SLOWEST" >&2
 
 if [ -n "$SKIP_REPORT" ]; then
   {
