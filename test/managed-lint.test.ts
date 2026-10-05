@@ -17,10 +17,11 @@ import { runPhaseLint } from '../src/core/cycle.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
-import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { disposePersistenceConsumer, startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { waitFor } from './helpers/wait-for.ts';
 
 const PREAMBLE = 'Of course. Here is a detailed brain page for Jane Doe.\n\n';
 const BODY = '# Jane Doe\n\nContent that stays.\n';
@@ -279,7 +280,7 @@ test('a canonical file removed between scan and repair is pending as canonical_f
     await seed(engine, sourceId);
     const file = join(root, `${JANE}.md`);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    const restore = interceptSnapshot(engine, JANE, 'before', async () => { unlinkSync(file); });
+    const restore = await interceptSnapshot(engine, sourceId, JANE, 'before', async () => { unlinkSync(file); });
     try {
       const { result, pending } = await lintCollecting(engine, sourceId, root);
       expect(result.fix_pending).toBe(1);
@@ -316,11 +317,14 @@ test('a listed canonical file removed before its scan read: managed --fix report
 
 /**
  * Runs `effect` once, around lint's first revision read of `slug` (in publishLintFix, after the scan read):
- * before it (the read sees the effect) or after it. The persistence consumer that lint's preflight starts
- * reads page snapshots through the same engine (the seeded page's embedding effect), so only lint's own
- * read counts; a background read must never fire the effect before the scan.
+ * before it (the read sees the effect) or after it. The persistence consumer reads page snapshots through the
+ * same engine (the seeded page's git and embedding effects), so the seed's effects settle first and only
+ * lint's own read counts: a background read must never fire the effect.
  */
-function interceptSnapshot(engine: BrainEngine, slug: string, when: 'before' | 'after', effect: () => Promise<void>): () => void {
+async function interceptSnapshot(engine: BrainEngine, sourceId: string, slug: string, when: 'before' | 'after', effect: () => Promise<void>): Promise<() => void> {
+  startPersistenceConsumer(engine, { engine: engine.kind });
+  await waitFor(async () => (await engine.executeRaw(`SELECT 1 FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
+    WHERE r.source_id=$1 AND e.state IN ('queued','running')`, [sourceId])).length === 0, { label: `${engine.kind}: effects of ${slug} settled before interception` });
   const original = engine.readPageSnapshot;
   let fired = false;
   // A transaction handle inherits this property, so the read keeps its own receiver.
@@ -341,7 +345,7 @@ test('a publication after the scan but before lint reads the revision is repaire
   await fixture(async (engine, sourceId, root) => {
     await seed(engine, sourceId);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    const restore = interceptSnapshot(engine, JANE, 'before', () => seed(engine, sourceId, JANE, NEWER));
+    const restore = await interceptSnapshot(engine, sourceId, JANE, 'before', () => seed(engine, sourceId, JANE, NEWER));
     try {
       const { result } = await lintCollecting(engine, sourceId, root);
       expect(result.fix_pending).toBe(0);
@@ -357,7 +361,7 @@ test('a publication between the revision read and the submission is refused as r
   await fixture(async (engine, sourceId, root) => {
     await seed(engine, sourceId);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-    const restore = interceptSnapshot(engine, JANE, 'after', () => seed(engine, sourceId, JANE, NEWER));
+    const restore = await interceptSnapshot(engine, sourceId, JANE, 'after', () => seed(engine, sourceId, JANE, NEWER));
     try {
       const { result, pending } = await lintCollecting(engine, sourceId, root);
       expect(result.fix_pending).toBe(1);
