@@ -61,6 +61,7 @@ test/checkpoint-harvest.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, 
 test/cli-dispatch-lifecycle.serial.test.ts	R2	R2: mock.module(../src/core/engine-factory.ts, ../src/commands/orphans.ts, ../src/commands/salience.ts, ../src/commands/serve.ts (+4 more)) replaces modules for every file in the process
 test/code-callers-pin.serial.test.ts	global-state	global-state: spyOn console.log, console.error, process.exit; process.chdir changes the shared cwd
 test/code-def-refs-pin.serial.test.ts	global-state	global-state: spyOn console.log, console.error, process.exit; process.chdir changes the shared cwd
+test/codex-rollout-0154.serial.test.ts	R1	R1: mutates GBRAIN_HOME/CODEX_HOME for in-process session-end hook runs
 test/company-brain-connect-cli.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/company-brain-recovery.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/config-db-plane.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_DATABASE_URL, DATABASE_URL)
@@ -74,6 +75,7 @@ test/contextual-synopsis-model.serial.test.ts	global-state	global-state: process
 test/core/audit-week-file.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/core/cycle.serial.test.ts	R2	R2: mock.module(../../src/commands/lint.ts, ../../src/commands/backlinks.ts, ../../src/commands/sync.ts, ../../src/commands/extract.ts (+3 more)) replaces modules for every file in the process
 test/core/remediation-checkpoint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/corpus-retention-uningested.serial.test.ts	R1	R1: mutates GBRAIN_HOME for in-process session-end hook runs and the doctor check
 test/creds-vault.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/cross-modal-hybrid-integration.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/cycle-lock-release-diagnostic.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
