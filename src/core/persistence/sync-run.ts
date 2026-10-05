@@ -476,7 +476,8 @@ async function admitAhead(engine: BrainEngine, cursor: Cursor, key: string, bulk
   assertActive: () => void): Promise<Cursor> {
   if (!bulk.settings.enabled || !cursor.group?.length) return cursor;
   const lane = laneRunOf(cursor, bulk);
-  const depth = lane ? Math.max(1, lanePolicy(cursor.binding.worktree_id)?.effective ?? 1) : 1;
+  // With lanes, twice the lane count stays admitted, so lanes never wait for the sync side to freeze the next group.
+  const depth = lane ? 2 * Math.max(1, lanePolicy(cursor.binding.worktree_id)?.effective ?? 1) : 1;
   let current = cursor, foregroundChecked = false;
   for (let slot = 0; ; slot++) {
     const window = current.window ?? [];
