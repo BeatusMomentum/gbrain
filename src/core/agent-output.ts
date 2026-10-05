@@ -606,6 +606,18 @@ const ROWS: Row[] = [
     },
   },
   {
+    // Before any PageRevisionConflictError handling: same canonical revision, a newer projection installed by another worker.
+    match: named('PageProjectionConflictError'),
+    map: (e: Error & { changed: readonly string[]; slug: string; sourceId: string }, ctx) => ({
+      error: 'page_projection_conflict', code: 'page_projection_conflict', message: e.message,
+      detail: `changed: ${e.changed.join(', ')}`,
+      why: `Another worker (the persistence owner's projection rebuild, an embed or an import) installed a newer search projection of ${e.slug} while this command prepared its own; the guard keeps that newer installation instead of overwriting it.`,
+      suggestion: `Re-run ${ctx.command ? `gbrain ${ctx.command}` : 'the same command'}; it re-reads the current projection. If it conflicts again, another worker is still installing: wait for it to finish, then re-run.`,
+      fix: { argv: ['gbrain', 'get', '--source', e.sourceId, '--', e.slug], consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Reads the page as stored now (read-only) before the command is re-run.' },
+    }),
+  },
+  {
     match: named('EmbeddingDisabledError'),
     map: (e: Error & { fix?: Action }) => ({
       error: 'embedding_disabled', code: 'embedding_disabled', reason: 'disabled_by_choice',
