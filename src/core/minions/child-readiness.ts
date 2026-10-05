@@ -47,6 +47,18 @@ export function parseChildReadiness(raw: string): { version: string; versionSkew
   return { version: r.version, versionSkew: r.version !== VERSION, features: r.features as string[] };
 }
 
+/**
+ * Runs the selected child's readiness handshake under a deadline.
+ *
+ * Timeout contract: at `timeoutMs - min(250, timeoutMs / 10)` the selected
+ * process is SIGKILLed. Beneath tini that means every process group tini
+ * started (the selected grandchild), and tini then reaps the grandchild and
+ * exits. The confirmed failure ("timed out; no jobs were admitted") settles
+ * only from the wrapper's `close`, so the selected process has already exited
+ * and been reaped (or is a zombie awaiting its new parent). If `close` does not
+ * arrive by `timeoutMs`, the call settles with "cleanup unconfirmed" and makes
+ * no claim about the process.
+ */
 export async function checkChildReadiness(options: ChildReadinessOptions): Promise<{ version: string; versionSkew: boolean; features: string[] }> {
   const timeoutMs = options.timeoutMs ?? CHILD_READINESS_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) throw new Error('Invalid child readiness deadline.');

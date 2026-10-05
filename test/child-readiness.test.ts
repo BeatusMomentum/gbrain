@@ -164,7 +164,7 @@ describe('selected child readiness protocol', () => {
       await fixture(`import {writeFileSync} from 'node:fs';
         writeFileSync(process.argv[1]+'.pid',String(process.pid));
         setInterval(()=>{},1000);`, async (invocation) => {
-        await expect(checkChildReadiness({ invocation, tiniPath, timeoutMs: 500 })).rejects.toThrow('timed out');
+        await expect(checkChildReadiness({ invocation, tiniPath, timeoutMs: 2500 })).rejects.toThrow('timed out; no jobs were admitted');
         const pid = Number(readFileSync(invocation.argsPrefix[0] + '.pid', 'utf8'));
         try {
           process.kill(pid, 0);
