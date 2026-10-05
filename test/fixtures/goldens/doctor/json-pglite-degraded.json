@@ -507,13 +507,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 206 (latest: 206)",
+          "message": "Version 207 (latest: 207)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "901 column(s) verified against live schema",
+          "message": "932 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1576,6 +1576,26 @@
           },
           "message": "Planner statistics are fresh on 6 hot tables.",
           "name": "planner_stats_stale",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "answers_recorded": 0,
+            "docs": "docs/guides/retrieval-feedback.md",
+            "enabled": false,
+            "implicit": false,
+            "influence": 0.1,
+            "last_rating_at": null,
+            "learn": true,
+            "ratings_cited": 0,
+            "ratings_explicit": 0,
+            "top_client_share_7d": null,
+            "weights": 0,
+            "weights_off_neutral": 0
+          },
+          "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
+          "name": "retrieval_feedback_health",
           "status": "ok"
         },
         {

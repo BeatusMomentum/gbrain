@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.63.0] - 2026-10-05
+## [0.60.64.0] - 2026-10-05
 
 **An agent connected to a remote brain can now save a stack of long pages in under a minute, and gbrain tells it how.**
 
@@ -28,7 +28,7 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 | SQL statements on one page's publish path | 135 | 115 |
 | Backlinks between the pages you just wrote | about 30 manual `add_link` calls | built automatically after the commit |
 
-## To take advantage of v0.60.63.0
+## To take advantage of v0.60.64.0
 
 `gbrain upgrade` should do this automatically. Remote agents pick up the new instructions the next time they connect.
 
@@ -66,6 +66,81 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 ### For contributors
 - New e2e coverage: Postgres statement budgets per write phase, two-connection page-guard tests, grouped `put_page` publication (happy path and per-member failure), and the remote links effect on both engines.
 - The initialize-instructions and served-schema budgets grew for the write guidance; a new test pins the prompt-critical lines inside the first 2,048 characters.
+
+## [0.60.63.0] - 2026-10-05
+
+**Your brain can learn which pages actually helped, if you turn it on.**
+
+Retrieval feedback records which pages each answer used. When you or your agent rate an answer (`rate_answer`, or `gbrain rate <answer_id> 1-5`), those pages rank a little higher or lower next time: a capped 0.9x to 1.1x multiplier, no model call, nothing leaves the machine. It ships **off**. In held-out tests with consistent ratings it improved ranking on entity-centric brains (people, companies, deals: +2.0 NDCG@10) and did not help on chat-history brains, which is why it is opt-in. `gbrain post-upgrade` prints a one-time notice with the same facts and the command.
+
+A schema pack can now also declare a state relation single-valued (`cardinality: one_per_from`, for example `works_at` meaning the one current employer). The nightly relationship check then proposes, without a model, which competing relationship ended and when. It only proposes: held-out testing found an advisory timeline line read as a new job, so every closure waits for review.
+
+### How to use it
+
+```bash
+gbrain config set feedback.enabled true      # opt in (explicit ratings only)
+gbrain search "acme renewal"                 # prints: answer: ans_… (rate with: gbrain rate ans_… 1-5)
+gbrain rate ans_01J… 5                       # the pages that answer used rank a little higher
+gbrain search "acme renewal" --explain       # shows feedback ×1.01 on rated pages
+gbrain feedback status                       # what the brain has learned; gbrain feedback reset undoes it
+gbrain schema cardinality-preview            # with a pack that declares cardinality: what would close
+```
+
+Over MCP, `rate_answer { answer_id, rating }` rates an answer, or `pages: [{ ref, rating }]` rates single pages. Guide: `docs/guides/retrieval-feedback.md`.
+
+### The numbers that matter
+
+| Measure (held-out, custodian) | Result |
+|---|---|
+| Entity brain (world-v1 relational), consistent ratings, NDCG@10 | +2.04 [+1.03, +3.28]; beats a frequency-only baseline (−1.50) |
+| Chat-history brain (LoCoMo), consistent ratings, NDCG@10 | −0.12 [−1.02, +0.61]: no gain |
+| Feedback on, no ratings: LongMemEval-S retrieval lists (500 questions) | identical; mean read latency +0.6 ms |
+| Declared single-value closures (temporal-edges set C) | 3 of 3 applied closures wrong, so closures are review-only |
+
+Full record: `docs/eval/decisions/p3-retrieval-feedback/VERDICTS.md`.
+
+### Things to watch
+
+- With feedback on, answers carry an `answer_id` and a `how_to_rate` line; agents should rate answers they used. A brain with no ratings ranks exactly as before.
+- A rating applies to the page revision the answer read; a page edited since is skipped.
+- Relational triplet scoring was tested and is not included: the relational arm recognized too few held-out phrasings for it to matter.
+
+## To take advantage of v0.60.63.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Your agent reads `skills/migrations/v0.60.63.0.md` the next time you interact with it.** It relays the retrieval feedback notice and turns feedback on only if you say yes.
+3. **Verify the outcome:**
+   ```bash
+   gbrain doctor --only retrieval_feedback_health --json
+   gbrain feedback status --json
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- **Retrieval feedback store** (migration v207): `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `retrieval_feedback`, `retrieval_weights`; a write-behind recording queue with overflow and drain accounting; retention in the purge phase; all five tables classified in the engine graduation inventory.
+- **Feedback ranking stage** after fusion (`src/core/search/feedback-boost.ts`), bounded by `feedback.influence` λ; `--explain` shows the per-row factor.
+- **`rate_answer`** MCP operation, `gbrain rate`, and CLI-only `gbrain feedback status|reset`, with agent-first refusal codes (`invalid_rating`, `answer_pending`, `answer_unavailable`, `answer_not_yours`, `ref_not_in_answer`, `ambiguous_ref`, `feedback_disabled`, `feedback_not_authorized`).
+- **Defaults**: `feedback.enabled=false`, `feedback.implicit=false`; doctor `retrieval_feedback_health` and the post-upgrade notice say how to turn it on.
+- **Declared single-value relations** (`src/core/link-single-value.ts`): schema pack `cardinality: one_per_from` on state relations (built in or `temporal: state`), lint rule `link_types_cardinality`, the declared pass in `edge_contradictions`, `gbrain schema cardinality-preview`, `dream.single_value.mode` (default `propose`).
+- **Raw-query routing guard**: a test asserts no operation reachable by a remote caller accepts SQL or graph-query text.
+
+### For contributors
+
+- Tests: `test/feedback-*.test.ts`, `test/e2e/feedback-parity.test.ts` (PGLite and Postgres), `test/link-single-value.test.ts`, `test/raw-query-routing-guard.test.ts`.
+- Preregistration and verdicts: `docs/eval/decisions/p3-retrieval-feedback/`. Eval runners live in gbrain-evals.
+- Catalog, doctor, migration and upgrade-replay goldens regenerated for migration v207.
 
 ## [0.60.62.0] - 2026-10-05
 

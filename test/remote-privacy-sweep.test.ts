@@ -335,6 +335,9 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // mutating ops (fresh-slug targets; envelope-echo checks only)
   remember: 'ok',
   forget: 'error',
+  // rate_answer with no answer_id is a validation error; a real answer id only
+  // ever names pages that answer returned to the same client.
+  rate_answer: 'error',
   put_page: 'ok',
   put_pages: 'ok',
   delete_page: 'ok',

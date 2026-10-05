@@ -170,6 +170,7 @@ const LEDGER: Record<string, string> = {
   reload_schema_pack: 'test/operations-schema-pack.test.ts',
   run_onboard: 'test/ops-run-onboard-scope-gate.serial.test.ts',
   run_skillopt: 'test/skillopt/run-skillopt-op.serial.test.ts',
+  rate_answer: 'test/feedback-store.test.ts',
   // Covered by the C1 lifecycle behavioral suite (moved out of UNCOVERED).
   get_job_progress: 'test/jobs-lifecycle-ops.test.ts',
   pause_job: 'test/jobs-lifecycle-ops.test.ts',
