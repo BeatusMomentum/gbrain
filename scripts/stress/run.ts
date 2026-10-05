@@ -33,9 +33,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from 'node:path';
 import postgres from '#postgres';
 import { parseJUnit, type TestCase } from '../ci-executed-counts.ts';
-import { postgresArm } from '../check-postgres-lane-coverage.ts';
 import {
-  DEFAULT_ITERATIONS, STRESS_DOCS, TEST_PATH_RE, allTestFiles, changedFiles, defaultSeed, expandHelper,
+  DEFAULT_ITERATIONS, STRESS_DOCS, TEST_PATH_RE, allTestFiles, armMode, changedFiles, defaultSeed, expandHelper,
   notStressedReason, parseFileList, profileFor, redact, reproduceLine, validRef, type HelperExpansion, type Profile,
 } from './plan.ts';
 
@@ -431,10 +430,16 @@ async function main(argv: string[]): Promise<number> {
   const liveKeyOnly = new Set(existsSync(livePath) ? readFileSync(livePath, 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')) : []);
   const missing = selection.files.filter(f => !existsSync(join(ROOT, f)));
   if (missing.length) { console.error(`test:stress: no such file: ${missing.join(', ')}. Fix: pass repo-relative paths of existing test files. Docs: ${STRESS_DOCS}`); return 2; }
+  if (args.postgres && !args.work) {
+    for (const f of [...selection.files]) {
+      const wrapper = armMode(ROOT, f).wrapper;
+      if (wrapper && existsSync(join(ROOT, wrapper)) && !selection.files.includes(wrapper)) { selection.files.push(wrapper); log(`  ${f}: its PostgreSQL arm runs through ${wrapper}; stressing that wrapper too`); }
+    }
+  }
   const plan = selection.files.map(file => {
     const reason = notStressedReason(file, liveKeyOnly);
-    const armed = !file.startsWith('test/e2e/') && postgresArm(join(ROOT, file)) !== null;
-    return { file, reason, armed, profile: profileFor(file, { armed, postgres: args.postgres }) };
+    const mode = armMode(ROOT, file);
+    return { file, reason, armed: mode.armed || !!mode.wrapper, profile: profileFor(file, { armed: mode.armed, postgres: args.postgres }) };
   });
   const needsDb = plan.filter(p => !p.reason && p.profile.env === 'database');
   for (const p of plan) {

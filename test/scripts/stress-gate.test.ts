@@ -76,6 +76,20 @@ describe('gate plan', () => {
   });
 });
 
+describe('PostgreSQL arm routing', () => {
+  // A wrapper-laned arm (registerPostgresTests) never runs with DATABASE_URL
+  // alone; the #5927 replay flagged it "never connected" 10 of 10 times.
+  test('a file whose arm runs through a test/e2e wrapper is stressed with that wrapper', () => {
+    const plan = isPlan(planGate(REPO, { event: 'workflow_dispatch', stressFiles: 'test/autopilot-auto-drain-dispatch.test.ts' }, weights()));
+    expect(plan.files.map(f => [f.file, f.profile])).toEqual([['test/autopilot-auto-drain-dispatch.test.ts', 'unit'], ['test/e2e/autopilot-auto-drain-dispatch.test.ts', 'e2e']]);
+  });
+
+  test('a listed unit-lane arm runs both arms against a fresh database', () => {
+    const plan = isPlan(planGate(REPO, { event: 'workflow_dispatch', stressFiles: 'test/managed-lint.test.ts' }, weights()));
+    expect(plan.files.map(f => [f.file, f.profile])).toEqual([['test/managed-lint.test.ts', 'postgres-arm']]);
+  });
+});
+
 describe('race hunt plan', () => {
   const list = (n: number) => Array.from({ length: n }, (_, i) => `test/arm-${String(i).padStart(2, '0')}.test.ts`);
   function armsRepo(n: number) {

@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, normalize, relative } from 'node:path';
+import { postgresArm, postgresLanes } from '../check-postgres-lane-coverage.ts';
 
 export const STRESS_DOCS = 'docs/TESTING.md#stress-gate';
 export const RACE_HUNT_DOCS = 'docs/TESTING.md#race-hunt';
@@ -76,6 +77,22 @@ export function profileFor(file: string, opts: { armed: boolean; postgres: boole
   else if (file.endsWith('.slow.test.ts')) base = { name: 'slow', env: 'no-database', arm: 'pglite', timeoutMs: 120_000, vars: {} };
   else base = { name: 'unit', env: 'no-database', arm: 'pglite', timeoutMs: 60_000, vars: {} };
   return { ...base, ...special, vars: { ...base.vars, ...(special.vars ?? {}) }, name: base.name, env: base.env, arm: base.arm };
+}
+
+let lanes: Map<string, string> | undefined;
+
+/**
+ * How a file's DATABASE_URL-gated PostgreSQL arm runs. A file in
+ * test/postgres-unit-arms.txt or a DATABASE_URL workflow step runs it with
+ * DATABASE_URL set (`armed`); a file whose only lane is a test/e2e wrapper
+ * (registerPostgresTests, GBRAIN_TEST_BACKEND=postgres) runs it only through
+ * that wrapper, so the wrapper is stressed instead.
+ */
+export function armMode(root: string, file: string): { armed: boolean; wrapper?: string } {
+  if (file.startsWith('test/e2e/') || !existsSync(join(root, file)) || !postgresArm(join(root, file))) return { armed: false };
+  lanes ??= postgresLanes();
+  const lane = lanes.get(file);
+  return lane?.startsWith('test/e2e/') ? { armed: false, wrapper: lane } : { armed: true };
 }
 
 /** Database URLs and tokens never reach a printed line. */

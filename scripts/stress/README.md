@@ -54,7 +54,7 @@ passed, 1 a failure, 2 a usage or setup error, 130/143 cancelled.
 | `unit` | `*.test.ts` | `bun test --timeout=60000`, `DATABASE_URL` unset |
 | `serial` | `*.serial.test.ts` | `bun test --max-concurrency=1 --timeout=120000`, `DATABASE_URL` unset; files run one at a time |
 | `slow` | `*.slow.test.ts` | the workflow's pull-request values (`SPECIAL_FILES` in `plan.ts`: export scale at 10,001 pages, the pre-feature executable built for the old-binary suite) |
-| `postgres-arm` | a file with a `DATABASE_URL`-gated arm, with `--postgres` | `bun --no-env-file test --timeout=120000` with a fresh `DATABASE_URL`: both arms, as in `unit-postgres-arms` |
+| `postgres-arm` | a file with a `DATABASE_URL`-gated arm laned by `test/postgres-unit-arms.txt` or a `DATABASE_URL` workflow step, with `--postgres` | `bun --no-env-file test --timeout=120000` with a fresh `DATABASE_URL`: both arms, as in `unit-postgres-arms`. A file whose arm runs only through a `test/e2e/` wrapper (`registerPostgresTests`) runs in its suffix profile and its wrapper is stressed as an `e2e` file |
 | `e2e` | `test/e2e/*.test.ts`, with `--postgres` | `bash scripts/run-e2e.sh <file>` with a fresh `DATABASE_URL` |
 
 Paid-provider files (`*.live.test.ts`, `test/live/`,

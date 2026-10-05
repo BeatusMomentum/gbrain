@@ -24,6 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statS
 import { dirname, join, resolve } from 'node:path';
 import { inert, restClient, type GitHubClient } from '../lib/gh-issue.ts';
 import { postgresArm } from '../check-postgres-lane-coverage.ts';
+import { armMode } from './plan.ts';
 import { readArmsList } from '../postgres-unit-arms.ts';
 import {
   DEFAULT_ITERATIONS, RACE_HUNT_DOCS, STRESS_DOCS, allTestFiles, changedFiles, expandHelper, iterationEstimateMs,
@@ -68,8 +69,7 @@ function classify(root: string, files: string[], weights: Weights): { stress: Ar
     if (!existsSync(join(root, file))) { notStressed.push({ file, reason: 'no such file at the head commit' }); continue; }
     const reason = notStressedReason(file, live);
     if (reason) { notStressed.push({ file, reason }); continue; }
-    const armed = !file.startsWith('test/e2e/') && postgresArm(join(root, file)) !== null;
-    const profile = profileFor(file, { armed, postgres: true });
+    const profile = profileFor(file, { armed: armMode(root, file).armed, postgres: true });
     const perIterationMs = iterationEstimateMs(file, profile.name, weights);
     stress.push({ file, profile: profile.name, iterations: DEFAULT_ITERATIONS, estimateMs: 0, perIterationMs, setupMs: profile.prereq ? 180_000 : 0 });
   }
@@ -112,6 +112,7 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
   } else {
     return emptyPlan('gate', 'not a PR event');
   }
+  files = withWrappers(root, files);
   const { stress, notStressed } = classify(root, files, weights);
   const shards = planShards(stress, DEFAULT_ITERATIONS, GATE_SHARD_BUDGET_MS);
   return {
@@ -120,6 +121,11 @@ export function planGate(root: string, input: GatePlanInput, weights = loadWeigh
     files: stress.map(({ file, profile }) => ({ file, profile, iterations: DEFAULT_ITERATIONS, estimateMs: estimateOf(shards, file) })),
     estimateMs: shards.reduce((s, x) => s + x.estimateMs, 0),
   };
+}
+
+/** Add the test/e2e wrapper that owns each file's PostgreSQL arm. */
+function withWrappers(root: string, files: string[]): string[] {
+  return [...new Set([...files, ...files.map(f => armMode(root, f).wrapper).filter((w): w is string => !!w && existsSync(join(root, w)))])].sort();
 }
 
 const estimateOf = (shards: Shard[], file: string) => shards.flatMap(s => s.items).filter(i => i.file === file).reduce((s, i) => s + i.estimateMs, 0);
