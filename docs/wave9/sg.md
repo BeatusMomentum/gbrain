@@ -11,6 +11,7 @@ Integrator: fold these into CHANGELOG.md and docs/UPGRADING_DOWNSTREAM_AGENTS.md
 - **Portable canonical skills list their usable tools (#5150).** A shared skill published without `tools:` now inherits the caller's available brain tools as `usable_tools` (list, detail, and the v1 compatibility catalog), matching host-repository skills; `tools: []` still permits none. Revisions published before this release re-read their SKILL.md on `get_skill`; `list_skills` keeps them empty until republished.
 - **`put_skill` refuses an empty SKILL.md (A-NEW-5).** An empty or whitespace-only entry point is `invalid_params` instead of publishing a blank skill.
 - **`gbrain reindex --markdown` works on managed brains (#5377, C-NEW-5).** It used to fail every page with "cannot mutate a managed brain through the legacy writer", while doctor, upgrade and post-upgrade kept prescribing it. On a managed brain it now runs the projection repairs (`gbrain repair safe-chunks`, then `contextual-mode` unless `--no-embed`): no page revision, journal request or canonical file changes. `--type` is refused on managed brains with the repair commands.
+- **`gbrain sources writer status` no longer reports a CLI's own consumer as the brain's ingress (C-NEW-4).** The `ingress` field (always `not_running` from a one-shot CLI) is replaced by `local_process_ingress`, which says it describes only the process that answered; ownership stays under `worktrees` and `bindings`.
 
 ## Upgrade-note rows
 
@@ -23,3 +24,4 @@ Integrator: fold these into CHANGELOG.md and docs/UPGRADING_DOWNSTREAM_AGENTS.md
 | Canonical skills without `tools:` inherit brain tools (#5150) | Clients reading `usable_tools` for shared skills | `gbrain call get_skill '{"name":"<skill>"}'` | Declare `tools:` in the skill to narrow it |
 | Empty SKILL.md refused (A-NEW-5) | Editors publishing placeholder skills | none | Write a non-empty SKILL.md |
 | Managed `reindex --markdown` delegates to projection repairs (#5377) | Managed brains with chunker or contextual-mode drift | doctor calibration hint (`gbrain reindex --markdown`) now works | Run `gbrain repair safe-chunks` / `contextual-mode` directly for per-kind control |
+| `writer status`: `ingress` → `local_process_ingress` with a `scope` note (C-NEW-4) | Scripts reading `ingress` from `gbrain sources writer status --json` | none | Read `local_process_ingress.state`; for ownership read `worktrees`/`bindings` |
