@@ -475,6 +475,18 @@ describe('verify + workflow wiring', () => {
     );
     expect(wf).toContain('tests/docker/bootstrap-e2e.sh');
   });
+
+  test('the nightly-only Docker e2e expects the surface stdio registrations actually pin (#6049)', async () => {
+    const { REGISTRATION_SURFACE, stdioServeArgv } = await import('../src/core/mcp-registration.ts');
+    const { registerCodexMcp } = await import('../src/core/bootstrap/hooks.ts');
+    const inner = require('node:fs').readFileSync(join(ROOT, 'tests/docker/bootstrap-e2e-inner.sh'), 'utf8');
+    const expected = /^EXPECTED_SURFACE=(\S+)$/m.exec(inner)?.[1];
+    expect(expected).toBe(REGISTRATION_SURFACE);
+    expect(inner).toContain('grep -Fq "serve --surface $EXPECTED_SURFACE" "$GB_CODEX_STATE"');
+    const [argv] = registerCodexMcp({ gbrainBin: '/opt/gbrain/bin/gbrain', sourceId: 'workspace' });
+    expect(argv!.join(' ')).toContain(`serve --surface ${expected}`);
+    expect(argv!.slice(-4)).toEqual(stdioServeArgv('/opt/gbrain/bin/gbrain'));
+  });
 });
 
 // ── check-grok-pin.sh ────────────────────────────────────────────────────────

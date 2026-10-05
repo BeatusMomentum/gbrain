@@ -26,9 +26,11 @@ permissions:
 
 # Cancel a superseded run when a newer commit lands on the same PR/branch.
 # PR number for pull_request events (fork-safe), github.ref fallback for
-# push/scheduled runs.
+# push runs. Scheduled runs get their own `-nightly` group (as in test.yml):
+# sharing refs/heads/master with push runs let the next merge cancel the
+# nightly full corpus mid-shard (#6040).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -876,6 +878,11 @@ jobs:
     # Named exception: nightly E2E schedule only (docs/TESTING.md#event-parity).
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
     runs-on: ubicloud-standard-4-ubuntu-2404
+    # actions + checks: the shard classifier reads this run's jobs and their annotations.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -890,14 +897,23 @@ jobs:
         with:
           pattern: coverage-full-*
           path: ${{ runner.temp }}/coverage-artifacts
+      # A run cancelled by a newer run in its concurrency group or by a user
+      # reports its cancelled shards as cancelled (no coverage, not a test
+      # failure). A shard that failed or hit timeout-minutes in a run nobody
+      # cancelled stays a failure. cancelled() cannot tell (it is false in an
+      # always() job started after the cancel), so the script reads the shard
+      # jobs' annotations. docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states
+      - name: Classify full E2E shards
+        id: shards
+        env:
+          FULL_E2E_RESULT: ${{ needs.coverage-full-e2e.result }}
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/classify-full-e2e-shards.ts
       - name: Merge full corpus
+        if: steps.shards.outputs.state == 'complete'
         env:
           COVERAGE_CORPUS: fullCorpus
         run: |
-          if [ "${{ needs.coverage-full-e2e.result }}" != "success" ]; then
-            echo "Full E2E did not succeed; refusing a complete report from prior-attempt artifacts"
-            exit 1
-          fi
           bun scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/coverage-artifacts" 4 "$GITHUB_SHA"
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
@@ -905,8 +921,10 @@ jobs:
             --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
+        if: steps.shards.outputs.state == 'complete'
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-full-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
       - name: Baseline gate (fullCorpus, like-for-like)
+        if: steps.shards.outputs.state == 'complete'
         # shell: bash → pipefail, so tee can't mask the gate's exit code.
         shell: bash
         env:
