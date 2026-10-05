@@ -30,6 +30,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { databaseRefusal, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { faultPoint, withFaultPoints } from './fault-points.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -165,7 +166,8 @@ export function pageRecoveryRecord(row: WriteRequest, file: PageMutationFile, bi
 }
 
 export async function publishMutation(engine: BrainEngine, row: WriteRequest, prepared: PreparedMutation,
-  hostId = localHostId(), hooks: PublicationHooks = {}): Promise<WriteRequest> {
+  hostId = localHostId(), callerHooks: PublicationHooks = {}): Promise<WriteRequest> {
+  const hooks = withFaultPoints(callerHooks);
   let lock: NativeLockHandle | null = null;
   let releaseCapacity: (() => void) | null = null;
   let binding: WorktreeBinding | null = null;
@@ -430,6 +432,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       return queued;
     });
     if (isTerminal(row) && row.blocked_reason !== 'unexpected_staging_bytes') {
+      await faultPoint('publication_recovery:before_clear', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
       await clearResolvedRecovery(engine, id);
       row = (await getWriteRequestById(engine, id))!;
     }
