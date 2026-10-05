@@ -1,10 +1,11 @@
 /**
  * #5829 remainder: `mentions.exclude_slugs` keeps a page out of the mention
- * gazetteer entirely, title and aliases. Hangul word boundaries landed in
- * #5960; what they cannot fix is a name that is also a common word, like the
- * person page titled 인하 against the connective "로 인하여" ("due to"). The
- * exclude list is the operator's escape hatch, and the mention pass removes
- * links already written to the excluded page.
+ * gazetteer entirely, title and aliases. Hangul word boundaries (#5960, and
+ * the name-suffix rule of v0.60.69.0) stop word-internal matches like 인하 in
+ * "인하여"; what they cannot fix is a name that is also a standalone common
+ * word, like a person page titled 우리 against 우리는 ("we"). The exclude list
+ * is the operator's escape hatch, and the mention pass removes links already
+ * written to the excluded page.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -43,11 +44,11 @@ describe('mentions.exclude_slugs (#5829)', () => {
   });
 
   test('the mention pass removes links already written to a page once it is excluded', async () => {
-    await page(engine, 'people/inha', 'person', '인하', 'A person.');
-    await page(engine, 'notes/n1', 'note', 'n1', '사정으로 인하여 취소되었습니다.');
+    await page(engine, 'people/uri', 'person', '우리', 'A person.');
+    await page(engine, 'notes/n1', 'note', 'n1', '우리는 내일 다시 만납니다.');
     await sweep(engine);
-    expect(await mentionLinks(engine)).toEqual(['notes/n1 -> people/inha']);
-    await engine.setConfig('mentions.exclude_slugs', 'people/inha');
+    expect(await mentionLinks(engine)).toEqual(['notes/n1 -> people/uri']);
+    await engine.setConfig('mentions.exclude_slugs', 'people/uri');
     await sweep(engine);
     expect(await mentionLinks(engine)).toEqual([]);
   });
