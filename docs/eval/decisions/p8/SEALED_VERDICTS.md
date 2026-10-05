@@ -16,7 +16,10 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 The held-out failure keeps the new quote grounding (think answers and the `synthesize` verb, `think --save`,
 concept narratives, pattern pages) opt-in: `gbrain config set think.quote_verify true` and
 `gbrain config set dream.quote_verify true`. The dream synthesis quote check that predates P8
-(`dream.synthesize.quote_verify`, default on) is unchanged.
+(`dream.synthesize.quote_verify`, default on) matches master exactly: the matching tolerance P8 adds (markdown
+link syntax read as its text, punctuation and elision at a quote's edges) applies only to the opt-in coverage's
+sources (`groundSource(…, { tolerant: true })`), because the held-out run measured it only as part of that
+coverage, which failed.
 
 Follow-up: the over-flagging. The dev runs measured 1.3% after the edge-punctuation and link-syntax fix; the
 held-out set flags 4.7%, so supported quotes still fail on forms the dev questions did not contain. The next step

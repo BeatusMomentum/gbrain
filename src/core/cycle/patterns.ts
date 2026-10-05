@@ -678,7 +678,7 @@ export async function groundPatternPages(engine: BrainEngine, maintenance: Maint
   const sourcePages = await engine.executeRaw<{ slug: string; compiled_truth: string; timeline: string }>(
     'SELECT slug, compiled_truth, timeline FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL',
     [sourceId, reflections.map(r => r.slug)]);
-  const sources = sourcePages.map(p => groundSource(p.slug, `${p.compiled_truth}\n\n${p.timeline ?? ''}`));
+  const sources = sourcePages.map(p => groundSource(p.slug, `${p.compiled_truth}\n\n${p.timeline ?? ''}`, { tolerant: true }));
   const stats = { pages: 0, quarantined: 0, repaired: 0 };
   const { serializePageToMarkdown } = await import('../markdown.ts');
   for (const slug of slugs) {

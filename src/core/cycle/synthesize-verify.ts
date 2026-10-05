@@ -193,8 +193,8 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
  * source char desynced every later offset and could slice garbage — or
  * nothing — back into a page as a "verbatim" repair).
  */
-export function normalizeForGrounding(s: string): { norm: string; map: number[] } {
-  return foldForGrounding(s, true) as { norm: string; map: number[] };
+export function normalizeForGrounding(s: string, opts: { foldLinks?: boolean } = {}): { norm: string; map: number[] } {
+  return foldForGrounding(s, true, opts.foldLinks === true) as { norm: string; map: number[] };
 }
 
 /**
@@ -207,10 +207,10 @@ export function normalizeForGrounding(s: string): { norm: string; map: number[] 
  * Parity matters: the rescue gate and the repair ladder must mean the same
  * thing by "normalized substring of the transcript".
  */
-function foldForGrounding(s: string, withMap: boolean): { norm: string; map: number[] } | string {
+function foldForGrounding(s: string, withMap: boolean, foldLinks = false): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
-  const skip = linkSyntaxMask(s);
+  const skip = foldLinks ? linkSyntaxMask(s) : null;
   let pendingSpace = false;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
@@ -296,6 +296,12 @@ export interface GroundedTranscript {
   map: number[];
   /** Speaker-turn anchors, ascending. Absent or empty: no turn structure. */
   turns?: SpeakerTurn[];
+  /**
+   * The opt-in quote grounding's tolerance (think, concepts, patterns): link
+   * syntax reads as its text, and punctuation or elision at a quote's edges is
+   * the writer's. Unset (dream synthesis): exact, normalized and near rungs only.
+   */
+  tolerant?: boolean;
 }
 
 /** A transcript prepared for verification: grounding text, speaker turns,
@@ -492,8 +498,8 @@ function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Se
 }
 
 /** Prepare one transcript for verification. */
-export function groundSource(path: string, content: string): GroundedSource {
-  const { norm, map } = normalizeForGrounding(content);
+export function groundSource(path: string, content: string, opts: { tolerant?: boolean } = {}): GroundedSource {
+  const { norm, map } = normalizeForGrounding(content, { foldLinks: opts.tolerant });
   const turns = parseSpeakerTurns(content);
   const name = basename(path);
   return {
@@ -506,6 +512,7 @@ export function groundSource(path: string, content: string): GroundedSource {
     numbersBySpeaker: numbersBySpeaker(content, turns),
     nameNorm: normForGrounding(name),
     speakers: speakerMentionPatterns(turns),
+    ...(opts.tolerant ? { tolerant: true } : {}),
   };
 }
 
@@ -593,6 +600,7 @@ const PUNCT_EDGE = /[.,;:!?]/;
  * in another's mouth.
  */
 export function groundQuote(inner: string, t: GroundedTranscript): GroundResult {
+  if (!t.tolerant) return groundQuoteSpan(inner, t, true);
   const whole = groundQuoteSpan(inner, t, false);
   if (whole.status !== 'none') return whole;
   const core = quoteCore(inner);
@@ -616,7 +624,8 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
   }
   if (exact.length) return { status: 'exact', spans: exact };
 
-  const q = normalizeForGrounding(inner);
+  const q = normalizeForGrounding(inner, { foldLinks: t.tolerant });
+  const shown = (slice: string) => t.tolerant ? displayText(slice) : slice;
   if (q.norm.length === 0) return { status: 'none', reason: 'not_found' };
 
   // Rung 2: normalized whole-span match → map back to the original slice.
@@ -631,7 +640,7 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
   }
   if (normalized.length) {
     const [start, end] = normalized[0];
-    const replacement = displayText(t.content.slice(start, end));
+    const replacement = shown(t.content.slice(start, end));
     if (replacement.length === 0) return { status: 'none', reason: 'not_found' };
     return replacement === inner ? { status: 'exact', spans: normalized } : { status: 'normalized', replacement, spans: normalized };
   }
@@ -705,7 +714,7 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
   const innerTrim = inner.trim();
   if (!PUNCT_EDGE.test(innerTrim[0] ?? '')) while (a < b && PUNCT_EDGE.test(t.content[a])) a++;
   if (!PUNCT_EDGE.test(innerTrim[innerTrim.length - 1] ?? '')) while (b > a && PUNCT_EDGE.test(t.content[b - 1])) b--;
-  const replacement = displayText(t.content.slice(a, b)).trim();
+  const replacement = shown(t.content.slice(a, b)).trim();
   if (replacement.length === 0) return none;
   if (normForGrounding(replacement).length > Math.ceil(q.norm.length * NEAR_MATCH_MAX_GROWTH)) return none;
   if (crossesTurn(t.turns, a, b)) return { status: 'none', reason: 'crosses_speakers' };

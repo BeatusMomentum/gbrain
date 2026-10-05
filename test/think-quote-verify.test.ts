@@ -55,18 +55,26 @@ describe('groundAnswerQuotes (pure)', () => {
   });
 
   test('punctuation and elision marks at a quote\'s edges are the writer\'s: the words still ground', () => {
-    const r = groundAnswerQuotes('She called it "move to annual billing," then "…Bob Example asked about seats." and "annual billing in M…".', sources);
+    const tolerant = [groundSource('evidence', 'Alice Example said we will move to annual billing in March. Bob Example asked about seats.', { tolerant: true })];
+    const r = groundAnswerQuotes('She called it "move to annual billing," then "…Bob Example asked about seats." and "annual billing in M…".', tolerant);
     expect(r.quote_check).toEqual({ grounded: 3, repaired: 0, unverified: 0 });
     expect(r.answer).toContain('"move to annual billing,"');
-    const fabricated = groundAnswerQuotes('She said "we will move to quarterly billing."', sources);
+    const fabricated = groundAnswerQuotes('She said "we will move to quarterly billing."', tolerant);
     expect(fabricated.quote_check.unverified).toBe(1);
   });
 
   test('markdown link syntax in the evidence does not hide the quoted words; repairs carry no link targets', () => {
-    const linked = [groundSource('evidence', '[Elena](people/elena-example) said the [Meridian](companies/meridian-example) deal is moving faster than expected.')];
+    const linked = [groundSource('evidence', '[Elena](people/elena-example) said the [Meridian](companies/meridian-example) deal is moving faster than expected.', { tolerant: true })];
     const r = groundAnswerQuotes('Elena: "the Meridian deal is moving faster than expected" and "Elena said the meridian deal".', linked);
     expect(r.quote_check.unverified).toBe(0);
     expect(r.answer).not.toContain('](');
+  });
+
+  test('the tolerance is opt-in coverage only: a default source (dream synthesis) grounds as before', () => {
+    const text = 'She said "the Meridian deal," twice.';
+    const evidence = 'Elena said the [Meridian](companies/meridian-example) deal is moving faster than expected.';
+    expect(groundAnswerQuotes(text, [groundSource('evidence', evidence)]).quote_check.unverified).toBe(1);
+    expect(groundAnswerQuotes(text, [groundSource('evidence', evidence, { tolerant: true })]).quote_check.unverified).toBe(0);
   });
 
   test('quotes-only mode never flags computed numbers; full mode does', () => {

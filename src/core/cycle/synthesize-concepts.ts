@@ -632,8 +632,8 @@ async function groundConceptNarrative(engine: BrainEngine, narrative: string, gr
   const { ALL_CLAIMS_QUARANTINED_BODY, dreamQuoteVerifyEnabled, groundSource, verifyBody } = await import('./synthesize-verify.ts');
   if (!await dreamQuoteVerifyEnabled(engine)) return { narrative, unverified: [] };
   const sources = [
-    groundSource('concept-atom-titles', group.atomTitles.slice(0, 10).join('\n')),
-    ...group.atomBodies.slice(0, 5).map((b, i) => groundSource(`concept-atom-${i + 1}`, b.slice(0, 500))),
+    groundSource('concept-atom-titles', group.atomTitles.slice(0, 10).join('\n'), { tolerant: true }),
+    ...group.atomBodies.slice(0, 5).map((b, i) => groundSource(`concept-atom-${i + 1}`, b.slice(0, 500), { tolerant: true })),
   ];
   const v = verifyBody(narrative, sources, { checks: 'quotes' });
   return { narrative: v.body.trim() || ALL_CLAIMS_QUARANTINED_BODY, unverified: v.quarantined };

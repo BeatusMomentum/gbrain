@@ -1131,7 +1131,7 @@ async function groundThinkAnswer(engine: BrainEngine, answer: string, blocks: st
   if (answer.trim().length === 0 || !await readThinkQuoteVerify(engine)) return {};
   const { groundSource, groundAnswerQuotes, verifyBody } = await import('../cycle/synthesize-verify.ts');
   const sources = blocks.map((block, i) => ({ block, i })).filter(b => b.block.trim().length > 0)
-    .map(b => groundSource(`think-evidence-${b.i}`, b.block));
+    .map(b => groundSource(`think-evidence-${b.i}`, b.block, { tolerant: true }));
   const check = groundAnswerQuotes(answer, sources);
   if (check.quote_check.grounded + check.quote_check.repaired + check.quote_check.unverified === 0) return {};
   if (check.quote_check.unverified > 0) warnings.push('QUOTE_NOT_IN_EVIDENCE');
