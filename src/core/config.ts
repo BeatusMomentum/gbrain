@@ -553,6 +553,8 @@ export interface GBrainConfig {
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
     /** Search/query row shape for remote MCP callers: 'lean' (default) | 'full'. Dual-plane, DB > file. */
     result_rows?: 'lean' | 'full';
+    /** Stdio `request_tools {surface}` widens the session's tool surface (default true). Dual-plane, DB > file. */
+    allow_session_widen?: boolean | string;
   };
 }
 
@@ -1535,6 +1537,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',
   'mcp.result_rows', // C1 row shape, read dual-plane by src/mcp/result-rows.ts
+  'mcp.allow_session_widen', // stdio request_tools session widening (default on), read dual-plane by src/mcp/surface.ts
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
