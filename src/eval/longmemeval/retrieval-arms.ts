@@ -145,8 +145,8 @@ async function extractItems(engine: BrainEngine, arm: FactKeyArm, body: string, 
   } else {
     const outcome = await extractFactsFromTurnWithOutcome({ turnText: body, source: 'longmemeval:fact-keys', model: arm.model, engine });
     spend.calls++;
-    if (!outcome.ok) throw new Error(`production fact extractor unavailable (${outcome.reason}) for ${arm.model}`);
-    items = outcome.facts.map(f => f.fact).filter(f => typeof f === 'string' && f.trim().length > 0);
+    if (!outcome.ok && outcome.reason === 'chat_unavailable') throw new Error(`production fact extractor unavailable (${outcome.reason}) for ${arm.model}`);
+    items = !outcome.ok ? [] : outcome.facts.map(f => f.fact).filter(f => typeof f === 'string' && f.trim().length > 0);
   }
   cache.set(key, items);
   return items;
