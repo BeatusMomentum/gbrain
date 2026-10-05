@@ -92,15 +92,20 @@ export function behaviorBrainKey(cfg: GBrainConfig | null | undefined, brainId =
   return `${safe(brainId)}-${createHash('sha256').update(location).digest('hex').slice(0, 12)}`;
 }
 
-/** The brain id the current process routes to (`--brain`, GBRAIN_BRAIN_ID, .gbrain-mount), `host` when unresolvable. */
-export async function currentBrainId(): Promise<string> {
-  try {
-    const { resolveBrainId } = await import('./brain-resolver.ts');
-    const { getCliOptions } = await import('./cli-options.ts');
-    return resolveBrainId(getCliOptions().brain);
-  } catch {
-    return 'host';
-  }
+let brainIdMemo: Promise<string> | null = null;
+
+/** The brain id this process routes to (`--brain`, GBRAIN_BRAIN_ID, .gbrain-mount), `host` when unresolvable; resolved once per process. */
+export function currentBrainId(): Promise<string> {
+  brainIdMemo ??= (async () => {
+    try {
+      const { resolveBrainId } = await import('./brain-resolver.ts');
+      const { getCliOptions } = await import('./cli-options.ts');
+      return resolveBrainId(getCliOptions().brain);
+    } catch {
+      return 'host';
+    }
+  })();
+  return brainIdMemo;
 }
 
 // ── eligibility ─────────────────────────────────────────────────────────────
