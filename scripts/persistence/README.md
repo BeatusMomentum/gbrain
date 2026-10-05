@@ -417,3 +417,33 @@ recovery bytes and pool activity.
 The CLI without `--informational` still enforces the threshold. The original
 heavy shell entry invokes this harness; its optional `STRICT_LATENCY=1`
 flag affects only the latency threshold, never validity requirements.
+
+## Engine graduation tests
+
+Graduation (`gbrain migrate --to postgres`) is tested against two fixtures.
+`test/fixtures/graduation/legacy-brain.ts` builds a small brain by hand-written
+SQL on a fresh schema, and its expected outcomes live in `expected.json`
+beside it (`test/graduation-legacy-fixture.test.ts` proves the build matches
+and that the target checker discriminates).
+`scripts/persistence/graduation-fixture.ts` wraps `buildHistoryFixture` for
+the 1k and 10k history brains, builds keylessly in a child process, and
+caches each build as a tarball keyed by the fixture sources, schema version,
+seed and size (`GBRAIN_GRADUATION_FIXTURE_CACHE`, default
+`~/.cache/gbrain-graduation-fixtures`). A restore re-homes paths and owner
+stamps and marks sources synced, so the source doctor stays green.
+
+The E2E suites drive the real CLI in child processes:
+`graduation-crash` (SIGKILL at every run and rollback boundary),
+`graduation-faults` (ENOSPC on a tmpfs tablespace, which needs Docker;
+password rotation; DDL route mismatch), `graduation-clients` (older
+releases, respawned and resident serve, stale CLI and MCP configs) and
+`graduation-cli` (agent flow, zero-mutation `--plan`/`--status`, `--force`,
+PgBouncer through `GBRAIN_PGBOUNCER_URL`, a NOSUPERUSER role, the 1k round
+trip). Kill and pause points come from `graduationBoundary()` hooks that only
+`test/helpers/graduation-hooks-preload.ts` registers. Older release binaries
+are built once per tag under `GBRAIN_OLDER_RELEASE_DIR`. The crash suite takes
+about 40 seconds per case, so run it with `GBRAIN_E2E_FILE_TIMEOUT=3600`.
+`scripts/persistence/graduation-ttv.ts` records the commands and wall time
+from the first plan to a green doctor, the run's phase timings and query
+p50/p95 on both engines. The 1k-page gate is five minutes;
+`tests/heavy/graduation_10k.sh` reports the 10k run.

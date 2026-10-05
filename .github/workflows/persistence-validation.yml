@@ -209,6 +209,10 @@ jobs:
                 test/decide/conflict-proposals-managed.test.ts
                 test/declared-lineage-visibility.test.ts
                 test/extract-endpoint-revision.serial.test.ts
+                test/graduation-digest.test.ts
+                test/graduation-drain.test.ts
+                test/graduation-inventory.test.ts
+                test/graduation-state.test.ts
                 test/grandfather-managed.test.ts
                 test/harness-skills-epoch.test.ts
                 test/links-attendance-blocked.test.ts
@@ -241,6 +245,10 @@ jobs:
                 test/derived-link-reconciliation.test.ts
                 test/doctor-frontmatter-holds.test.ts
                 test/embedding-completion-atomic.serial.test.ts
+                test/graduation-copy.test.ts
+                test/graduation-rollback.test.ts
+                test/graduation-target.test.ts
+                test/graduation-verify.test.ts
                 test/held-read-signals.test.ts
                 test/import-frontmatter-key-order-5158.test.ts
                 test/import-revision-concurrency.test.ts
@@ -249,6 +257,7 @@ jobs:
                 test/managed-sync-chunker-version.test.ts
                 test/persistence-diagnostics.test.ts
                 test/persistence-git-subdir-origin.test.ts
+                test/persistence-history-fixture.test.ts
                 test/persistence-image-import.serial.test.ts
                 test/persistence-physical-root-device.test.ts
                 test/persistence-skill-crash.slow.test.ts

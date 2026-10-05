@@ -26,6 +26,8 @@ export const KEEP_EXACT: ReadonlySet<string> = new Set([
   'GBRAIN_AUDIT_DIR', // audit-dir-preload honors a wrapper pre-set (inspect audit output after a run)
   'GBRAIN_SYNC_FAILURES_DIR', // same wrapper pre-set contract in sync-failures-preload
   'GBRAIN_DEBUG_PRELOAD', // the preload stack's own logging hatch
+  'GBRAIN_GRADUATION_FIXTURE_CACHE', // cache directory for the 1k/10k graduation history fixtures (scripts/persistence/graduation-fixture.ts); a location, not a behavior gate
+  'GBRAIN_OLDER_RELEASE_DIR', // per-tag older-release binaries the graduation-clients suite builds once (test/helpers/graduation-e2e.ts)
   // Documented exception to the GBRAIN_TEST_LIVE_* rule: paid live layer of
   // cycle-synthesize-triage-calibration.
   'GBRAIN_TRIAGE_CALIBRATION_LIVE',

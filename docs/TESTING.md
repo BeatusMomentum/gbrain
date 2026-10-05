@@ -563,6 +563,10 @@ nested transaction confinement and the Postgres resident-stop barrier.
 Persistence suites (native-matrix publication, managed writers, schedules, crash boundaries, the runtime
 matrix and read latency) are described in [scripts/persistence/README.md](../scripts/persistence/README.md#test-suites).
 
+### Engine graduation
+
+Graduation fixtures and suites: [scripts/persistence/README.md](../scripts/persistence/README.md#engine-graduation-tests).
+
 ### PGLite schema snapshot (default-on)
 
 `scripts/build-pglite-snapshot.ts` (`bun run build:pglite-snapshot`) bakes a
