@@ -23,9 +23,11 @@ permissions:
 
 # Cancel a superseded run when a newer commit lands on the same PR/branch.
 # PR number for pull_request events (fork-safe), github.ref fallback for
-# push/scheduled runs.
+# push runs. Scheduled runs get their own `-nightly` group (as in test.yml):
+# sharing refs/heads/master with push runs let the next merge cancel the
+# nightly full corpus mid-shard (#6040).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -875,14 +877,39 @@ jobs:
         with:
           pattern: coverage-full-*
           path: ${{ runner.temp }}/coverage-artifacts
+      # A run cancelled by a newer run in its concurrency group or by a user
+      # reports its cancelled shards as cancelled (no coverage, not a test
+      # failure). A shard that failed or hit timeout-minutes in a run nobody
+      # cancelled stays a failure. docs/TESTING.md#full-corpus-report-states
+      - name: Classify full E2E shards
+        id: shards
+        env:
+          FULL_E2E_RESULT: ${{ needs.coverage-full-e2e.result }}
+          RUN_CANCELLED: ${{ cancelled() }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          DOCS: docs/TESTING.md#full-corpus-report-states
+        run: |
+          if [ "$FULL_E2E_RESULT" = success ]; then
+            echo "state=complete" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$FULL_E2E_RESULT" = cancelled ] && [ "$RUN_CANCELLED" = true ]; then
+            msg="Full E2E shards cancelled: this run ($RUN_URL) was cancelled by a newer run in its concurrency group or by a user before the four shards finished, so no full-corpus coverage report exists for it. This is not a test failure. Next: gh workflow run e2e.yml --ref master -f full_corpus=true (or wait for the next schedule). Docs: $DOCS"
+            echo "::warning title=Full E2E shards cancelled::$msg"
+            { echo "### Full-corpus coverage: cancelled"; echo; echo "$msg"; } >> "$GITHUB_STEP_SUMMARY"
+            echo "state=cancelled" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          msg="Full E2E did not succeed (result: ${FULL_E2E_RESULT:-none}) and nobody cancelled this run, so a shard failed or hit its timeout-minutes; refusing a complete report from prior-attempt artifacts. Next: gh run view $RUN_ID --log-failed, fix the failing shard, then gh run rerun $RUN_ID --failed. Docs: $DOCS"
+          echo "::error title=Full E2E shards failed::$msg"
+          { echo "### Full-corpus coverage: failed"; echo; echo "$msg"; } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
       - name: Merge full corpus
+        if: steps.shards.outputs.state == 'complete'
         env:
           COVERAGE_CORPUS: fullCorpus
         run: |
-          if [ "${{ needs.coverage-full-e2e.result }}" != "success" ]; then
-            echo "Full E2E did not succeed; refusing a complete report from prior-attempt artifacts"
-            exit 1
-          fi
           bun scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/coverage-artifacts" 4 "$GITHUB_SHA"
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-full-merged/lcov.info" \
@@ -890,8 +917,10 @@ jobs:
             --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,serial,slow,e2e-1,e2e-2,e2e-3,e2e-4 \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
+        if: steps.shards.outputs.state == 'complete'
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-full-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"
       - name: Baseline gate (fullCorpus, like-for-like)
+        if: steps.shards.outputs.state == 'complete'
         # shell: bash → pipefail, so tee can't mask the gate's exit code.
         shell: bash
         env:

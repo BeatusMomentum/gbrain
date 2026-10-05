@@ -130,20 +130,49 @@ describe('nightly E2E scheduling', () => {
     const report = workflow.jobs['coverage-full-report'];
     expect(report.needs).toContain('coverage-full-e2e');
     expect(report.if).toBe(`always() && (${fullProfile})`);
-    const merge = report.steps.find((step: any) => step.name === 'Merge full corpus').run;
+    const mergeStep = report.steps.find((step: any) => step.name === 'Merge full corpus');
+    const merge = mergeStep.run;
     expect(merge).toContain('scripts/verify-nightly-e2e.ts "$RUNNER_TEMP/coverage-artifacts" 4 "$GITHUB_SHA"');
     expect(merge).toContain(',e2e-1,e2e-2,e2e-3,e2e-4');
+    const classify = report.steps.find((step: any) => step.name === 'Classify full E2E shards');
+    expect(report.steps.indexOf(classify)).toBeLessThan(report.steps.indexOf(mergeStep));
+    expect(classify.id).toBe('shards');
+    expect(classify.env.FULL_E2E_RESULT).toBe('${{ needs.coverage-full-e2e.result }}');
+    expect(classify.env.RUN_CANCELLED).toBe('${{ cancelled() }}');
+    for (const name of ['Merge full corpus', 'Coverage summary → step summary', 'Baseline gate (fullCorpus, like-for-like)']) {
+      expect(report.steps.find((step: any) => step.name === name).if).toBe("steps.shards.outputs.state == 'complete'");
+    }
+    expect(readFileSync(join(repo, 'docs/TESTING.md'), 'utf8')).toMatch(/^#+ Full-corpus report states$/m);
     fixture(root => {
-      const bin = join(root, 'bin');
-      mkdirSync(bin);
-      writeFileSync(join(bin, 'bun'), '#!/bin/sh\necho COVERAGE_CALLED\n', { mode: 0o755 });
-      for (const result of ['success', 'failure', 'cancelled', 'skipped', '']) {
-        const script = merge.replace('${{ needs.coverage-full-e2e.result }}', result);
-        const run = spawnSync('bash', ['-e', '-c', script], {
-          encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: root, GITHUB_SHA: 'fixture-sha' },
+      // A timed-out shard in a run nobody cancelled reports `cancelled` from
+      // needs but RUN_CANCELLED=false: it must stay a failure.
+      for (const [result, runCancelled, status, state] of [
+        ['success', 'false', 0, 'complete'], ['success', 'true', 0, 'complete'],
+        ['failure', 'false', 1, ''], ['failure', 'true', 1, ''],
+        ['cancelled', 'false', 1, ''], ['cancelled', 'true', 0, 'cancelled'],
+        ['skipped', 'false', 1, ''], ['', 'false', 1, ''],
+      ] as const) {
+        const out = join(root, `out-${result || 'none'}-${runCancelled}`);
+        const summary = `${out}.summary`;
+        writeFileSync(out, '');
+        writeFileSync(summary, '');
+        const run = spawnSync('bash', ['-e', '-c', classify.run], {
+          encoding: 'utf8',
+          env: { ...process.env, FULL_E2E_RESULT: result, RUN_CANCELLED: runCancelled, RUN_ID: '42', RUN_URL: 'https://example.test/runs/42', DOCS: classify.env.DOCS, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: summary },
         });
-        expect(run.status, run.stderr).toBe(result === 'success' ? 0 : 1);
-        expect(run.stdout.includes('COVERAGE_CALLED')).toBe(result === 'success');
+        expect(run.status, `${result}/${runCancelled}: ${run.stdout}${run.stderr}`).toBe(status);
+        expect(readFileSync(out, 'utf8')).toBe(state ? `state=${state}\n` : '');
+        if (state === 'cancelled') {
+          expect(run.stdout).toContain('::warning title=Full E2E shards cancelled::');
+          expect(readFileSync(summary, 'utf8')).toContain('Full-corpus coverage: cancelled');
+          expect(run.stdout).toContain('gh workflow run e2e.yml --ref master -f full_corpus=true');
+        }
+        if (status === 1) {
+          expect(run.stdout).toContain('::error title=Full E2E shards failed::');
+          expect(run.stdout).toContain('gh run view 42 --log-failed');
+          expect(readFileSync(summary, 'utf8')).toContain('Full-corpus coverage: failed');
+        }
+        if (status !== 0 || state === 'cancelled') expect(run.stdout).toContain('docs/TESTING.md#full-corpus-report-states');
       }
     });
     const status = workflow.jobs['e2e-status'];
@@ -163,7 +192,7 @@ describe('nightly E2E scheduling', () => {
     const select = selection.run;
     expect(selection.env.FULL_CORPUS).toBe('${{ ' + fullProfile + ' }}');
     const group = workflow.concurrency.group;
-    expect(group).toBe("${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}");
+    expect(group).toBe("${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}");
     for (const [event, enabled, expected] of [
       ['pull_request', false, false], ['pull_request', true, false], ['push', true, false],
       ['workflow_dispatch', false, false], ['workflow_dispatch', true, true], ['schedule', false, true],
