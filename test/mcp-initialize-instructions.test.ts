@@ -82,7 +82,8 @@ describe('F1 generated instructions', () => {
   });
 
   test('recorded tail-free instruction sizes per surface', () => {
-    const recorded = { verbs: 2_243, starter: 4_546, full: 4_607 };
+    // #6007: starter +140 and full +230 for the write guidance (wait_ms; put_pages where it is served), within WRITING_CLAUSE_BYTES.
+    const recorded = { verbs: 2_243, starter: 4_686, full: 4_837 };
     for (const surface of SURFACES) {
       const listed = new Set(filterOpsForSurface(operations, surface).map(o => o.name));
       const size = buildMcpInstructions({ tools: { callable: n => listed.has(n) } }).length;
