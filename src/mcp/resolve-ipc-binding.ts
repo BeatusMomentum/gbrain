@@ -88,7 +88,7 @@ export async function bindResolveIpcForServe(
   engine: BrainEngine,
   defaultSource: string,
   persistenceProvider?: PersistenceIpcProvider,
-  opts: { rememberCallable?: boolean } = {},
+  opts: { rememberCallable?: boolean | (() => boolean) } = {},
 ): Promise<ResolveIpcBinding> {
   let persistence: PersistenceIpcBinding | null = null;
   try {
@@ -207,7 +207,7 @@ export async function bindResolveIpcForServe(
           lexicalArms: lexicalArmsEnabled(loadConfig()),
         }),
         // Context-pressure gate for the harness hook (pressure.ts); a surface without remember never warns.
-        pressure: await readPressureGate(engine, opts.rememberCallable ?? true),
+        pressure: await readPressureGate(engine, typeof opts.rememberCallable === 'function' ? opts.rememberCallable() : opts.rememberCallable ?? true),
       }),
       // v0.45.7 ambient recall: boundary context pack. Extracted to
       // context-pack-handler.ts (directly testable against a real engine);
