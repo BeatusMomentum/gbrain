@@ -1072,8 +1072,6 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   priority         INTEGER     NOT NULL DEFAULT 0,
   submission_authority JSONB, -- NULL legacy rows require local authorization before workers start
   claim_generation BIGINT NOT NULL DEFAULT 0, -- advanced atomically by protocol-aware claims
-  spend_authorization JSONB, -- submit-time consent record of a paid producer; never read from data
-  spend_claim_token BIGINT, -- per-acquisition fence: spend-aware claims set it to the new claim_generation
   data             JSONB       NOT NULL DEFAULT '{}',
   max_attempts     INTEGER     NOT NULL DEFAULT 3,
   attempts_made    INTEGER     NOT NULL DEFAULT 0,
@@ -1129,7 +1127,6 @@ CREATE INDEX IF NOT EXISTS idx_minion_jobs_delayed ON minion_jobs (delay_until) 
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent ON minion_jobs(parent_job_id);
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_timeout ON minion_jobs (timeout_at) WHERE status = 'active' AND timeout_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent_status ON minion_jobs (parent_job_id, status) WHERE parent_job_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_minion_jobs_spend_group ON minion_jobs ((spend_authorization->>'group_id')) WHERE spend_authorization IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (idempotency_key) WHERE idempotency_key IS NOT NULL;
 -- WP4/WP5 (v127, ENG-10): wedge-signal index — covers the queue-health count
 -- FILTERs and max(updated_at) reads in queryWedgeSignals (supervisor.ts).

@@ -596,8 +596,6 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   priority         INTEGER     NOT NULL DEFAULT 0,
   submission_authority JSONB,
   claim_generation BIGINT NOT NULL DEFAULT 0,
-  spend_authorization JSONB,
-  spend_claim_token BIGINT,
   data             JSONB       NOT NULL DEFAULT '{}',
   max_attempts     INTEGER     NOT NULL DEFAULT 3,
   attempts_made    INTEGER     NOT NULL DEFAULT 0,
@@ -653,7 +651,6 @@ CREATE INDEX IF NOT EXISTS idx_minion_jobs_delayed ON minion_jobs (delay_until) 
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent ON minion_jobs(parent_job_id);
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_timeout ON minion_jobs (timeout_at) WHERE status = 'active' AND timeout_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_parent_status ON minion_jobs (parent_job_id, status) WHERE parent_job_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_minion_jobs_spend_group ON minion_jobs ((spend_authorization->>'group_id')) WHERE spend_authorization IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_queue_status_updated ON minion_jobs (queue, status, updated_at);
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_recovery

@@ -507,7 +507,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 201 (latest: 201)",
+          "message": "Version 204 (latest: 204)",
           "name": "schema_version",
           "status": "ok"
         },
@@ -1085,6 +1085,11 @@
             "authorizable_total": 0,
             "docs": "docs/guides/repair.md#legacy-job-authority",
             "live": 0,
+            "queued_spend": {
+              "by_basis": {},
+              "long_waiting": 0,
+              "long_waiting_ids": []
+            },
             "terminal_keyed": {},
             "terminal_keyed_total": 0,
             "unsupported": 0,

@@ -5202,6 +5202,8 @@
           "remove_on_complete: boolean",
           "remove_on_fail: boolean",
           "result: Record<string, unknown> | null",
+          "spend_authorization?: SpendAuthorization | null | undefined",
+          "spend_authorization_invalid?: true | undefined",
           "stacktrace: string[]",
           "stagger_key: string | null",
           "stalled_counter: number",
@@ -5230,6 +5232,7 @@
           "readInbox: () => Promise<InboxMessage[]>",
           "shutdownSignal: AbortSignal",
           "signal: AbortSignal",
+          "spend?: JobSpendContext | undefined",
           "submission_authority?: SubmissionAuthority | null | undefined",
           "updateProgress: (progress: unknown) => Promise<void>",
           "updateTokens: (tokens: TokenUpdate) => Promise<void>"
