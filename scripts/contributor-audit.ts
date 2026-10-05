@@ -377,13 +377,23 @@ async function preflight(o: Options, repo: string): Promise<{ base: string; head
 
 interface Ctx { o: Options; repo: string; runDir: string; scratch: string; cacheDir: string; head: string; timeoutMs: number }
 
+/** One fresh Bun process per test file (as the unit loop runs them), each in its own throwaway HOME. */
 async function runTests(ctx: Ctx, wt: string, tests: string[], log: string): Promise<RunCounts> {
-  const home = mkdtempSync(join(ctx.scratch, 'home-'));
-  mkdirSync(join(home, 'tmp'));
-  const env = sandboxEnv({ home, bunPath: process.execPath, cacheDir: ctx.cacheDir, postgresUrl: ctx.o.postgres });
-  const r = await runStep([process.execPath, '--no-env-file', 'test', '--timeout=60000', ...tests.map(t => `./${t}`)], { cwd: wt, env, log, timeoutMs: ctx.timeoutMs });
-  rmSync(home, { recursive: true, force: true });
-  return { exit: r.exit, timedOut: r.timedOut, ...parseCounts(r.output) };
+  const total: RunCounts = { exit: 0, pass: 0, fail: 0, timedOut: false };
+  for (const [i, test] of tests.entries()) {
+    const home = mkdtempSync(join(ctx.scratch, 'home-'));
+    mkdirSync(join(home, 'tmp'));
+    const env = sandboxEnv({ home, bunPath: process.execPath, cacheDir: ctx.cacheDir, postgresUrl: ctx.o.postgres });
+    const fileLog = tests.length === 1 ? log : log.replace(/\.log$/, `.${i + 1}.log`);
+    const r = await runStep([process.execPath, '--no-env-file', 'test', '--timeout=60000', `./${test}`], { cwd: wt, env, log: fileLog, timeoutMs: ctx.timeoutMs });
+    rmSync(home, { recursive: true, force: true });
+    const counts = parseCounts(r.output);
+    total.pass += counts.pass;
+    total.fail += counts.fail;
+    total.timedOut ||= r.timedOut;
+    if (total.exit === 0) total.exit = r.exit;
+  }
+  return total;
 }
 
 async function install(ctx: Ctx, wt: string, log: string): Promise<boolean> {

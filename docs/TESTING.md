@@ -323,7 +323,7 @@ fails on a harmless rename, and duplicates the behavioral test above.
 (`scripts/contributor-audit.ts`) re-proves discrimination for every
 first-parent commit in the range and for each PR head in `--prs`, trial-merged
 onto `<head>`. In an isolated worktree of `<head>` it runs the change's test
-files (green baseline required), reverses only that change's product hunks
+files, one Bun process per file as the unit loop does (green baseline required), reverses only that change's product hunks
 (`git diff M^1 M -- <product files> | git apply -R`; tests and docs stay),
 reruns, restores, checks the tree is identical and re-verifies green. Hunks
 that no longer apply at `<head>` are audited at the merge commit itself.
