@@ -10,6 +10,67 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.49.0] - 2026-10-04
+
+**Automatic event extraction now records only what happened. On the independent lift eval that failed it, wrong or premature events drop from 1.11 per judged page to 0.07 and 0.11 (gate: 0.20), and recall rises from 35/38 to 38/38.**
+
+`auto_chronicle` wrote plans as if they happened: "board meeting in Austin on May 15" in an April 18 meeting note became a May 15 event, and "back in 2024" became January 1, 2024. Now the extractor is told to return only what happened by the end of the page's day, and two rules hold after it answers, before anything is written: no event after the page's own day (`future_dated`), and no event without a real day (`date_imprecise`). A plan never reaches `gbrain day`, and a vague year is never pinned to January 1.
+
+### The numbers that matter
+
+gbrain-evals `chronicle-lift.ts` (amara-life-v1, 48 judged pages, 38 labeled events on 28 pages, judge `anthropic:claude-sonnet-4-6`), one ON arm per run, scored with the published review rubric:
+
+| | master `5bd9e849` | this release, run 1 | this release, run 2 |
+|---|---|---|---|
+| Recall of labeled events | 35/38 (92.1%) | 38/38 (100%) | 38/38 (100%) |
+| Premature (dated after the page) | 26 | 0 | 0 |
+| False (misdated or unsupported) | 5 | 2 | 3 |
+| **False + premature per judged labeled page** (gate ≤ 0.20) | **1.11** | **0.07** | **0.11** |
+| Slack events dated after their page | 32 | 0 | 0 |
+| Proposals dropped as `date_imprecise` | — | 9 | 6 |
+| Events written | 386 | 303 | 315 |
+| Cost per judged page | $0.0119 | $0.0105 | $0.0106 |
+
+The remaining false events are quarter results ("Q1 revenue came in at $2.1M") dated on the meeting that discussed them; counted strictly, as the published review does. No control page was judged in any run. Method and receipts: `docs/fix-wave-notes/capy-chronicle-date-quality.md`.
+
+### What changed
+
+- **No event after the page's own day.** The page's own day is the latest of its own date (frontmatter `date` or `start`, or an authored effective date), a calendar invite's `end` and a conversation's last message, read in `chronicle.tz`; anything on that day counts, and nothing after today does. Ended calendar invites still produce their meeting event.
+- **No invented days.** The extractor writes a vague past date at its real precision ("2024", "2026-03"); the timeline stores days, so those proposals are dropped instead of pinned to the first of the year or month.
+- **Drops are reported.** The `chronicle` phase result carries `events_dropped` by reason; a page whose every proposal was dropped records `future_dated` or `date_imprecise` on its ledger row instead of `no_events`. Both codes are in the reason table (`docs/guides/life-chronicle.md`) and the `chronicle_skipped` error-code registry.
+- **Re-extraction still cleans up.** A changed page whose new proposals are all dropped retires its previous automatic events like any empty generation.
+
+## To take advantage of v0.60.49.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Nothing else to migrate.** There is no schema change; the rules apply to every extraction from now on. Events already written stay until their page is extracted again.
+3. **Verify the outcome:**
+   ```bash
+   gbrain dream --phase chronicle --json   # events_dropped lists refused proposals by reason
+   ```
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- `src/core/chronicle/extract-events.ts`: `chronicleJudgeContext` collects the page's dating instants (`pageDates`); `chronicleEventCutoff` and `screenChronicleProposals` drop `future_dated` and `date_imprecise` proposals; `buildChronicleEvents` returns `{ events, dropped }`; the judge prompt extracts only what happened and never invents a day; `runChronicleExtract` reports `events_dropped`.
+- `src/core/chronicle/execute.ts`, `src/core/cycle/chronicle.ts`, `src/core/chronicle/job.ts`, `src/core/chronicle/contract.ts`: drop counts on the row outcome and in `ChronicleRunDetails.events_dropped`; an extracted row with a reason counts as `no_events`.
+- `src/core/chronicle/reasons.ts`, `src/core/error-registry.ts`: `future_dated` and `date_imprecise`.
+
+### For contributors
+
+- `test/chronicle-date-quality.test.ts` (+ `test/e2e/chronicle-date-quality-postgres.test.ts`): a past meeting mentioning a future offsite, "back in 2024", same-day events, ended invites, multi-day conversations, re-extraction cleanup and the cutoff arithmetic across time zones.
+
 ## [0.60.48.0] - 2026-10-04
 
 **A managed Postgres brain now catches up a big sync backlog in one `gbrain sync` run, about 4.6 times faster, and the run tells your agent exactly what happened and what to do next (#5984).**
