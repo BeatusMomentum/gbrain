@@ -764,12 +764,13 @@ describe('inferLinkType', () => {
     expect(inferLinkType('person', 'Emily advises Acme on go-to-market.')).toBe('advises');
   });
 
-  test('"board member" alone is too ambiguous (investors also hold board seats) -> mentions', () => {
-    // Tightened in v0.10.4 after BrainBench rich-prose surfaced that partner
-    // bios ("She sits on the boards of [portfolio company]") were classified
-    // as advises. Generic board language now requires explicit advisor/advise
-    // rooting to count.
-    expect(inferLinkType('person', 'Jane is a board member at Beta Health.')).toBe('mentions');
+  test('a board role is never employment: an investor\'s board seat is invested_in, anyone else\'s is advises', () => {
+    // v0.10.4 kept generic board language at mentions because partner bios
+    // ("She sits on the boards of [portfolio company]") read as advises. The
+    // page's investor role now decides instead, so a board line can never
+    // fall through to works_at (a board role is not a job).
+    expect(inferLinkType('person', 'Jane is a board member at Beta Health.')).toBe('advises');
+    expect(inferLinkType('person', 'She sits on the boards of Beta Health.', 'Jane is a partner at a venture fund.')).toBe('invested_in');
   });
 
   test('explicit advisor language -> advises', () => {
@@ -889,14 +890,11 @@ describe('inferLinkType', () => {
 
   // ─── Regression guards: v0.10.5 expansions must not break tightened rules ───
 
-  test('v0.10.5 regression: generic "board member" still resolves to mentions', () => {
-    // This was the v0.10.4 tightening. The expanded ADVISES_RE must not
-    // re-introduce the false-positive on partner bios.
-    expect(inferLinkType('person', 'Jane is a board member at Beta Health.')).toBe('mentions');
-  });
-
-  test('v0.10.5 regression: "sits on the board" still mentions (not advises)', () => {
-    expect(inferLinkType('person', 'She sits on the board of Acme.')).toBe('mentions');
+  test('v0.10.5 regression: a partner bio\'s board seats stay investments, never advises', () => {
+    // The v0.10.4 false positive: partner bios must not read as advisory.
+    const bio = 'Jane is a partner at a venture fund. She sits on the board of Acme.';
+    expect(inferLinkType('person', 'She sits on the board of Acme.', bio)).toBe('invested_in');
+    expect(inferLinkType('person', 'Jane is a board member at Beta Health.', bio)).toBe('invested_in');
   });
 
   test('v0.10.5 regression: "backs companies" still resolves to invested_in via partner prior', () => {

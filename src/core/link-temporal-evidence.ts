@@ -68,10 +68,16 @@ const NOT_PERFECT = String.raw`(?<!\b(?:has|have|'s|’s)\s+(?:\w+\s+)?)`;
 /** Advisory, board and investor roles ("took an advisory role with", "became an advisor at") are not jobs. */
 const NOT_EMPLOYMENT_ROLE = String.raw`(?!(?:\w+\s+){0,2}?(?:advis\w*|board|investor|investing|investment|angel|observer)\b)`;
 const OWNED = String.raw`(?:(?:her|his|their|my|the)\s+)?(?:time|stint|tenure|role|job|run)\s+`;
+/** A leave phrase whose object splits the phrasal verb: "wrapped their time up at", "handed their notice in at", "handed in her resignation at". */
+const LEAVE_OBJECT = String.raw`(?:(?:her|his|their|my|a|the)\s+)?(?:time|stint|tenure|role|job|run|things|it|notice|resignation)\s+`;
+const SPLIT_LEAVE = String.raw`(?:wrapped|wound|finished)\s+${LEAVE_OBJECT}up\s+(?:at|with)|(?:handed|turned|put)\s+(?:in\s+${LEAVE_OBJECT}|${LEAVE_OBJECT}in\s+)(?:at|to|with)|(?:gave|submitted|tendered)\s+${LEAVE_OBJECT}(?:at|to)`;
+/** "traded [A] for [B]": the exchange ends A; the "for" then starts B (see the natural-cue loop). */
+const EXCHANGE_BEFORE = /\b(?:traded|swapped|exchanged|ditched|dropped)\s*$/i;
+const EXCHANGE_AFTER = /^\s+for\s+(?:\[|the\s+\[|an?\s+\[)/i;
 
 const EMPLOYMENT = {
-  end: new RegExp(String.raw`\b(?:left|leaving|departed(?:\s+from)?|quit|resigned(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+down(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+away\s+from|moved\s+on\s+from|(?:moved|switched|transitioned|jumped)\s+(?:over\s+|out\s+)?from|(?:was\s+)?laid\s+off\s+(?:from|by|at)|(?:was\s+)?let\s+go\s+(?:from|by)|(?:was\s+)?fired\s+(?:from|by)|no\s+longer\s+(?:at|with|works\s+at|working\s+at)|exited|parted\s+ways\s+with|retired\s+from|(?:wrapped\s+up|finished|ended|concluded)\s+(?:${OWNED})?(?:at|with)|last\s+day\s+at|departure\s+from)\s*$`, 'i'),
-  start: new RegExp(String.raw`\b(?:(?:re-?)?join(?:ed|s|ing)?(?:\s+${ROLE}(?:at|as))?|(?:was\s+)?hired\s+(?:by|at|as\s+${ROLE}at)|started\s+(?:at|with|working\s+(?:at|for)|(?:a\s+)?new\s+(?:role|job|position)\s+at)|became\s+${NOT_EMPLOYMENT_ROLE}${ROLE}(?:at|of)|promoted\s+to\s+${ROLE}(?:at|of)|signed\s+on\s+(?:at|with)|named\s+${ROLE}(?:at|of)|accepted\s+(?:an?\s+)?(?:offer|role|position|job)\s+(?:at|with|from)|took\s+(?:an?\s+|the\s+)?${NOT_EMPLOYMENT_ROLE}(?:\w+\s+){0,2}?(?:role|job|position)\s+(?:at|with)|came\s+(?:on\s+board|aboard)\s+(?:at|with)|went\s+to\s+work\s+(?:at|for)|returned\s+to)\s*$`, 'i'),
+  end: new RegExp(String.raw`\b(?:left|leaving|departed(?:\s+from)?|quit|resigned(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+down(?:\s+as\s+${ROLE})?(?:\s+from|\s+at)?|stepped\s+away\s+from|moved\s+on\s+from|(?:moved|switched|transitioned|jumped)\s+(?:over\s+|out\s+)?from|(?:was\s+)?laid\s+off\s+(?:from|by|at)|(?:was\s+)?let\s+go\s+(?:from|by)|(?:was\s+)?fired\s+(?:from|by)|no\s+longer\s+(?:at|with|works\s+at|working\s+at)|exited|parted\s+ways\s+with|retired\s+from|(?:wrapped\s+up|finished|ended|concluded)\s+(?:${OWNED})?(?:at|with)|last\s+day\s+at|departure\s+from|${SPLIT_LEAVE}|step(?:ped|s|ping)?\s+back\s+from|walked\s+away\s+from|parted\s+company\s+with|called\s+it\s+quits\s+(?:at|with)|said\s+(?:(?:her|his|their|my)\s+)?goodbyes?\s+to|bid(?:\s+a)?\s+farewell\s+to)\s*$`, 'i'),
+  start: new RegExp(String.raw`\b(?:(?:re-?)?join(?:ed|s|ing)?(?:\s+${ROLE}(?:at|as))?|(?:was\s+)?hired\s+(?:by|at|as\s+${ROLE}at)|started\s+(?:at|with|working\s+(?:at|for)|(?:a\s+)?new\s+(?:role|job|position)\s+at)|became\s+${NOT_EMPLOYMENT_ROLE}${ROLE}(?:at|of)|promoted\s+to\s+${ROLE}(?:at|of)|signed\s+on\s+(?:at|with)|named\s+${ROLE}(?:at|of)|accepted\s+(?:an?\s+)?(?:offer|role|position|job)\s+(?:at|with|from)|took\s+(?:an?\s+|the\s+)?${NOT_EMPLOYMENT_ROLE}(?:\w+\s+){0,2}?(?:role|job|position)\s+(?:at|with)|came\s+(?:on\s+board|aboard)(?:\s+(?:at|with))?|got\s+on\s+board\s+(?:at|with)|(?:was\s+|got\s+|been\s+)?onboarded\s+(?:at|with|to|into|by)|hired\s+on\s+(?:at|with|by)|(?:was\s+)?brought\s+on(?:\s+board)?\s+(?:at|by|with)|joined\s+up\s+with|signed\s+up\s+(?:at|with)|began\s+(?:work(?:ing)?\s+)?(?:at|with|for)|went\s+to\s+(?:work\s+)?(?:at|for)|took\s+up\s+(?:an?\s+|the\s+)?${NOT_EMPLOYMENT_ROLE}(?:\w+\s+){0,2}?(?:role|job|post|position)\s+(?:at|with)|returned\s+to)\s*$`, 'i'),
   past: new RegExp(String.raw`\b(?:previously(?:\s+worked)?\s+(?:at|with|for)|formerly(?:\s+${ROLE})?\s*(?:at|of|with)|former\s+${ROLE}(?:at|of|with)|ex-[\w-]+\s+(?:at|of)|used\s+to\s+work\s+(?:at|for)|${NOT_PERFECT}worked\s+(?:at|for|with)|${NOT_PERFECT}spent\s+(?:[\w-]+\s+){1,4}?(?:at|with)|(?:his|her|their|my)\s+(?:time|stint|tenure)\s+at|stint\s+at|was\s+${NOT_PAST_ROLE}${ROLE}(?:at|of)|alum(?:nus|na|ni)?\s+of)\s*$`, 'i'),
 };
 
@@ -250,7 +256,7 @@ export function deriveTemporalEvidence(page: PageForEvidence, rows: readonly Own
             if (r.link_type !== 'advises' || !ADVISORY_BOARD_AFTER.test(line.text.slice(ref.end))) continue;
             kind = /\b(?:left|stepped\s+(?:down|off|away)\s+from|resigned\s+from)\s*$/i.test(window) ? 'end'
               : /\b(?:(?:re-?)?joined|was\s+(?:added|named|appointed)\s+to)\s*$/i.test(window) ? 'start' : null;
-          } else kind = cues.end.test(window) ? 'end'
+          } else kind = cues.end.test(window) || (EXCHANGE_BEFORE.test(window) && EXCHANGE_AFTER.test(line.text.slice(ref.end))) ? 'end'
             : cues.start.test(window) || (prevEnded.has(r.link_type) && /^\s*(?:to|for)\s*$/i.test(between)) ? 'start' : null;
         } else if (EVENT_START[r.link_type]?.test(window)) kind = 'start';
         if (!kind) continue;

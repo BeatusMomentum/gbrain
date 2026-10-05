@@ -60,6 +60,33 @@ describe('dated timeline cues', () => {
     expect(brief(ev.transitions)).toEqual(['acme-example:works_at:start:2024-06-01:timeline']);
   });
 
+  const works = (line: string) => brief(derive('', `- **2024-05-01** | note — ${line}`,
+    [row('companies/acme-example', 'works_at'), row('companies/widget-co', 'works_at')]).transitions);
+  const A = '[Acme](companies/acme-example)', B = '[Widget](companies/widget-co)';
+
+  test('onboarding-style join verbs start employment', () => {
+    for (const line of [`was onboarded at ${A}`, `got onboarded with ${A}`, `came aboard ${A}`, `hired on at ${A}`, `was brought on at ${A}`,
+      `joined up with ${A}`, `began working at ${A}`, `took up a new post at ${A}`])
+      expect(works(line)).toEqual(['acme-example:works_at:start:2024-05-01:timeline']);
+    expect(works(`took up an advisory post at ${A}`)).toEqual([]);
+  });
+
+  test('leave phrases, including ones whose object splits the verb, end employment', () => {
+    for (const line of [`wrapped their time up at ${A}`, `wound things up at ${A}`, `handed in their notice at ${A}`, `handed their notice in at ${A}`,
+      `gave notice at ${A}`, `stepped back from ${A}`, `walked away from ${A}`, `said goodbye to ${A}`, `called it quits at ${A}`])
+      expect(works(line)).toEqual(['acme-example:works_at:end:2024-05-01:timeline']);
+  });
+
+  test('"traded [A] for [B]" ends A and starts B', () => {
+    for (const verb of ['traded', 'swapped', 'exchanged'])
+      expect(works(`${verb} ${A} for ${B}`)).toEqual(['acme-example:works_at:end:2024-05-01:timeline', 'widget-co:works_at:start:2024-05-01:timeline']);
+  });
+
+  test('look-alikes are not moves: traded shares, swapped notes, a stock, a board', () => {
+    for (const line of [`traded shares of ${A}`, `swapped notes with ${A}`, `traded ${A} stock`, `stepped back from the ${A} board`])
+      expect(works(line)).toEqual([]);
+  });
+
   test('a meeting with a former employer is not a start', () => {
     const ev = derive('', '- **2026-01-10** | cal — Coffee with the [Acme](companies/acme-example) team', [row('companies/acme-example', 'works_at')]);
     expect(ev.transitions).toEqual([]);

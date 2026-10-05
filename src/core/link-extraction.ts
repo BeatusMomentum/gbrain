@@ -733,7 +733,7 @@ export async function extractPageLinks(
     }
     const suppressPrior = idx !== undefined && idx >= 0 && inSuppressedRange(suppressedRanges, idx);
     const legacy = inferLinkType(pageType, ctx, suppressPrior ? undefined : content, targetSlug,
-      opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined);
+      opts.targetType ? targetType ?? null : undefined, bodyReference && idx !== undefined && idx >= 0 ? excerptAnchor(content, idx, 240) : undefined, content);
     if (pack?.link_types.some(lt => lt.name === legacy && (lt.inference?.page_type || lt.inference?.target_type))) return { linkType: 'mentions' };
     return { linkType: legacy };
   };
@@ -1182,7 +1182,7 @@ const WORKS_AT_RE = /\b(?:joined\b[^.\n]{0,80}?\bas (?:an? |the )?(?:senior |sta
 // Series A"), narrative verbs ("invests in", "investing in"), historical
 // ("early investor in", "first check"), and portfolio framing ("portfolio
 // company", "portfolio includes").
-const INVESTED_RE = /\b(?:invested in|invests in|investing in|invest in|investment in|investments in|backed by|funding from|funded by|raised from|led the (?:seed|Series|round|investment|round)|led .{0,30}(?:Series [A-Z]|seed|round|investment)|participated in (?:the )?(?:seed|Series|round)|wrote (?:a |the )?check|first check|early investor|portfolio (?:company|includes)|board seat (?:at|in|on)|term sheet for)\b/i;
+const INVESTED_RE = /\b(?:invested in|invests in|investing in|invest in|investment in|investments in|backed by|funding from|funded by|raised from|led the (?:seed|Series|round|investment|round)|led .{0,30}(?:Series [A-Z]|seed|round|investment)|participated in (?:the )?(?:seed|Series|round)|wrote (?:a |the )?check|first check|early investor|portfolio (?:company|includes)|board seat (?:at|in|on)|term sheet for|as an? (?:angel |early |lead )?investor|(?:board )?observer (?:at|to|of|on|with|seat)|as an? (?:board )?observer)\b/i;
 
 // Founded patterns. Includes the noun-form "founder of" / "founders include"
 // because that's how real prose identifies founders ("Carol Wilson is the
@@ -1202,7 +1202,7 @@ const FOUNDED_RE = /\b(?:founded|co-?founded|started the company|incorporated|fo
 //     narratives where the direct "advises" verb isn't used.
 //   - Advisor-qualified: "strategic advisor to|at", "technical advisor to|at",
 //     "security advisor to|at", "product advisor to|at", "industry advisor".
-const ADVISES_RE = /\b(?:advises|advised|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
+const ADVISES_RE = /\b(?:advises|advised|advising|advisor (?:to|at|for|of)|advisory (?:board|role|position|capacity|engagement|partnership|contract|relationship|work)|board advisor|on .{0,20} advisory board|joined .{0,20} advisory board|in an? advisory (?:capacity|role|position)|as an? (?:advisor|security advisor|technical advisor|strategic advisor|industry advisor|product advisor|board advisor|senior advisor)|(?:strategic|technical|security|product|industry|senior|board) advisor (?:to|at|for|of)|consults for|consulting role (?:at|with))\b/i;
 
 // Chinese link type patterns for CJK entity mentions.
 // NOTE: These patterns are Chinese-only (zh). Japanese and Korean link
@@ -1238,8 +1238,12 @@ const ADVISOR_ROLE_RE = /\b(?:full-time advisor|professional advisor|advises (?:
 const EMPLOYEE_ROLE_RE = /\b(?:is an? (?:senior|staff|principal|lead|backend|frontend|full-?stack|ML|data|security|DevOps|platform)? ?engineer at|is an? (?:senior|staff|principal|lead)? ?(?:developer|designer|product manager|engineering manager|director|VP) (?:at|of)|holds? the (?:CTO|CEO|CFO|COO|CMO|CRO|VP) (?:role|position|seat|title) at|is the (?:CTO|CEO|CFO|COO|CMO|CRO) of|employee at|on the team at|works on .{0,30} at)\b/i;
 
 
+// Board roles ("joined the board of [X]", "board member at [X]", "[X]'s board") are never employment.
+// An investor's board seat is the investment; anyone else's is advisory (resolved in inferLinkType).
+const BOARD_RE = /\b(?:board (?:member|director|role|position) (?:of|at|for|with)|(?:join(?:s|ed|ing)?|serves? on|sits? on|named to|appointed to|elected to|seats? on) (?:the )?boards? (?:of|at)|board of directors (?:of|at)|(?:non-executive|independent) director (?:of|at)|chair(?:man|woman|person)? of the board (?:of|at)|as an? (?:board member|board director|independent director|non-executive director))\b/i;
+const BOARD_AFTER_RE = /(?:'s|’s) (?:advisory )?board\b/i;
 const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [FOUNDED_RE, 'founded'], [INVESTED_RE, 'invested_in'], [ADVISES_RE, 'advises'], [WORKS_AT_RE, 'works_at'],
+  [FOUNDED_RE, 'founded'], [INVESTED_RE, 'invested_in'], [ADVISES_RE, 'advises'], [BOARD_RE, 'board'], [BOARD_AFTER_RE, 'board'], [WORKS_AT_RE, 'works_at'],
   [ZH_FOUNDED_RE, 'founded'], [ZH_INVESTED_RE, 'invested_in'], [ZH_ADVISES_RE, 'advises'], [ZH_WORKS_AT_RE, 'works_at'], [ZH_CITED_RE, 'cited'],
 ];
 
@@ -1296,7 +1300,7 @@ function attachedVerb(context: string, targetSlug?: string, anchor?: number): st
  * lists portfolio companies without repeating the investment verb each time
  * ("Her current board seats reflect her portfolio: [Co A], [Co B], [Co C]").
  */
-export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number): string {
+export function inferLinkType(pageType: PageType, context: string, globalContext?: string, targetSlug?: string, targetType?: string | null, anchor?: number, pageText?: string): string {
   if (pageType === 'media') {
     return 'mentions';
   }
@@ -1312,9 +1316,12 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
   // Per-edge verb rules, precedence founded > invested_in > advises > works_at
   // (then the Chinese rules), over the verbs that belong to this link: in
   // "works at [A] and also advises [B]", A is works_at and B advises.
+  // The role prior's timeline suppression does not apply here: whose board seat this is depends on the whole page.
+  const roleText = pageText ?? globalContext;
+  const board = () => (pageType === 'person' && roleText && PARTNER_ROLE_RE.test(roleText) ? 'invested_in' : 'advises');
   const attached = attachedVerb(context, targetSlug, anchor);
-  if (attached) return attached;
-  if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context)) return verb;
+  if (attached) return attached === 'board' ? board() : attached;
+  if (attached === undefined) for (const [re, verb] of VERB_RULES) if (re.test(context)) return verb === 'board' ? board() : verb;
   // Page-role prior: only fires for person -> company links. Concept pages
   // about VC topics naturally contain "venture capital" in their text, but
   // their company refs are mentions, not investments. Partner pages mentioning

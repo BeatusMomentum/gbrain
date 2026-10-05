@@ -3,7 +3,7 @@
  * another link in the same context window does not type this link, and
  * "joined [X] as <role>" reads as works_at. Pure, no engine.
  */
-import { expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { extractPageLinks, inferLinkType, type SlugResolver } from '../src/core/link-extraction.ts';
 
 const nullResolver: SlugResolver = { resolve: async () => null };
@@ -56,4 +56,27 @@ test('a verb right before a preposition and the next link belongs to that link: 
   const content = 'Alice works at [Beta](companies/beta-example).\n\n## Timeline\n\n- **2024-03-01** | linkedin — Took an advisory role with [Acme](companies/acme-example)';
   const r = await extractPageLinks('people/alice-example', content, {}, 'person', { resolve: async () => null } as SlugResolver, {});
   expect(r.candidates.map(c => [c.targetSlug, c.linkType])).toEqual([['companies/beta-example', 'works_at'], ['companies/acme-example', 'advises']]);
+});
+
+describe('advisory, board, investor and observer roles are never employment', () => {
+  const typeOf = async (line: string, prose = '') => {
+    const r = await extractPageLinks('people/alice-example', `${prose}\n\n## Timeline\n\n- **2023-09-01** | note — ${line}`, {}, 'person', { resolve: async () => null } as SlugResolver, {});
+    return r.candidates.filter(c => c.targetSlug === 'companies/acme-example').map(c => c.linkType);
+  };
+  const advisory = ['Took an advisory role with [Acme](companies/acme-example)', 'Became a board member of [Acme](companies/acme-example)',
+    "Joined [Acme](companies/acme-example)'s board", 'Joined the board of [Acme](companies/acme-example)', 'Board director at [Acme](companies/acme-example)',
+    'Took on a board role at [Acme](companies/acme-example)', 'Joined [Acme](companies/acme-example) as an independent director', 'Started advising [Acme](companies/acme-example)'];
+  test('a board or advisory role types advises, even on a page whose prose names a job elsewhere', async () => {
+    for (const line of advisory) {
+      expect(await typeOf(line)).toEqual(['advises']);
+      expect(await typeOf(line, 'Alice is the CTO of [Beta](companies/beta-example).')).toEqual(['advises']);
+    }
+  });
+  test('an observer or investor role types invested_in', async () => {
+    for (const line of ['Board observer at [Acme](companies/acme-example)', 'Became an observer at [Acme](companies/acme-example)', 'Joined [Acme](companies/acme-example) as an angel investor'])
+      expect(await typeOf(line)).toEqual(['invested_in']);
+  });
+  test("an investor's board seat is the investment", async () => {
+    expect(await typeOf('Joined the board of [Acme](companies/acme-example)', 'Alice is a general partner at a venture fund.')).toEqual(['invested_in']);
+  });
 });
