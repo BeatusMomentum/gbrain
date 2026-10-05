@@ -181,6 +181,11 @@
       "persistence_effects.persistence_effects_request_id_kind_key": "u UNIQUE (request_id, kind)",
       "persistence_effects.persistence_effects_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'committed'::text, 'failed'::text])))",
       "persistence_effects.persistence_effects_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
+      "persistence_graduation.persistence_graduation_pkey": "p PRIMARY KEY (singleton)",
+      "persistence_graduation.persistence_graduation_role_check": "c CHECK ((role = ANY (ARRAY['source'::text, 'target'::text])))",
+      "persistence_graduation.persistence_graduation_singleton_check": "c CHECK ((singleton = 1))",
+      "persistence_graduation.persistence_graduation_state_check": "c CHECK ((state = ANY (ARRAY['quiesced'::text, 'cutover'::text, 'rolled_back'::text, 'copying'::text, 'verifying'::text, 'verified'::text, 'authoritative'::text, 'verify_failed'::text, 'rollback_fenced'::text, 'rollback_approved'::text, 'source_restoring'::text, 'abandoned'::text])))",
+      "persistence_graduation.persistence_graduation_trigger_bypass_check": "c CHECK (((trigger_bypass IS NULL) OR (trigger_bypass = ANY (ARRAY['session_replication_role'::text, 'disable_trigger'::text]))))",
       "persistence_host_bindings.persistence_host_bindings_pkey": "p PRIMARY KEY (worktree_id, host_id)",
       "persistence_host_bindings.persistence_host_bindings_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_local_writers.persistence_local_writers_credential_hash_key": "u UNIQUE (credential_hash)",
@@ -320,6 +325,7 @@
       "gbrain_fact_fingerprint(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=666cc212d15431ede62a3d1e8932676a950705717852262f86df6d836d526ab4",
       "gbrain_fact_fingerprint_v1(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=38f7cfc0016f2b34d6f54652f4910cf1dd5240fbec5fd636c782e46fb70a6c7d",
       "gbrain_fact_normalize(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=5fff22c689f79bb28b4cc66254ca3a42c2fc809be193c6ceaf75c3200a353035",
+      "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[] body_sha256=12baf1d365a8aa3009ac0fe6605497e6433304e8d5915a3fc0b0b39ad748f6c2",
@@ -539,6 +545,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "persistence_effects": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "persistence_graduation": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "persistence_host_bindings": [
@@ -901,6 +910,7 @@
       "persistence_effects_pkey": "CREATE UNIQUE INDEX persistence_effects_pkey ON public.persistence_effects USING btree (id)",
       "persistence_effects_recovery": "CREATE INDEX persistence_effects_recovery ON public.persistence_effects USING btree (worktree_id) WHERE (recovery IS NOT NULL)",
       "persistence_effects_request_id_kind_key": "CREATE UNIQUE INDEX persistence_effects_request_id_kind_key ON public.persistence_effects USING btree (request_id, kind)",
+      "persistence_graduation_pkey": "CREATE UNIQUE INDEX persistence_graduation_pkey ON public.persistence_graduation USING btree (singleton)",
       "persistence_host_bindings_pkey": "CREATE UNIQUE INDEX persistence_host_bindings_pkey ON public.persistence_host_bindings USING btree (worktree_id, host_id)",
       "persistence_local_writers_credential_hash_key": "CREATE UNIQUE INDEX persistence_local_writers_credential_hash_key ON public.persistence_local_writers USING btree (credential_hash)",
       "persistence_local_writers_pkey": "CREATE UNIQUE INDEX persistence_local_writers_pkey ON public.persistence_local_writers USING btree (id)",
@@ -2161,6 +2171,27 @@
           "16 outcome jsonb/jsonb NULL",
           "17 recovery jsonb/jsonb NULL",
           "18 recovery_bytes bigint/int8 NOT NULL DEFAULT 0"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "persistence_graduation": {
+        "columns": [
+          "1 singleton smallint/int2 NOT NULL DEFAULT 1",
+          "2 role text/text NOT NULL",
+          "3 run_id uuid/uuid NOT NULL",
+          "4 state text/text NOT NULL",
+          "5 source_brain_id uuid/uuid NULL",
+          "6 source_data_dir text/text NULL",
+          "7 cutover_sequence bigint/int8 NULL",
+          "8 trigger_bypass text/text NULL",
+          "9 table_receipts jsonb/jsonb NULL",
+          "10 replay_probe jsonb/jsonb NULL",
+          "11 timings jsonb/jsonb NOT NULL DEFAULT '{}'::jsonb",
+          "12 doctor jsonb/jsonb NULL",
+          "13 rollback jsonb/jsonb NULL",
+          "14 graduated_at timestamp with time zone/timestamptz NULL",
+          "15 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "16 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
