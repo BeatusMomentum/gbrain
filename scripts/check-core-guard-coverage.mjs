@@ -38,6 +38,7 @@ const EXEMPT = {
   'src/core/repair/captured-facts.ts': 'owner-run repair that expires fact rows (shrinks only)',
   'src/core/repair/extractor-facts.ts': 'owner-run repair restoring expired fact rows',
   'src/core/shared-skills/publication.ts': 'skill bundles, not pages',
+  'src/core/persistence/prepared-import.ts': 'type definitions shared by import preparers; prepares nothing itself',
   'src/commands/extract-timeline-db.ts': 'writes timeline rows; timeline never enters core',
 };
 
