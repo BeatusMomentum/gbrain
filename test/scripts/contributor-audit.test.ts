@@ -30,7 +30,7 @@ function withFixture(fn: (f: ReturnType<typeof buildFixture>) => void) {
 }
 
 describe('contributor audit on the fixture range', () => {
-  test('classifies discriminating, non-discriminating, setup-failure, docs-only and conflicting changes', () => {
+  test('classifies discriminating, non-discriminating, setup-failure, docs-only and conflicting changes, keeping later fixes in place', () => {
     withFixture(f => {
       const r = audit(f.dir, [`${f.base}..${f.head}`, '--prs', f.prsManifest, '--json', '--skip-security', '--skip-lanes']);
       expect(r.code, r.stderr).toBe(1);
@@ -44,6 +44,8 @@ describe('contributor audit on the fixture range', () => {
       expect(byPr[102].result).toBe('does_not_discriminate');
       expect(byPr[103]).toMatchObject({ result: 'setup_failed', reason: 'baseline_red' });
       expect(byPr[104]).toMatchObject({ result: 'not_audited', reason: 'no_product_change' });
+      expect(byPr[106]).toMatchObject({ result: 'does_not_discriminate', audited_at: f.head });
+      expect(byPr[107]).toMatchObject({ result: 'not_audited', reason: 'no_tests' });
       expect(byPr[105].result).toBe('conflict');
       expect(byPr[105].reason).toContain('src/clamp.ts');
       expect(report.exit_code).toBe(1);
@@ -54,7 +56,7 @@ describe('contributor audit on the fixture range', () => {
 
       const md = audit(f.dir, [`${f.base}..${f.head}`, '--resume', '--prs', join(report.run_dir, 'prs.pinned.json'), '--skip-security', '--skip-lanes']);
       expect(md.code).toBe(1);
-      expect(md.stderr).toContain('resuming: 5 case(s) already done');
+      expect(md.stderr).toContain('resuming: 7 case(s) already done');
       expect(md.stdout).toContain('| **discriminates** |');
       expect(md.stdout).toContain('| Human verdict |');
     });

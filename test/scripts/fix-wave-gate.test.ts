@@ -69,7 +69,7 @@ describe('fix-wave gate decision', () => {
     expect(ok.out).toContain('::notice title=Fix-wave gate override::');
     expect(ok.out).toContain(`${OVERRIDE_LABEL} applied by @garrytan (User) at 2026-10-05T01:00:00Z (timeline event 1)`);
 
-    for (const actor of [['capy-ai[bot]', 'Bot'], ['github-actions[bot]', 'Bot'], ['alice-example', 'User'], ['garrytan[bot]', 'User']] as const) {
+    for (const actor of [['capy-ai[bot]', 'Bot'], ['github-actions[bot]', 'Bot'], ['alice-example', 'User'], ['garrytan[bot]', 'User'], ['garrytan', 'Bot']] as const) {
       const r = await gate(event, fakeClient([labeled(actor[0], actor[1], 2)]).client);
       expect(r.code, actor[0]).toBe(1);
       expect(r.summary).toContain('override_not_by_maintainer');
