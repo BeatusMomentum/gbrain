@@ -510,7 +510,7 @@
         },
         {
           "category": "meta",
-          "message": "Version 208 (latest: 208)",
+          "message": "Version <latest> (latest: <latest>)",
           "name": "schema_version",
           "status": "ok"
         },
