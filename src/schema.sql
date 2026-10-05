@@ -690,7 +690,11 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   grant_profile           TEXT NULL,
   grant_revision          INTEGER NOT NULL DEFAULT 0,
   grant_repair_reasons    TEXT[] NOT NULL DEFAULT '{}',
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Explicit no-source grant ('none') and per-client takes holders (NULL =
+  -- ['world']); upgrades add both through src/core/grants/oauth-client-axes-schema.ts.
+  source_grant            TEXT NULL CHECK (source_grant IN ('none')),
+  takes_holders           TEXT[] NULL
 );
 -- v0.34.1 (#861, D13 + #876): source_id is the write-source scope;
 -- federated_read is the read-source array. Migrations v60-v65 land both
@@ -824,7 +828,7 @@ CREATE INDEX IF NOT EXISTS context_volunteer_events_src_slug_idx
 -- Use-attributed retrieval feedback (src/core/feedback/): answers record the
 -- pages (with the retrieved revision's content_hash) and relational-path edges
 -- they used; ratings move per-element weights (neutral 0.5) that the search
--- ranking stage reads. No query text is stored. Mirrors migration v202.
+-- ranking stage reads. No query text is stored. Mirrors migration v204.
 CREATE TABLE IF NOT EXISTS retrieval_events (
   id          TEXT PRIMARY KEY,
   client_id   TEXT NOT NULL DEFAULT 'local',

@@ -222,7 +222,7 @@ const CONFIG_SET_KNOWN_FLAGS = ['--force', '--coverage-override', '--yes'];
 export async function handleDbPlaneRoutedKeys(key: string, value: string): Promise<boolean> {
   if (key === 'engine') {
     console.error('[config] engine is INFERRED from database_url / database_path — it is never set directly.');
-    console.error('[config] To move your data between engines:  gbrain migrate --to <supabase|pglite>');
+    console.error('[config] To move your data between engines:  gbrain migrate --to <postgres|pglite>');
     console.error('[config] To point at a different database:   gbrain config set database_url <conn>  (or gbrain init --url <conn>)');
     console.error('[config] No --force escape: an engine flip without a data migration splits the brain across two stores.');
     process.exit(1);
@@ -299,6 +299,11 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
+  if (key.startsWith('facts.drain_')) {
+    const { validateFactsDrainConfigValue } = await import('../core/facts/drain-config.ts');
+    const err = validateFactsDrainConfigValue(key, value);
+    if (err) { console.error(`[config] ${err}`); process.exit(1); }
+  }
   await engine.setConfig(key, value);
   if (key === 'auto_chronicle') await acknowledgeAutoChronicle(engine, value);
   if (!key.startsWith('decide.slots.')) return;
