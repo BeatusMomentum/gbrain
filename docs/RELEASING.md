@@ -88,7 +88,8 @@ re-check, and a "Next step for the agent" block plus a JSON block.
   A matching cell keeps the issue open with the `known-red` label; a new failure in
   the same job opens a new incident; a passed review-by date asks for a fix again.
 - **Closing:** nightly-watch closes the issue only when a later scheduled run is
-  green and every previously failing job executed. A skipped job never closes it.
+  green with complete evidence and every previously failing job executed. A
+  skipped job never closes it.
 - **Re-check after a fix:** `gh workflow run <workflow>.yml --ref master`, then
   `gh workflow run nightly-watch.yml -f run_id=<that scheduled run id>` to preview
   (`-f dry_run=true`) or apply the issue update.
@@ -96,6 +97,26 @@ re-check, and a "Next step for the agent" block plus a JSON block.
   `bun.lock`, `admin/bun.lock`, `patches/` or a package.json dependency field, or
   carry the `dependency-audit` label; pushes and the nightly run always block, so a
   new upstream advisory shows up as one red nightly instead of every open PR.
+
+## Master-red issues
+
+nightly-watch keeps one `master-red` issue per workflow (`Master red: Test`,
+`Master red: E2E Tests`) for push-to-master runs; scheduled runs stay in
+`nightly-red`. The body names each failing job, every failing test file with
+its `bun run test:stress` reproduce line, and the suspect range (last green
+push SHA, first red SHA, merged PRs). Labels, close rules and recovery steps:
+[CI red runbook](ci-red-runbook.md#ci-issue-labels).
+
+- **Owner:** the agent on release duty owns every open `master-red` issue, as
+  for `nightly-red`; Garry is the escalation for owner-only actions.
+- **First response within 1 hour:** a comment or a linked repair PR. CI health
+  measures it; nothing enforces it.
+- **Response:** a repair PR whose body says `Fixes #<issue>`. Known-red rows
+  never apply to push runs. A master-red repair PR is fast-tracked when Garry
+  asks.
+- **Closing:** nightly-watch closes the issue on a green push run where every
+  previously failing job (E2E Tests: every failing test file) ran and passed
+  with complete evidence. Without a merged repair PR it opens `flake` issues.
 
 ## Merge queue
 
@@ -444,10 +465,27 @@ already-published bad binaries; an affected release needs its own explicitly
 approved recovery and asset verification. The template and plugin publishing
 jobs pin the same Bun version.
 
+### Release CI gate
+
+The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
+`latest-stable` move until the push-to-master runs of Test and E2E Tests both
+succeed on the release commit.
+
+- **Failed run:** nothing is published and the job fails with the run and the
+  master-red issue. After master is green again, publish the current VERSION
+  with `gh workflow run release.yml --ref master`.
+- **Run cancelled by a newer push:** the gate follows the next master commit.
+  If it contains the release commit and carries the same VERSION, that commit
+  is gated and published. If VERSION moved on, this version is skipped and the
+  newer VERSION's release run publishes.
+- **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
+  master HEAD's VERSION. Other refs are refused.
+- The gate waits up to 110 minutes, then fails with the backfill command.
+
 ### The `latest-stable` tag
 
 The **final step of the release job** force-advances the `latest-stable` tag to
-the release commit (`git push origin "+${GITHUB_SHA}:refs/tags/latest-stable"`).
+the gated release commit (`git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"`).
 `latest-stable` is the single sanctioned distribution ref: the README paste
 block, the `BOOTSTRAP_FOR_AGENTS.md` fetch URL, and
 `bun install -g github:garrytan/gbrain#latest-stable` all reference it

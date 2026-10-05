@@ -278,7 +278,10 @@ test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage ga
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/nightly-issue.test.ts	.github/nightly-known-red.tsv	2	readFileSync
+test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	1	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
+test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
+test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	6	readFileSync
 test/scripts/regen-all.test.ts	regen:all	4	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
