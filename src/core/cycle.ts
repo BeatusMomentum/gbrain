@@ -76,6 +76,7 @@ export type CyclePhase =
   //  - calibration_profile: aggregates the resolved subset into 2-4
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
+  | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
@@ -169,6 +170,7 @@ export const ALL_PHASES: CyclePhase[] = [
   'propose_takes',
   'grade_takes',
   'calibration_profile',
+  'edge_contradictions', // temporal typed edges; after extract so it judges fresh relationship state
   // #2653 — drift detection. Default OFF (dream.drift.enabled). Runs AFTER
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
@@ -335,6 +337,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'calibration_profile',
   // #2653 — writes the reports/drift-<date> page.
   'drift',
+  'edge_contradictions', // writes proposals and (apply mode) closure lines
   // #5876 — writes event pages, projections and the chronicle ledger.
   'chronicle',
   // Lane D — writes facts (fence + index) through facts-absorb jobs.
@@ -1400,6 +1403,8 @@ async function runPhaseExtract(
     } catch (e) {
       staleDetails = { stale_drain_error: e instanceof Error ? e.message : String(e) };
     }
+    const { sweepStaleRelationships } = await import('./link-relationships.ts');
+    staleDetails = { ...staleDetails, ...(await sweepStaleRelationships(engine)) };
     return {
       phase: 'extract',
       status: 'ok',
@@ -1751,7 +1756,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     let purgedDecisionReceipts = 0;
     try { purgedDecisionReceipts = await (await import('./ai/decide/store.ts')).pruneReceiptsForCycle(engine); } catch { /* pre-v179 brain */ }
     let purgedFeedback = { events: 0, weights: 0 };
-    try { purgedFeedback = await (await import('./feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('./feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v204 brain */ }
+    try { purgedFeedback = await (await import('./feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('./feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v205 brain */ }
     return {
       phase: 'purge',
       status: purgedPages.error ? 'fail' : 'ok', error: purgedPages.error,
@@ -2702,6 +2707,16 @@ export async function runCycle(
           }
         }
       }
+    }
+
+    // Temporal typed edges: proposes (or, certified, applies) closures for live relationships that cannot both hold.
+    if (phases.includes('edge_contradictions')) {
+      checkAborted(cycleSignal);
+      progress.start('cycle.edge_contradictions');
+      const { edgeContradictionsCyclePhase } = await import('./cycle/edge-contradictions.ts');
+      const { result, duration_ms } = await timePhase(() => edgeContradictionsCyclePhase(engine, dryRun), 'edge_contradictions');
+      result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
+      await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── #2653: drift detection ──────────────────────────────────

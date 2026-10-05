@@ -701,6 +701,9 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await (await import('../core/chronicle/upgrade-notice.ts')).printAutoChronicleUpgradeNotice(engine);
         await (await import('../core/feedback/upgrade-notice.ts')).printRetrievalFeedbackUpgradeNotice(engine);
 
+        // Temporal typed edges: one-shot [AGENT] notice (live-by-default graph reads + relationship check), best-effort.
+        await (await import('../core/temporal-edges-upgrade-notice.ts')).printTemporalEdgesUpgradeNotice(engine);
+
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on
         // its own sentinel + the setting being unset; [AGENT]-relayed;
