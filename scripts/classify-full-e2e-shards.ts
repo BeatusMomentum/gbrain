@@ -20,12 +20,12 @@
  * Usage (Actions): FULL_E2E_RESULT=<needs result> GH_TOKEN=<token>
  *   bun scripts/classify-full-e2e-shards.ts
  * Writes state=complete|cancelled to $GITHUB_OUTPUT; exits 0 for complete or
- * cancelled, 1 for failed. Docs: docs/TESTING.md#full-corpus-report-states
+ * cancelled, 1 for failed. Docs: docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states
  */
 import { appendFileSync } from 'node:fs';
 import { type GitHubClient, inert, restClient } from './lib/gh-issue.ts';
 
-export const DOCS = 'docs/TESTING.md#full-corpus-report-states';
+export const DOCS = 'docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states';
 const SHARD_JOB = /^coverage-full-e2e \(\d+\)$/;
 const RUN_CANCELLED = [/^Canceling since a higher priority waiting request for .+ exists/, /^The run was canceled by /];
 const TIMED_OUT = /has exceeded the maximum execution time/;

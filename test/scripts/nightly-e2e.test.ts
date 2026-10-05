@@ -148,7 +148,8 @@ describe('nightly E2E scheduling', () => {
     for (const name of ['Merge full corpus', 'Coverage summary → step summary', 'Baseline gate (fullCorpus, like-for-like)']) {
       expect(report.steps.find((step: any) => step.name === name).if).toBe("steps.shards.outputs.state == 'complete'");
     }
-    expect(readFileSync(join(repo, 'docs/TESTING.md'), 'utf8')).toMatch(/^#+ Full-corpus report states$/m);
+    expect(CLASSIFY_DOCS).toBe('docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states');
+    expect(readFileSync(join(repo, 'docs/operations/verify-and-nightly-e2e.md'), 'utf8')).toMatch(/^## Full-corpus report states$/m);
     const status = workflow.jobs['e2e-status'];
     expect(status.if).toBe('always()');
     expect(status.needs).toContain('coverage-full-e2e');

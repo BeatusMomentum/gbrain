@@ -887,7 +887,7 @@ jobs:
       # failure). A shard that failed or hit timeout-minutes in a run nobody
       # cancelled stays a failure. cancelled() cannot tell (it is false in an
       # always() job started after the cancel), so the script reads the shard
-      # jobs' annotations. docs/TESTING.md#full-corpus-report-states
+      # jobs' annotations. docs/operations/verify-and-nightly-e2e.md#full-corpus-report-states
       - name: Classify full E2E shards
         id: shards
         env:
