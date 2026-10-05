@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198595,
-    "stdoutSha256": "7d2b43ea2fc64cd07907cc2fd1ecb1fae4812fe23091cd76629a7512ff57de98",
+    "stdoutBytes": 198065,
+    "stdoutSha256": "6885550fc1033de037ad23d54bb1322ad6905537cd25b6bc344a2af635a9f06a",
     "toolNames": [
       "remember",
       "entity",
@@ -4247,7 +4247,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} persists a wider surface for your OAuth client.",
+        "description": "More tools: no arguments lists your catalog; {tools: [names]} returns schemas; {surface} widens it (per OAuth client; stdio: this session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -4260,7 +4260,7 @@
         "schema": {
           "properties": {
             "surface": {
-              "description": "Surface to persist for your client.",
+              "description": "Surface to widen to (stdio: this session only).",
               "enum": [
                 "verbs",
                 "starter",
@@ -6303,7 +6303,7 @@
         "scope": "write"
       },
       {
-        "description": "Stop a coaching or info notice from appearing for this client (or unmute it with muted: false). Safety, degraded and ask notices cannot be muted.",
+        "description": "Stop a coaching or info notice (or first_run_decisions) from appearing for this client; muted: false unmutes.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -6317,22 +6317,6 @@
           "properties": {
             "code": {
               "description": "Notice code, the word after `[gbrain notice` in the block.",
-              "enum": [
-                "backup_coverage",
-                "degraded_dedup",
-                "empty_retrieval",
-                "facts_drain_first_run",
-                "features_auto_fix",
-                "former_relationships_hidden",
-                "listing_truncated",
-                "local_transcripts",
-                "onboard_opportunities",
-                "recovered_frontmatter",
-                "source_binding_narrowed",
-                "synthesis_keyless",
-                "think_not_saved",
-                "unknown_param"
-              ],
               "type": "string"
             },
             "muted": {
