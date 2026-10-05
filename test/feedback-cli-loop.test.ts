@@ -3,7 +3,7 @@
  * default (no answer id); once enabled, search prints an answer id, `gbrain rate` records the rating, and the next
  * `search --explain` shows the feedback multiplier on the rated pages.
  *
- * Serial: spawns the CLI against a temporary GBRAIN_HOME.
+ * Spawns the CLI against a temporary GBRAIN_HOME; no process-wide state.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
