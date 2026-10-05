@@ -3020,10 +3020,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "core_edit_notices",
+        "name": "links_temporal_state",
         "sql": {
-          "length": 721,
-          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
+          "length": 4732,
+          "sha256": "75dbc393feb6485b2a00d9c5a1c67ae3d61382845d00c67a367501d1940dadec"
         },
         "sqlFor": "absent",
         "transaction": "absent",
