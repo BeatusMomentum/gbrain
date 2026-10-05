@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { isPhysicalRootMetadata } from '../src/core/persistence/physical-root.ts';
 import { tmpdir } from 'node:os';
@@ -99,6 +99,18 @@ test('set-path at the bound checkout repairs a stale sources.local_path instead 
   expect(row.local_path).toBe(realpathSync(root));
   const again=await runManagedSourceLifecycle(engine,{operation:'rebind',sourceId:source,path:root}) as {noop?:boolean};
   expect(again.noop).toBe(true);
+}));
+
+test('a local_path that is an alias (symlink) of the bound root is current: claim and rebind through it are no-ops',()=>fixture(async(home,source,root)=>{
+  const alias=join(home,'alias-root');symlinkSync(realpathSync(root),alias);
+  await engine.transaction(async tx=>{
+    await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+    await tx.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1',[source,alias]);
+  });
+  for(const operation of ['claim','rebind'] as const){
+    expect(await runManagedSourceLifecycle(engine,{operation,sourceId:source,path:alias})).toMatchObject({state:'committed',noop:true});
+    expect(await engine.executeRaw('SELECT local_path FROM sources WHERE id=$1',[source])).toEqual([{local_path:alias}]);
+  }
 }));
 
 test('rebind requires exact manifest including deletion and old path remains fenced',()=>fixture(async(home,source,root)=>{
