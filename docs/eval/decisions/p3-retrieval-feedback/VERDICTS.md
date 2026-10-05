@@ -90,9 +90,12 @@ Custodian decision `p3-e5-heldout-2026-10-05`, build `bd700323e`, P1's temporal-
 
 Reported only: current-employer recall 0.612 → 0.577, live-edge recall 0.603 → 0.589.
 
-Cause: every wrong closure ended the person's actual current employer (one stint since 2009). The extractor types a
-later advisory line ("Took an advisory role with [X]") as `works_at`, so the chain rule read it as a newer job and
-closed the real one at its date. The rule did what it specifies; the upstream link typing is wrong for that phrasing.
+Cause: every wrong closure ended the person's actual current employer (one stint since 2009). The link itself is
+typed correctly: "Took an advisory role with [X]" is an `advises` link on every build. The dated timeline cue is
+not: the employment start pattern `EMPLOYMENT.start` in `src/core/link-temporal-evidence.ts` has a
+`took … role|job|position (at|with)` alternative that also matches advisory roles, so on a page that also asserts
+`works_at` to X the line becomes a `works_at` start transition. The chain rule then read X as a newer employer and
+closed the real one at that date. The rule did what it specifies; the start cue is too broad for that phrasing.
 
 Decision, as preregistered: `dream.single_value.mode` defaults to `propose`. Closures for declared types are recorded
 as proposals (`gbrain edge-proposals list`) and nothing is written to pages until a user accepts one or sets the mode
@@ -100,6 +103,6 @@ to `apply`.
 
 Follow-ups (not in this pull request; each needs a fresh held-out run):
 
-1. Stop advisory phrasing ("took an advisory role with", "advises", "board advisor to") from typing as `works_at` in
-   link extraction.
+1. Narrow the `took … role|job|position (at|with)` alternative of `EMPLOYMENT.start` so advisory roles do not start
+   `works_at` (in progress in #6017, with a held-out guard).
 2. In the chain rule, skip a successor relationship whose target also has an `advises` edge from the same page.

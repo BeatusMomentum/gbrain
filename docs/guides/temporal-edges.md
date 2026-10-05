@@ -201,8 +201,8 @@ reversible timeline line.
 - `dream.single_value.mode` is `propose` by default: closures wait for review in
   `gbrain edge-proposals list`. `gbrain config set dream.single_value.mode apply` writes them
   automatically; `off` hands declared types back to the model judge. Held-out testing found
-  wrong closures when an advisory line ("Took an advisory role with X") was typed as
-  `works_at` and read as a newer job, so review proposals before accepting them.
+  wrong closures when an advisory timeline line ("Took an advisory role with X") counted as
+  the start of a new job at X, so review proposals before accepting them.
 - To stop further closures, remove the declaration. `gbrain edge-proposals undo <id>`
   (or deleting the line) reopens a relationship it closed.
 
