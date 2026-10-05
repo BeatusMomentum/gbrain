@@ -33,6 +33,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { dispatchToolCall, __resetBackupNoticeForTests } from '../src/mcp/dispatch.ts';
+import { __resetFactsDrainNoticesForTests } from '../src/core/facts/drain.ts';
 import { withEnv } from './helpers/with-env.ts';
 import type { ListPagesPagination } from '../src/core/ops/list-pages-pagination.ts';
 
@@ -237,9 +238,10 @@ describe('list_pages pagination meta for remote callers', () => {
 
   test('MCP dispatch: content[0] stays the bare array; the listing_truncated notice names the next call', async () => {
     __resetBackupNoticeForTests();
+    __resetFactsDrainNoticesForTests();
     await seed(12);
-    // Once-per-process notices (backup coverage, post-upgrade) depend on files other tests in the same shard leave in
-    // the shared home; switch them off so this test counts only the listing notice.
+    // Once-per-process notices (backup coverage, post-upgrade, a pending facts-drain notice) depend on what other tests
+    // in the same shard leave behind; switch them off or clear them so this test counts only the listing notice.
     await withEnv({ GBRAIN_BACKUP_CHECK: 'off', GBRAIN_NO_ONBOARD_NUDGE: '1' }, async () => {
     const opts = { remote: true, transport: 'stdio' as const, sourceId: 'default' };
     const res = await dispatchToolCall(engine as any, 'list_pages', { limit: 10, type: 'note' }, opts);

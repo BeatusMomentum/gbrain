@@ -538,7 +538,7 @@ const search: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Evidence token budget (default 6000).' },
+    token_budget: { type: 'number', description: 'Evidence token cap (default 6000).' },
     // #4415: explicit ranking-axis overrides (the same knobs `query` has had
     // since v0.29.1). The auto-detect banks are English regex, so on a
     // non-English brain the recency/salience stages never fire — these flags
@@ -687,7 +687,7 @@ const query: Operation = {
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
     token_budget: { type: 'number', description: 'Evidence token cap.' },
-    expand: { type: 'boolean', description: 'Default true; false skips the expansion LLM call.' },
+    expand: { type: 'boolean', description: 'Default true; false skips the LLM expansion.' },
     detail: { type: 'string', description: 'low (compiled truth), medium (default) or high (all chunks).' },
     fields: FIELDS_PARAM,
     mode: { type: 'string', description: 'Local callers only.' },

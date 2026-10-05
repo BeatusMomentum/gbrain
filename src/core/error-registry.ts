@@ -337,6 +337,7 @@ export const NOTICE_CODES = {
   no_worker: { kind: 'degraded', summary: 'A job was queued but no worker is running to execute it; it waits until a worker runs.' },
   unknown_param: { kind: 'info', summary: 'The call passed a parameter the tool does not declare; it was ignored.' },
   listing_truncated: { kind: 'info', summary: 'A listing returned a full page and more rows match; the fix is the next-page call.' },
+  former_relationships_hidden: { kind: 'info', summary: 'A graph read returned live relationships only and left out ended ones; the fix repeats the call with status: "all" (or as_of) to see history.' },
   mention_index: { kind: 'degraded', summary: 'The entity mention index is pending, off, failed or does not cover this page type, so references listed for an entity may be incomplete.' },
   degraded_recall: { kind: 'degraded', summary: 'A retrieval stage that affects recall did not run; an empty or thin result is not proof of absence.' },
   source_binding_narrowed: { kind: 'info', summary: "A GBRAIN_SOURCE / .gbrain-source binding narrowed an unqualified read that came back empty; the fix reads another source explicitly." },

@@ -860,7 +860,7 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
 
 const COLUMN_EXEMPTIONS = new Set<string>([
   // page_aliases origin / case_sensitive / alias_text (entity mention index,
-  // migration v204): page_aliases is a PGLite bootstrap table and a
+  // migration v205): page_aliases is a PGLite bootstrap table and a
   // Postgres migration-only table; no schema blob references these columns
   // (no index or view reads them), so there is nothing to forward-reference.
   'page_aliases.origin',
