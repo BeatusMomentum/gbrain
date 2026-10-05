@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.72.0] - 2026-10-05
+## [0.60.73.0] - 2026-10-05
 
 **Fix wave 9: cost caps hold under concurrency and bound what DeepSeek really bills, stopping a job supervisor no longer leaves work running, the nightly quality probe uses your models and tells the truth, email threads and synced fact sections reach your facts, long filenames and images stop blocking writes and sync, and OAuth access tokens can no longer live forever.**
 
@@ -35,7 +35,7 @@ Each fix has a test that fails on the previous release.
 
 Thanks to the contributors whose work is folded in: @andreineacsu (#5959, #6005, #5973, #5940, #5975, #5515), @kvnloo (#5972) and @Masashi-Ono0611 (#5257).
 
-## To take advantage of v0.60.72.0
+## To take advantage of v0.60.73.0
 
 `gbrain upgrade` installs the binary and runs three schema migrations: v209 adds the empty `page_facts_reconcile` table, v210 clamps stored OAuth token lifetimes and shortens outstanding access tokens to 90 days after issue, v211 pins `search_path` on every gbrain database function. Upgraded brains show a one-time notice listing the behavior changes below; `gbrain doctor --only behavior_changes` shows it again.
 
@@ -171,6 +171,21 @@ Thanks to the contributors whose work is folded in: @andreineacsu (#5959, #6005,
 
 - New guards in `bun run verify`: `check:recipe-pricing` (every recipe model priced or declared unpriced) and `check:skill-publication` (every bundled SKILL.md passes the shared-skill parser).
 - `test/helpers/managed-connector-job-contract.ts` gains `extract_conversation_facts_thread`.
+
+## [0.60.72.0] - 2026-10-05
+
+**`ci:ubicloud` VMs carry their owner's name, an interrupted run destroys every VM it asked for, and no run destroys another owner's VMs.**
+
+VMs are named `ubirun-<owner>-<epoch>-<suffix>`, where the owner is `UBI_OWNER` or a per-machine id. Before, nothing showed which thread a VM belonged to, and every `up` destroyed any `ubirun-*` VM older than 12 hours, whoever started it. That sweep is now off unless `UBI_GC_HOURS` is set, and even then it only destroys the caller's own VMs. `ubi-runner.sh gc HOURS` runs the same sweep by hand.
+
+A run stopped with SIGTERM while VMs were still provisioning used to tear down before their create requests finished. Those VMs appeared afterwards and leaked (three `standard-16` VMs sat idle for 84 minutes). SIGHUP, which a dropped terminal or a cancelled background operation sends, was not handled at all, so the run died with every VM still up (14 leaked VMs on 2026-10-04). Now SIGINT, SIGTERM, SIGHUP and SIGQUIT all take the same teardown path, and a second signal can't cut it short. Each name is recorded before its create is sent. An interrupted `up` finishes its create request and destroys its own VM. Teardown then polls every recorded name until it is confirmed gone. Mock-API tests reproduce both old leaks (SIGTERM left two of three VMs behind, SIGHUP all three) and pass with the fix.
+
+`ubi-runner.sh list --mine` lists your VMs, and `ubi-runner.sh usage` shows VMs and vCPUs per owner across the project. A create refused for vCPU quota now says how many vCPUs it needed, how many the project uses and the maximum, followed by that per-owner table.
+
+## To take advantage of v0.60.72.0
+
+- Run `UBI_OWNER=<your-thread-code> bun run ci:ubicloud`. You no longer need `UBI_GC_HOURS=0`.
+- In a multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only the integrator runs the full gate. One full gate takes 64 of the project's 256 vCPUs.
 
 ## [0.60.71.0] - 2026-10-05
 
