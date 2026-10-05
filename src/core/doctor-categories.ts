@@ -212,6 +212,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_serve_lock',
   'batch_retry_health',
   'canonical_content_writes',
+  // Sources opted out of, or parked by, the shared-skills migration (checks/shared-skills.ts).
+  'shared_skills_sources',
   'brainstorm_health',
   'connectors',
   'dream_paid_loop',
