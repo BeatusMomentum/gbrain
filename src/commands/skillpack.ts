@@ -27,6 +27,7 @@ import { runMigrateFence } from '../core/skillpack/migrate-fence.ts';
 import { runScrubLegacy } from '../core/skillpack/scrub-legacy.ts';
 import { runHarvest, HarvestError } from '../core/skillpack/harvest.ts';
 import { computeSkillCurrency } from '../core/skillpack/skill-currency.ts';
+import { registerManifestEntries } from '../core/skill-manifest.ts';
 import { parseSkillFrontmatter } from '../core/skill-frontmatter.ts';
 import { parsePrecondition, type Precondition } from '../core/skillpack/preconditions.ts';
 import { resolveAbs, findGbrainOrDie, resolveWorkspace } from './skillpack/shared.ts';
@@ -399,9 +400,10 @@ async function cmdSync(args: string[]): Promise<void> {
       runScaffold({ gbrainRoot, targetWorkspace, skillSlug: slug, dryRun });
       scaffolded.push(slug);
     }
+    const registered = dryRun ? [] : registerManifestEntries(join(targetWorkspace, 'skills'), scaffolded);
 
     if (json) {
-      console.log(JSON.stringify({ scaffolded, drifted: driftedSlugs, dryRun }, null, 2));
+      console.log(JSON.stringify({ scaffolded, registered, drifted: driftedSlugs, dryRun }, null, 2));
       process.exit(0);
     }
 
@@ -409,6 +411,7 @@ async function cmdSync(args: string[]): Promise<void> {
     console.log(
       `${verb} ${scaffolded.length} new skill(s)${scaffolded.length ? ': ' + scaffolded.join(', ') : ''}`,
     );
+    if (registered.length) console.log(`Registered ${registered.length} of them in skills/manifest.json.`);
     if (driftedSlugs.length) {
       console.log(
         `${driftedSlugs.length} skill(s) drifted from the bundle — run \`gbrain skillpack reference <slug>\` to review (not overwritten).`,
