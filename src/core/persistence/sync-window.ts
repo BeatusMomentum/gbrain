@@ -22,6 +22,20 @@ export function windowPredecessor(row: Pick<WriteRequest, 'intent'>): string | n
   return typeof after === 'string' ? after : null;
 }
 
+/**
+ * Whether a window group may still publish: its predecessor committed, or, for a lane group (`intent.lane`),
+ * is still publishing, since the lane commits only after it (sync-lanes.ts `awaitLaneTurn`). A predecessor
+ * that ended without committing, or is missing, never lets it publish.
+ */
+export async function windowPredecessorAllows(engine: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'intent' | 'principal_kind' | 'principal_id'>): Promise<boolean> {
+  const after = windowPredecessor(row);
+  if (!after) return true;
+  const [prior] = await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
+    [row.principal_kind, row.principal_id, after]);
+  if (prior?.state === 'committed') return true;
+  return typeof (row.intent as Record<string, unknown> | null | undefined)?.lane === 'string' && ['queued', 'running'].includes(prior?.state ?? '');
+}
+
 /** Whether the predecessor of a window group committed (true for requests outside a window). */
 export async function windowPredecessorCommitted(engine: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'intent' | 'principal_kind' | 'principal_id'>): Promise<boolean> {
   const after = windowPredecessor(row);

@@ -550,7 +550,7 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
   const last = rows.find(row => row.request_id === members.at(-1)!.requestId)!;
   const waited = await awaitWrite(engine, last, config, wait);
   const policy = ahead ? lanePolicy(cursor.binding.worktree_id) : null;
-  if (policy && policy.run === bulk.settings.laneRun) onProgress?.({ phase: 'managed_sync.lanes', lanes: { effective: policy.effective, stepDown: policy.stepDown, overlapped: policy.overlapped } });
+  if (policy && policy.run === bulk.settings.laneRun) onProgress?.({ phase: 'managed_sync.lanes', lanes: { effective: policy.effective, stepDown: policy.stepDown, overlapped: policy.overlapped, fallbacks: policy.fallbacks } });
   assertSyncDispatchActive();
   const states = new Map((await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[])', [rows.map(row => row.id)])).map(row => [row.request_id, row]));
   const next: Cursor = { ...cursor, counts: { ...cursor.counts } };

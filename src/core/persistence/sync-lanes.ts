@@ -21,13 +21,15 @@ import { leaseDraining, leaseWounded } from './worktree-lease.ts';
 
 export interface LanePolicy { run: string; asked: number; effective: number; stepDown: string | null;
   /** Groups whose transaction began while the group before them was still publishing in this process. */
-  overlapped: number }
+  overlapped: number;
+  /** Lane groups that did not commit as a group (cancelled, released for the FIFO head, or published singly). */
+  fallbacks: number }
 export interface LaneState extends LanePolicy { coordinationPath: string | null; claimed: Set<string>; begun: Set<string> }
 const policies = new Map<string, LaneState>();
 
 /** The drain's lane policy for a worktree; replaces any earlier one. */
 export function openLanes(worktreeId: string, run: string, lanes: number, coordinationPath: string | null): void {
-  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, coordinationPath, claimed: new Set(), begun: new Set() });
+  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, fallbacks: 0, coordinationPath, claimed: new Set(), begun: new Set() });
 }
 /** Ends a drain's lane run on every worktree it opened; its unclaimed groups go back to the FIFO claim. */
 export function closeLaneRun(run: string): void {
@@ -35,7 +37,7 @@ export function closeLaneRun(run: string): void {
 }
 export function lanePolicy(worktreeId: string): LanePolicy | null {
   const state = policies.get(worktreeId);
-  return state ? { run: state.run, asked: state.asked, effective: state.effective, stepDown: state.stepDown, overlapped: state.overlapped } : null;
+  return state ? { run: state.run, asked: state.asked, effective: state.effective, stepDown: state.stepDown, overlapped: state.overlapped, fallbacks: state.fallbacks } : null;
 }
 /** The open lane runs and how many lanes each may run now (0 while the worktree's lease drains for an exclusive writer). */
 export function laneRoots(): Array<{ worktreeId: string; run: string; capacity: number }> {

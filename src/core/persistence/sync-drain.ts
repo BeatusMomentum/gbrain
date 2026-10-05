@@ -53,7 +53,7 @@ export interface DrainReport {
     /** #5984 admit-ahead: groups admitted while the previous group was still publishing. */
     admitted_ahead: number;
     /** #5984 lanes: groups published at once, as asked and as in effect at the end, and why fewer. */
-    lanes: { configured: number; effective: number; reason: string | null; step_down: string | null; overlapped_groups: number } };
+    lanes: { configured: number; effective: number; reason: string | null; step_down: string | null; overlapped_groups: number; fallbacks: number } };
 }
 
 const TERMINAL_STATUSES = new Set(['synced', 'first_sync', 'up_to_date', 'dry_run']);
@@ -164,7 +164,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
   const signal = coop.signal && input.signal ? AbortSignal.any([input.signal, coop.signal]) : coop.signal ?? input.signal;
   let passes = 0, attempt = 0, readFailures = 0, refreshWaitedMs = 0, written = 0, waived = 0, index = 0, total: number | null = null;
   let announcedStart = false, lastLine = 0, groups = 0, groupedPages = 0, largestGroup = 0, admittedAhead = 0;
-  let lanes: { effective: number; stepDown: string | null; overlapped: number } | null = null;
+  let lanes: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number } | null = null;
   let stall: { key: string; since: number; passes: number } | null = null;
   const remaining = () => total === null ? null : Math.max(0, total - index);
   const onProgress: NonNullable<SyncOpts['onProgress']> = event => {
@@ -178,7 +178,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     }
     if (event.phase === 'managed_sync.group' && typeof event.group === 'number') { groups++; groupedPages += event.group; largestGroup = Math.max(largestGroup, event.group); }
     if (event.phase === 'managed_sync.group_ahead') admittedAhead += typeof event.group === 'number' ? 1 : 0;
-    if (event.phase === 'managed_sync.lanes' && event.lanes) lanes = { effective: event.lanes.effective, stepDown: event.lanes.stepDown, overlapped: event.lanes.overlapped };
+    if (event.phase === 'managed_sync.lanes' && event.lanes) lanes = { effective: event.lanes.effective, stepDown: event.lanes.stepDown, overlapped: event.lanes.overlapped, fallbacks: event.lanes.fallbacks };
     if (event.phase !== 'managed_sync.page_committed') return;
     if (event.waived) waived++; else written++;
     noteForwardProgress();
@@ -196,7 +196,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     return { ...result, drain: { outcome, ...(stopReason ? { stop_reason: stopReason } : {}), passes, processed: written + waived, written, waived,
       remaining: left, ...drainEstimate(left, written + waived, Date.now() - startedAt),
       ...(input.bulk ? { bulk: { enabled: input.bulk.enabled, reason: input.bulk.reason, groups, grouped_pages: groupedPages, largest_group: largestGroup, admitted_ahead: admittedAhead,
-        lanes: { configured: input.bulk.lanes ?? 1, effective: lanes?.effective ?? input.bulk.lanes ?? 1, reason: input.bulk.lanesReason ?? null, step_down: lanes?.stepDown ?? null, overlapped_groups: lanes?.overlapped ?? 0 } } } : {}), ...extra } };
+        lanes: { configured: input.bulk.lanes ?? 1, effective: lanes?.effective ?? input.bulk.lanes ?? 1, reason: input.bulk.lanesReason ?? null, step_down: lanes?.stepDown ?? null, overlapped_groups: lanes?.overlapped ?? 0, fallbacks: lanes?.fallbacks ?? 0 } } } : {}), ...extra } };
   };
   try {
     for (;;) {

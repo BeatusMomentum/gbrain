@@ -86,6 +86,7 @@ test('lanes publish several groups at once and every page still commits, attribu
   const result = await performSync(engine, { sourceId: f.id, noPull: true, noEmbed: true, noExtract: true, drain: true, lanes: 4 });
   expect(result.drain).toMatchObject({ outcome: 'synced', bulk: { enabled: true, lanes: { configured: 4 } } });
   expect(result.drain!.bulk!.lanes.overlapped_groups).toBeGreaterThan(0);
+  expect(result.drain!.bulk!.lanes.fallbacks).toBe(0);
   const rows = await imports(engine, f.id);
   expect(rows).toHaveLength(80);
   expect(rows.every(row => row.state === 'committed')).toBe(true);
