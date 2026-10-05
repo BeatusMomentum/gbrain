@@ -48,6 +48,8 @@ export async function connectEngineForServe(hooks: EngineConnectHooks, opts: { p
   const { connectWithRetry } = await import('./db.ts');
   await connectWithRetry(engine, toEngineConfig(config), { noRetry });
   try {
+    // Engine graduation: a fenced target or a cut-over source refuses every connect but the run's own.
+    await (await import('./persistence/graduation-custody.ts')).gateGraduationConnect(engine);
     // probeOnly (get_health, `upgrade --status`, doctor's migration_wedge check) never starts or waits on migrations.
     if (opts.probeOnly !== true) await hooks.completeStartup(engine);
   } catch (e) {

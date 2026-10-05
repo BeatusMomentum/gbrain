@@ -32,7 +32,7 @@ export function statusModeEligible(args: readonly string[], hostBrain: boolean):
 export function preConnectStatusReason(): StatusReason | null {
   if (!loadConfig()) return 'no_brain';
   const probed = probeStatus();
-  return probed && (probed.reason === 'missing_brain' || probed.reason === 'repair_failed') ? probed.reason : null;
+  return probed && (probed.reason === 'missing_brain' || probed.reason === 'repair_failed' || probed.reason === 'engine_graduated') ? probed.reason : null;
 }
 
 /** Map a connect failure to a status reason; null when status mode does not apply. */
@@ -59,8 +59,12 @@ export async function runStatusModeServe(
   const transport: StatusTransport = args.includes('--http') ? 'http' : 'stdio';
   const enteredAt = Date.now();
   logStatusTransition('serve_status_mode_enter', state, transport, enteredAt);
+  // Engine graduation (§6.4): re-resolve config on each re-probe and exit for relaunch on an engine change.
+  const { engineIdentity, exitOnEngineIdentityChange } = await import('../core/persistence/graduation-serve-guard.ts');
+  const startIdentity = engineIdentity();
   // The one re-probe both transports run; a check that must run on every re-probe hooks here.
   const probeAgain = async (): Promise<BrainEngine | null> => {
+    exitOnEngineIdentityChange(startIdentity, { startedGraduated: state.reason === 'engine_graduated' });
     const engine = await reprobe(state, connect);
     if (engine) logStatusTransition('serve_status_mode_recovered', state, transport, enteredAt);
     return engine;

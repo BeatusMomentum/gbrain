@@ -423,7 +423,7 @@ function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
   };
 }
 
-const STATUS_REASONS: readonly string[] = ['lock_held', 'no_brain', 'config_unreadable', 'missing_brain', 'brain_unopenable', 'repair_failed'];
+const STATUS_REASONS: readonly string[] = ['lock_held', 'no_brain', 'config_unreadable', 'missing_brain', 'brain_unopenable', 'repair_failed', 'engine_graduated'];
 
 /**
  * A shared `gbrain serve --http` exists but answers in status-only mode: the
