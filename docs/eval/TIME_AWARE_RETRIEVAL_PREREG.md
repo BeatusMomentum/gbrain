@@ -105,3 +105,22 @@ in [`TIME_AWARE_RETRIEVAL_RESULTS.md`](TIME_AWARE_RETRIEVAL_RESULTS.md).
    the release-default `balanced` bundle, and the production default facts
    extraction model; Haiku 4.5 remains disclosed as the development-gate
    stand-in.
+
+## Amendment 2 — 2026-10-05 (before any `tokenmax` cell)
+
+Recorded before any `tokenmax` synopsis cell runs. Amendment 1 item 3 placed
+the `tokenmax` comparison on LongMemEval-M; a calibrated projection put that
+run at about $4,280 (production per-chunk synopses carry the whole session in
+every chunk prompt; M has about 1.04M chunks and synopses do not reuse across
+questions), above the plan's full budget cap. The comparison therefore moves
+to LoCoMo:
+
+1. **Development:** fact keys (`balanced` + keys, production extractor) vs
+   `tokenmax` synopses vs `balanced`, retrieval metrics on the LoCoMo
+   development conversations (conv-44, conv-47, conv-48), cost calibrated on a
+   few sessions first. The F2 gate's "beats `tokenmax`" clause is evaluated
+   here.
+2. **Sealed:** the preregistered LoCoMo sealed run gains `tokenmax` as a third
+   arm: `balanced` vs fact keys vs `tokenmax`.
+3. **LongMemEval-M** remains disclosed confirmation against `balanced` only.
+   M does not run the `tokenmax` comparison, because of cost.
