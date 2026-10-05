@@ -417,6 +417,13 @@ brains mint fine while the server runs: `gbrain bootstrap harness --yes --port 3
 
 ## Troubleshooting
 
+A served `gbrain serve --http` that cannot open its brain stays up in
+[status-only mode](../mcp/DEPLOY.md#status-only-mode): `/health` answers 503
+with `Retry-After: 5`, remote clients get a `serve_status_only` envelope whose
+fix is `gbrain doctor` on this host, and the server opens the brain on the same
+port once the cause is fixed. `--fail-fast` (or `GBRAIN_SERVE_FAIL_FAST=1`)
+exits instead.
+
 `gbrain mcp expose --status` re-runs the probes; `--json` names the failing
 check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 
@@ -452,6 +459,7 @@ check. Logs: `~/.gbrain/serve/serve.log` and `serve.err`.
 | An interrupted `gbrain mcp expose` (no receipt, but a handler / service / wrapper is left behind) — `gbrain mcp expose --status` reports `leftovers_without_receipt` (exit 1) naming each artifact | Run the command `--status` prints: `gbrain mcp expose --remove --yes` (add `--port N` if you published a non-default port; `--force` when only a handler stands) recovers without a receipt: it removes the service, the wrapper and the `:443` handler proxying that port, and leaves the admin token. A handler with no wrapper, unit or service next to it is left in place until you add `--force`. See [`--remove`](#--remove). | agent, after the user agrees | none | `gbrain mcp expose --status --json` |
 | `handler_not_removed` (exit 1) — "--remove" stopped with "the tailscale handler for port <port> is still present" (or "could not be confirmed gone") | `tailscale serve --https=443 --set-path=/ off` ran but the re-read still shows gbrain's handler (or the serve status could not be re-read). The service was already uninstalled; the receipt and the wrapper were kept on purpose so the re-run finds everything. Run `tailscale serve status`, fix what it reports (operator, daemon), then `gbrain mcp expose --remove --yes` again. | user | none | `gbrain mcp expose --status --json` |
 | `foreign_serve_config` — "tailscale serve already proxies :443 to <target>. Re-run with --force to take it over, or pick another local port for that service." | A `/` handler on `:443` (a background config, another terminal's foreground `tailscale serve` session, or a raw TCP forward) already points somewhere else. Inspect it with `tailscale serve status` (the suggested next action), move that service, or — for a background handler only — re-run with `--force`; a foreground session must be stopped in its own terminal. | user | none | `gbrain mcp expose --status --json` |
+| `verify.local` warn — "status-only (<reason>): the server runs but cannot open its brain" (publish exit 2; `--status` exit 1) | The served `gbrain serve --http` is up on the port but in [status-only mode](../mcp/DEPLOY.md#status-only-mode): `/health` answers 503 and clients get the `serve_status_only` envelope. `gbrain doctor --only harness_wiring` names the reason's fix (for `lock_held`, stop the other process holding the PGLite brain). The server opens the brain within 5 s of the fix; no restart. | brain host | none | `gbrain mcp expose --status --json` |
 | `verify.local` warn / `local_health_timeout` (exit 2) | The service was installed but `http://127.0.0.1:<port>/health` did not answer within 20s; `verify.tailnet` is skipped. Read `~/.gbrain/serve/serve.err`, then `gbrain mcp expose --status`. | brain host | none | `gbrain mcp expose --status --json` |
 | `service: manual` (cloud sandbox, ephemeral container, no user bus) | There is no supervisor to keep the server alive. Run the printed foreground command, or the `nohup ~/.gbrain/serve/gbrain-serve.sh &` line, and re-run `--status`. On Linux without a user bus, `loginctl enable-linger $USER` may enable one. | brain host | none | `gbrain mcp expose --status --json` |
 | `thin_client` (exit 1) — "run on the brain host" | This install is a thin client; `expose` publishes the machine that holds the database. Run it there. | brain host | none | run `--status --json` on the brain host |
@@ -4070,6 +4078,33 @@ swaps in the full catalog. Harness support varies by version:
 
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
+
+## A shared HTTP server that cannot open its brain
+
+`gbrain serve --http` whose brain is locked, missing, damaged or unconfigured
+stays up on its port in status-only mode instead of exiting:
+
+- `GET /health` answers `503` with `Retry-After: 5` and the payload
+  `{status, reason, why, fix, user_message, retry_after_s, contract_version, instance}`.
+- `POST /mcp` lists exactly `gbrain_status`; any other tool returns one
+  `serve_status_only` error block. OAuth discovery, `/token`, `/authorize`,
+  `/register` and `/admin*` answer `503` with the `serve_status_only` envelope.
+- Every response is unauthenticated, so `reason` is always `unavailable` and
+  no path, PID or host detail appears. The fix is `gbrain doctor --json` for
+  `actor: host_admin` (`next: tell_user_to_run`): relay `user_message` to the
+  user. The detailed reason is on the brain host: stderr, the marker
+  `GBRAIN_HOME/serve-http-status-<port>.json`, and `gbrain doctor`, whose
+  `harness_wiring` check reports `serve_status_only` (`transport: http`) with
+  the reason's fix.
+- The server re-checks every 5 s and opens the brain in place on the same
+  port. HTTP cannot push `tools/list_changed` to these clients: re-list tools
+  or reconnect. A client that connected during status mode gets `401` with
+  `WWW-Authenticate` and signs in again; an authenticated `gbrain_status` on
+  the recovered server answers `status: recovered`.
+- A thin client (`gbrain` with `remote_mcp`) reports the host's
+  `serve_status_only` envelope from discovery or `/token`, with the same fix.
+- `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1` exits non-zero instead, for
+  supervisors and container health checks that must restart the process.
 
 ## First run
 
@@ -8330,6 +8365,44 @@ absolute paths outside cwd are rejected, and page slugs and filenames are
 allowlist-validated (alphanumeric + hyphens; no control chars, RTL overrides,
 or backslashes). Local CLI callers (`gbrain files upload ...`) keep
 unrestricted filesystem access since the user owns the machine.
+
+## Status-only mode
+
+A `gbrain serve --http` that cannot open its brain (another serve holds the
+PGLite lock, no brain is configured yet, the brain is missing or damaged, or
+the config is unreadable) keeps its port and answers in status-only mode
+instead of exiting, so a supervisor does not crash-loop it and every client
+sees the cause:
+
+```text
+$ curl -i localhost:3131/health
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json
+Retry-After: 5
+
+{"status":"unavailable","reason":"unavailable","why":"This gbrain server cannot open its brain; its host operator can see why with `gbrain doctor`.","fix":{"argv":["gbrain","doctor","--json"],"command":"gbrain doctor --json","consent":[],"actor":"host_admin","next":"tell_user_to_run",...},"user_message":"The gbrain memory server is running but cannot open its brain, so memory is offline. ...","retry_after_s":5,"contract_version":1,"instance":"<nonce>"}
+```
+
+- `/mcp` offers only `gbrain_status`; OAuth and admin routes answer `503` with
+  the `serve_status_only` envelope. Responses never name the reason, a path or
+  a PID: Tailscale Funnel delivers public requests from a loopback address, so
+  every request is treated as remote.
+- On the host, stderr prints the reason and its fix ("Re-checking every 5 s;
+  Ctrl-C to stop; `--fail-fast` to exit instead"), the marker
+  `GBRAIN_HOME/serve-http-status-<port>.json` records it, and
+  `gbrain doctor --only harness_wiring` reports `serve_status_only` with the
+  fix. `gbrain mcp expose` reports `verify.local` as status-only with the
+  reason.
+- The server re-checks every 5 s and, once the brain opens, serves the full app
+  on the same port. Clients reconnect: a client that connected during status
+  mode receives `401` with `WWW-Authenticate` resource metadata and completes
+  OAuth again.
+- Container health checks that probe `/health` treat the `503` as unhealthy and
+  restart the container. Pass `--fail-fast` (or set `GBRAIN_SERVE_FAIL_FAST=1`)
+  there so the process exits non-zero with the classified envelope on stderr.
+- A second `gbrain serve --http` on a port another server already holds exits
+  with `serve_port_in_use`. A Postgres connect failure keeps the degraded-engine
+  path (`GBRAIN_DB_ACCESS` marker, `gbrain db-repair`).
 
 ## Deployment Options
 

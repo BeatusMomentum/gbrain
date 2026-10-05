@@ -988,6 +988,33 @@ swaps in the full catalog. Harness support varies by version:
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
 
+## A shared HTTP server that cannot open its brain
+
+`gbrain serve --http` whose brain is locked, missing, damaged or unconfigured
+stays up on its port in status-only mode instead of exiting:
+
+- `GET /health` answers `503` with `Retry-After: 5` and the payload
+  `{status, reason, why, fix, user_message, retry_after_s, contract_version, instance}`.
+- `POST /mcp` lists exactly `gbrain_status`; any other tool returns one
+  `serve_status_only` error block. OAuth discovery, `/token`, `/authorize`,
+  `/register` and `/admin*` answer `503` with the `serve_status_only` envelope.
+- Every response is unauthenticated, so `reason` is always `unavailable` and
+  no path, PID or host detail appears. The fix is `gbrain doctor --json` for
+  `actor: host_admin` (`next: tell_user_to_run`): relay `user_message` to the
+  user. The detailed reason is on the brain host: stderr, the marker
+  `GBRAIN_HOME/serve-http-status-<port>.json`, and `gbrain doctor`, whose
+  `harness_wiring` check reports `serve_status_only` (`transport: http`) with
+  the reason's fix.
+- The server re-checks every 5 s and opens the brain in place on the same
+  port. HTTP cannot push `tools/list_changed` to these clients: re-list tools
+  or reconnect. A client that connected during status mode gets `401` with
+  `WWW-Authenticate` and signs in again; an authenticated `gbrain_status` on
+  the recovered server answers `status: recovered`.
+- A thin client (`gbrain` with `remote_mcp`) reports the host's
+  `serve_status_only` envelope from discovery or `/token`, with the same fix.
+- `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1` exits non-zero instead, for
+  supervisors and container health checks that must restart the process.
+
 ## First run
 
 `gbrain init` emits one decision bundle instead of scattered prompts: an
