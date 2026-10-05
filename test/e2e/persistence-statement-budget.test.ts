@@ -33,14 +33,16 @@ const CRITICAL: Phase[] = ['admission', 'claim', 'prepare', 'recovery_record', '
 
 /**
  * Per-phase statement budgets, about 10% above the measured counts (#6007 on
- * v0.60.60.0 measured admission 27, claim 5, prepare 19, recovery record 6,
- * publication 47, completion 6: 110 on the critical path, and an 8-statement receipt; the
+ * v0.60.62.0 measured admission 27, claim 5, prepare 23, recovery record 6,
+ * publication 48, completion 6: 115 on the critical path, and an 8-statement
+ * receipt; v0.60.62.0 added four config reads to preparation and a second
+ * alias delete to publication over v0.60.60.0's 19 and 47; the
  * code before #6007 measured 29, 5, 21, 9, 61, 10: 135, and 10). The claim
  * counts only the transaction that claimed this write; another tick's empty
  * claim attempt is a consumer scan.
  */
 const BUDGET: Record<string, number> = {
-  admission: 28, claim: 6, prepare: 21, recovery_record: 7, publication: 50, completion: 7, critical_path: 118, receipt: 9,
+  admission: 28, claim: 6, prepare: 25, recovery_record: 7, publication: 50, completion: 7, critical_path: 118, receipt: 9,
 };
 
 const SCAN = [

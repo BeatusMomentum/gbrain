@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 201613,
-    "stdoutSha256": "b50d3da452d51e341f85c225b629209e6717db97ba610ace33fe0e053081cfdd",
+    "stdoutBytes": 201629,
+    "stdoutSha256": "daba7f43435a6aa08933fb39c03859059cf1625f869dc7818c52f267353f1b13",
     "toolNames": [
       "remember",
       "entity",
@@ -397,7 +397,7 @@
         "scope": "read"
       },
       {
-        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links wait for a stdio `gbrain serve` sweep (`gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.",
+        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,

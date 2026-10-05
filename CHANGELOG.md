@@ -23,9 +23,9 @@ Measured with 25 pages of 60 KB each, written over MCP to a Postgres brain 30 ms
 | | Before | Now |
 | --- | --- | --- |
 | 25 pages, one `put_page` at a time, with polling | nearly 5 minutes (about 11 s a page) | not needed |
-| 25 pages, 4 `put_pages` calls sent one after another | not available | 48 s, no polling |
+| 25 pages, 4 `put_pages` calls sent one after another | not available | 49 s, no polling |
 | One 60 KB `put_page` | 7.2 s reply saying "pending", then polls (about 11 s total) | committed in about 6 s, in the reply |
-| SQL statements on one page's publish path | 135 | 110 |
+| SQL statements on one page's publish path | 135 | 115 |
 | Backlinks between the pages you just wrote | about 30 manual `add_link` calls | built automatically after the commit |
 
 ## To take advantage of v0.60.63.0
