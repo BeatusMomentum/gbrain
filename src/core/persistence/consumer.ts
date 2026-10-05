@@ -8,6 +8,7 @@ import { isTerminal, type WriteRequest } from './model.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
+import { cancelOrphanedWindowGroup } from './sync-window.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
@@ -527,6 +528,9 @@ export class PersistenceConsumer {
   }
   /** #5984: a claimed bulk sync head takes its directly following group members along; one row runs the single path. */
   private async executeOrGroup(row: WriteRequest): Promise<boolean> {
+    // #5984 admit-ahead: a window group whose predecessor did not commit is cancelled, never published after it.
+    const orphaned = await cancelOrphanedWindowGroup(this.engine, row);
+    if (orphaned) { for (const done of orphaned) this.settled(done); return true; }
     const group = publicationGroupKey(row);
     if (!group || this.engine.kind !== 'postgres') return this.execute(row);
     // #6007: a put_pages batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.

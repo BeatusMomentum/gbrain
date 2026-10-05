@@ -416,7 +416,7 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
         for (const tag of versionTags) await tx.addTag(row.slug, tag, source);
       }
       // #6007: the page the import just wrote live is the page the projections describe; no re-read.
-      await project?.(tx, row.operation === 'restore_page' ? undefined : applied?.livePageId);
+      await project?.(tx, row.operation === 'restore_page' ? undefined : applied?.pageId);
       autoLinks = await links?.apply(tx);
       if (targetDeleted) await tx.softDeletePage(row.slug, source);
       // Index installation and terminal receipt share this transaction. The import sealed the projection

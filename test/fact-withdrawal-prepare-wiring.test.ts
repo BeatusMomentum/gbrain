@@ -23,7 +23,8 @@ test.each([
   ['page-prepare.ts', 1],
 ] as const)('%s validates every prepared content import it applies', (file, applied) => {
   const text = source(file);
-  expect(count(text, 'await ready.apply(tx)') + count(text, 'await applied.apply(tx)')).toBe(applied);
+  // #5984: apply may also receive the publisher's preimage (`apply(tx, preimage)`).
+  expect(count(text, 'await ready.apply(tx)') + count(text, 'await ready.apply(tx,') + count(text, 'await applied.apply(tx)') + count(text, 'await applied.apply(tx,')).toBe(applied);
   expect(count(text, 'await ready.validate(tx)') + count(text, 'validate: ready.validate')).toBe(applied);
 });
 
@@ -31,7 +32,7 @@ test('a managed rename validates the import it re-prepares at the new slug befor
   const text = source('sync-prepare.ts');
   const validated = text.indexOf('await movedImport.validate(tx); applied = movedImport;');
   expect(validated).toBeGreaterThan(0);
-  expect(validated).toBeLessThan(text.indexOf('await applied.apply(tx)'));
+  expect(validated).toBeLessThan(text.indexOf('await applied.apply(tx,'));
 });
 
 test('the coordinator validates prepared mutations before publication boundaries and file writes', () => {
