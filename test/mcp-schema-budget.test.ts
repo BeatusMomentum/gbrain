@@ -51,7 +51,7 @@ const PARAM_DESCRIPTION_HARD_CAP = 200;
 const TOOL_BUDGETS: Record<string, number> = {
   add_timeline_entry: 640, cancel_job: 270, cancel_write_request: 350, capture: 1250, context_pack: 760,
   delete_skill: 810, delta: 830, edit_page: 1090, entity: 460, find_anomalies: 520, forget: 560, get_agent_job: 270,
-  get_backlinks: 430, get_ingest_log: 280, get_page: 810, get_recent_salience: 660, get_skill: 910,
+  get_backlinks: 430, get_ingest_log: 280, get_page: 930, get_recent_salience: 660, get_skill: 910,
   get_skill_asset: 790, get_write_request: 330, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
   list_link_sources: 220, list_pages: 1090, list_skills: 670, list_write_requests: 450, put_page: 1320,
   put_skill: 1420, query: 3250, recall: 1590, remember: 1370, request_tools: 560, resolve_slugs: 410, search: 1760,
