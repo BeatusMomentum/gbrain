@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { runEnrich } from '../src/commands/enrich.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { withEnv } from './helpers/with-env.ts';
+import type { SpendAuthorization } from '../src/core/minions/spend-authorization.ts';
 
 class Exit extends Error { constructor(readonly code: number) { super(`exit ${code}`); } }
 
@@ -27,7 +28,7 @@ function fakePostgres(sourceIds: string[]) {
 }
 
 let home: string;
-let added: Array<{ name: string; data: Record<string, unknown>; opts: Record<string, unknown> | undefined }>;
+let added: Array<{ name: string; data: Record<string, unknown>; opts: Record<string, unknown> | undefined; trusted: { spendAuthorization?: SpendAuthorization } | undefined }>;
 let out: string[];
 let spies: Array<{ mockRestore(): void }>;
 
@@ -37,9 +38,9 @@ beforeEach(() => {
   out = [];
   let nextId = 1;
   spies = [
-    spyOn(MinionQueue.prototype, 'add').mockImplementation((async (name: string, data: Record<string, unknown>, opts?: Record<string, unknown>) => {
-      added.push({ name, data, opts });
-      return { id: nextId++ };
+    spyOn(MinionQueue.prototype, 'add').mockImplementation((async (name: string, data: Record<string, unknown>, opts?: Record<string, unknown>, trusted?: { spendAuthorization?: SpendAuthorization }) => {
+      added.push({ name, data, opts, trusted });
+      return { id: nextId++, status: 'waiting', spend_authorization: trusted?.spendAuthorization ?? null };
     }) as never),
     spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Exit(code ?? 0); }) as never),
     spyOn(process.stdout, 'write').mockImplementation(((chunk: string) => { out.push(String(chunk)); return true; }) as never),
@@ -82,13 +83,30 @@ describe('enrich --background consent', () => {
     expect(JSON.parse(out.join('')).est_usd).toBe(1);
   });
 
-  test('--yes queues one job per source', async () => {
+  test('--yes queues one job per source, all under one authorized group', async () => {
     expect(await run(['default', 'wiki'], ['--background', '--yes'])).toBeNull();
     expect(added.map(a => [a.name, a.data.sourceId])).toEqual([['enrich', 'default'], ['enrich', 'wiki']]);
+    const records = added.map(a => a.trusted?.spendAuthorization);
+    expect(records[0]).toMatchObject({ kind: 'authorized', of: 2, cap_usd: 1.5, cap_source: 'derived', est_usd: 1, command: 'enrich',
+      argv: ['gbrain', 'enrich', '--background'] });
+    expect(records[1]!.group_id).toBe(records[0]!.group_id);
+    expect(added.every(a => !('spend_authorization' in a.data))).toBe(true);
+  });
+
+  test('a single source carries its record through the background submit', async () => {
+    expect(await run(['default'], ['--background', '--max-usd', '3'])).toBeNull();
+    expect(added[0]!.trusted?.spendAuthorization).toMatchObject({ kind: 'authorized', of: 1, cap_usd: 3, cap_source: 'user', via: 'max_usd' });
+    expect(added[0]!.opts?.idempotency_key).toMatch(/^cli:enrich:/);
+  });
+
+  test('--max-usd off is itself the authorization and stores an uncapped record', async () => {
+    expect(await run(['default', 'wiki'], ['--background', '--max-usd', 'off'])).toBeNull();
+    expect(added[0]!.trusted?.spendAuthorization).toMatchObject({ cap_usd: null, uncapped: true, via: 'max_usd' });
   });
 
   test('--dry-run queues without consent', async () => {
     expect(await run(['default'], ['--background', '--dry-run'])).toBeNull();
     expect(added.map(a => a.data.dryRun)).toEqual([true]);
+    expect(added[0]!.trusted).toBeUndefined();
   });
 });

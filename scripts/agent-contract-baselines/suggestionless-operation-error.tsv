@@ -1,5 +1,4 @@
 # shrink-only baseline for scripts/check-agent-contract.ts rule suggestionless-operation-error: path<TAB>count
-src/commands/book-mirror.ts	1
 src/commands/capture.ts	4
 src/commands/embed-facts-delegate.ts	5
 src/commands/extract-stale-delegate.ts	4

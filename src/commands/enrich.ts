@@ -55,9 +55,10 @@ import {
 import { createProgress } from '../core/progress.ts';
 import { consentGateOrExit, engineConsentEnv, tokenmaxUncappedEnv } from '../core/consent-cli.ts';
 import { derivedCapUsd } from '../core/consent.ts';
+import { jobSpendAuthorization, spendSubmitSummary, type SpendAuthorization } from '../core/minions/spend-authorization.ts';
 import { getCliOptions, cliOptsToProgressOptions, maybeBackground } from '../core/cli-options.ts';
 import { loadConfig } from '../core/config.ts';
-import { runSlidingPool } from '../core/worker-pool.ts';
+import { isMustAbortError, runSlidingPool } from '../core/worker-pool.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
 import { withRefreshingLock, LockUnavailableError } from '../core/db-lock.ts';
 import {
@@ -603,7 +604,7 @@ export async function runEnrichCore(
       // pages completed since the last 25-item flush BEFORE it bubbles to
       // runEnrichCore's catch, else resume re-charges them (and SKIP pages stay
       // thin). `done` is in scope here; it isn't in the outer catch.
-      if (err instanceof BudgetExhausted && !dryRun) {
+      if ((err instanceof BudgetExhausted || isMustAbortError(err)) && !dryRun) {
         await recordCompleted(engine, cpKey, [...done]);
       }
       throw err;
@@ -988,10 +989,14 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
   // else exit 3 with the consent payload and nothing queued.
   const explicitOff = parsed.maxCostUsd === Infinity;
   let maxCostUsd = parsed.maxCostUsd;
+  const base = args.filter(a => a !== '--yes');
+  let spend: SpendAuthorization | undefined;
+  if (background && !parsed.dryRun && explicitOff) {
+    spend = jobSpendAuthorization({ uncapped: true, via: 'max_usd' }, { command: 'enrich', of: sourceIds.length, argv: ['gbrain', 'enrich', ...base] });
+  }
   if (!parsed.dryRun && !explicitOff) {
     const limit = parsed.limit ?? DEFAULT_LIMIT;
     const estUsd = Math.ceil(limit * sourceIds.length * COST_ESTIMATE_PER_PAGE_USD * 100) / 100;
-    const base = args.filter(a => a !== '--yes');
     const auth = await consentGateOrExit({
       command: 'enrich', effects: ['paid'], actor: 'agent',
       what: `Enrich up to ${limit} page(s) per source across ${sourceIds.length} source(s)${background ? ' as background jobs' : ''}`,
@@ -1004,6 +1009,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
       args,
     }, { json: parsed.json === true, env: engineConsentEnv(engine, await tokenmaxUncappedEnv(engine, parsed.maxCostUsd !== undefined)) });
     if (maxCostUsd === undefined && auth.cap_usd !== null) maxCostUsd = auth.cap_usd;
+    if (background) spend = jobSpendAuthorization(auth, { command: 'enrich', est_usd: estUsd, of: sourceIds.length, argv: ['gbrain', 'enrich', ...base] });
   }
 
   if (background) {
@@ -1013,22 +1019,24 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
         args: parsed.sourceId ? args : [...args, '--source', sourceIds[0]],
         jobName: 'enrich',
         paramBuilder: buildJobParams,
+        spendAuthorization: spend,
       });
       return;
     }
     const { MinionQueue } = await import('../core/minions/queue.ts');
     const queue = new MinionQueue(engine);
-    const ids: number[] = [];
+    const jobs = [];
     for (const sid of sourceIds) {
-      const job = await queue.add(
+      jobs.push(await queue.add(
         'enrich',
         { ...buildJobParams(args), sourceId: sid },
         { idempotency_key: backgroundIdempotencyKey(sid, args) },
-      );
-      ids.push(job.id);
+        spend ? { spendAuthorization: spend } : undefined,
+      ));
     }
-    console.log(`Submitted ${ids.length} enrich job(s) (one per source): ${ids.map((i) => `job_id=${i}`).join(' ')}`);
+    console.log(`Submitted ${jobs.length} enrich job(s) (one per source): ${jobs.map((j) => `job_id=${j.id}`).join(' ')}`);
     console.log('Follow with: gbrain jobs follow <id>');
+    if (spend) for (const line of spendSubmitSummary(spend, jobs, spend.argv!).lines) console.error(line);
     return;
   }
 
