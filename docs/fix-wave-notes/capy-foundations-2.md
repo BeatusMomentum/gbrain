@@ -64,11 +64,9 @@ Every P0 item shipped. Nothing was cut.
   projected (no judge call) and still dated by its `end`; `auth rescope
   --client` takes `--operations all` and `--sources none` / `--takes-holders`
   together; `core-services-1.md` was split under the 60 KB cap.
-- `test/e2e/graduation-clients.test.ts` picked its "older released binaries"
-  as the newest tags at or below VERSION. Once v0.60.52.0 was tagged that
-  included the graduation release itself, which correctly refuses a lock-gap
-  write with `graduation_interrupted`, so the lock-gap case failed (on master
-  too). The helper now takes the newest tags before v0.60.52.0.
+- `test/e2e/graduation-clients.test.ts` failed on master once v0.60.52.0 was
+  tagged (its "older releases" included the graduation release); #6031
+  fixes it on master and this branch takes that version.
 - `consumer.ts` composes Lane A's `consumer:prepared` seam and first-tick
   PGLite `releaseAbandonedClaims` with Lane F's refresh-fence predicate in the
   idle probe; released claims are still fenced when they are claimed again.
