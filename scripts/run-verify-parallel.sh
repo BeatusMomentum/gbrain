@@ -110,6 +110,8 @@ CHECKS=(
   # C2: weight maps name only existing files; the unweighted share per lane
   # warns (step summary) and fails only on the scheduled run.
   "check:weight-coverage"
+  # X1 (wave 9 lane A): every recipe model is priced or marked unpriced_models.
+  "check:recipe-pricing"
   # ── light tail (sub-second greps; historical order) ──
   "check:proposal-pii"
   "check:jsonb"

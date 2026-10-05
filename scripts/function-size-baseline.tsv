@@ -24,7 +24,6 @@ src/commands/mcp-expose.ts	runPublish	443	seed: W5 baseline, refactor wave 1 (de
 src/commands/migrate-engine.ts	runMigrateEngine	405	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/commands/serve.ts	installStdioLifecycle	323	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +7 GBRA-40 Lane D: facts drain install call and its shutdown stop (logic in installFactsDrain); +1 engine graduation (GBRA-50 G3): onShutdownReady hook for the graduation hand-off (logic in installGraduationHandoff)
 src/commands/sources.ts	runAdd	365	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +3 fix wave 4 #5673: connector sources print that autopilot keeps them synced after the first sync
-src/core/ai/gateway.ts	chat	313	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +2 #5490: a configured chat_fallback_chain hands the call to chatWithFallback (loop lives in ai/chat-fallback.ts)
 src/core/bootstrap/harness.ts	applyHarness	1167	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	413	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1); +1 #5890 close-set spreads INTERNAL_BREADTH_SEARCH_OPTS
 src/core/check-resolvable.ts	checkResolvable	419	seed: W5 baseline, refactor wave 1 (decomposition deferred to wave 2, plan D1)

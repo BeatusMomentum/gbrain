@@ -138,7 +138,7 @@ const run_skillopt: Operation = {
     epochs: { type: 'number', description: 'Default 4' },
     batch_size: { type: 'number', description: 'Default 8' },
     lr: { type: 'number', description: 'Default 4' },
-    max_cost_usd: { type: 'number', description: 'Default 5.00' },
+    max_cost_usd: { type: 'number', description: 'Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing.' },
     reflect_max_tokens: { type: 'number', description: 'Optimizer output cap (positive integer, clamped to 256..32000). Default: skillopt.reflect_max_tokens config, else 32000 for thinking optimizers and 4096 otherwise.' },
     no_mutate: { type: 'boolean', description: 'Write proposed.md without replacing SKILL.md' },
     allow_mutate_bundled: { type: 'boolean', description: 'Required to mutate bundled skills' },
@@ -270,6 +270,7 @@ const run_skillopt: Operation = {
       ...(heldOutPath ? { heldOutPath } : {}),
       json: true,
       maxCostUsd: (p.max_cost_usd as number) ?? 5.0,
+      maxCostSource: p.max_cost_usd === undefined ? 'default' : 'user',
       maxRuntimeMin: 30,
       force: false,
     });

@@ -35,6 +35,9 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
+import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
+import { loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { pricingSetCommand } from '../budget/no-pricing.ts';
 import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
@@ -43,10 +46,11 @@ import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishManagedConcept } from './concept-publication.ts';
 
 const DEFAULT_BUDGET_USD = 1.5;
-// Canonical-miss policy — mirrors skillopt/preflight.ts's lookupPrice:
-// assume Sonnet-tier pricing for models absent from CANONICAL_PRICING.
-// Conservative and non-throwing; keeps the budget gate effective (and
-// matches this file's pre-canonical behavior) instead of letting an
+// Miss policy for the shared resolver (`priceFor`: operator overrides, the
+// claude-cli → Anthropic sibling, canonical rows): assume Sonnet-tier
+// pricing for a model nothing prices, and name it in the phase details
+// (`pricing_fallback_models`) plus one stderr line. Conservative and
+// non-throwing; keeps this default budget effective instead of letting an
 // unpriced model run unmetered. The rates are DERIVED from the canonical
 // table (never hand-copied — CLAUDE.md invariant); the literal pair only
 // fires if the Sonnet key itself ever leaves the table.
@@ -54,6 +58,17 @@ const FALLBACK_PRICING: ModelPricing = canonicalLookup('anthropic:claude-sonnet-
   input: 3.0,
   output: 15.0,
 };
+/** The rate a narrative call meters at: the shared resolver, else the Sonnet fallback, naming each fallback model once. */
+function narrativePricing(model: string, overrides: PricingOverrides | undefined, fallbackModels: Set<string>, budgetUsd: number): ModelPricing {
+  const priced = priceFor(model, 'chat', overrides);
+  if (priced) return priced.pricing;
+  if (!fallbackModels.has(model)) {
+    fallbackModels.add(model);
+    console.error(`[synthesize_concepts] ${model} has no pricing; metering it at Sonnet-tier rates against the $${budgetUsd.toFixed(2)} phase budget. To meter its real price, look it up and register it: ${pricingSetCommand(model, 'chat')}`);
+  }
+  return FALLBACK_PRICING;
+}
+
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
 const TIER_T3_MIN = 2;
@@ -301,6 +316,8 @@ export async function runPhaseSynthesizeConcepts(
   const skippedHumanOwned: string[] = [];
   const skippedUnchanged: string[] = [];
   const keptExistingNarrative: string[] = [];
+  const pricingOverrides = await loadPricingOverrides(engine);
+  const pricingFallbackModels = new Set<string>();
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -358,10 +375,7 @@ export async function runPhaseSynthesizeConcepts(
           // refresh rate.
           await maybeYield();
           llmHalt.reset();
-          // Price from the model that actually answered, through the one
-          // canonical chat-pricing table (CLAUDE.md invariant). Canonical
-          // miss → Sonnet-tier FALLBACK_PRICING (see constant above).
-          const pricing = canonicalLookup(result.model) ?? FALLBACK_PRICING;
+          const pricing = narrativePricing(result.model, pricingOverrides, pricingFallbackModels, budgetCap);
           estimatedSpendUsd +=
             (result.usage.input_tokens * pricing.input +
               result.usage.output_tokens * pricing.output) /
@@ -581,6 +595,7 @@ export async function runPhaseSynthesizeConcepts(
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
+      pricing_fallback_models: [...pricingFallbackModels],
       dry_run: opts.dryRun ?? false,
     },
   };

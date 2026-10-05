@@ -2891,6 +2891,7 @@
           "judgeModel: string",
           "lr: number",
           "lrSchedule: \"cosine\" | \"linear\" | \"constant\"",
+          "maxCostSource?: \"default\" | \"user\" | undefined",
           "maxCostUsd: number",
           "maxRuntimeMin: number",
           "mode: \"patch\" | \"rewrite\"",
