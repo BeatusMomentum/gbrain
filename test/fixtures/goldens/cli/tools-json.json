@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 198851,
-    "stdoutSha256": "8c117022be2e87213495611e5bbb289452fda938e08888844b81b9c29346b65e",
+    "stdoutBytes": 199133,
+    "stdoutSha256": "b42f35c3d886837625a537154830f9938b921618548b83498e4d8df0285c868c",
     "toolNames": [
       "remember",
       "entity",
@@ -172,12 +172,11 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string?",
+          "fact": "string",
           "force": "boolean?",
           "infer_entity": "boolean?",
-          "items": "array?",
           "kind": "string?",
-          "provenance": "string?",
+          "provenance": "string",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -206,13 +205,6 @@
               "description": "Default true.",
               "type": "boolean"
             },
-            "items": {
-              "description": "Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]",
-              "items": {
-                "type": "object"
-              },
-              "type": "array"
-            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -225,7 +217,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Where the fact came from (max 500 chars); per item with items.",
+              "description": "Where the fact came from (max 500 chars).",
               "type": "string"
             },
             "request_id": {
@@ -249,7 +241,10 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "fact",
+            "provenance"
+          ],
           "type": "object"
         },
         "scope": "write"
@@ -1705,6 +1700,7 @@
           "all_sources": "boolean?",
           "depth": "number?",
           "direction": "string?",
+          "hops": "array?",
           "link_type": "string?",
           "slug": "string",
           "source_id": "string?"
@@ -1728,6 +1724,23 @@
                 "both"
               ],
               "type": "string"
+            },
+            "hops": {
+              "description": "≤3 typed hops, e.g. [{\"link_type\":\"founded\",\"toward\":\"subject\"}]; toward: object|subject.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "link_type": {
+                    "type": "string"
+                  },
+                  "toward": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "type": "array"
             },
             "link_type": {
               "description": "Follow only this link type.",
@@ -5222,14 +5235,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): core memory plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string?",
+          "entities": "string",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5242,7 +5255,7 @@
               "type": "number"
             },
             "entities": {
-              "description": "Comma-separated names or slugs (max 8); omit for core only.",
+              "description": "Comma-separated names or slugs (max 8).",
               "type": "string"
             },
             "include_private": {
@@ -5258,7 +5271,9 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "entities"
+          ],
           "type": "object"
         },
         "scope": "read"
