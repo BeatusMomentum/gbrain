@@ -2512,6 +2512,7 @@
           "backup?: { check_enabled?: boolean | string; check_interval_days?: number | string; } | undefined",
           "brain?: { audience?: string; } | undefined",
           "chat_fallback_chain?: string[] | undefined",
+          "chat_fallback_on_refusal?: boolean | undefined",
           "chat_model?: string | undefined",
           "consent?: { preapprove?: { paid?: { max_usd_per_run?: number; }; persistent_install?: boolean; }; } | undefined",
           "content_sanity?: { bytes_warn?: number; bytes_block?: number; junk_patterns_enabled?: boolean; disabled_patterns?: string[]; disabled?: boolean; junk_disposition?: \"quarantine\" | \"reject\"; max_markup_ratio?: number; prose_check_enabled?: boolean; } | undefined",
