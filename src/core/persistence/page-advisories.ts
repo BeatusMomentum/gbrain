@@ -19,7 +19,7 @@ const LINE_GRAMMAR_FINDINGS_MAX = 5;
  * A question for the writer, never a merge; slugs only.
  */
 async function similarPagesAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
-  if (!['put_page', 'capture'].includes(row.operation) || row.slug.startsWith('wiki/agents/')
+  if (!['put_page', 'capture'].includes(row.operation) || row.page_id != null || row.slug.startsWith('wiki/agents/')
     || page.frontmatter?.dream_generated === true || (page.type as string) === 'extract_receipt' || isQuarantined(page.frontmatter)
     || !(await isSimilarPagesEnabled(engine))) return undefined;
   const found = await findSimilarPages(engine, { sourceId: row.source_id, slug: row.slug, title: page.title ?? '',
@@ -43,6 +43,9 @@ async function similarPagesAdvisory(engine: BrainEngine, row: WriteRequest, page
  * remote writer); fact lines stay page text and are not added to `facts`.
  */
 async function lineGrammarAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
+  // Declared-type gating only turns relations into findings, so a body with nothing to read needs no config or pack reads.
+  const ungated = parseLineGrammar(page.compiled_truth);
+  if (!ungated.relations.length && !ungated.facts.length && !ungated.diagnostics.length) return undefined;
   const options = await lineGrammarOptions(engine);
   if (!options.enabled) return undefined;
   const pack = options.allowUndeclaredTypes ? null : (await loadActivePackForLocalEngine(engine, { sourceId: row.source_id }))?.manifest ?? null;

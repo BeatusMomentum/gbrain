@@ -37,9 +37,6 @@ export async function isSimilarPagesEnabled(engine: Pick<BrainEngine, 'getConfig
 export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, input: {
   sourceId: string; slug: string; title: string; excludePrivate: boolean;
 }): Promise<{ candidates: SimilarPageCandidate[]; checks_ran: readonly string[] } | null> {
-  const existing = await engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1',
-    [input.sourceId, input.slug]);
-  if (existing.length) return null;
   const title = input.title.trim();
   const basename = input.slug.slice(input.slug.lastIndexOf('/') + 1);
   const dir = input.slug.includes('/') ? input.slug.slice(0, input.slug.indexOf('/')) : '';
@@ -48,6 +45,9 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
   const privacy = input.excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : '';
   const rows = await engine.executeRaw<{ slug: string; evidence: SimilarPageEvidence }>(`
     WITH hits AS (
+      SELECT NULL::text AS slug, 'page_exists' AS evidence, 0 AS tier, 0::real AS sim FROM pages p
+        WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+      UNION ALL
       SELECT p.slug, 'exact_title' AS evidence, 1 AS tier, 1.0::real AS sim FROM pages p
         WHERE p.source_id = $1 AND p.slug <> $2 AND p.deleted_at IS NULL AND $3 <> '' AND p.title ILIKE $7 ESCAPE '\\'${privacy}
       UNION ALL
@@ -63,6 +63,8 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
     )
     SELECT DISTINCT ON (slug) slug, evidence, tier, sim FROM hits ORDER BY slug, tier, sim DESC`,
   [input.sourceId, input.slug, title, normalizeAlias(title), basename, dir, title.replace(/[\\%_]/g, ch => `\\${ch}`)]);
+  // The page already exists (a create raced another writer, or this is an update): not a create, no advisory.
+  if ((rows as Array<{ evidence: string }>).some(row => row.evidence === 'page_exists')) return null;
   const ranked = (rows as Array<{ slug: string; evidence: SimilarPageEvidence; tier: number; sim: number }>)
     .sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.slug.localeCompare(b.slug)).slice(0, MAX_CANDIDATES);
   return { candidates: ranked.map(row => ({ slug: row.slug, source_id: input.sourceId, evidence: row.evidence })), checks_ran: CHECKS };
