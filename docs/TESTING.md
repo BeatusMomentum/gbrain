@@ -1279,7 +1279,11 @@ optional assertion within a file.
 #### Full-corpus report states
 
 `coverage-full-report` classifies the four full E2E shards before merging
-anything. All shards succeeded: it merges, renders and gates the full corpus.
+anything (`scripts/classify-full-e2e-shards.ts`, reading this run attempt's
+shard jobs and their check-run annotations; `cancelled()` cannot tell, since it
+reads false in an `always()` job that starts after the cancel, and a timed-out
+shard also reports `cancelled` through `needs`). All shards succeeded: it
+merges, renders and gates the full corpus.
 The run was cancelled (by a newer run in its concurrency group or by a user)
 before the shards finished: it reports `Full E2E shards cancelled` as a
 warning and a step-summary section, publishes no coverage and does not fail,
@@ -1287,7 +1291,8 @@ because nothing was measured; re-run with
 `gh workflow run e2e.yml --ref master -f full_corpus=true` or wait for the next
 schedule. Any other non-success (a shard failed, or hit its `timeout-minutes`
 in a run nobody cancelled) is a failure: read `gh run view <run-id> --log-failed`,
-fix the shard, then `gh run rerun <run-id> --failed`. Scheduled runs use their
+fix the shard, then `gh run rerun <run-id> --failed`. Shard evidence that
+cannot be read is a failure, never a cancellation on a guess. Scheduled runs use their
 own `-nightly` concurrency group, so a push to master no longer cancels the
 nightly full corpus (#6040).
 

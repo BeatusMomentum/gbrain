@@ -863,6 +863,11 @@ jobs:
     needs: [coverage-full-unit, coverage-full-serial, coverage-full-slow, coverage-full-e2e]
     if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus))
     runs-on: ubicloud-standard-4-ubuntu-2404
+    # actions + checks: the shard classifier reads this run's jobs and their annotations.
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -880,36 +885,15 @@ jobs:
       # A run cancelled by a newer run in its concurrency group or by a user
       # reports its cancelled shards as cancelled (no coverage, not a test
       # failure). A shard that failed or hit timeout-minutes in a run nobody
-      # cancelled stays a failure. docs/TESTING.md#full-corpus-report-states
-      # Status functions are only valid in `if:`, so cancellation reaches the
-      # classifier through GITHUB_ENV.
-      - name: Note run cancellation
-        if: cancelled()
-        run: echo "RUN_CANCELLED=true" >> "$GITHUB_ENV"
+      # cancelled stays a failure. cancelled() cannot tell (it is false in an
+      # always() job started after the cancel), so the script reads the shard
+      # jobs' annotations. docs/TESTING.md#full-corpus-report-states
       - name: Classify full E2E shards
         id: shards
-        if: always()
         env:
           FULL_E2E_RESULT: ${{ needs.coverage-full-e2e.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          RUN_ID: ${{ github.run_id }}
-          DOCS: docs/TESTING.md#full-corpus-report-states
-        run: |
-          if [ "$FULL_E2E_RESULT" = success ]; then
-            echo "state=complete" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$FULL_E2E_RESULT" = cancelled ] && [ "$RUN_CANCELLED" = true ]; then
-            msg="Full E2E shards cancelled: this run ($RUN_URL) was cancelled by a newer run in its concurrency group or by a user before the four shards finished, so no full-corpus coverage report exists for it. This is not a test failure. Next: gh workflow run e2e.yml --ref master -f full_corpus=true (or wait for the next schedule). Docs: $DOCS"
-            echo "::warning title=Full E2E shards cancelled::$msg"
-            { echo "### Full-corpus coverage: cancelled"; echo; echo "$msg"; } >> "$GITHUB_STEP_SUMMARY"
-            echo "state=cancelled" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          msg="Full E2E did not succeed (result: ${FULL_E2E_RESULT:-none}) and nobody cancelled this run, so a shard failed or hit its timeout-minutes; refusing a complete report from prior-attempt artifacts. Next: gh run view $RUN_ID --log-failed, fix the failing shard, then gh run rerun $RUN_ID --failed. Docs: $DOCS"
-          echo "::error title=Full E2E shards failed::$msg"
-          { echo "### Full-corpus coverage: failed"; echo; echo "$msg"; } >> "$GITHUB_STEP_SUMMARY"
-          exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/classify-full-e2e-shards.ts
       - name: Merge full corpus
         if: steps.shards.outputs.state == 'complete'
         env:
