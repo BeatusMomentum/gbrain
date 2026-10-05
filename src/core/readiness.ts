@@ -24,6 +24,8 @@
  * stops the owning serve named by `lock_owner`.
  */
 import type { GBrainConfig } from './config.ts';
+import type { McpSurface } from '../mcp/surface.ts';
+import { REGISTRATION_SURFACE, stdioServeArgv } from './mcp-registration.ts';
 import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { redactForTransport, type Action, type ActionInput, type Effect, type Transport } from './agent-output.ts';
@@ -378,6 +380,8 @@ function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
 export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode';
 export interface HarnessWiringInput {
   transport: Transport;
+  /** The surface the registration pins; default REGISTRATION_SURFACE (`gbrain init --surface` overrides). */
+  surface?: McpSurface;
   /** Harnesses detected on this machine (config plane: from process-scoped agent markers). */
   harnesses: readonly ReadinessHarness[];
   lockOwner: LockOwner | null;
@@ -393,14 +397,21 @@ const HARNESS_DESTINATION: Record<ReadinessHarness, string> = {
 };
 const MEMORY_VERBS_INSTALL = 'docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart';
 
-function stdioRegistration(h: ReadinessHarness, bin: string): Action {
-  const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', bin, 'serve', '--surface', 'verbs']
-    : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', bin, 'serve', '--surface', 'verbs']
-      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks'];
+const SURFACE_GLOSS: Record<McpSurface, string> = {
+  verbs: 'the seven memory verbs',
+  starter: 'the seven memory verbs plus page, timeline-write, skill and agent tools',
+  full: 'every operation',
+};
+
+function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface = REGISTRATION_SURFACE): Action {
+  const serve = stdioServeArgv(bin, surface);
+  const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', ...serve]
+    : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', ...serve]
+      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(surface === REGISTRATION_SURFACE ? [] : ['--surface', surface])];
   const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
-    why: `Registers gbrain as a stdio MCP server (${bin} serve --surface verbs, the seven memory verbs) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
+    why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
     user_message: `I'd like to add gbrain's memory tools to ${HARNESS_LABEL[h]} by writing one MCP server entry to ${HARNESS_DESTINATION[h]}. OK?`,
     verify: VERIFY('harness_wiring'), docs: MEMORY_VERBS_INSTALL,
   };
@@ -426,7 +437,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: MEMORY_VERBS_INSTALL,
-        why: 'Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).',
+        why: `Register \`<absolute path to gbrain> serve --surface ${input.surface ?? REGISTRATION_SURFACE}\` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw).`,
         user_message: 'Which agent app should get gbrain memory? The install guide has a one-line command for each.' } };
   }
   if (lockOwner?.transport === 'http') {
@@ -444,7 +455,7 @@ export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
       fix: { consent: ['persistent_install'], actor: 'user', requires_exclusive: false, docs: 'INSTALL_FOR_AGENTS.md',
         why: 'Install gbrain globally (`bun install -g github:garrytan/gbrain`) so `gbrain` resolves to an absolute path, then re-run readiness.' } };
   }
-  return { ...base, state: 'unknown', reason: 'registration_unverified', why: `${HARNESS_LABEL[h]} is the active harness; its gbrain registration has not been verified from this process.`, fix: stdioRegistration(h, input.gbrainBin) };
+  return { ...base, state: 'unknown', reason: 'registration_unverified', why: `${HARNESS_LABEL[h]} is the active harness; its gbrain registration has not been verified from this process.`, fix: stdioRegistration(h, input.gbrainBin, input.surface) };
 }
 
 const MARKER_HARNESS: Record<string, ReadinessHarness> = {
@@ -453,12 +464,12 @@ const MARKER_HARNESS: Record<string, ReadinessHarness> = {
 
 let cachedBin: { value: string | null } | null = null;
 
-function harnessConfigEntry(transport: Transport, lockOwner: LockOwner | null): ReadinessEntry {
+function harnessConfigEntry(transport: Transport, lockOwner: LockOwner | null, surface?: McpSurface): ReadinessEntry {
   if (transport !== 'cli') return harnessWiringEntry({ transport, harnesses: [], lockOwner, gbrainBin: null });
   const marker = agentProcessMarker();
   const harness = marker ? MARKER_HARNESS[marker] : undefined;
   cachedBin ??= { value: resolveGbrainBin() };
-  return harnessWiringEntry({ transport, harnesses: harness ? [harness] : [], lockOwner, gbrainBin: cachedBin.value });
+  return harnessWiringEntry({ transport, harnesses: harness ? [harness] : [], lockOwner, gbrainBin: cachedBin.value, ...(surface ? { surface } : {}) });
 }
 
 // ── config plane ───────────────────────────────────────────────────────────
@@ -477,18 +488,19 @@ export function readinessHttpView(entries: readonly ReadinessEntry[]): Readiness
   return redactForTransport(entries.filter(e => e.http_visible), 'http');
 }
 
-export function configReadiness(cfg: GBrainConfig, ctx: { transport: Transport }): ConfigReadiness {
-  const memo = configMemo.get(cfg)?.get(ctx.transport);
+export function configReadiness(cfg: GBrainConfig, ctx: { transport: Transport; surface?: McpSurface }): ConfigReadiness {
+  const memo = ctx.surface ? undefined : configMemo.get(cfg)?.get(ctx.transport);
   if (memo) return memo;
   if (!lockMemo.has(cfg)) lockMemo.set(cfg, lockOwnerFor(cfg));
   const lockOwner = lockMemo.get(cfg) ?? null;
   const entries: ReadinessEntry[] = [embeddingsEntry(cfg), chatEntry(cfg), writebackEntry(cfg), toolSurfaceEntry(cfg)];
   const sync = syncConfigEntry(cfg);
   if (sync) entries.push(sync);
-  entries.push(harnessConfigEntry(ctx.transport, lockOwner));
+  entries.push(harnessConfigEntry(ctx.transport, lockOwner, ctx.surface));
   const result: ConfigReadiness = ctx.transport === 'http'
     ? { entries: readinessHttpView(entries), lock_owner: null }
     : { entries: entries.map(e => (e.fix ? { ...e, fix: exclusiveFix(e.fix, lockOwner) } : e)), lock_owner: lockOwner };
+  if (ctx.surface) return result;
   const byTransport = configMemo.get(cfg) ?? new Map<Transport, ConfigReadiness>();
   byTransport.set(ctx.transport, result);
   configMemo.set(cfg, byTransport);
