@@ -122,3 +122,19 @@ Written before P0 generated any sealed withdrawal-review data.
   judges them or the data the threshold was tuned on.
 - **Disclosure.** The verdict record and the PR state that the paraphrase pairs are model-written and
   custodian-checked, not human-written. Every other gate in section 3 is unchanged.
+
+### 2026-10-05: quote grounding retest on fresh sealed quotes (section 6)
+
+Written after the section 6 sealed run failed and before any retest data exists.
+
+- **Change.** One retest of section 6 on a fresh sealed set: new held-out questions and quote spans the second
+  custodian writes, disjoint from the dev questions and from the first sealed set, sized to at least 300 supported
+  spans and clustered by question. The build is the frozen SHA reported with this amendment. Gate, metric, think
+  model, judge and cost limit are unchanged: supported spans wrongly flagged, Wilson 95% upper bound ≤ 5%.
+- **What changed in the build.** Matcher gaps the second custodian found in the first run's false flags, described
+  without sealed text: link display text kept as `[Name]`, the source's inner `"` written as `'`, editorial brackets
+  in or at the end of a word, and (a policy decision) the user's question counted as a grounding source. Unit tests
+  in `test/think-quote-verify.test.ts`.
+- **Reason.** The first sealed run's text informed these fixes, so it can no longer test them; only fresh quotes can.
+- **Outcome.** PASS turns `think.quote_verify` and `dream.quote_verify` on by default; FAIL keeps them opt-in. The
+  first run's FAIL stays in the verdict record either way.

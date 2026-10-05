@@ -6,7 +6,8 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 | Part | Gate | Held-out result | Verdict | Default |
 |---|---|---|---|---|
 | Write cost (section 2) | commit-path generative attempts = 0 in both arms | 0 in the extraction-on and extraction-off arms | PASS | Guard on; cost published |
-| Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6% | FAIL | `think.quote_verify` and `dream.quote_verify` off by default (opt-in) |
+| Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6%; the second custodian's rescore with the fixed scorer: 16 of 319 (5.0%), upper bound 8.0% | FAIL | `think.quote_verify` and `dream.quote_verify` off by default (opt-in) |
+| Quote grounding retest (section 6, amendment 2026-10-05) | same gate, fresh sealed quotes | pending (second custodian) | — | stays off until PASS |
 | Semantic withdrawal review (section 3) | precision LB ≥ 0.90, end-to-end recall ≥ 0.60, zero proposals on corrected values, N5 unchanged | precision LB 0.970 (124/124 eval families, 248 actions), end-to-end recall 0.977, 0 proposals on corrected values, N5 contracts pass | PASS | `review_withdraw` on (proposes where the conflict slot is on with a TypeSafe key); reference calibration shipped |
 | Advertised tool surface (section 7) | pooled success ≥ control − 3 pts, no leak rise, hidden-tool family ≥ control − 5 pts | pending | — | new installs advertise `full` |
 | HTTP graph freshness (report-only) | remote `put_page`: timeline row at commit; mention links after the `links` effect; typed edges only after extract | as stated, on PGLite (`test/remote-graph-freshness.test.ts`) | REPORT | no switch |
@@ -22,10 +23,21 @@ link syntax read as its text, punctuation and elision at a quote's edges) applie
 sources (`groundSource(…, { tolerant: true })`), because the held-out run measured it only as part of that
 coverage, which failed.
 
-Follow-up: the over-flagging. The dev runs measured 1.3% after the edge-punctuation and link-syntax fix; the
-held-out set flags 4.7%, so supported quotes still fail on forms the dev questions did not contain. The next step
-is to read the held-out wrongly-flagged spans with the custodian (without tuning on the sealed questions) and
-re-run on a fresh held-out set.
+Root cause of the over-flagging, from the second custodian's rerun (the sealed text was not shared): the scorer
+fix left the verdict unchanged at 16 of 319 supported spans flagged (5.0%, upper bound 8.0%), and most false flags
+were matcher gaps in the opt-in tolerance. The tolerant matcher now also accepts:
+
+1. link display text written as `[Name]` without the target, against the source's `[Name](target)`;
+2. the source's inner `"` written as `'` inside a quotation (a repair never inserts a `"`);
+3. editorial brackets in or at the end of a word: `[T]he` for `the`, `decide[s]` or `want[ed]` for `decide` or
+   `want`;
+4. a quote of the user's own question (policy decision): the question is a grounding source for think answers.
+
+The custodian estimates about 2.2% wrongly flagged (upper bound 4.5%) after items 1–3, lower with item 4. That is an
+estimate, not a verdict: per the 2026-10-05 retest amendment in the preregistration, the second custodian writes a
+fresh sealed quote set and runs it against the frozen build with the same gate. Quote grounding stays off by
+default until that retest passes. The dream synthesis quote check (`dream.synthesize.quote_verify`) stays
+byte-identical to master; none of these changes reach it.
 
 ## HTTP graph freshness (report-only)
 

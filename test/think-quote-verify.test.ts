@@ -70,6 +70,30 @@ describe('groundAnswerQuotes (pure)', () => {
     expect(r.answer).not.toContain('](');
   });
 
+  test('link display text kept as [Name] without its target grounds against the linked source', () => {
+    const linked = [groundSource('evidence', '[Elena Example](people/elena-example) said the [Meridian](companies/meridian-example) deal is moving faster than expected.', { tolerant: true })];
+    const r = groundAnswerQuotes('Notes: "[Elena Example] said the [Meridian] deal is moving faster than expected".', linked);
+    expect(r.quote_check).toEqual({ grounded: 1, repaired: 0, unverified: 0 });
+    expect(r.answer).toContain('"[Elena Example] said the [Meridian] deal is moving faster than expected"');
+  });
+
+  test("the source's inner double quotes written as single quotes inside a quotation still ground, and repairs never carry a double quote", () => {
+    const quoted = [groundSource('evidence', 'Bob Example wrote that the plan is "ship it by Friday" and moved on.', { tolerant: true })];
+    const r = groundAnswerQuotes('He wrote "the plan is \'ship it by Friday\' and moved on".', quoted);
+    expect(r.quote_check).toEqual({ grounded: 1, repaired: 0, unverified: 0 });
+    const repaired = groundAnswerQuotes('He wrote "The Plan is \'ship it by Friday\'".', quoted);
+    expect(repaired.quote_check.unverified).toBe(0);
+    expect(repaired.answer).toBe('He wrote "the plan is \'ship it by Friday\'".');
+  });
+
+  test('editorial brackets inside or at the end of a word ground: [T]he, decide[s], want[ed]', () => {
+    const src = [groundSource('evidence', 'Carol Example said the board will decide the budget once we want clarity on hiring.', { tolerant: true })];
+    const r = groundAnswerQuotes('She said "[T]he board will decide the budget", that it "decide[s] the budget once we want[ed] clarity on hiring".', src);
+    expect(r.quote_check).toEqual({ grounded: 2, repaired: 0, unverified: 0 });
+    expect(r.answer).toContain('"decide[s] the budget once we want[ed] clarity on hiring"');
+    expect(groundAnswerQuotes('She said "the board will decide[s] the payroll".', src).quote_check.unverified).toBe(1);
+  });
+
   test('the tolerance is opt-in coverage only: a default source (dream synthesis) grounds as before', () => {
     const text = 'She said "the Meridian deal," twice.';
     const evidence = 'Elena said the [Meridian](companies/meridian-example) deal is moving faster than expected.';
@@ -95,6 +119,12 @@ describe('think and saved syntheses', () => {
     expect(r.answer_raw).toContain('"we will triple prices"');
     expect(r.warnings).toContain('QUOTE_NOT_IN_EVIDENCE');
     expect(r.answer).toContain('52 percent');
+  });
+
+  test("a quote of the user's own question counts as supported", async () => {
+    const question = 'did we agree to move pricing to annual billing for enterprise seats';
+    const r = await runThink(engine, { question, client: stub(`You asked "did we agree to move pricing to annual billing for enterprise seats": yes, Alice said "we will move to annual billing in March".`) });
+    expect(r.quote_check).toEqual({ grounded: 2, repaired: 0, unverified: 0 });
   });
 
   test('a saved synthesis keeps the failing claim out of its body', async () => {

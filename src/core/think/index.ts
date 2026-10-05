@@ -962,7 +962,7 @@ export async function runThink(
 
   return {
     question: opts.question,
-    answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
+    answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [opts.question, pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
     citations: resolved.citations,
     gaps: response.gaps,
     pagesGathered: gather.pages.length,
@@ -1124,7 +1124,8 @@ async function readThinkTrajectoryEnabled(engine: BrainEngine): Promise<boolean>
 
 /**
  * Ground every quoted span of a synthesized answer against the evidence blocks
- * the prompt carried. Empty when think.quote_verify is off or the answer has no
+ * the prompt carried, the user's question included (quoting the question back
+ * is supported). Empty when think.quote_verify is off or the answer has no
  * quotes; otherwise the safe answer, what the model wrote, the counts, and the
  * body persistSynthesis saves (failing claim units removed).
  */

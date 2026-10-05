@@ -193,8 +193,8 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
  * source char desynced every later offset and could slice garbage — or
  * nothing — back into a page as a "verbatim" repair).
  */
-export function normalizeForGrounding(s: string, opts: { foldLinks?: boolean } = {}): { norm: string; map: number[] } {
-  return foldForGrounding(s, true, opts.foldLinks === true) as { norm: string; map: number[] };
+export function normalizeForGrounding(s: string, opts: { tolerant?: boolean } = {}): { norm: string; map: number[] } {
+  return foldForGrounding(s, true, opts.tolerant === true) as { norm: string; map: number[] };
 }
 
 /**
@@ -207,10 +207,10 @@ export function normalizeForGrounding(s: string, opts: { foldLinks?: boolean } =
  * Parity matters: the rescue gate and the repair ladder must mean the same
  * thing by "normalized substring of the transcript".
  */
-function foldForGrounding(s: string, withMap: boolean, foldLinks = false): { norm: string; map: number[] } | string {
+function foldForGrounding(s: string, withMap: boolean, tolerant = false): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
-  const skip = foldLinks ? linkSyntaxMask(s) : null;
+  const skip = tolerant ? bracketMask(s) : null;
   let pendingSpace = false;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
@@ -233,6 +233,7 @@ function foldForGrounding(s: string, withMap: boolean, foldLinks = false): { nor
     // grounding agree. One-to-many like the toLowerCase expansions below —
     // every emitted unit maps to the ellipsis' original index.
     else if (ch === '…') ch = '...';
+    if (tolerant && ch === '"') ch = "'";
     if (pendingSpace) {
       out.push(' ');
       if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
@@ -250,21 +251,53 @@ function foldForGrounding(s: string, withMap: boolean, foldLinks = false): { nor
 
 const MD_LINK = /\[([^\[\]\n]{1,300})\]\([^()\s]{1,500}\)/g;
 
-/** Code-unit offsets of markdown link syntax (`[` and `](target)`): a quote never carries a link target, so the fold reads `[Ana](people/ana)` as `Ana`. */
-function linkSyntaxMask(s: string): Set<number> | null {
-  if (!s.includes('](')) return null;
+/**
+ * Code-unit offsets the tolerant fold skips: markdown link syntax (`[` and
+ * `](target)`, since a quote never carries a link target) and every other
+ * square bracket, so `[Ana](people/ana)`, `[Ana]` and `Ana` read alike, and so
+ * do an editorial `[T]he` and `The`.
+ */
+function bracketMask(s: string): Set<number> | null {
+  if (!s.includes('[') && !s.includes(']')) return null;
   const skip = new Set<number>();
   for (const m of s.matchAll(MD_LINK)) {
     const at = m.index!;
-    skip.add(at);
     for (let k = at + 1 + m[1]!.length; k < at + m[0].length; k++) skip.add(k);
   }
+  for (let i = 0; i < s.length; i++) if (s[i] === '[' || s[i] === ']') skip.add(i);
   return skip;
 }
 
-/** A source slice as a reader sees it: link syntax reduced to the link text. */
+/** A source slice as a reader sees it, ready to sit inside a quotation: link syntax reduced to the link text, inner double quotes as single. */
 function displayText(slice: string): string {
-  return slice.replace(MD_LINK, '$1').replace(/\]\([^()\s]*\)/g, '');
+  return slice.replace(MD_LINK, '$1').replace(/\]\([^()\s]*\)/g, '').replace(/"/g, "'");
+}
+
+/**
+ * Whether `form` is the source's `words` with only the changes a writer may
+ * make in a quotation: brackets (link display, editorial), the case of a
+ * bracketed letter (`[T]he` for `the`) and the inner quote style.
+ */
+function sameWords(words: string, form: string): boolean {
+  const src = words.replace(/[[\]]/g, '').replace(/["“”]/g, "'");
+  let out = '';
+  let bracketed = false;
+  const loose = new Set<number>();
+  for (const ch of form.replace(/["“”]/g, "'")) {
+    if (ch === '[' || ch === ']') { bracketed = ch === '['; continue; }
+    if (bracketed) loose.add(out.length);
+    out += ch;
+  }
+  if (out.length !== src.length) return false;
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] !== src[i] && !(loose.has(i) && out[i]!.toLowerCase() === src[i]!.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/** A quote without editorial insertions attached to a word (`decide[s]`, `want[ed]`): the letters are the writer's. */
+function withoutInsertions(inner: string): string {
+  return inner.replace(/(?<=\p{L})\[\p{L}{1,3}\]/gu, '');
 }
 
 /** A quote's core: the elision marks and closing punctuation writers put at a quotation's edges ("the deal," / "…edge cases o…"). */
@@ -298,8 +331,10 @@ export interface GroundedTranscript {
   turns?: SpeakerTurn[];
   /**
    * The opt-in quote grounding's tolerance (think, concepts, patterns): link
-   * syntax reads as its text, and punctuation or elision at a quote's edges is
-   * the writer's. Unset (dream synthesis): exact, normalized and near rungs only.
+   * syntax reads as its text, and the writer's punctuation or elision at a
+   * quote's edges, brackets (`[Name]`, `[T]he`, `decide[s]`) and inner quote
+   * style (`'` for the source's `"`) do not change its words. Unset (dream
+   * synthesis): exact, normalized and near rungs only.
    */
   tolerant?: boolean;
 }
@@ -499,7 +534,7 @@ function numbersBySpeaker(content: string, turns: SpeakerTurn[]): Map<string, Se
 
 /** Prepare one transcript for verification. */
 export function groundSource(path: string, content: string, opts: { tolerant?: boolean } = {}): GroundedSource {
-  const { norm, map } = normalizeForGrounding(content, { foldLinks: opts.tolerant });
+  const { norm, map } = normalizeForGrounding(content, { tolerant: opts.tolerant });
   const turns = parseSpeakerTurns(content);
   const name = basename(path);
   return {
@@ -601,14 +636,15 @@ const PUNCT_EDGE = /[.,;:!?]/;
  */
 export function groundQuote(inner: string, t: GroundedTranscript): GroundResult {
   if (!t.tolerant) return groundQuoteSpan(inner, t, true);
-  const whole = groundQuoteSpan(inner, t, false);
-  if (whole.status !== 'none') return whole;
-  const core = quoteCore(inner);
-  if (core !== inner && core.split(/\s+/).filter(Boolean).length >= 2) {
-    // Punctuation or elision marks at the edges are the writer's, not the source's: the words themselves are grounded.
-    const r = groundQuoteSpan(core, t, false);
-    if (r.status === 'exact' || (r.status === 'normalized' && r.replacement === core)) return { status: 'exact', spans: r.spans };
-    if (r.status !== 'none') return r;
+  const bare = withoutInsertions(inner);
+  const forms = [...new Set([inner, quoteCore(inner), bare, quoteCore(bare)])]
+    .filter((form, i) => i === 0 || form.split(/\s+/).filter(Boolean).length >= 2);
+  for (const form of forms) {
+    const r = groundQuoteSpan(form, t, false);
+    if (r.status === 'none') continue;
+    // Edge punctuation, editorial brackets, link display and inner quote style are the writer's: the words themselves are grounded.
+    if (r.status === 'exact' || sameWords(r.replacement, form)) return { status: 'exact', spans: r.spans };
+    return r;
   }
   return groundQuoteSpan(inner, t, true);
 }
@@ -624,7 +660,7 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
   }
   if (exact.length) return { status: 'exact', spans: exact };
 
-  const q = normalizeForGrounding(inner, { foldLinks: t.tolerant });
+  const q = normalizeForGrounding(inner, { tolerant: t.tolerant });
   const shown = (slice: string) => t.tolerant ? displayText(slice) : slice;
   if (q.norm.length === 0) return { status: 'none', reason: 'not_found' };
 
