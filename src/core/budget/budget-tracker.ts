@@ -503,12 +503,17 @@ export class BudgetTracker {
     });
 
     if (cost === null) {
-      // Unpriced model: record audit but skip cumulative math. A user cap
+      // Unpriced served model: no per-token math. A user cap
       // already rejected this call at reserve(); a record() here means the
       // unpriced warn-once path let it through (cap unset or default/derived).
-      // A served model can be unpriced while the requested one held a
-      // projection (fallback hop): settle it anyway.
-      if (actual.reservation) this.settleReservation(actual.reservation);
+      // A served model can be unpriced while the requested one held a priced
+      // projection (a fallback hop, a renamed id): the real cost is unknown,
+      // so the held ceiling becomes spend and the cap stays a real ceiling.
+      const held = actual.reservation ? this.outstanding.get(actual.reservation) : undefined;
+      if (held !== undefined) {
+        this.settleReservation(actual.reservation!);
+        this.cumulativeUsd += held;
+      }
       appendAuditLine(this.auditPath, {
         schema_version: 1,
         ts: new Date().toISOString(),
@@ -520,6 +525,7 @@ export class BudgetTracker {
         input_tokens: actual.inputTokens,
         output_tokens: actual.outputTokens ?? 0,
         embedding_dims: actual.embeddingDims ?? null,
+        charged_reservation_usd: held ?? null,
       });
       return;
     }

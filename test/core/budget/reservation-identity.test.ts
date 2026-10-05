@@ -90,6 +90,14 @@ describe('BudgetTracker settles reservations by id', () => {
     expect(() => t.reserve(est(LARGE * 1.2))).toThrow(BudgetExhausted);
   });
 
+  test('a priced reservation recorded under an unpriced served id charges the held ceiling', () => {
+    const t = tracker();
+    const r = t.reserve(est(LARGE));
+    t.record({ modelId: 'stub:served-under-another-name', kind: 'chat', inputTokens: 0, outputTokens: 10, reservation: r });
+    expect(t.totalSpent).toBeCloseTo(0.5, 9);
+    expect(() => t.reserve(est(LARGE * 1.2))).toThrow(BudgetExhausted);
+  });
+
   test('uncapped and unpriced reservations hold nothing and return no id', () => {
     expect(new BudgetTracker({ label: 'x', auditPath: join(tmp, 'b.jsonl') }).reserve(est(LARGE))).toBeUndefined();
     expect(new BudgetTracker({ label: 'x', auditPath: join(tmp, 'b.jsonl'), maxCostUsd: 1, capSource: 'default' })
