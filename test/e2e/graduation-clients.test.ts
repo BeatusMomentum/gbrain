@@ -174,6 +174,10 @@ describe.skipIf(!DATABASE_URL)('graduation: older released binaries', () => {
       await waitForEvent(c.events, e => e.event === 'paused', child);
       child.kill('SIGKILL');
       await child.exited;
+      const aware = await gbrain(['put', 'notes/lock-gap-aware', '--source', 'default', '--json'], { home: c.fx.home, stdin: 'a graduation-aware binary must not write here\n', timeoutMs: 120_000 });
+      if (boundary === 'source_closed') {
+        expect({ code: aware.code, error: codeOf(aware.json) }).toEqual({ code: 1, error: 'graduation_interrupted' });
+      }
       const write = await olderRun(older[0].binary, c.fx.home, ['put', 'notes/lock-gap-write', '--source', 'default'], 'written by an older release in the lock gap\n');
       expect({ code: write.code, stderr: write.code === 0 ? '' : write.stderr.slice(-1500) }).toEqual({ code: 0, stderr: '' });
       const resumed = await gbrain(['migrate', '--resume', '--json'], { home: c.fx.home, timeoutMs: 900_000 });
