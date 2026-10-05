@@ -1,5 +1,8 @@
 # P1 temporal typed edges, round 2: development verdict and held-out preregistration
 
+**Held-out E1 (set C, seeds 11/13/17, custodian): pass.** `graph.edge_validity` stays on.
+Results are below, under "Held-out verdicts".
+
 Round 2 replaces [round 1](../p1-dev-2026-10-04/README.md), whose held-out run on
 phrasing set B failed. `decision.json` is the decision-kit spec and `verdict.json` the
 dev verdict. Dev verdicts never set a default; the custodian's held-out verdict does.
@@ -76,3 +79,24 @@ minimum of 10), which makes the overall kit verdict `inconclusive`.
    live-edge recall non-inferior within 0.02; traps ≥ 0.99; order invariance 1 on every
    item; no guardrail failing. `graph.edge_validity` stays on only if E1 passes.
 2. **E2 and E3** as preregistered in round 1, run on this frozen build after E1.
+
+## Held-out verdicts
+
+**E1, set C (custodian; baseline `6622a119e`, candidate `feb077ef9`): pass.**
+
+| Gate | Baseline → candidate | Result |
+|---|---|---|
+| Current-employer precision | 0.376 → 0.943 | pass |
+| As-of exact | 0.208 → 0.678 | pass |
+| During-year F1 | 0.455 → 0.653 | pass |
+| Stale-summary correction | 0.000 → 0.364 | pass |
+| Current-employer recall | 0.616 → 0.612 | non-inferior, pass |
+| Live-edge recall | 0.608 → 0.603 | non-inferior, pass |
+| Traps | 115 / 115 | pass |
+| Write-order invariance | 240 / 240 | pass |
+
+**E3, ingestion to answer (report only).** After a correction is written, `entity`,
+`context_pack` and compiled context show it for 0.277 of people and ambient turn context
+for 0.239; the baseline shows it for none. The ceiling is link typing shared by both
+builds: a line such as "Signed on with [X] as CTO" is not typed `works_at`, so there is
+no relationship for the correction to date.
