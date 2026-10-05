@@ -379,7 +379,7 @@ import {
   type ParseConversationOpts as OrchestratorParseOpts,
 } from '../core/conversation-parser/parse.ts';
 import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
-import { terminalConversationSkip } from '../core/facts/conversation-skip.ts';
+import { conversationSkip } from '../core/facts/conversation-skip.ts';
 import { runLlmFallback } from '../core/conversation-parser/llm-fallback.ts';
 import { resolveModel, resolveTierDefault } from '../core/model-config.ts';
 import { FAILED_EXIT_CODE } from '../core/exit-codes.ts';
@@ -1023,12 +1023,13 @@ async function processPage(
       );
     }
   }
-  // #5025 / N2: undated time-only turns, or a prose meeting/email page, end
-  // in a terminal not-extractable outcome instead of epoch-dated facts or a
-  // rescan every run.
-  const terminalSkip = terminalConversationSkip(page, body, parseResult.phase, messages, Boolean(state.llmFallbackModel));
-  if (terminalSkip) {
-    process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: ${terminalSkip.message}\n`);
+  // #5025 / N2: undated time-only turns, a single email or a prose
+  // meeting/email page end in a not-extractable outcome instead of
+  // epoch-dated facts or a rescan every run.
+  const skip = conversationSkip(page, body, parseResult, messages, { llmFallback: Boolean(state.llmFallbackModel), managed: state.managed });
+  const terminalSkip = skip?.durable ? skip : null;
+  if (skip) {
+    process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: ${skip.message}\n`);
     messages = [];
   }
   // An email thread is one conversation even when replies are hours apart;
@@ -1047,7 +1048,7 @@ async function processPage(
     if (
       !state.dryRun &&
       (parseResult.phase !== 'no_match' || terminalSkip !== null) &&
-      allSegments.length === 0 &&
+      allSegments.length === 0 && !(skip && !skip.durable) &&
       // #4136 — a decline must stay NON-TERMINAL. The audit row is keyed by
       // a content versionToken and skips the page on every future run; a
       // declined page must retry once the parser learns the label instead.

@@ -608,8 +608,7 @@ function scoreFromLines(
     entry.multi_line &&
     entry.quick_reject &&
     anchorCandidates > 0 &&
-    (anchored >= 2 || firstLineAnchored ||
-      (entry.score_continuations_max_preamble_lines !== undefined && anchored === 1)) &&
+    (anchored >= 2 || firstLineAnchored) &&
     distinctSpeakersOk &&
     preambleOk
   ) {
@@ -624,9 +623,8 @@ function scoreFromLines(
  *
  * Quick_reject is honored. Patterns that opt into
  * `score_continuations_as_body` may exclude continuation lines from the
- * denominator only after the scorer sees two anchors, an anchor on the
- * first non-blank line, or (with a preamble bound) one anchor inside the
- * preamble. Otherwise the ordinary full-body density applies.
+ * denominator only after the scorer sees two anchors, or an anchor on the
+ * first non-blank line. Otherwise the ordinary full-body density applies.
  *
  * Exported for tests.
  */

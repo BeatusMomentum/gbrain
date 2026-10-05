@@ -900,9 +900,7 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     // for a sent message), the body below it. The time is UTC (the
     // renderer slices an ISO instant). The speaker is the From display
     // name; speaker_clean drops the `<address>` and surrounding quotes.
-    // The ` · date time` suffix keeps ordinary `## Section` headings out,
-    // and the 2-line preamble allowance lets a one-message thread (title
-    // line, then the only heading) score as a conversation.
+    // The ` · date time` suffix keeps ordinary `## Section` headings out.
     id: 'email-thread-heading',
     origin: 'builtin',
     regex: /^##\s+(?:→\s+)?(\S.*?)\s+·\s+(\d{4}-\d{2}-\d{2})\s+(\d{1,2}):(\d{2})\s*()$/u,

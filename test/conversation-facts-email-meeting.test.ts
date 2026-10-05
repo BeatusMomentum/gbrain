@@ -73,12 +73,6 @@ describe('parser', () => {
     expect(r.unrecognized_headings).toBeUndefined();
   });
 
-  test('a one-message thread under its title still parses', () => {
-    const body = `# Planning call\n\n## Alice Example <alice@example.com> · 2026-09-07 12:21\n\n${'Line of a long message.\n'.repeat(40)}`;
-    const r = parseConversation(body, {});
-    expect(r.matched_pattern_id).toBe('email-thread-heading');
-    expect(r.messages.map((m) => m.speaker)).toEqual(['Alice Example']);
-  });
 
   test('meeting-note metadata labels are never speakers', () => {
     expect(parseConversation(PROSE_MEETING, { fallbackDate: '2026-09-07' }).phase).toBe('no_match');
@@ -136,6 +130,15 @@ describe('extractor', () => {
     expect(second).toMatchObject({ pages_skipped_non_extractable: 1, pages_marked_non_extractable: 0 });
     expect(calls).toBe(0);
     expect(await backlog()).toBe(0);
+  });
+
+  test('a one-message email thread is marked not extractable', async () => {
+    const single = renderThreadPage({ threadId: '18c2f4a9b3d21e00', account: 'bob@example.com', messages: [message({})] })!.markdown;
+    await importFromContent(engine, 'email/single', single, { noEmbed: true });
+    const r = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug: 'email/single', extractor, sleepMs: 0 });
+    expect(r).toMatchObject({ pages_marked_non_extractable: 1, pages_skipped_unparsed: 0, facts_inserted: 0 });
+    const [audit] = await engine.executeRaw<{ fact: string }>('SELECT context AS fact FROM facts WHERE source = $1', [NON_EXTRACTABLE_AUDIT_SOURCE]);
+    expect(audit!.fact).toContain('a single email message in this email page');
   });
 
   test('a time-only parse on a page with no date yields no epoch-dated facts', async () => {

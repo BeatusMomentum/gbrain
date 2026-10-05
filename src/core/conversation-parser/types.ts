@@ -214,8 +214,6 @@ export interface PatternEntry {
    * (like a bare `**You:**` heading) that are plausible prose labels on
    * their own: distinct-speaker count alone still lets a single
    * illustrative example pair anywhere in a long document through.
-   * A pattern that sets it also accepts a single anchor inside the
-   * preamble (a one-message email thread under its title line).
    */
   score_continuations_max_preamble_lines?: number;
   /**

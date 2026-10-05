@@ -96,8 +96,7 @@ inside an otherwise unrelated long document. Also set
 fully-matching anchor line to land at or before that index in the scored
 lines. A short title or heading before the transcript starts still qualifies;
 an anchor group appearing well past the bound falls back to the ordinary
-flat-density score instead. A pattern that sets the bound also accepts a single
-anchor inside it, so a one-message email thread under its title line parses.
+flat-density score instead.
 
 Use `score_full_body: true` for a broad grammar that also occurs in ordinary
 prose. For example, `**Label:** text` can be either a transcript line or a bold
@@ -158,11 +157,13 @@ segment gap is the 7-day maximum instead of 30 minutes.
 
 ## Meeting notes and undated pages
 
-A meeting or email page that yields no speaker turns and has the shape of
-meeting notes or a calendar event (`looksLikeMeetingNotes`: a bold metadata
-label line, or an Attendees / Participants / Agenda / Action items section) is
-recorded as scanned, not extractable, when no LLM fallback is configured; it
-leaves the backlog until the page changes. Other speaker-less pages stay
+On a brain without managed persistence, a meeting or email page that yields no
+speaker turns and has the shape of meeting notes or a calendar event
+(`looksLikeMeetingNotes`: a bold metadata label line, or an Attendees /
+Participants / Agenda / Action items section) is recorded as scanned, not
+extractable, when no LLM fallback is configured, and so is a one-message email
+thread (an email, not a conversation); they leave the backlog until the page
+changes. Other speaker-less pages, and these pages on a managed brain, stay
 retryable. A time-only parse on a page with no date would place every turn on
 1970-01-01; extract-conversation-facts records it as not extractable instead
 (adding a `date:` reopens it). The parser itself still reports those
