@@ -399,7 +399,7 @@ for (const kind of testBackends()) {
         enc({ v: 1, p: ['2026-01-01T00:00:00Z', null], f: ['2026-01-01T00:00:00Z', 1.5] }),
         enc({ v: 1, p: ['2026-01-01T00:00:00Z', null], f: ['2026-01-01T00:00:00Z', -1] }),
       ]) {
-        await expect(call({ cursor })).rejects.toMatchObject({ code: 'invalid_params' });
+        await expect(call({ cursor, session_id: 'validation' })).rejects.toMatchObject({ code: 'invalid_params' });
       }
     });
 
