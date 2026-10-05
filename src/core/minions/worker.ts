@@ -944,7 +944,10 @@ export class MinionWorker extends EventEmitter {
           new Promise(resolve => setTimeout(resolve, 30000)),
         ]);
         if (this.configurationError) await this.drainConfiguration();
-        else this.drainForced = await releaseUndrainedClaims(this.engine, this.executions.values());
+        else if (this.shutdownAbort.signal.aborted) {
+          const isolated = this.opts.jobIsolation === 'process';
+          this.drainForced = await releaseUndrainedClaims(this.engine, [...this.executions.values()].filter(e => !isolated || e.stopped));
+        }
       }
 
       // The worker does NOT disconnect the engine: it doesn't own the
