@@ -326,6 +326,10 @@ export async function watchRun(opts: WatchOptions): Promise<WatchResult> {
     throw new Error(`run ${run.id} is a ${run.event} run; the nightly-red path only tracks scheduled runs. Fix: pass a scheduled run id, or add --dry-run to preview.`);
   }
   const evidence = await collectEvidence(client, run, opts);
+  if (run.event === 'schedule' && (run.conclusion === 'cancelled' || evidence.verdict === 'ignored')) {
+    const plan: Plan = { action: 'none', title: `Nightly red: ${inert(run.name, 100)}`, labels: [], reason: 'run or its failing lanes were cancelled (not run); no state change' };
+    return { plan, assessment: { state: 'green', failures: [], unmatched: [], matched: [], stale: [], reviewPassed: [] }, run, evidence, flakesClosed: [] };
+  }
   const assessment = assessRun(run, evidence.jobs, evidence.annotations, opts.rows, opts.today);
   const greens = await client.request<{ workflow_runs: Array<{ head_sha: string }> }>('GET',
     `repos/{repo}/actions/workflows/${run.workflow_id}/runs?event=schedule&status=success&per_page=1`).catch(() => ({ workflow_runs: [] }));

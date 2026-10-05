@@ -33,6 +33,11 @@ response: a repair PR whose body says `Fixes #<issue>`.
   re-run is a newer attempt; a run cancelled by a newer push changes nothing.
   The first watch for a workflow with no master-red issue yet opens only an
   incident that is still red.
+- **Cancelled jobs are not run:** a job cancelled with its run (a newer push,
+  a user, fail-fast) neither fails nor clears anything, in master-red and
+  nightly-red alike. A run whose only failures are aggregators of cancelled
+  jobs changes no state. A cancelled job whose annotation says it exceeded its
+  timeout is a timed-out failure.
 - **Missing or malformed JSON block:** the state is rebuilt from the actions API
   by folding from the last green run before the newest red one. The body says
   so. If the API cannot be read, the watch fails and writes nothing.

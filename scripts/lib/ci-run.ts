@@ -3,7 +3,9 @@
  * and master-red watchers (scripts/nightly-issue.ts, scripts/lib/master-red.ts).
  *
  * `collectEvidence` reads the run's jobs, the failing jobs' check-run
- * annotations and, for workflows that upload it, the `ci-manifest` artifact
+ * annotations (a cancelled job is not run unless its annotation says it hit
+ * timeout-minutes; a red run whose only failures are aggregators of cancelled
+ * jobs is ignored, changing no state) and, for workflows that upload it, the `ci-manifest` artifact
  * (scripts/ci-manifest.ts). It returns structured failure records (job, step,
  * every failing test file and test identity) kept apart from sanitized error
  * excerpts, plus `complete` and `problems`: a jobs page, annotation or
@@ -46,7 +48,10 @@ export interface FailedTest { file: string; test: string; lane: string; arm: str
 export interface FailedJob { job: string; job_id: number; step: string; conclusion: string; files: string[]; excerpt: string[]; owner_signal: boolean }
 export interface RunEvidence {
   verdict: 'red' | 'green' | 'ignored';
+  /** Jobs as evaluated: a cancelled job GitHub stamped as timed out reads `timed_out`. */
   jobs: JobInfo[];
+  /** Jobs cancelled with their run, by a user or by fail-fast: not run, so they neither fail nor clear anything. */
+  cancelled: string[];
   annotations: Record<number, Annotation[]>;
   failed: FailedJob[];
   succeeded: string[];
@@ -58,7 +63,9 @@ export interface RunEvidence {
   problems: string[];
 }
 
-export const FAILING = new Set(['failure', 'timed_out', 'cancelled', 'startup_failure']);
+/** Job conclusions that are failures. A cancelled job is not run (see `collectEvidence`), unless GitHub stamped it as timed out. */
+export const FAILING = new Set(['failure', 'timed_out', 'startup_failure']);
+export const TIMED_OUT_ANNOTATION = /has exceeded the maximum execution time/;
 export const RED_CONCLUSIONS = new Set(['failure', 'timed_out', 'startup_failure']);
 export const AGGREGATORS = new Set(['test-status', 'e2e-status']);
 export const MANIFEST_WORKFLOWS = new Set(['test.yml', 'e2e.yml']);
@@ -120,22 +127,32 @@ export interface EvidenceOptions { manifest?: (run: RunInfo) => Promise<{ value?
 
 export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: EvidenceOptions = {}): Promise<RunEvidence> {
   const problems: string[] = [];
-  const { jobs, complete: jobsComplete } = await pagedJobs(client, run);
-  if (!jobsComplete) problems.push(`the jobs list of run ${run.id} was truncated`);
-  const failing = jobs.filter(j => FAILING.has(j.conclusion ?? ''));
-  const shown = failing.some(j => !AGGREGATORS.has(j.name)) ? failing.filter(j => !AGGREGATORS.has(j.name)) : failing;
-  const failed: FailedJob[] = [];
+  const listed = await pagedJobs(client, run);
+  if (!listed.complete) problems.push(`the jobs list of run ${run.id} was truncated`);
   const byJob: Record<number, Annotation[]> = {};
-  for (const job of shown) {
-    let annotations: Annotation[] = [];
+  const read = async (job: JobInfo) => {
+    if (byJob[job.id]) return byJob[job.id]!;
     try {
-      annotations = await client.request<Annotation[]>('GET', `repos/{repo}/check-runs/${job.id}/annotations?per_page=50`);
+      byJob[job.id] = await client.request<Annotation[]>('GET', `repos/{repo}/check-runs/${job.id}/annotations?per_page=50`);
     } catch (e) {
       problems.push(`annotations of job '${inert(job.name)}' could not be read (${inert(e instanceof Error ? e.message : String(e), 120)})`);
+      byJob[job.id] = [];
     }
-    byJob[job.id] = annotations;
-    failed.push(failedJobRecord(job, annotations));
+    return byJob[job.id]!;
+  };
+  const cancelled: string[] = [];
+  const jobs: JobInfo[] = [];
+  for (const job of listed.jobs) {
+    if (job.conclusion !== 'cancelled') { jobs.push(job); continue; }
+    const timedOut = (await read(job)).some(a => TIMED_OUT_ANNOTATION.test(a.message));
+    if (timedOut) jobs.push({ ...job, conclusion: 'timed_out' });
+    else { jobs.push(job); cancelled.push(inert(job.name)); }
   }
+  const failing = jobs.filter(j => FAILING.has(j.conclusion ?? ''));
+  const real = failing.filter(j => !AGGREGATORS.has(j.name));
+  const shown = real.length ? real : cancelled.length ? [] : failing;
+  const failed: FailedJob[] = [];
+  for (const job of shown) failed.push(failedJobRecord(job, await read(job)));
   const tests: FailedTest[] = [];
   let passed: string[] = [];
   let manifestState: RunEvidence['manifest'] = 'not-expected';
@@ -163,9 +180,11 @@ export async function collectEvidence(client: GitHubClient, run: RunInfo, opts: 
     }
   }
   const files = [...new Set([...tests.map(t => t.file), ...failed.flatMap(j => j.files)])].sort();
+  const verdict = verdictOf(run.conclusion) === 'red' && !failed.length && cancelled.length ? 'ignored' : verdictOf(run.conclusion);
   return {
-    verdict: verdictOf(run.conclusion),
+    verdict,
     jobs,
+    cancelled,
     annotations: byJob,
     failed,
     succeeded: jobs.filter(j => j.conclusion === 'success').map(j => inert(j.name)),

@@ -142,6 +142,7 @@ export function applyRun(prev: MasterRedState, run: RunInfo, ev: RunEvidence): M
   const state: MasterRedState = structuredClone(prev);
   const ref = refOf(run);
   state.evaluated = ref;
+  if (ev.verdict === 'ignored') return state;
   state.evidence = { run_id: run.id, complete: ev.complete, problems: ev.problems };
   if (ev.verdict === 'red') {
     if (state.status !== 'red') {

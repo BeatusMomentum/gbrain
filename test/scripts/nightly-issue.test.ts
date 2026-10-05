@@ -503,6 +503,73 @@ describe('master-red: push-to-master runs', () => {
     expect(issue.comments.at(-1)).toContain('has not run and passed since it failed');
   });
 
+  test('cancelled jobs are not run: a concurrency or user cancel changes no state and never clears a failure; a timed-out cancel is a failure', async () => {
+    const cancelNote = (id: number, message: string) => [{ annotation_level: 'failure', message }].map(a => ({ ...a, id }));
+    const w = testWorld(T.g8315, T.r8320);
+    await go(w, T.r8320);
+    const failing = 'persistence-validation / Unit-lane PostgreSQL arms 2/2 / Bun 1.4.0';
+
+    const onlyCancelled: RunInfo = { ...T.r8320, id: 999101, run_number: 8321, head_sha: 'd'.repeat(40) };
+    w.runs.set(onlyCancelled.id, onlyCancelled);
+    w.jobs.set(`${onlyCancelled.id}/1`, { total_count: 3, jobs: [
+      { id: 7001, name: failing, conclusion: 'cancelled', steps: [] },
+      { id: 7002, name: 'coverage-full-e2e (1)', conclusion: 'cancelled', steps: [] },
+      { id: 7003, name: 'test-status', conclusion: 'failure', steps: [] },
+    ] });
+    w.annotations.set(7001, cancelNote(7001, 'Canceling since a higher priority waiting request for Test-refs/heads/master exists'));
+    w.annotations.set(7002, cancelNote(7002, 'The run was canceled by @someone.'));
+    w.manifests.set(`${onlyCancelled.id}/1`, completeManifest(onlyCancelled));
+    const before = mrState(masterIssue(w)!);
+    const r1 = await go(w, onlyCancelled);
+    const after = mrState(masterIssue(w)!);
+    expect(r1.masterRed!.evidence!.verdict).toBe('ignored');
+    expect(r1.masterRed!.evidence!.cancelled).toEqual([failing, 'coverage-full-e2e (1)']);
+    expect(after.open_jobs).toEqual(before.open_jobs);
+    expect(after.latest_red).toEqual(before.latest_red);
+    expect(after.evaluated!.run_id).toBe(onlyCancelled.id);
+    expect(masterIssue(w)!.comments).toEqual([]);
+
+    const green: RunInfo = { ...T.g8352 };
+    w.addRun(green, `jobs-${green.id}.json`);
+    const jobs = w.jobs.get(`${green.id}/1`)!;
+    const cancelledId = jobs.jobs.find(j => j.name === failing)!.id;
+    w.jobs.set(`${green.id}/1`, { ...jobs, jobs: jobs.jobs.map(j => (j.name === failing ? { ...j, conclusion: 'cancelled' } : j)) });
+    w.annotations.set(cancelledId, cancelNote(cancelledId, 'The run was canceled by @someone.'));
+    const r2 = await go(w, green);
+    expect(r2.masterRed!.action).toBe('update');
+    expect(masterIssue(w)!.state).toBe('open');
+    expect(mrState(masterIssue(w)!).blocked).toEqual([failing]);
+
+    const timedOut: RunInfo = { ...T.r8320, id: 999102, run_number: 8360, head_sha: 'e'.repeat(40) };
+    w.runs.set(timedOut.id, timedOut);
+    w.jobs.set(`${timedOut.id}/1`, { total_count: 2, jobs: [{ id: 7101, name: 'test (4)', conclusion: 'cancelled', steps: [] }, { id: 7102, name: 'test-status', conclusion: 'failure', steps: [] }] });
+    w.annotations.set(7101, cancelNote(7101, 'The job running on runner ubicloud-x has exceeded the maximum execution time of 30 minutes.'));
+    w.manifests.set(`${timedOut.id}/1`, completeManifest(timedOut));
+    const r3 = await go(w, timedOut);
+    expect(r3.masterRed!.evidence!.verdict).toBe('red');
+    expect(mrState(masterIssue(w)!).open_jobs.find(j => j.job === 'test (4)')!.conclusion).toBe('timed_out');
+  });
+
+  test('nightly-red: a cancelled job is not a failure, and a previously failing job that was cancelled keeps the incident open', async () => {
+    const h = heavy();
+    const cancelledAll = h.jobs.jobs.map(j => (j.conclusion === 'failure' ? { ...j, conclusion: 'cancelled' } : j));
+    const notes = Object.fromEntries(cancelledAll.filter(j => j.conclusion === 'cancelled').map(j => [j.id, [{ annotation_level: 'failure', message: 'Canceling since a higher priority waiting request for Heavy Tests-refs/heads/master exists' }]]));
+    const quiet = fakeClient({ ...h, jobs: { ...h.jobs, jobs: cancelledAll }, annotations: notes });
+    const r = await watchRun({ client: quiet.client, repo: REPO, runId: 1, rows: realRows, today: TODAY, dryRun: false });
+    expect(r.assessment.failures).toEqual([]);
+    expect(r.evidence.cancelled.length).toBeGreaterThan(0);
+    expect(quiet.calls.some(c => c.method === 'POST' && c.path === 'repos/{repo}/issues')).toBe(false);
+
+    const green = { run: load<RunInfo>('run-macos-green.json'), jobs: load<{ jobs: JobInfo[]; total_count: number }>('jobs-macos-green.json') };
+    const target = green.jobs.jobs[0]!;
+    const open = fakeClient({ ...green, jobs: { ...green.jobs, jobs: green.jobs.jobs.map(j => (j.id === target.id ? { ...j, conclusion: 'cancelled' } : j)) },
+      annotations: { [target.id]: [{ annotation_level: 'failure', message: 'The run was canceled by @someone.' }] },
+      issues: [{ ...issueWith('open', { failing: [{ job: target.name, job_id: 1, step: 's', errors: [] }] }), title: 'Nightly red: macOS 26 validation' }] });
+    const kept = await watchRun({ client: open.client, repo: REPO, runId: 1, rows: realRows, today: TODAY, dryRun: false });
+    expect(kept.plan.action).toBe('none');
+    expect(open.calls.some(c => c.method === 'PATCH')).toBe(false);
+  });
+
   test('incomplete evidence (unreadable manifest or annotations) never closes and is reported, never read as zero failures', async () => {
     const w = testWorld(T.g8315, T.r8320);
     await go(w, T.r8320);
