@@ -1662,6 +1662,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'search.',           // search.* (mode, cache.*, etc.)
+  'graph.',            // graph.edge_validity (temporal typed-edge read policy, src/core/link-validity.ts)
   'models.',           // models.* (tier, aliases, per-task)
   'dream.',            // dream.synthesize.*, dream.patterns.*
   'cycle.',            // cycle.<phase>.*
