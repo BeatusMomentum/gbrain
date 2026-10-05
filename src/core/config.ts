@@ -1372,6 +1372,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.metadata_boost_gate',
   'search.crag_escalation',
   'search.crag_think',
+  // Fact keys (docs/designs/FACT_KEYS.md): facts merged into title-tier chunk embeddings (facts/fact-keys-publish.ts reads; on|off).
+  'search.fact_keys',
   // Evidence delivery (search/evidence-delivery.ts): default unit (auto),
   // window radius, default/auto/remote-max token budgets; think reads its own unit.
   'search.return_unit',

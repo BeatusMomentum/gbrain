@@ -507,13 +507,13 @@
         },
         {
           "category": "meta",
-          "message": "Version 208 (latest: 208)",
+          "message": "Version 209 (latest: 209)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "935 column(s) verified against live schema",
+          "message": "931 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1608,6 +1608,21 @@
           },
           "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
           "name": "retrieval_feedback_health",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
+            "docs": "docs/guides/time-aware-recall.md",
+            "eligible_unkeyed_pages": 0,
+            "enabled": false,
+            "key_rows": 0,
+            "keyed_chunks": 0,
+            "keyed_pages": 0,
+            "stale_rows_pages": 0
+          },
+          "message": "Fact keys are off (search.fact_keys).",
+          "name": "retrieval_enrichment",
           "status": "ok"
         },
         {

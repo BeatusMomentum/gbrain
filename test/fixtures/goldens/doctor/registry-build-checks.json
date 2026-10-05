@@ -663,6 +663,10 @@
       },
       {
         "category": "meta",
+        "name": "retrieval_enrichment"
+      },
+      {
+        "category": "meta",
         "name": "revision_backfill"
       },
       {

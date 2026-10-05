@@ -444,6 +444,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     // Only present when the SELECT included it (getChunks); undefined elsewhere
     // so callers can tell "not selected" from "vector present".
     ...(row.embedding_is_null !== undefined && { embedding_is_null: Boolean(row.embedding_is_null) }),
+    ...(row.fact_keys !== undefined && { fact_keys: (row.fact_keys as string | null) ?? null }),
   };
 }
 

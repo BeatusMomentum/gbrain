@@ -295,6 +295,7 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'default_source_local_path',
   'eval_capture',
   'retrieval_feedback_health',
+  'retrieval_enrichment',
   // #4613 — links_link_source_check CHECK shape: schema coherence healed by
   // `gbrain apply-migrations` (sibling of pages_upsert_arbiter).
   'links_link_source_check',

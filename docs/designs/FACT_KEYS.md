@@ -1,12 +1,52 @@
 # Fact keys in chunk embeddings — design note
 
-Status: **proposed, revision 4. The third engineering review round approved it with changes, and those changes are folded in here.** There is
-no product code for it yet. This note covers obligations 1–9 from the
-preregistered plan
-([`docs/eval/TIME_AWARE_RETRIEVAL_PREREG.md`](../eval/TIME_AWARE_RETRIEVAL_PREREG.md));
-where it departs from one, it says so and why. Development results are in
+Status: **built behind `search.fact_keys` (default off until the held-out
+verdict).** Revision 4 of this note passed three engineering review rounds
+(approve with changes, folded in). The "As built" section records where the
+code is simpler than the reviewed text; where they differ, it wins. This note
+covers obligations 1–9 from the preregistered plan
+([`docs/eval/TIME_AWARE_RETRIEVAL_PREREG.md`](../eval/TIME_AWARE_RETRIEVAL_PREREG.md)).
+Development results are in
 [`docs/eval/TIME_AWARE_RETRIEVAL_RESULTS.md`](../eval/TIME_AWARE_RETRIEVAL_RESULTS.md).
 File references are relative to `src/core/` on master.
+
+## As built
+
+- **Only `title`-mode pages are keyed.** Keys exist only in the title-tier
+  embedding input (the `balanced` default). Pages in `none` or
+  `per_chunk_synopsis` mode get no keys, so per-chunk tier detection on
+  synopsis pages isn't needed: a synopsis page never carries keys, and its
+  title-tier vectors from a partial re-embed carry none either.
+- **`content_chunks.fact_keys`** holds each chunk's derived key text, next to
+  the `page_fact_keys` provenance rows. Chunk rows carry their keys through
+  `getChunks`, so `wrapChunkTextsForStoredMode`, `embeddingInputHash` and
+  every plain re-embed path build the same keyed input with no extra lookup.
+- **Exact-input install check.** `installPageEmbeddings` refuses a title-tier
+  vector whose key text differs from the stored row. Callers pass the key text
+  they embedded, or the prepared row the input was built from. This is the
+  captured-input comparison of obligation 6, done on the input itself rather
+  than on a separate hash parameter, so every existing caller is covered.
+- **One SQL rule in `upsertChunks`:** when a row's key text changes and the
+  incoming row brings no new vector, the stored vector and its provenance are
+  dropped in the same statement. Re-chunking a page (the replacement chunks
+  carry no keys) therefore never leaves a keyed vector behind, and
+  `retireStaleFactKeys` deletes the rows of older revisions on every path that
+  seals a new chunk set.
+- **Withdrawal** finds keyed pages through `page_fact_keys` (key subject `'*'`
+  matches any subject-scoped withdrawal) and sends them down the existing
+  delete-and-rebuild path. The rebuild runs under a new revision, so the
+  page's other keys are retired too until its next extraction.
+- **Disable and recovery are commands.** `gbrain fact-keys clear` strips keys
+  page by page with the same prepare-then-swap (re-embed without keys, then
+  swap), whatever the setting says. `gbrain fact-keys refresh` re-runs facts
+  extraction for eligible pages without current keys. `gbrain fact-keys status`
+  and doctor's `retrieval_enrichment` report coverage and leftovers.
+- **Extraction lanes.** Keys come from the extractor's output for that lane.
+  `put_page` and capture lanes extract every notability tier. Git sync asks
+  the extractor for high-notability facts only, so synced pages carry fewer
+  keys.
+- **Other vector columns** of a re-keyed chunk are nulled in the swap
+  transaction. Only the active column gets the new vector.
 
 ## What it does
 
@@ -389,21 +429,15 @@ there.
   promotion and demotion with partial re-embeds; a graduation round trip that
   keeps the invariant.
 
-## Open questions for review
+## Decisions (2026-10-05)
 
-1. **The `tokenmax` gate.** The preregistered gate also requires beating
-   `tokenmax` synopses, which the LongMemEval harness can't generate. One
-   option is to add synopsis generation (paid, about the cost of one embedding
-   run). The other is to amend the preregistration to compare against the
-   `balanced` default only and record the reason. Code waits on this choice.
-2. **Extractor model.** The dev gate pinned Haiku 4.5, and production defaults
-   to the reasoning tier. The sealed run uses the shipping default.
-3. **Embedding multiplier.** The cohort multiplier is expected to exceed
-   1.3×. The proposal is to report it rather than gate on it, because the
-   re-embed is intended work. The alternative is to delay the first embed of
-   eligible pages until extraction lands or a deadline passes, trading
-   write-time searchability for cost.
-4. **Visibility policy.** This note uses the fail-closed intersection. The
-   alternative treats keys as page-visible: keys are paraphrases of text the
-   page already exposes and only change ranking. That needs an explicit
-   policy decision, and it widens what private facts influence.
+1. **The `tokenmax` gate** stays in the gate. It runs on LoCoMo (development
+   conversations, then a third arm on the sealed run), because on
+   LongMemEval-M production synopses would cost about $4,280. M stays as
+   confirmation against `balanced` only (preregistration amendment 2).
+2. **Extractor model:** sealed cells use the shipping default. Haiku 4.5 is
+   disclosed as the development stand-in.
+3. **Embedding cost** is reported, not gated (amendment 1). The verdict
+   reports the embedding-spend ratio on the fact-bearing cohort and sync time.
+4. **Visibility** fails closed. Coverage is reported with
+   `facts.default_visibility` unset and set to `world`.

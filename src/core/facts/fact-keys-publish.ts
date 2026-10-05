@@ -128,9 +128,9 @@ export async function publishPageFactKeys(engine: BrainEngine, binding: FactKeys
   const keys = items.length ? assignFactKeys(items.map(item => item.text), prepared.chunks, 'chunk') : prepared.chunks.map(() => null);
   const changed = prepared.chunks.map((chunk, i) => ({ chunk, keys: keys[i] })).filter(({ chunk, keys: next }) => next !== (chunk.fact_keys ?? null));
 
-  const signature = currentEmbeddingSignature();
+  const canEmbed = !!opts.embed || !!currentEmbeddingSignature();
   let vectors: Float32Array[] = [];
-  if (changed.length && signature) {
+  if (changed.length && canEmbed) {
     try {
       vectors = await (opts.embed ?? embedBatch)(
         wrapChunkTextsForStoredMode(page, changed.map(({ chunk, keys: next }) => ({ ...chunk, fact_keys: next }))),
@@ -206,9 +206,11 @@ export async function clearPageFactKeys(engine: BrainEngine, sourceId: string, s
  * Never throws; a failed publication leaves the previous keys and vectors.
  */
 export async function publishExtractedFactKeys(engine: BrainEngine, binding: FactKeysBinding,
+  input: { pageSlug?: string; turnText: string },
   facts: ReadonlyArray<{ fact?: unknown; entity_slug?: string | null }>, visibility: 'private' | 'world',
   resolve: (engine: BrainEngine, sourceId: string, ref: string) => Promise<{ slug: string; source: string } | null>,
   abortSignal?: AbortSignal): Promise<FactKeysPublishResult> {
+  if (input.pageSlug !== binding.slug || input.turnText !== binding.text) return { published: false, reason: 'superseded' };
   try {
     const items: FactKeyItem[] = [];
     for (const f of facts) {

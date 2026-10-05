@@ -211,6 +211,7 @@ jobs:
                 test/decide/conflict-proposals-managed.test.ts
                 test/declared-lineage-visibility.test.ts
                 test/extract-endpoint-revision.serial.test.ts
+                test/fact-keys-publish.test.ts
                 test/graduation-digest.test.ts
                 test/graduation-drain.test.ts
                 test/graduation-inventory.test.ts

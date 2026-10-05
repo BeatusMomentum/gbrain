@@ -660,10 +660,7 @@ async function runPipelineBodyInner(
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
-  if (ctx.factKeys && input.pageSlug === ctx.factKeys.slug && input.turnText === ctx.factKeys.text) {
-    const { publishExtractedFactKeys } = await import('./fact-keys-publish.ts');
-    await publishExtractedFactKeys(ctx.engine, ctx.factKeys, outcome.facts, visibility, resolveEntitySlugWithSource, abortSignal);
-  }
+  if (ctx.factKeys) await (await import('./fact-keys-publish.ts')).publishExtractedFactKeys(ctx.engine, ctx.factKeys, input, outcome.facts, visibility, resolveEntitySlugWithSource, abortSignal);
   // #5888: one exact-duplicate check for the capture lanes, before either writer.
   const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug) : null);
