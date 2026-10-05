@@ -85,6 +85,9 @@ Every P0 item shipped. Nothing was cut.
   home: snapshot brains share one `brain_id`, so the maintenance principal
   lookup found and verified that registration. The test now runs with its own
   `GBRAIN_HOME`.
+- `test/decide/retrieval-think.serial.test.ts` (from #5797): the late-answer
+  test now waits for both of its intent receipts before returning, so the
+  late `fallback_regex` receipt no longer lands in the next test's count.
 - PR-budget coverage cut: the 150 s pull-request robot run on Postgres skips
   the seams and the fault that can wait out a dead owner's 2-minute claim
   lease (`effect:*`, `consumer:prepared`, `publication:prepared`,
