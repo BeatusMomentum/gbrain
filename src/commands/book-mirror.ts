@@ -41,7 +41,7 @@
 
 import * as fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { OperationError, opError } from '../core/ops/contract.ts';
+import { opError } from '../core/ops/contract.ts';
 import { isWriteReceipt } from '../core/persistence/types.ts';
 import * as path from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -359,8 +359,11 @@ export async function prepareBookMirrorPublication(engine: BrainEngine, slug: st
     }
     if (receipt.state !== 'committed') {
       const code = ['queued', 'running', 'recovering'].includes(receipt.state) ? 'write_pending' : 'storage_error';
-      const error = new OperationError(code, `Book publication is ${receipt.state}.`,
-        `Inspect get_write_request with request_id '${requestId}' before repeating publication.`);
+      const error = opError(code, `Publishing ${slug} is ${receipt.state}; the page may not hold the new mirror yet.`,
+        `Read write request ${requestId} (gbrain write-request -- ${requestId}) and wait for it to settle before repeating publication; a repeat with a new request could write the page twice.`,
+        { why: 'The publication was handed to the brain\'s write path but has not committed; its durable receipt says whether it will.',
+          fix: { argv: ['gbrain', 'write-request', '--', requestId], consent: [], actor: 'agent', requires_exclusive: false,
+            why: 'Reads the publication\'s durable write receipt, read-only.' } });
       error.writeRequest = receipt;
       error.writeError = code;
       throw error;

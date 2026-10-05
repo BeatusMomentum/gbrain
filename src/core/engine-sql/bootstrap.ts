@@ -299,7 +299,7 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
   const needsMinionJobsPrivateQueue = probe.minion_jobs_exists
     && (!probe.minion_jobs_pq_owner_exists || !probe.minion_jobs_pq_token_exists
         || !probe.minion_jobs_pq_lease_exists);
-  // v149/v201: the schema-blob queue protocol references these fields and the
+  // v149/v204: the schema-blob queue protocol references these fields and the
   // blob indexes the spend group. Repair any missing field without assigning
   // authority to historical work.
   const needsMinionJobsAuthority = probe.minion_jobs_exists

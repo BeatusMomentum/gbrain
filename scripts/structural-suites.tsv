@@ -3,7 +3,7 @@
 # Fix misclassifications in the classifier, never by hand-editing rows.
 # Columns: file	suite	cases	detector
 test/agent-install.test.ts	(file-level)	10	readFileSync
-test/agent-journey-upgrade.serial.test.ts	(1) existing scripts after the upgrade	3	readFileSync
+test/agent-journey-upgrade.serial.test.ts	(file-level)	13	readFileSync
 test/agent-register.test.ts	PGLite integration (pre-flight → tx → audit → exchange)	3	readFileSync
 test/agent-register.test.ts	resolvePreset	7	readFileSync
 test/agent-register.test.ts	structural guards	2	readFileSync
@@ -196,6 +196,7 @@ test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFi
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
+test/mcp-registration.test.ts	every stdio registration path builds from REGISTRATION_SURFACE	4	readFileSync
 test/meeting-ingestion-attendance-template.test.ts	(file-level)	3	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper

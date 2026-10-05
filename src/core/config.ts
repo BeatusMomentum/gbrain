@@ -71,6 +71,7 @@ export interface GBrainConfig {
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
   persistence?: { write_wait_ms?: number | string };
+  migrate?: { graduation?: boolean }; // `migrate.graduation false`: legacy copier instead of graduation (file plane, read pre-connect)
   /** A4 user preapprovals (file plane only; set by the trusted local CLI; read by core/consent.ts). */
   consent?: { preapprove?: { paid?: { max_usd_per_run?: number }; persistent_install?: boolean } };
   database_url?: string;
@@ -150,9 +151,9 @@ export interface GBrainConfig {
    */
   chat_model?: string;
   /**
-   * Optional silent-refusal fallback chain for `chatWithFallback()` (v0.27+).
-   * Each entry is a "provider:modelId" string. Blocked from critic/judge/
-   * synthesize flows in their respective handlers (per D13 review decision).
+   * Optional chat fallback chain for `chatWithFallback()` (v0.27+): tried in
+   * order when a chat call fails or refuses. Each entry is a "provider:modelId"
+   * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
@@ -553,6 +554,8 @@ export interface GBrainConfig {
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
     /** Search/query row shape for remote MCP callers: 'lean' (default) | 'full'. Dual-plane, DB > file. */
     result_rows?: 'lean' | 'full';
+    /** Stdio `request_tools {surface}` widens the session's tool surface (default true). Dual-plane, DB > file. */
+    allow_session_widen?: boolean | string;
   };
 }
 
@@ -1535,6 +1538,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',
   'mcp.result_rows', // C1 row shape, read dual-plane by src/mcp/result-rows.ts
+  'mcp.allow_session_widen', // stdio request_tools session widening (default on), read dual-plane by src/mcp/surface.ts
   // Skill-nag suppression (#2180): brain-resident pack install nag off-switch.
   'skillpack.nag_disabled',
   // Self-upgrade (v0.42; file plane, read on the hot path)
@@ -1646,6 +1650,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
   'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts
+  'migrate.graduation', // file plane, src/commands/migrate-graduation.ts (engine graduation opt-out)
   'consent.preapprove.paid.max_usd_per_run', 'consent.preapprove.persistent_install', // A4: file plane, core/consent.ts
   // F4b: PGLite row-delta ANALYZE (src/core/planner-stats.ts); F4a: get_health memo TTL (src/core/health-memo.ts, 0 disables).
   'planner.auto_analyze', 'planner.first_read_budget_ms', 'import.analyze_every_pages', 'health.cache_ttl_ms',

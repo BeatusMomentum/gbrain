@@ -125,7 +125,14 @@ function parseFlags(args: string[]): ParsedFlags {
     if (a === '--source') { out.source = args[++i] ?? 'default'; out.sourceExplicit = true; continue; }
     if (a === '--source-id') { out.source = args[++i] ?? ''; out.sourceExplicit = true; continue; }
     if (a.startsWith('--source-id=')) { out.source = a.slice('--source-id='.length); out.sourceExplicit = true; continue; }
-    if (a === '--limit') { out.limit = parseInt(args[++i] ?? '50', 10) || 50; continue; }
+    if (a === '--limit') {
+      const raw = args[++i] ?? '';
+      if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) {
+        process.stderr.write(`Error: --limit must be a positive safe integer (got "${raw}").\n`);
+        process.exit(2);
+      }
+      out.limit = Number(raw); continue;
+    }
     if (a === '--query') { out.query = args[++i] ?? null; continue; }
     if (a === '--budget-tokens') { rawBudget = args[++i]; continue; }
     if (a === '--budget-policy') {
@@ -832,16 +839,18 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
     ? args[sourceIndex].slice('--source='.length) : args[sourceIndex + 1];
   const { parseWriteRequestId } = await import('../core/persistence/preconditions.ts');
   const { randomUUID } = await import('node:crypto');
-  const { OperationError, operations } = await import('../core/operations.ts');
+  const { opError, operations } = await import('../core/operations.ts');
   const { reportPersistenceCliError } = await import('./persistence-delegate.ts');
   const json = args.includes('--json');
   let requestId: string;
   try {
     if (requestIndex >= 0 && (!requestValue || requestValue.startsWith('--'))) {
-      throw new OperationError('invalid_params', '--request-id requires a UUID.');
+      throw opError('invalid_params', '--request-id requires a UUID.',
+        `Give --request-id the UUID an earlier attempt of this forget printed, or omit it and gbrain forget ${id} generates one.`);
     }
     if (sourceIndex >= 0 && (!sourceValue || sourceValue.startsWith('--'))) {
-      throw new OperationError('invalid_params', '--source requires a source ID.');
+      throw opError('invalid_params', '--source requires a source ID.', `Give --source the id of the source that holds fact ${id}, e.g. --source default, or omit it to use the default source.`,
+        { fix: { argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', why: 'Lists the source ids, read-only.', requires_exclusive: false } });
     }
     requestId = parseWriteRequestId(requestValue) ?? randomUUID();
   } catch (error) {
@@ -857,7 +866,10 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
     try {
-      if (sourceValue) throw new OperationError('invalid_params', '--source cannot override the remote memory writer grant.');
+      if (sourceValue) throw opError('invalid_params', '--source cannot override the remote memory writer grant.',
+        'Drop --source: on a remote brain the connection\'s memory writer grant decides the source.',
+        { fix: { argv: ['gbrain', 'forget', String(id), ...(reason !== undefined ? ['--reason', reason] : []), '--request-id', requestId], consent: [], actor: 'agent',
+          requires_exclusive: false, why: `The same forget of fact ${id} without --source, under the same request id.` } });
       const raw = await callRemoteTool(cfg!, 'forget', params, { timeoutMs: 30_000 });
       const result = unpackToolResult<{ id: string; expired: boolean }>(raw);
       if (json) console.log(JSON.stringify(result, null, 2));

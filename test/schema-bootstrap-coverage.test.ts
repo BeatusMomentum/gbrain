@@ -232,7 +232,7 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // Authority remains nullable: bootstrap must never authorize historical work.
   { kind: 'column', table: 'minion_jobs', column: 'submission_authority' },
   { kind: 'column', table: 'minion_jobs', column: 'claim_generation' },
-  // v201 spend protocol: the fence trigger reads both; the group index reads the record.
+  // v204 spend protocol: the fence trigger reads both; the group index reads the record.
   { kind: 'column', table: 'minion_jobs', column: 'spend_authorization' },
   { kind: 'column', table: 'minion_jobs', column: 'spend_claim_token' },
 ];
@@ -882,7 +882,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // columns from the migration chain.
   'takes.embedding_model',
   'takes.embedded_text_hash',
-  // Spend meter budget owner (v201): mcp_spend_reservations and mcp_spend_log
+  // Spend meter budget owner (v204): mcp_spend_reservations and mcp_spend_log
   // are migration-only tables (no CREATE TABLE in the schema blob), so there is
   // no blob forward reference; the migration chain adds the column and index.
   'mcp_spend_reservations.budget_key',

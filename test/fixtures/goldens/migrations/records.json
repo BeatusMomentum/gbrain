@@ -1,11 +1,13 @@
 {
   "golden": {
-    "count": 196,
+    "count": 197,
     "gaps": [
       17,
       18,
       19,
-      100
+      100,
+      202,
+      203
     ],
     "helpers": {
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
@@ -28,7 +30,7 @@
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 201,
+    "latest": 204,
     "records": [
       {
         "handler": {
@@ -2972,6 +2974,19 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "persistence_graduation",
+        "sql": {
+          "length": 1498,
+          "sha256": "79590a9d55a008e72d52b9b2482a4071b0b0736bac505bdfebf8d23a5ff7b098"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 201
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "minion_spend_authorization",
         "sql": {
           "length": 2517,
@@ -2980,7 +2995,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 201
+        "version": 204
       }
     ],
     "versions": [
@@ -3179,7 +3194,8 @@
       198,
       199,
       200,
-      201
+      201,
+      204
     ]
   },
   "normalizer": "migrations-record-v1"

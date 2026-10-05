@@ -32,8 +32,8 @@ BEGIN
 END;
 $protocol$ LANGUAGE plpgsql;`;
 
-export const v201: Migration = {
-  version: 201,
+export const v204: Migration = {
+  version: 204,
   name: 'minion_spend_authorization',
   idempotent: true,
   sql: `

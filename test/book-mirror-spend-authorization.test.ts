@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runBookMirrorCmd } from '../src/commands/book-mirror.ts';
+import { prepareBookMirrorPublication, runBookMirrorCmd } from '../src/commands/book-mirror.ts';
+import { operations } from '../src/core/operations.ts';
 import { parseSpendAuthorization } from '../src/core/minions/spend-authorization.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -68,3 +69,29 @@ describe('book-mirror spend authorization', () => {
     expect(groups).toEqual([{ g: group_id }]);
   });
 });
+
+describe('book-mirror publication refusals name their next step', () => {
+  const putPage = operations.find(op => op.name === 'put_page')!;
+  const publishWith = async (receipt: unknown) => {
+    const spy = spyOn(putPage, 'handler').mockImplementation((async () => receipt) as never);
+    try {
+      const publish = await prepareBookMirrorPublication(engine, 'media/books/z-book-personalized');
+      return await publish('# Z').then(() => null, (e: unknown) => e as Record<string, any>);
+    } finally { spy.mockRestore(); }
+  };
+
+  test('a pending receipt refuses with the read-only write-request fix', async () => {
+    const err = (await publishWith({ request_id: '0192a000-0000-7000-8000-000000000009', state: 'queued', retry_after_ms: 500 }))!;
+    expect(err.code).toBe('write_pending');
+    expect(err.fix).toMatchObject({ argv: ['gbrain', 'write-request', '--', expect.any(String)], consent: [] });
+    expect(err.suggestion).toContain('gbrain write-request --');
+    expect(err.writeRequest).toMatchObject({ state: 'queued' });
+  });
+
+  test('a missing receipt refuses with a read of the page', async () => {
+    const err = (await publishWith({ ok: true }))!;
+    expect(err.code).toBe('storage_error');
+    expect(err.fix).toMatchObject({ argv: ['gbrain', 'get', '--source', 'default', '--', 'media/books/z-book-personalized'], consent: [] });
+  });
+});
+

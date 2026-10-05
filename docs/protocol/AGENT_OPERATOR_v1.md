@@ -361,7 +361,7 @@ stdout (`--json`):
           "options": [
             {
               "id": "wire",
-              "label": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "label": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             {
               "id": "skip",
@@ -540,7 +540,9 @@ gbrain returns these content blocks:
     }
   },
   "checked_at": "2026-10-03T16:20:00.000Z",
-  "contract_version": 1
+  "contract_version": 1,
+  "surface": "full",
+  "surface_source": "default"
 }
 ```
 
@@ -748,10 +750,65 @@ is stateless, so dedupe is per authenticated client and session, and
 `coaching` notices per session. Notices that describe one call's result
 (`empty_retrieval`, `unknown_param`, `listing_truncated`) are never deduped.
 
-**Mute.** Only `coaching` and `info` notices can be muted. The brain's owner
+**Mute.** `coaching` and `info` notices can be muted, plus one `ask`:
+`first_run_decisions`, so an unanswered first-run bundle stays dismissible.
+Every other safety, degraded and ask notice always shows. The brain's owner
 runs `gbrain notices mute <code>` (global; `gbrain notices list` shows the
-muted and muteable codes); a remote client calls `mute_notice {code}` (write
-scope; that client only). Safety, degraded and ask notices always show.
+muted and muteable codes). An MCP client calls `mute_notice {code}` (write
+scope): over HTTP it mutes for that client only; over the owner's stdio pipe
+it mutes for every stdio session on this machine. `gbrain notices unmute
+<code>` clears both the owner's mute and the stdio mute. Under `serve --access
+read-only`, `mute_notice` is not callable, so notice text names the CLI mute
+instead.
+
+**Notices by transport.**
+
+| Notice | stdio MCP (owner's pipe) | HTTP MCP | CLI |
+|---|---|---|---|
+| `onboard_stale_chunks`, `onboard_link_coverage`, `onboard_timeline_coverage`, `onboard_no_takes` | on a call whose result shows the gap (below) | never | `gbrain init` prints `onboard_opportunities`; `gbrain onboard --check` lists every remedy |
+| `features_auto_fix` | on `get_backlinks` / `traverse_graph` while the link graph is empty | never | `gbrain features` |
+| `first_run_decisions` | on the second successful call of a session while a decision is open | never | `gbrain init` |
+| `post_upgrade` | the first session after an upgrade | never | `gbrain post-upgrade` |
+| `backup_coverage` | once per process | never | the CLI startup rail |
+| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call | every affected call (redacted) | the command's own notices |
+
+HTTP gets no onboarding coaching because the counts are brain-wide (they cross
+source-scoped grants) and every remedy runs on the brain host, which a remote
+client cannot see. The owner gets the same coaching on stdio, the CLI and
+`gbrain doctor`.
+
+**Onboarding coaching on stdio.** The stdio serve keeps the counts behind
+init's nudge in a per-brain cache (`GBRAIN_HOME/onboard-counts-<brain>.json`,
+6 h TTL) and refreshes them in the background only while no request is in
+flight; a call that arrives while the cache is cold gets no onboarding notice.
+Each opportunity class has its own code, and attaches only to a call whose own
+result shows the limitation:
+
+| Code | Calls | Evidence on the call |
+|---|---|---|
+| `onboard_stale_chunks` | `search`, `query`, `recall`, `context_pack` | the vector arm ran and the brain has unembedded chunks (never on a keyless brain) |
+| `onboard_link_coverage` | `get_backlinks`, `traverse_graph`, `entity` | under 70% of people/company pages have an incoming link (`entity`: this card has no backlinks) |
+| `onboard_timeline_coverage` | `get_timeline`, `entity`, `get_page` | under 90% of people/company pages have timeline entries, and this people/company page has none |
+| `onboard_no_takes` | `think`, `takes_list`, `recall`, `context_pack` | the brain holds no takes |
+
+Each notice names its remedy and its cost in `why` and `user_message` (the
+embedding backfill and takes extraction are paid and need the user's consent;
+link and timeline extraction are local). Its `fix` is a read-only preview:
+`get_health` where that tool is on the session's surface (`next: run`),
+otherwise `gbrain onboard --check` rendered `tell_user_to_run`. CLI remedies
+take the brain lock the stdio serve holds, so run them after the session ends
+or through the running server. An empty brain and `GBRAIN_NO_ONBOARD_NUDGE=1`
+emit nothing.
+
+**First-run decisions on stdio.** An MCP-only agent gets the `writeback` and
+`skills_scaffold` decisions (never `search_mode` or `harness_wiring`) on the
+second successful call of a session, never the first, so the user's own request
+comes first. Finish it, then relay the bundle. Delivering the bundle records
+nothing; it returns in the next session until the decision is answered
+(`memory.auto_writeback` set, the skills scaffolded) or the user mutes
+`first_run_decisions`. `gbrain doctor` (the `memory_writeback` check) and
+`gbrain onboard --check` list decisions that are open but muted, with the
+`gbrain notices unmute first_run_decisions` command.
 
 ## Consent and preapproval
 
@@ -1023,6 +1080,33 @@ swaps in the full catalog. Harness support varies by version:
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
 
+## A shared HTTP server that cannot open its brain
+
+`gbrain serve --http` whose brain is locked, missing, damaged or unconfigured
+stays up on its port in status-only mode instead of exiting:
+
+- `GET /health` answers `503` with `Retry-After: 5` and the payload
+  `{status, reason, why, fix, user_message, retry_after_s, contract_version, instance}`.
+- `POST /mcp` lists exactly `gbrain_status`; any other tool returns one
+  `serve_status_only` error block. OAuth discovery, `/token`, `/authorize`,
+  `/register` and `/admin*` answer `503` with the `serve_status_only` envelope.
+- Every response is unauthenticated, so `reason` is always `unavailable` and
+  no path, PID or host detail appears. The fix is `gbrain doctor --json` for
+  `actor: host_admin` (`next: tell_user_to_run`): relay `user_message` to the
+  user. The detailed reason is on the brain host: stderr, the marker
+  `GBRAIN_HOME/serve-http-status-<port>.json`, and `gbrain doctor`, whose
+  `harness_wiring` check reports `serve_status_only` (`transport: http`) with
+  the reason's fix.
+- The server re-checks every 5 s and opens the brain in place on the same
+  port. HTTP cannot push `tools/list_changed` to these clients: re-list tools
+  or reconnect. A client that connected during status mode gets `401` with
+  `WWW-Authenticate` and signs in again; an authenticated `gbrain_status` on
+  the recovered server answers `status: recovered`.
+- A thin client (`gbrain` with `remote_mcp`) reports the host's
+  `serve_status_only` envelope from discovery or `/token`, with the same fix.
+- `--fail-fast` or `GBRAIN_SERVE_FAIL_FAST=1` exits non-zero instead, for
+  supervisors and container health checks that must restart the process.
+
 ## First run
 
 `gbrain init` emits one decision bundle instead of scattered prompts: an
@@ -1040,8 +1124,9 @@ Relay the bundle's one `user_message` ("Reply 'defaults' to accept …"); apply
 each answer with the decision's `argv`. Then:
 
 1. Register gbrain with the harness using the `harness_wiring` fix. The
-   registration always uses the absolute gbrain path and `--surface verbs`
-   (for example `claude mcp add gbrain -- /abs/path/gbrain serve --surface verbs`).
+   registration always uses the absolute gbrain path and `--surface starter`
+   (for example `claude mcp add gbrain -- /abs/path/gbrain serve --surface starter`;
+   `gbrain init --surface <verbs|starter|full>` changes the surface it prints).
 2. Run `gbrain doctor --only harness_wiring --json`, a read-only smoke check:
    it reads the registration, then either finds the registered server already
    running or starts it and runs initialize, tools/list and one `recall`.
@@ -1073,8 +1158,14 @@ each with a `fix`.
 - **Backup.** Repo backups exclude database-only pages and facts. When the
   `backup_coverage` notice fires, tell the user what is unprotected.
 - **Surface.** `--surface verbs` (memory verbs), `starter` or `full` decides
-  which tools you see. If a fix names a tool you cannot call, the fix is
-  rendered as `tell_user_to_run` with the CLI command instead.
+  which tools you see; every stdio registration gbrain writes pins `starter`.
+  When you call a real tool outside the session's surface, the `unknown_tool`
+  fix is `request_tools {"surface":"full"}` (`next: run`): it widens this
+  session only, sends `tools/list_changed` and returns the new tools' schemas,
+  so call them by name. Where `request_tools` is not callable (the `verbs`
+  surface, `--access read-only`, or `mcp.allow_session_widen` off), the fix is
+  the CLI equivalent rendered `tell_user_to_run`, and its `why` names the
+  lasting route: `GBRAIN_SURFACE=full` in the env of the harness's MCP server entry for gbrain.
 
 Coach at most once per topic, at a natural point, and never about something
 the user turned off on purpose.
