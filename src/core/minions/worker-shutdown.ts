@@ -47,14 +47,15 @@ export async function settleShutdownInterruptedJob(
  * After a shutdown's drain window: hand back every claim still held. Returns
  * true when any was. Called only when shutdown was requested (the process is
  * about to exit); a cooperative `stop()` keeps its claims, whose handlers are
- * still running in this process. An isolated child whose termination was not
- * confirmed is not passed in: the stall sweep owns that claim.
+ * still running in this process. With `isolated`, a child whose termination
+ * was not confirmed is skipped: the stall sweep owns that claim.
  */
 export async function releaseUndrainedClaims(
-  engine: BrainEngine, executions: Iterable<{ job: MinionJob; lockToken: string }>,
+  engine: BrainEngine, executions: Iterable<{ job: MinionJob; lockToken: string; stopped: boolean }>, isolated: boolean,
 ): Promise<boolean> {
   let any = false;
-  for (const { job, lockToken } of executions) {
+  for (const { job, lockToken, stopped } of executions) {
+    if (isolated && !stopped) continue;
     any = true;
     try {
       const released = await releaseShutdownClaim(engine, job.id, lockToken);
