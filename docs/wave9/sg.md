@@ -12,6 +12,7 @@ Integrator: fold these into CHANGELOG.md and docs/UPGRADING_DOWNSTREAM_AGENTS.md
 - **`put_skill` refuses an empty SKILL.md (A-NEW-5).** An empty or whitespace-only entry point is `invalid_params` instead of publishing a blank skill.
 - **`gbrain reindex --markdown` works on managed brains (#5377, C-NEW-5).** It used to fail every page with "cannot mutate a managed brain through the legacy writer", while doctor, upgrade and post-upgrade kept prescribing it. On a managed brain it now runs the projection repairs (`gbrain repair safe-chunks`, then `contextual-mode` unless `--no-embed`): no page revision, journal request or canonical file changes. `--type` is refused on managed brains with the repair commands.
 - **`gbrain sources writer status` no longer reports a CLI's own consumer as the brain's ingress (C-NEW-4).** The `ingress` field (always `not_running` from a one-shot CLI) is replaced by `local_process_ingress`, which says it describes only the process that answered; ownership stays under `worktrees` and `bindings`.
+- **Doctor sees unpushed source checkouts (#5063).** New `git_convergence` check: a source checkout or `sync.repo_path` with commits not on its upstream warns after 6 hours and fails after 24; uncommitted changes older than 6 hours warn. It compares with the last fetched upstream and never fetches. `bootstrap_push_health` no longer says `ok` on a recent push while the workspace is still ahead of origin, and `scripts/smoke-test.sh` accepts a configured database URL and a keyless embedding provider that doctor accepts.
 
 ## Upgrade-note rows
 
@@ -25,3 +26,4 @@ Integrator: fold these into CHANGELOG.md and docs/UPGRADING_DOWNSTREAM_AGENTS.md
 | Empty SKILL.md refused (A-NEW-5) | Editors publishing placeholder skills | none | Write a non-empty SKILL.md |
 | Managed `reindex --markdown` delegates to projection repairs (#5377) | Managed brains with chunker or contextual-mode drift | doctor calibration hint (`gbrain reindex --markdown`) now works | Run `gbrain repair safe-chunks` / `contextual-mode` directly for per-kind control |
 | `writer status`: `ingress` → `local_process_ingress` with a `scope` note (C-NEW-4) | Scripts reading `ingress` from `gbrain sources writer status --json` | none | Read `local_process_ingress.state`; for ownership read `worktrees`/`bindings` |
+| New doctor `git_convergence`; `bootstrap_push_health` warns when ahead (#5063) | Brains syncing from Git checkouts with an upstream | `gbrain doctor --only git_convergence` | Push the checkout; checkouts without an upstream are skipped |

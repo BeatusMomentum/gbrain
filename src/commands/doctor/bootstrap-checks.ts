@@ -279,18 +279,28 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         // itself failed): unverified must NOT be treated as clean below.
         let dirty = false;
         let known = false;
+        // #5063: commits on a NAMED branch not yet on origin, counted whatever the push age.
+        let ahead = 0;
         if (ws) {
           try {
             const statusOut = execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
               stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
             }).toString();
+            const branch = execFileSync('git', ['-C', ws, 'branch', '--show-current'], {
+              stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+            }).toString().trim();
+            if (branch) {
+              try {
+                ahead = parseInt(execFileSync('git', ['-C', ws, 'rev-list', '--count', `origin/${branch}..HEAD`], {
+                  stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+                }).toString().trim(), 10) || 0;
+              } catch { ahead = 0; }
+            }
             if (statusOut.trim() !== '') {
               dirty = true;
               known = true;
             } else {
-              const branchOut = execFileSync('git', ['-C', ws, 'branch', '--show-current'], {
-                stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-              }).toString().trim();
+              const branchOut = branch;
               if (branchOut) {
                 try {
                   const aheadOut = execFileSync(
@@ -366,6 +376,13 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
             message: ws
               ? `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed) — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`
               : `last successful push ${staleIso} (>48h ago); workspace tree state unverified (no bootstrap receipt on this machine names a workspace to check) — check the workspace manually`,
+          });
+        } else if (ahead > 0) {
+          // #5063: a recent successful push of something never certifies a tree that is still ahead.
+          checks.push({
+            name: 'bootstrap_push_health',
+            status: 'warn',
+            message: `last push ok (${staleIso}), but ${ws} has ${ahead} commit(s) not on origin — recent agent memory is unpushed. Run \`gbrain sources push --path ${ws}\`.`,
           });
         } else {
           checks.push({ name: 'bootstrap_push_health', status: 'ok', message: `last push ok (${staleIso})` });
