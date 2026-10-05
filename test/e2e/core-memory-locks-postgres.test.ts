@@ -1,11 +1,12 @@
 /**
- * Always-loaded core writes on Postgres: the ordered source lock
- * (core-guard.ts lockCoreSources: `sources` rows FOR UPDATE in id order,
- * own source plus `default`, taken after the worktree ownership check and
- * before the authority FOR SHARE and the counter locks) never deadlocks
- * with core writes in another source, non-core writes in `default`, or a
- * concurrent source topology change. Every write commits or is refused by
- * a business rule; none fails with a deadlock (40P01).
+ * Always-loaded core writes on Postgres: the core lock order (core-guard.ts:
+ * `persistence_brain` FOR SHARE first, then the worktree ownership check,
+ * then `sources` rows FOR UPDATE in id order, own source plus `default`,
+ * then the authority FOR SHARE and the counter locks) never deadlocks with
+ * core writes in another source, non-core writes in `default`, a concurrent
+ * source topology change, or a worktree claim (brain row, then source row,
+ * both FOR UPDATE). Every write commits or is refused by a business rule;
+ * none fails with a deadlock (40P01).
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync } from 'node:fs';
@@ -18,6 +19,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../../src/core/persistence/identity.ts';
 import { runManagedSourceLifecycle } from '../../src/core/persistence/source-lifecycle.ts';
 import { listCorePages } from '../../src/core/core-memory.ts';
+import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 
 const describeE2E = hasDatabase() ? describe : describe.skip;
 const page = (title: string, body: string, core: boolean) => `---\ntitle: ${title}\ntype: note\n${core ? 'always_load: true\n' : ''}---\n\n${body}\n`;
@@ -64,18 +66,27 @@ describeE2E('core memory ordered source lock (Postgres)', () => {
   test('a core write and a worktree-claim-shaped transaction (brain row, then source row, both FOR UPDATE) never deadlock', () => managedBrain(async ({ engine }) => {
     const put = await writer(engine);
     await put('default', 'core/seed', page('Seed', 'seed core', true));
-    let claimed = false;
-    const claim = engine.transaction(async tx => {
-      await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-      await new Promise(r => setTimeout(r, 300));
-      await tx.executeRaw("SELECT id FROM sources WHERE id='default' FOR UPDATE");
-      claimed = true;
+    let claim: Promise<void> | null = null;
+    installFaultHook(async (point, detail) => {
+      if (point !== 'publication:prepared' || claim) return;
+      let brainHeld!: () => void;
+      const held = new Promise<void>(r => { brainHeld = r; });
+      claim = engine.transaction(async tx => {
+        await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+        brainHeld();
+        await new Promise(r => setTimeout(r, 300));
+        await tx.executeRaw("SELECT id FROM sources WHERE id='default' FOR UPDATE NOWAIT");
+      });
+      await held;
     });
-    await new Promise(r => setTimeout(r, 50));
-    const write = put('default', 'core/during-claim', page('During', 'core during a claim', true));
-    const [result] = await Promise.all([write, claim]);
-    expect(claimed).toBe(true);
-    expect(result.text).not.toMatch(/deadlock|40P01/i);
-    expect(result.isError).toBe(false);
+    try {
+      const result = await put('default', 'core/during-claim', page('During', 'core during a claim', true));
+      expect(claim).not.toBeNull();
+      await claim;
+      expect(result.text).not.toMatch(/deadlock|40P01/i);
+      expect(result.isError).toBe(false);
+    } finally {
+      installFaultHook(undefined);
+    }
   }, { databaseUrl: process.env.DATABASE_URL }), 120_000);
 });

@@ -612,9 +612,9 @@ const context_pack: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): core memory plus budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.',
+  description: 'MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.',
   params: {
-    entities: { type: 'string', description: 'Comma-separated names or slugs (max 8); omit for core only.' },
+    entities: { type: 'string', description: 'Comma-separated names or slugs (max 8).' },
     budget_tokens: { type: 'number', description: 'Token budget; cards pack first.' },
     since: { type: 'string', description: 'Only open-thread events after this ISO time.' },
     session_id: { type: 'string', description: 'Opaque session id.' },

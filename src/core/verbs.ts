@@ -62,19 +62,19 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.',
+  description: 'MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.',
   params: {
     ...PAGE_MUTATION_PARAMS,
     fact: { type: 'string', description: 'One claim.' },
     items: {
       type: 'array',
-      description: 'Up to 20 facts at once (e.g. before compaction): [{fact, entity?, kind?, ttl?, provenance?}]',
+      description: '≤20 facts: [{fact, provenance}]',
       items: { type: 'object' },
     },
     provenance: {
       type: 'string',
       // Required for a single fact (the handler refuses with provenance_required); with items it may be given per item.
-      description: 'Where the fact came from (max 500 chars); per item with items.',
+      description: 'Source of the fact (max 500 chars).',
     },
     ttl: {
       type: 'string',
@@ -82,7 +82,7 @@ const remember: Operation = {
     },
     entity: {
       type: 'string',
-      description: 'Who or what it is about (name or slug).',
+      description: 'Subject (name or slug).',
     },
     infer_entity: {
       type: 'boolean',
