@@ -75,7 +75,7 @@ pages link to it, most-referenced first. A bare-name link like
 `[[Dave Example]]` whose name matches an existing page in another directory
 shows that page in `existing_matches`, so the link can be rewritten by slug.
 Remote callers never see targets that only private pages reference. Writes from remote agents record their missing
-mention targets too when `wanted_pages.remote` is on (off by default).
+mention targets too (`wanted_pages.remote`, on by default).
 
 **Say to your agent:** *"Which people and companies do my notes link to that don't have pages yet?"*
 

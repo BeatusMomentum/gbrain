@@ -104,10 +104,11 @@ export async function exerciseRemoteLinks(engine: BrainEngine, scenario: RemoteL
       if (scenario === 'wanted') {
         const wanted = () => engine.executeRaw<{ target_ref: string; producer: string; link_type: string }>(`SELECT w.target_ref,w.producer,w.link_type
           FROM wanted_links w JOIN pages p ON p.id=w.origin_page_id WHERE p.source_id=$1 AND p.slug='notes/example' ORDER BY w.target_ref`, [sourceId]);
+        await engine.setConfig('wanted_pages.remote', 'false');
         await write(MENTIONS(sourceId));
         await runLinks();
-        expect(await wanted()).toEqual([]); // wanted_pages.remote is off by default
-        await engine.setConfig('wanted_pages.remote', 'true');
+        expect(await wanted()).toEqual([]); // turned off: nothing recorded
+        await engine.executeRaw("DELETE FROM config WHERE key='wanted_pages.remote'"); // default on
         try {
           await write(`${MENTIONS(sourceId)}\nAnother paragraph.\n`);
           await runLinks();
