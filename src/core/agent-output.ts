@@ -805,6 +805,13 @@ export function toAgentError(e: unknown, ctx: AgentErrorContext): AgentEnvelope 
   }
 }
 
+/** A batch command's one-line failure for a projection conflict that outlasted its retries: code, message and next step. */
+export function projectionConflictLine(e: unknown, command: string): string | null {
+  if (!named('PageProjectionConflictError')(e)) return null;
+  const env = toAgentError(e, { transport: 'cli', command, render: cliRenderContext() });
+  return `[${env.code}] ${env.message} ${env.suggestion}`;
+}
+
 /** Pure: callers write the strings. TTY order: `Error [code]: msg` / `Fix:` / `Why:` / `Docs:`. */
 export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean }): CliErrorRender {
   const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext() });
