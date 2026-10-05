@@ -41,6 +41,8 @@ import { validateMountId } from './brain-registry.ts';
 import { agentProcessMarker } from './interaction.ts';
 import { resolveGbrainBin } from './gbrain-bin.ts';
 import { resolveWritebackConfigFromFile } from './facts/writeback-config.ts';
+import { liveStatusMarkers, type HttpStatusMarker } from './serve-http-status-marker.ts';
+import { initialStatusState, statusFix, statusHeadline, type StatusReason } from '../mcp/status-mode.ts';
 
 export type ReadinessState = 'ok' | 'disabled_by_choice' | 'not_applicable' | 'missing' | 'degraded' | 'unknown';
 export type CapabilityId =
@@ -59,6 +61,8 @@ export interface ReadinessEntry {
   asset?: string;
   /** false → stripped from the HTTP view. */
   http_visible: boolean;
+  /** harness_wiring `serve_status_only`: the transport of the status-only server. */
+  transport?: Transport;
 }
 
 export interface LockOwner { pid: number; transport: 'stdio' | 'http'; started_at?: string; is_self: boolean }
@@ -93,7 +97,7 @@ export const MIGRATIONS_REASONS = ['current', 'pending', 'engine_unreachable', '
 export const LOCAL_TRANSCRIPTS_REASONS = ['transcripts_cli_only', 'no_transcripts', 'engine_unreachable', 'probe_failed', 'probe_timeout'] as const;
 export const HARNESS_WIRING_REASONS = [
   'wired_running', 'registration_unverified', 'http_serve_running', 'multiple_sessions', 'multiple_harnesses',
-  'no_harness_detected', 'binary_unresolved', 'remote_transport',
+  'no_harness_detected', 'binary_unresolved', 'remote_transport', 'serve_status_only',
 ] as const;
 
 const VERIFY = (check: string) => ({ argv: ['gbrain', 'doctor', '--only', check, '--json'] });
@@ -383,6 +387,8 @@ export interface HarnessWiringInput {
   lockOwner: LockOwner | null;
   /** Absolute gbrain binary; null when it cannot be resolved (never registered bare). */
   gbrainBin: string | null;
+  /** A live status-only `serve --http` on this machine (its marker), when there is one. */
+  httpStatusServer?: HttpStatusMarker | null;
 }
 
 const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode' };
@@ -417,11 +423,28 @@ function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
   };
 }
 
+const STATUS_REASONS: readonly string[] = ['lock_held', 'no_brain', 'config_unreadable', 'missing_brain', 'brain_unopenable', 'repair_failed'];
+
+/**
+ * A shared `gbrain serve --http` exists but answers in status-only mode: the
+ * fix is its status reason's fix (classified again here, file reads only),
+ * never "start `gbrain serve --http`" on a port it already holds.
+ */
+export function httpStatusServerEntry(m: HttpStatusMarker): ReadinessEntry {
+  const state = initialStatusState((STATUS_REASONS.includes(m.reason) ? m.reason : 'brain_unopenable') as StatusReason);
+  return {
+    capability: 'harness_wiring', tier: 'config', http_visible: false, state: 'degraded', reason: 'serve_status_only', transport: 'http',
+    why: `A shared \`gbrain serve --http\` (PID ${m.pid}, port ${m.port}) is running in status-only mode: ${statusHeadline(state)} It re-checks every 5 s and serves the full tool list once the brain opens.`,
+    fix: statusFix(state, 'http').fix,
+  };
+}
+
 /** `harness_wiring` for a concrete detection result. Doctor (Lane E) passes filesystem-detected harnesses. */
 export function harnessWiringEntry(input: HarnessWiringInput): ReadinessEntry {
   const base = { capability: 'harness_wiring' as const, tier: 'config' as const, http_visible: false };
   if (input.transport === 'stdio') return { ...base, state: 'ok', reason: 'wired_running', why: 'An agent harness launched this gbrain MCP server over stdio.' };
   if (input.transport === 'http') return { ...base, state: 'not_applicable', reason: 'remote_transport', why: 'Harness wiring is a property of the brain host.' };
+  if (input.httpStatusServer) return httpStatusServerEntry(input.httpStatusServer);
   const { harnesses, lockOwner } = input;
   if (harnesses.length === 0) {
     return { ...base, state: 'missing', reason: 'no_harness_detected', why: 'No agent harness was detected.',
@@ -458,7 +481,7 @@ function harnessConfigEntry(transport: Transport, lockOwner: LockOwner | null): 
   const marker = agentProcessMarker();
   const harness = marker ? MARKER_HARNESS[marker] : undefined;
   cachedBin ??= { value: resolveGbrainBin() };
-  return harnessWiringEntry({ transport, harnesses: harness ? [harness] : [], lockOwner, gbrainBin: cachedBin.value });
+  return harnessWiringEntry({ transport, harnesses: harness ? [harness] : [], lockOwner, gbrainBin: cachedBin.value, httpStatusServer: liveStatusMarkers()[0] ?? null });
 }
 
 // ── config plane ───────────────────────────────────────────────────────────
