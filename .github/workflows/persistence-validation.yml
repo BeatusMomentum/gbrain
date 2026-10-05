@@ -200,8 +200,15 @@ jobs:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           SHARD: ${{ matrix.shard }}
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          GBRAIN_TEST_RECEIPT_LANE: pg-arms-bun-${{ matrix.bun }}
         run: |
           : "${DATABASE_URL:?unit-lane PostgreSQL arms require the explicit test database}"
+          # Executed-test receipts (one per file, JUnit included) feed the
+          # executed-receipts ledger and nightly-watch's failure manifest, so a
+          # master-red issue from this lane names the failing test.
+          . scripts/lib/test-env.sh
+          receipts_init pg-arms || exit 2
           # The list lives in test/postgres-unit-arms.txt (one path per line);
           # shards balance by measured runtime (scripts/postgres-arm-weights.json).
           selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 2)
@@ -219,13 +226,26 @@ jobs:
           failed=()
           for file in "${files[@]}"; do
             echo "::group::$file"
-            bun --no-env-file test --timeout=120000 "$file" || failed+=("$file")
+            receipt_begin primary "s$SHARD-$(basename "$file" .ts)" "$SHARD" 2 postgres "$file"
+            rc=0
+            bun --no-env-file test --timeout=120000 ${RECEIPT_ARGS[@]+"${RECEIPT_ARGS[@]}"} "$file" || rc=$?
+            receipt_end "$rc"
+            [ "$rc" -eq 0 ] || failed+=("$file")
             echo "::endgroup::"
           done
           for file in ${failed[@]+"${failed[@]}"}; do
             echo "::error file=$file::PostgreSQL arm failed. Reproduce: DATABASE_URL=<pgvector test database> GBRAIN_TEST_ALLOW_DATABASE_URL=1 bun test --timeout=120000 $file"
           done
           [ "${#failed[@]}" -eq 0 ]
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: receipts-pg-arms-${{ matrix.shard }}-bun-${{ matrix.bun }}
+          path: ${{ runner.temp }}/receipts
+          retention-days: 14
+          if-no-files-found: warn
+          overwrite: true
 
   invariants:
     name: ${{ matrix.engine }} / Bun ${{ matrix.bun }}
