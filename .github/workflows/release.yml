@@ -48,7 +48,6 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       exists: ${{ steps.v.outputs.exists }}
-      template_tree_hash: ${{ steps.v.outputs.template_tree_hash }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - id: v
@@ -58,13 +57,6 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          # [C3] Record the vendored template tree's git hash alongside the
-          # asset completeness check. The publish-template job embeds it in
-          # the template repo's commit message, so template-repo HEAD can be
-          # audited back to the exact reviewed tree in THIS repo. Empty until
-          # templates/bootstrap/template-repo/ is vendored.
-          tree_hash="$(git rev-parse "HEAD:templates/bootstrap/template-repo" 2>/dev/null || true)"
-          echo "template_tree_hash=$tree_hash" >> "$GITHUB_OUTPUT"
           # Complete = release exists AND carries every asset the self-updater
           # can request. A partial release must NOT short-circuit, so a re-run
           # can repair it.
@@ -309,9 +301,16 @@ jobs:
         name: Force-push the template repo
         env:
           RELEASE_VERSION: ${{ needs.version.outputs.version }}
-          TEMPLATE_TREE_HASH: ${{ needs.version.outputs.template_tree_hash }}
+          RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}
         run: |
           set -euo pipefail
+          # [C3] The vendored template tree's git hash at the gated release
+          # commit (the commit this job checked out and the release was
+          # published at, which differs from github.sha when a cancelled push
+          # was followed to a newer commit). Embedded in the template repo's
+          # commit message so template-repo HEAD audits back to the exact
+          # reviewed tree in THIS repo. Empty until the tree is vendored.
+          TEMPLATE_TREE_HASH="$(git rev-parse "${RELEASE_SHA}:templates/bootstrap/template-repo" 2>/dev/null || true)"
           cd /tmp/template-tree
           git init -q -b main
           git config user.name "gbrain-release-bot"

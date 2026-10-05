@@ -110,4 +110,13 @@ describe('release.yml waits for the CI gate', () => {
     expect(advance.run).toContain('+${RELEASE_SHA}:refs/tags/latest-stable');
     expect(advance.env!.RELEASE_SHA).toBe('${{ needs.ci-gate.outputs.sha }}');
   });
+
+  test('publish-template takes the template tree hash from the gated commit, not github.sha', () => {
+    const push = wf.jobs['publish-template']!.steps.find(s => s.run?.includes('git push --force'))!;
+    expect(push.env!.RELEASE_SHA).toBe('${{ needs.ci-gate.outputs.sha }}');
+    expect(push.run).toContain('TEMPLATE_TREE_HASH="$(git rev-parse "${RELEASE_SHA}:templates/bootstrap/template-repo" 2>/dev/null || true)"');
+    expect(push.run!.indexOf('TEMPLATE_TREE_HASH="$(git rev-parse')).toBeLessThan(push.run!.indexOf('cd /tmp/template-tree'));
+    expect(push.env!.TEMPLATE_TREE_HASH).toBeUndefined();
+    expect(readFileSync(join(import.meta.dir, '../../.github/workflows/release.yml'), 'utf8')).not.toContain('template_tree_hash');
+  });
 });
