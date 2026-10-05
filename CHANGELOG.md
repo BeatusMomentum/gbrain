@@ -10,6 +10,33 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.70.0] - 2026-10-05
+
+**Turning off contextual retrieval no longer serves vectors built from an old title.**
+
+If a page switches from title or synopsis context to plain text, its previous
+text vectors are cleared in the same database operation as the mode change.
+This prevents an old title-aware result from being treated as a plain-text
+match. Pages marked to skip embedding keep their retained vectors; switching
+mode does not start a paid re-embed.
+
+### How to use it
+
+Run `gbrain upgrade` to get the fix. If you deliberately switch a source to
+plain-text embeddings, run `gbrain embed --stale` after reviewing its expected
+cost to replace any cleared vectors.
+
+| Page state | After the change |
+| --- | --- |
+| Title or synopsis mode switches to `none` | Previous active text vectors are cleared immediately, before search can use them as plain text. |
+| Legacy `none` page with an unverified vector | A later projection rebuild clears the vector; re-embedding is opt-in. |
+| Pre-contextual page with no stored mode | Its legacy raw vectors remain grandfathered when the text and model still match. |
+
+### Itemized changes
+
+- The shared page-state writer clears active vectors and their completion stamps atomically on a contextual-to-`none` transition, in both PGLite and PostgreSQL.
+- Projection rebuilds no longer accept an unstamped vector on an explicit `none` page as proof that it came from raw text; they still preserve verified current inputs and grandfather pre-contextual NULL-mode pages.
+
 ## [0.60.68.0] - 2026-10-05
 
 **`delta` no longer skips changes after a failed read, and the 21 contributor fixes merged on 2026-10-05 are brought up to the house bar.**
