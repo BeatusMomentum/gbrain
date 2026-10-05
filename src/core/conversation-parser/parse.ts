@@ -346,10 +346,14 @@ export function applyPattern(
   // is diagnostic-only (zero behavior change here): collect the folded
   // labels so ParseResult can surface them. Fence-aware so a transcript
   // whose answers paste markdown/shell inside code fences is not flagged.
+  // A heading anchor that carries its own inline date (email-thread-heading)
+  // cannot be mistaken for a section title, so its other headings are body
+  // text, not lost speakers.
   const headingAnchored =
     diag !== undefined &&
     entry.multi_line === true &&
     entry.score_continuations_as_body === true &&
+    entry.captures.date_group === undefined &&
     (entry.test_positive ?? []).some((s) => /^#{2,3}\s/.test(s));
   let fenceMarker: '```' | '~~~' | null = null;
   const collectFoldedHeading = (line: string): void => {
@@ -604,7 +608,8 @@ function scoreFromLines(
     entry.multi_line &&
     entry.quick_reject &&
     anchorCandidates > 0 &&
-    (anchored >= 2 || firstLineAnchored) &&
+    (anchored >= 2 || firstLineAnchored ||
+      (entry.score_continuations_max_preamble_lines !== undefined && anchored === 1)) &&
     distinctSpeakersOk &&
     preambleOk
   ) {
@@ -619,8 +624,9 @@ function scoreFromLines(
  *
  * Quick_reject is honored. Patterns that opt into
  * `score_continuations_as_body` may exclude continuation lines from the
- * denominator only after the scorer sees two anchors, or an anchor on the
- * first non-blank line. Otherwise the ordinary full-body density applies.
+ * denominator only after the scorer sees two anchors, an anchor on the
+ * first non-blank line, or (with a preamble bound) one anchor inside the
+ * preamble. Otherwise the ordinary full-body density applies.
  *
  * Exported for tests.
  */
