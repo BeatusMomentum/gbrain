@@ -108,7 +108,7 @@ async function freshTarget(opts: HarnessOptions): Promise<{ engine: BrainEngine;
   assertSafeE2eDatabaseUrl(opts.postgresUrl);
   const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
   const database = `gbrain_test_graduation_${randomUUID().replace(/-/g, '')}`;
-  const admin = postgres(opts.postgresUrl, { max: 1, prepare: false });
+  const admin = postgres(opts.postgresUrl, { max: 1, prepare: false, onnotice: () => {} });
   await admin.unsafe(`CREATE DATABASE ${database}`);
   const url = new URL(opts.postgresUrl);
   url.pathname = `/${database}`;
