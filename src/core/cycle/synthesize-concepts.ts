@@ -624,7 +624,7 @@ function deterministicNarrative(group: AtomGroup): string {
  * Ground the narrative's quoted spans against the atom titles and bodies the
  * prompt carried (quotes only: a concept narrative may count or compare).
  * A claim unit with an unverified quote is removed from the narrative and
- * kept in frontmatter `unverified_claims`. Kill switch: dream.quote_verify.
+ * kept in frontmatter `unverified_claims`. Opt-in: dream.quote_verify (default off).
  */
 type UnverifiedClaim = { text: string; reason: string; detail: string };
 async function groundConceptNarrative(engine: BrainEngine, narrative: string, group: { atomTitles: string[]; atomBodies: string[] }):

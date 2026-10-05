@@ -212,7 +212,7 @@ export interface ThinkResult {
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /**
-   * Quote grounding (think.quote_verify, default on): `answer` is the safe
+   * Quote grounding (think.quote_verify, opt-in, default off): `answer` is the safe
    * version (near-match quotes repaired to the evidence's words, quotes found
    * in no evidence unquoted and marked [unverified]); `answer_raw` is what the
    * model wrote. Present only when the answer contained quotes.
@@ -1140,13 +1140,13 @@ async function groundThinkAnswer(engine: BrainEngine, answer: string, blocks: st
     persist: { answer: persisted.body, unverified_claims: persisted.quarantined } };
 }
 
-/** `think.quote_verify` (default on): ground quoted spans in think answers against the prompt's evidence. */
+/** `think.quote_verify` (default OFF, opt-in): ground quoted spans in think answers against the prompt's evidence. */
 async function readThinkQuoteVerify(engine: BrainEngine): Promise<boolean> {
   try {
     const v = await engine.getConfig('think.quote_verify');
-    return !(v && ['false', '0', 'no', 'off'].includes(v.trim().toLowerCase()));
+    return !!v && ['true', '1', 'yes', 'on'].includes(v.trim().toLowerCase());
   } catch {
-    return true;
+    return false;
   }
 }
 

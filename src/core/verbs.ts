@@ -636,7 +636,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
     properties: {
       protocol_version: { type: 'integer', const: MEMORY_VERBS_VERSION },
       answer: { type: 'string', description: 'Quoted words not found in the evidence are unquoted and marked [unverified]; never present them as quotes.' },
-      answer_raw: { type: 'string', description: 'Present when the answer contained quotes: the answer as the model wrote it.' },
+      answer_raw: { type: 'string', description: 'With think.quote_verify on and quotes in the answer: the answer as the model wrote it.' },
       quote_check: { type: 'object', properties: { grounded: { type: 'integer' }, repaired: { type: 'integer' }, unverified: { type: 'integer' } } },
       unverified_quotes: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, reason: { type: 'string' } } } },
       sources: { type: 'array', items: { type: 'string' } },

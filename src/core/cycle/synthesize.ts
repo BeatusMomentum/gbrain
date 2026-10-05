@@ -1143,7 +1143,7 @@ async function runPhaseSynthesizeInner(
     // created this run, new units only otherwise), BEFORE the provenance
     // stamp / reverse-write / embed sweep, so unsupported claims never reach
     // chunks or the markdown body. Fail-open (abort still unwinds); kill
-    // switch: dream.quote_verify=false (alias dream.synthesize.quote_verify).
+    // switch: dream.synthesize.quote_verify=false.
     let quoteVerifyStats: QuoteVerifyStats | null = null;
     let publishPending = 0;
     const sinceByTranscript = await loadChildWriteEpochs(engine, childIds, jobRawSource, verifySince);
@@ -1686,7 +1686,8 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
   const linkManifestRaw = (await engine.getConfig('dream.synthesize.link_manifest'))?.trim().toLowerCase();
   const linkManifest = !(linkManifestRaw === 'false' || linkManifestRaw === '0' || linkManifestRaw === 'off');
   // F1b kill switch (same off-spelling contract as link_manifest).
-  const quoteVerify = await (await import('./synthesize-verify.ts')).dreamQuoteVerifyEnabled(engine);
+  const quoteVerifyRaw = (await engine.getConfig('dream.synthesize.quote_verify'))?.trim().toLowerCase();
+  const quoteVerify = !(quoteVerifyRaw === 'false' || quoteVerifyRaw === '0' || quoteVerifyRaw === 'off');
   // #4216: mode default 'oneshot' (D1=A). loadOutputRoot pattern: unknown
   // values warn to stderr and fall back to the default rather than failing.
   const modeRaw = (await engine.getConfig('dream.synthesize.mode'))?.trim().toLowerCase();

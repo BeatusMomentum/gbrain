@@ -9113,7 +9113,8 @@ output_tokens, usd_estimate}, protocol_version }`.
 
 #### synthesize quote check (additive)
 
-Every quoted span in a synthesized `answer` is grounded against the evidence
+When the brain owner turns it on (`think.quote_verify`, off by default),
+every quoted span in a synthesized `answer` is grounded against the evidence
 the answer was composed from (the same page excerpts, takes and graph lines,
 no refetch). An exact match stays; a normalized or near match is replaced with
 the evidence's own words; a quote found in no evidence loses its quotation

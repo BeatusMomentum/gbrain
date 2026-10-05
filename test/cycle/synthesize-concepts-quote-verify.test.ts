@@ -1,8 +1,8 @@
 // synthesize_concepts grounds the narrative's quotes against exactly the atom
 // titles and bodies its prompt carried, before the concept page is written: a
 // claim with a quote no atom contains leaves the narrative for frontmatter
-// unverified_claims; supported quotes and computed counts stay. Kill switch:
-// dream.quote_verify (dream.synthesize.quote_verify is its alias).
+// unverified_claims; supported quotes and computed counts stay. Opt-in:
+// dream.quote_verify (default off).
 //
 // Hermetic: PGLite + injected `_atoms` and `_chat`.
 
@@ -37,6 +37,7 @@ afterAll(async () => { await engine.disconnect(); });
 beforeEach(async () => {
   await resetPgliteState(engine);
   await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
+  await engine.setConfig('dream.quote_verify', 'true');
 });
 
 describe('synthesize_concepts quote grounding', () => {
@@ -52,8 +53,9 @@ describe('synthesize_concepts quote grounding', () => {
     expect(claims[0]!.reason).toBe('quote_not_in_source');
   });
 
-  test('the dream.synthesize.quote_verify alias turns it off', async () => {
-    await engine.setConfig('dream.synthesize.quote_verify', 'false');
+  test('off by default, and the synthesis switch does not turn it on', async () => {
+    await engine.unsetConfig('dream.quote_verify');
+    await engine.setConfig('dream.synthesize.quote_verify', 'true');
     await runPhaseSynthesizeConcepts(engine, { _atoms: atoms(), _chat: chat(NARRATIVE) });
     const page = await engine.getPage('concepts/compounding');
     expect(page!.compiled_truth).toContain('luck beats skill');

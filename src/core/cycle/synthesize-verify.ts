@@ -878,13 +878,14 @@ function groundAcross(inner: string, sources: GroundedSource[]): { result: Exclu
 }
 
 /**
- * The dream quote-verify kill switch: `dream.quote_verify` (covers synthesis,
- * patterns and concepts), with `dream.synthesize.quote_verify` as an alias read
- * when the new key is unset. Default on; only an explicit off spelling disables.
+ * Quote grounding for dream patterns and concept narratives:
+ * `dream.quote_verify`, default OFF (opt-in) — the held-out run flagged too
+ * many supported quotes to turn it on for everyone. Synthesis keeps its own
+ * switch, `dream.synthesize.quote_verify` (default on).
  */
 export async function dreamQuoteVerifyEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
-  const raw = ((await engine.getConfig('dream.quote_verify')) ?? (await engine.getConfig('dream.synthesize.quote_verify')))?.trim().toLowerCase();
-  return !(raw === 'false' || raw === '0' || raw === 'off' || raw === 'no');
+  const raw = (await engine.getConfig('dream.quote_verify'))?.trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'on' || raw === 'yes';
 }
 
 export interface AnswerQuoteCheck {

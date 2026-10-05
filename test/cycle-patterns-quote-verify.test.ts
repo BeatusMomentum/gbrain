@@ -3,7 +3,8 @@
  * against the full reflection pages, right after the writes and before
  * provenance stamping. A pattern page an earlier crashed run left without
  * `quote_verified_at` is verified on the next run. Quotes only: a pattern
- * counts its evidence, so numbers are not checked.
+ * counts its evidence, so numbers are not checked. Opt-in: dream.quote_verify
+ * (default off).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -16,6 +17,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  await engine.setConfig('dream.quote_verify', 'true');
   for (const [slug, body] of [
     ['wiki/personal/reflections/r1', 'I keep saying "ship smaller pieces" when projects stall.'],
     ['wiki/personal/reflections/r2', 'Again I told myself to ship smaller pieces.'],

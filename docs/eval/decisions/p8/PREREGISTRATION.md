@@ -108,4 +108,17 @@ About $1,020 across the sealed runs, under the $1,200 program cap including pilo
 
 ## Amendments
 
-None yet.
+### 2026-10-05: custodian-written paraphrase pairs for the withdrawal review (section 3)
+
+Written before P0 generated any sealed withdrawal-review data.
+
+- **Change.** The at least 50 human-written paraphrase pairs in section 3 become at least 50 custodian-written
+  pairs. P0 writes them with a model from a family that is neither the reviewer's (TypeSafe Jev, the `conflict`
+  slot provider) nor the extraction default's (Anthropic, `facts.extraction_model`), and not the dev generator's
+  (OpenAI, `p8-withdraw-review-gen@1`): Google Gemini. P0 spot-checks every pair before it enters the sealed set
+  and drops or rewrites any pair whose label is wrong or whose wording repeats the dev generator's templates.
+- **Reason.** No human is available to write the pairs. A family different from the reviewer, the extraction
+  model and the dev generator keeps the sealed paraphrases from sharing one model's habits with the system that
+  judges them or the data the threshold was tuned on.
+- **Disclosure.** The verdict record and the PR state that the paraphrase pairs are model-written and
+  custodian-checked, not human-written. Every other gate in section 3 is unchanged.
