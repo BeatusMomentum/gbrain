@@ -64,8 +64,8 @@ export const RETRIEVAL_FEEDBACK_SQL = `
       );
 `;
 
-export const v206: Migration = {
-  version: 206,
+export const v207: Migration = {
+  version: 207,
   name: 'retrieval_feedback',
   idempotent: true,
   sql: RETRIEVAL_FEEDBACK_SQL,

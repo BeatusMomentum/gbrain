@@ -38,6 +38,7 @@ import { probeProjectionReadiness } from '../search/projection-readiness.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../search/source-boost.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
+import { declaredNames, titleName } from '../mentions/aliases.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
@@ -109,7 +110,7 @@ const FIELDS_PARAM = {
 const RETURN_UNIT_PARAM = {
   type: 'string' as const,
   enum: ['chunk', 'window', 'section', 'page', 'auto'],
-  description: "chunk, window, section, page or auto (default; whole page for conversations).",
+  description: 'auto (default) returns whole conversations.',
 };
 const RETURN_WINDOW_PARAM = {
   type: 'number' as const,
@@ -250,10 +251,6 @@ function indexOfName(text: string, word: string, wholeWord: boolean): number {
   return -1;
 }
 
-const ALIAS_DECLARATION = /\b(?:account code|also known as|a\.k\.a\.|aka|short name|ticker|code name)\b\s*[:(]?\s*["\u201c']?([A-Z0-9][A-Za-z0-9&.-]{1,24})/gi;
-/** Every ALIAS_DECLARATION keyword, lowercased: a row containing none of them cannot match the regex. */
-const DECLARATION_KEYWORDS = ['account code', 'also known as', 'a.k.a', 'aka', 'short name', 'ticker', 'code name'];
-
 /**
  * Pages often declare another name for their subject ("Account code: MULI",
  * "also known as ..."), and documents elsewhere use only that name, so a
@@ -267,14 +264,9 @@ export function aliasDeclarations(rows: Array<{ slug: string; title?: string; ch
   const q = queryText.toLowerCase();
   const out = new Map<string, AliasDeclaration>();
   for (const row of rows.slice(0, 10)) {
-    const name = (row.title ?? '').split(':').pop()!.trim();
+    const name = titleName(row.title ?? '');
     if (!name) continue;
-    const text = row.chunk_text ?? '';
-    const lower = text.toLowerCase();
-    if (!DECLARATION_KEYWORDS.some(k => lower.includes(k))) continue;
-    for (const m of text.matchAll(ALIAS_DECLARATION)) {
-      const alias = m[1].replace(/[.,;]+$/, '');
-      if (!/[A-Z0-9]/.test(alias) || alias.toLowerCase() === name.toLowerCase()) continue;
+    for (const alias of declaredNames(row.chunk_text ?? '', name)) {
       const hasName = q.includes(name.toLowerCase());
       const hasAlias = indexOfName(q, alias, true) >= 0;
       if (hasName === hasAlias) continue;
@@ -553,7 +545,7 @@ const search: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Evidence token budget (default 6000).' },
+    token_budget: { type: 'number', description: 'Evidence token cap (default 6000).' },
     // #4415: explicit ranking-axis overrides (the same knobs `query` has had
     // since v0.29.1). The auto-detect banks are English regex, so on a
     // non-English brain the recency/salience stages never fire — these flags
@@ -675,7 +667,7 @@ const query: Operation = {
     /** v0.27.1: image-similarity search. Path resolved on the CLI side
      *  before the op fires (the op receives raw bytes neither side; the
      *  CLI loads the file, base64-encodes, and passes through `image`). */
-    image: { type: 'string', description: 'Base64 image for image search.' },
+    image: { type: 'string', description: 'Base64 image.' },
     image_mime: { type: 'string', description: 'MIME type of image.' },
     // #4356 — the text/hybrid path no longer hard-defaults this to 20; an
     // omitted OR falsy (0) `limit` resolves from the active search mode's
@@ -701,9 +693,9 @@ const query: Operation = {
     snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     return_unit: RETURN_UNIT_PARAM,
     return_window: RETURN_WINDOW_PARAM,
-    token_budget: { type: 'number', description: 'Token cap on the returned evidence.' },
-    expand: { type: 'boolean', description: 'Default true; false skips the expansion LLM call.' },
-    detail: { type: 'string', description: 'low (compiled truth only), medium (default) or high (all chunks).' },
+    token_budget: { type: 'number', description: 'Evidence token cap.' },
+    expand: { type: 'boolean', description: 'Default true; false skips the LLM expansion.' },
+    detail: { type: 'string', description: 'low (compiled truth), medium (default) or high (all chunks).' },
     fields: FIELDS_PARAM,
     mode: { type: 'string', description: 'Local callers only.' },
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
@@ -720,8 +712,8 @@ const query: Operation = {
     source_id: { type: 'string', description: SOURCE_ID_PARAM_DESCRIPTION },
     cross_modal: { type: 'string', enum: ['text', 'image', 'both', 'auto'], description: 'Default auto.' },
     embedding_column: { type: 'string', description: 'Registered embedding column.' },
-    adaptive_return: { type: 'boolean', description: 'true when one specific answer is wanted (fewer rows; never returns empty); omit for breadth.' },
-    autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth. Cuts at the score cliff, unlike adaptive_return.' },
+    adaptive_return: { type: 'boolean', description: 'true when one answer is wanted (fewer rows; never returns empty); omit for breadth.' },
+    autocut: { type: 'boolean', description: 'Default on (never returns empty); false gives full top-K for breadth, unlike adaptive_return.' },
     relational: { type: 'boolean', description: 'Relationship-graph arm (default on).' },
   },
   handler: async (ctx, p) => {

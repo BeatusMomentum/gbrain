@@ -859,7 +859,11 @@ export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: st
       return moved.length;
   }
 
-/** Replace a page's alias set under its page-key lock, inside the engine's transaction. */
+/**
+ * Replace a page's frontmatter alias set under its page-key lock, inside the
+ * engine's transaction. Derived rows (`origin` declared/subject, written by
+ * the mention pass) are left alone.
+ */
 export async function setPageAliases(
   exec: SqlExecutor,
   tx: Pick<BrainEngine, 'lockPageKeys'>,
@@ -869,7 +873,7 @@ export async function setPageAliases(
 ): Promise<void> {
     const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
       await tx.lockPageKeys([{ sourceId, slug }]);
-      await exec.executeRaw('DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+      await exec.executeRaw("DELETE FROM page_aliases WHERE source_id=$1 AND slug=$2 AND origin='frontmatter'", [sourceId, slug]);
       if (!uniq.length) return;
       await exec.executeRaw(`INSERT INTO page_aliases (source_id,alias_norm,slug)
         SELECT $1,a,$2 FROM unnest($3::text[]) AS a ON CONFLICT DO NOTHING`, [sourceId, slug, uniq]);

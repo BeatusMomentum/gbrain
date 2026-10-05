@@ -168,7 +168,7 @@ const entity: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: 'retrieval',
-  description: 'MEMORY VERB (v1): one known person/company/project card, zero LLM. A miss returns found:false with near matches and create_safety, so you do not duplicate a page. Facts: recall.',
+  description: 'MEMORY VERB (v1): person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches and create_safety. Facts: recall.',
   params: {
     name: { type: 'string', required: true, description: 'Name, alias or slug (e.g. "Alice Example").' },
   },
@@ -188,14 +188,21 @@ const entity: Operation = {
     const t0 = Date.now();
     const { buildEntityCard } = await import('./verbs/entity-card.ts');
     const result = await buildEntityCard(ctx.engine, ctx.sourceId ?? 'default', name, {
-      remote: ctx.remote !== false,
+      remote: ctx.remote !== false, includeReferences: true, surfaceCeiling: ctx.surfaceCeiling,
     });
+    const coverage = result.card?.coverage ?? result.coverage;
+    if (coverage) {
+      const { mentionCoverageNotice } = await import('./mentions/coverage.ts');
+      const notice = mentionCoverageNotice(coverage, result.card?.entity.type);
+      if (notice) ctx.emitNotice?.(notice);
+    }
     return {
       protocol_version: MEMORY_VERBS_VERSION,
       found: result.found,
       latency_ms: Date.now() - t0,
       ...(result.card ? { card: result.card } : {}),
       ...(result.suggestions !== undefined ? { suggestions: result.suggestions } : {}),
+      ...(!result.card && result.coverage ? { coverage: result.coverage } : {}),
     };
   },
   cliHints: { name: 'entity', positional: ['name'] },
@@ -404,6 +411,28 @@ const SYNTHESIS_STATUS_ENUM = [
   'ok', 'empty_answer', 'not_json', 'output_truncated', 'no_llm', 'model_unusable', 'llm_error', 'extractive_fallback',
 ];
 
+/** `coverage` on entity cards and misses (mentions/coverage.ts). */
+const COVERAGE_SCHEMA = {
+  type: 'object',
+  required: ['state', 'pending_pages', 'last_pass_at'],
+  properties: {
+    state: { type: 'string', enum: ['complete', 'pending', 'disabled', 'type_not_linkable', 'failed'] },
+    pending_pages: { type: 'integer' },
+    last_pass_at: { type: ['string', 'null'] },
+    degraded: { type: 'boolean', const: true },
+  },
+} as const;
+
+/** One `referenced_by` row (mentions/referrers.ts). */
+const REFERENCE_ROW_SCHEMA = {
+  type: 'object',
+  required: ['slug', 'title', 'type', 'canonical_type', 'date', 'date_source', 'preview'],
+  properties: {
+    slug: { type: 'string' }, title: { type: 'string' }, type: { type: ['string', 'null'] }, canonical_type: { type: 'string' },
+    date: { type: ['string', 'null'] }, date_source: { type: 'string' }, preview: { type: 'string' },
+  },
+} as const;
+
 const RECALL_BUDGET_ARM_SCHEMA = {
   type: 'object',
   required: ['candidates', 'kept', 'dropped', 'used'],
@@ -557,8 +586,27 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           backlink_count: { type: 'integer' },
           active_fact_count: { type: 'integer' },
           relationship_note: { type: 'string' },
+          // Entity recall — ADDITIVE OPTIONAL (frozen-v1 legal); the `entity`
+          // verb sets them, ambient callers (context_pack, delta) do not.
+          referenced_by_count: { type: 'integer' },
+          referenced_by: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['canonical_type', 'total', 'rows'],
+              properties: {
+                canonical_type: { type: 'string' },
+                total: { type: 'integer' },
+                rows: { type: 'array', items: REFERENCE_ROW_SCHEMA },
+                next: { type: 'object', required: ['tool', 'arguments'], properties: {
+                  tool: { type: 'string', const: 'get_backlinks' }, arguments: { type: 'object' }, requires_surface: { type: 'string', enum: ['starter'] } } },
+              },
+            },
+          },
+          coverage: COVERAGE_SCHEMA,
         },
       },
+      coverage: COVERAGE_SCHEMA,
       suggestions: {
         type: 'array',
         items: {

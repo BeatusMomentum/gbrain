@@ -497,7 +497,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 112/112 public tables",
+          "message": "RLS enabled on 110/110 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -509,7 +509,7 @@
         },
         {
           "category": "meta",
-          "message": "938 column(s) verified against live schema",
+          "message": "907 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1648,26 +1648,6 @@
         {
           "category": "meta",
           "details": {
-            "answers_recorded": 0,
-            "docs": "docs/guides/retrieval-feedback.md",
-            "enabled": false,
-            "implicit": false,
-            "influence": 0.1,
-            "last_rating_at": null,
-            "learn": true,
-            "ratings_cited": 0,
-            "ratings_explicit": 0,
-            "top_client_share_7d": null,
-            "weights": 0,
-            "weights_off_neutral": 0
-          },
-          "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
-          "name": "retrieval_feedback_health",
-          "status": "ok"
-        },
-        {
-          "category": "meta",
-          "details": {
             "column": "not_null",
             "failed": [],
             "pending": 0
@@ -1945,13 +1925,13 @@
         },
         {
           "category": "meta",
-          "message": "Active pack gbrain-base-v2@1.2.0+6c7be06e is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.3.0+a50a67b9 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "0 distinct typed values (pack declares 19)",
+          "message": "0 distinct typed values (pack declares 20)",
           "name": "type_proliferation",
           "status": "ok"
         },
