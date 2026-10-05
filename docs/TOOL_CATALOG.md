@@ -112,7 +112,7 @@ Every non-localOnly operation on the MCP surface: 138 tools across 23 areas. **S
 |---|---|---|---|---|
 | `add_link` | Create a typed link (edge) from one page to another in the same source. | write |  |  |
 | `find_orphans` | Find disconnected pages. | read |  |  |
-| `get_backlinks` | List links pointing to a page. | read | yes |  |
+| `get_backlinks` | Links to a page; group:"page" pages by referrer, newest first. | read | yes |  |
 | `get_links` | List a page's outgoing links (typed edges to other pages). | read |  |  |
 | `list_link_sources` | Link provenances in the brain (e.g. | read | yes |  |
 | `remove_link` | Remove a link between two pages (optionally only one link_type or link_source). | write |  |  |
@@ -141,7 +141,7 @@ Every non-localOnly operation on the MCP surface: 138 tools across 23 areas. **S
 |---|---|---|---|---|
 | `context_pack` | MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. | read | yes |  |
 | `delta` | MEMORY VERB (v1): what changed since a time (pages, facts, thread events), zero LLM. | read | yes |  |
-| `entity` | MEMORY VERB (v1): one known person/company/project card, zero LLM. | read | yes |  |
+| `entity` | MEMORY VERB (v1): person/company/account card, zero LLM. | read | yes |  |
 | `forget` | MEMORY VERB (v1): expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
 | `recall` | MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
 | `remember` | MEMORY VERB (v1): save one fact; provenance required. | write | yes |  |
@@ -198,7 +198,7 @@ Every non-localOnly operation on the MCP surface: 138 tools across 23 areas. **S
 |---|---|---|---|---|
 | `assemble_evidence` | Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): the same windows, sections or pages `query` returns with return_unit, packed into token_budget. | read |  |  |
 | `cache_stats` | Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) plus row counts and total hits. | admin |  |  |
-| `query` | Ranked hybrid search with multi-query expansion, for concept / synonym / landscape questions: expansion recovers synonym-phrased matches. | read | yes |  |
+| `query` | Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonym-phrased matches). | read | yes |  |
 | `search` | Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. | read | yes |  |
 | `search_by_image` | Image-as-query retrieval. | read |  |  |
 | `search_modes` | Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with attribution (mode default vs config override), the three frozen bundles, and a reranker_readiness verdict (whether the resolved reranker will actually run; remote callers get the verdict without the host key inventory). | read |  |  |

@@ -1576,6 +1576,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // reconcile-links, and sweep. The documented off-switch is `gbrain config
   // set auto_link false` — same unregistered-key class as auto_chronicle.
   'auto_link',
+  // Entity mention index (core/mentions/policy.ts): off switch, +type/-type linkable types, names never linked.
+  'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore',
   // #4987: the write-path timeline extractor's off switch (read by
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
