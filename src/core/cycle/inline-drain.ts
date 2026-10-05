@@ -42,6 +42,7 @@ import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
 import { RateLeaseUnavailableError, leaseFullBackoffMs } from '../minions/rate-leases.ts';
 import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
 import { withChatPhase } from '../ai/chat-usage.ts';
+import { runWithJobSpend } from '../minions/spend-authorization.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { anySignal, throwIfAborted } from '../abort-check.ts';
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
@@ -364,7 +365,7 @@ async function drainLoop(
         // work (e.g. dream synthesize) would silently absorb every child's
         // spend into the phase tag, breaking the one-ledger-per-surface rule
         // the phase telemetry depends on.
-        result = await withChatPhase(`job:${job.name}`, () => handler(context));
+        result = await withChatPhase(`job:${job.name}`, () => runWithJobSpend(engine, job, context, handler));
         handlerRan = true;
       } catch (e) {
         handlerErr = e;
