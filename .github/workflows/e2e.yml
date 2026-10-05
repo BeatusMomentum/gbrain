@@ -881,11 +881,16 @@ jobs:
       # reports its cancelled shards as cancelled (no coverage, not a test
       # failure). A shard that failed or hit timeout-minutes in a run nobody
       # cancelled stays a failure. docs/TESTING.md#full-corpus-report-states
+      # Status functions are only valid in `if:`, so cancellation reaches the
+      # classifier through GITHUB_ENV.
+      - name: Note run cancellation
+        if: cancelled()
+        run: echo "RUN_CANCELLED=true" >> "$GITHUB_ENV"
       - name: Classify full E2E shards
         id: shards
+        if: always()
         env:
           FULL_E2E_RESULT: ${{ needs.coverage-full-e2e.result }}
-          RUN_CANCELLED: ${{ cancelled() }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RUN_ID: ${{ github.run_id }}
           DOCS: docs/TESTING.md#full-corpus-report-states

@@ -138,7 +138,15 @@ describe('nightly E2E scheduling', () => {
     expect(report.steps.indexOf(classify)).toBeLessThan(report.steps.indexOf(mergeStep));
     expect(classify.id).toBe('shards');
     expect(classify.env.FULL_E2E_RESULT).toBe('${{ needs.coverage-full-e2e.result }}');
-    expect(classify.env.RUN_CANCELLED).toBe('${{ cancelled() }}');
+    expect(classify.if).toBe('always()');
+    expect(classify.env.RUN_CANCELLED).toBeUndefined();
+    const note = report.steps.find((step: any) => step.name === 'Note run cancellation');
+    expect(report.steps.indexOf(note)).toBe(report.steps.indexOf(classify) - 1);
+    expect(note.if).toBe('cancelled()');
+    expect(note.run).toBe('echo "RUN_CANCELLED=true" >> "$GITHUB_ENV"');
+    // Status functions such as cancelled() are refused outside `if:` (HTTP 422
+    // at dispatch), so no step may carry one in env or run.
+    for (const step of report.steps) expect(JSON.stringify({ env: step.env, run: step.run })).not.toMatch(/\b(cancelled|always|success|failure)\(\)/);
     for (const name of ['Merge full corpus', 'Coverage summary → step summary', 'Baseline gate (fullCorpus, like-for-like)']) {
       expect(report.steps.find((step: any) => step.name === name).if).toBe("steps.shards.outputs.state == 'complete'");
     }
