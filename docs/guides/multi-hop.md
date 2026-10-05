@@ -12,9 +12,9 @@ companies backed by Fund A?"*
 
 ## Two ways in
 
-**Ask in plain English (search, query, recall, think).** With
-`search.relational_planner` on, a question that chains 2-3 relationships is
-planned into typed hops and the answers join the normal search results. Each
+**Ask in plain English (search, query, recall, think).** In the `balanced`
+and `tokenmax` modes (`search.relational_planner`, on by default there), a
+question that chains 2-3 relationships is planned into typed hops and the answers join the normal search results. Each
 chain row carries a `relational` field:
 
 ```json
@@ -67,7 +67,6 @@ gbrain init --pglite --no-embedding
 printf -- '---\ntype: person\ntitle: Bob Example\n---\nBob Example is a robotics engineer.\n' | gbrain put people/bob-example
 printf -- '---\ntype: company\ntitle: Acme Example\n---\nAcme Example makes robots. It was founded by [Bob Example](people/bob-example).\n' | gbrain put companies/acme-example
 printf -- '---\ntype: person\ntitle: Alice Example\n---\nAlice Example is a seed investor. She backed [Acme Example](companies/acme-example) in 2024.\n' | gbrain put people/alice-example
-gbrain config set search.relational_planner true
 gbrain graph-query people/alice-example --hop invested_in:object --hop founded:subject
 gbrain search "Who founded the companies that Alice Example invested in?" --json
 ```
@@ -99,6 +98,11 @@ the hops run outward from it. Questions it does not plan, and says so in a
   invested in"), counting and superlatives;
 - two named entities, quoted names, or relationships whose page types do not
   chain.
+
+The vocabulary is fixed, so many rewordings are not planned: on the held-out
+multi-hop set the planner planned 70% of plainly worded questions and 21% of
+reworded ones. A chain question that comes back without `meta.relational_plan`
+was not planned; call `traverse_graph` with explicit `hops` instead.
 
 Single-relationship questions ("who invested in Acme?") keep the one-hop
 relational arm. Split an unplanned question into one-relationship questions,
@@ -140,8 +144,8 @@ company → company or deal), and a chain reads a link by that signature:
 `uncertain` when both fit (company ↔ company investment links, walked as
 written at half weight) and not at all when neither fits. Frontmatter,
 manual and attendance-section links keep their stored direction.
-`search.relational_orient_onehop` applies the same reading to
-single-relationship questions; unset, it follows `search.relational_planner`.
+`search.relational_orient_onehop` (off by default) applies the same reading to
+single-relationship questions.
 
 Every page and edge in a chain passes the caller's read scope before anything
 is ranked: private, deleted, quarantined and out-of-scope pages never appear
@@ -153,8 +157,8 @@ sanitized excerpt of at most 160 characters.
 
 | Key | Effect |
 |---|---|
-| `search.relational_planner` | Plan 2-3 relationship questions into typed chains (search, query, recall, think) |
-| `search.relational_orient_onehop` | Single-relationship walks read links written on either page (unset = follows the planner) |
+| `search.relational_planner` | Plan 2-3 relationship questions into typed chains (search, query, recall, think). On in `balanced` and `tokenmax`, off in `conservative`; `gbrain config set search.relational_planner false` turns it off |
+| `search.relational_orient_onehop` | Single-relationship walks read links written on either page. Off by default; unset follows the planner |
 | `search.relational_chain_slots` | When a chain fires, up to this many chain rows (answers, then the pages on their paths) lead page 1; 0..10, default 10, 0 keeps a single evidence slot |
 
 Each chain hop expands at most 50 pages, 100 links per page and 10 paths per

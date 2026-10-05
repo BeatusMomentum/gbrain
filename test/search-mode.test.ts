@@ -89,7 +89,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       // ranker wave (R1) — relational rerank pin, 3 in every bundle (0 = off).
       relational_rerank_pin: 3,
       relational_planner: false,
-      relational_orient_onehop: null,
+      relational_orient_onehop: false,
       relational_chain_slots: 10,
       // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
       keyword_arm_confidence_floor: null,
@@ -134,8 +134,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       relational_retrieval_depth: 2,
       // ranker wave (R1) — relational rerank pin, 3 in every bundle (0 = off).
       relational_rerank_pin: 3,
-      relational_planner: false,
-      relational_orient_onehop: null,
+      relational_planner: true,
+      relational_orient_onehop: false,
       relational_chain_slots: 10,
       // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
       keyword_arm_confidence_floor: null,
@@ -178,8 +178,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       relational_retrieval_depth: 2,
       // ranker wave (R1) — relational rerank pin, 3 in every bundle (0 = off).
       relational_rerank_pin: 3,
-      relational_planner: false,
-      relational_orient_onehop: null,
+      relational_planner: true,
+      relational_orient_onehop: false,
       relational_chain_slots: 10,
       // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
       keyword_arm_confidence_floor: null,
@@ -1107,11 +1107,10 @@ describe('ranker wave (R1) — relational_rerank_pin knob (relational rows bypas
 });
 
 describe('multi-hop planner knobs (relational_planner, relational_orient_onehop)', () => {
-  test('bundles ship the planner off and orientation following it', () => {
-    for (const m of ['conservative', 'balanced', 'tokenmax'] as const) {
-      expect(MODE_BUNDLES[m].relational_planner).toBe(false);
-      expect(MODE_BUNDLES[m].relational_orient_onehop).toBeNull();
-    }
+  test('balanced and tokenmax ship the planner on (held-out verdict); conservative off; one-hop orientation opt-in everywhere', () => {
+    expect(MODE_BUNDLES.conservative.relational_planner).toBe(false);
+    for (const m of ['balanced', 'tokenmax'] as const) expect(MODE_BUNDLES[m].relational_planner).toBe(true);
+    for (const m of ['conservative', 'balanced', 'tokenmax'] as const) expect(MODE_BUNDLES[m].relational_orient_onehop).toBe(false);
   });
 
   test('config booleans parse; garbage falls through', () => {
@@ -1123,14 +1122,15 @@ describe('multi-hop planner knobs (relational_planner, relational_orient_onehop)
     expect(loadOverridesFromConfig({ 'search.relational_chain_slots': '11' }).relational_chain_slots).toBeUndefined();
   });
 
-  test('knobsHash: planner off (default or explicit) hashes like the pre-planner build; on, orientation and slots fold in', () => {
+  test('knobsHash: planner off ignores chain slots; on folds slots and orientation in', () => {
     const dflt = knobsHash(resolveSearchMode({ mode: 'balanced' }));
-    const off = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: false, relational_chain_slots: 3 } }));
-    const on = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: true } }));
-    const onSlots = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: true }, perCall: { relational_chain_slots: 0 } }));
-    const onNoOrient = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: true, relational_orient_onehop: false } }));
-    const orientOnly = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_orient_onehop: true } }));
-    expect(off).toBe(dflt);
-    expect(new Set([dflt, on, onSlots, onNoOrient, orientOnly]).size).toBe(5);
+    const explicitOn = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: true, relational_orient_onehop: false } }));
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: false } }));
+    const offSlots = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_planner: false, relational_chain_slots: 3 } }));
+    const onSlots = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { relational_chain_slots: 0 } }));
+    const orient = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_orient_onehop: true } }));
+    expect(explicitOn).toBe(dflt);
+    expect(offSlots).toBe(off);
+    expect(new Set([dflt, off, onSlots, orient]).size).toBe(4);
   });
 });

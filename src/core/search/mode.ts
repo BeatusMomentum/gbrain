@@ -368,7 +368,7 @@ export interface ModeBundle {
   relational_planner: boolean;
   /**
    * Typed one-hop walks read edges stored from either page's side by the
-   * relation's type signature. `null` follows `relational_planner`. Override:
+   * relation's type signature (opt-in; `null` follows `relational_planner`). Override:
    * per-call SearchOpts.relationalOrientOneHop → `search.relational_orient_onehop`.
    */
   relational_orient_onehop: boolean | null;
@@ -479,9 +479,9 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_retrieval_depth: 2,
     // Ranker wave (R1) — relational rows re-pinned above reranked text rows (0 = off).
     relational_rerank_pin: DEFAULT_RELATIONAL_RERANK_PIN,
-    // Multi-hop planner: default set by its held-out eval (off until then).
+    // Multi-hop planner: relational retrieval is off in this tier, so the planner is too.
     relational_planner: false,
-    relational_orient_onehop: null,
+    relational_orient_onehop: false,
     relational_chain_slots: 10,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
@@ -545,9 +545,9 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_retrieval_depth: 2,
     // Ranker wave (R1) — relational rows re-pinned above reranked text rows (0 = off).
     relational_rerank_pin: DEFAULT_RELATIONAL_RERANK_PIN,
-    // Multi-hop planner: default set by its held-out eval (off until then).
-    relational_planner: false,
-    relational_orient_onehop: null,
+    // Multi-hop planner ON, one-hop orientation opt-in: docs/eval/decisions/p7-heldout-2026-10-05.
+    relational_planner: true,
+    relational_orient_onehop: false,
     relational_chain_slots: 10,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
@@ -611,9 +611,9 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_retrieval_depth: 2,
     // Ranker wave (R1) — relational rows re-pinned above reranked text rows (0 = off).
     relational_rerank_pin: DEFAULT_RELATIONAL_RERANK_PIN,
-    // Multi-hop planner: default set by its held-out eval (off until then).
-    relational_planner: false,
-    relational_orient_onehop: null,
+    // Multi-hop planner ON, one-hop orientation opt-in: docs/eval/decisions/p7-heldout-2026-10-05.
+    relational_planner: true,
+    relational_orient_onehop: false,
     relational_chain_slots: 10,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
