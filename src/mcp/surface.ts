@@ -38,7 +38,6 @@ import type { BrainEngine } from '../core/engine.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { opError } from '../core/ops/contract.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../core/minions/tools/brain-allowlist.ts';
-export { NEW_INSTALL_ADVERTISED_SURFACE, newInstallAdvertisedSurface, newInstallServeSurface } from './new-install-surface.ts';
 
 export type McpSurface = 'verbs' | 'starter' | 'full';
 

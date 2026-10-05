@@ -78,6 +78,12 @@ listing fewer tools to the agent, set `mcp.advertised_surface`:
 gbrain config set mcp.advertised_surface verbs   # list the 7 verbs; everything else stays callable
 ```
 
+Unset is the recommended default. In a held-out agent benchmark, listing only
+`starter` or `verbs` lowered task success by 8–10 points pooled across four
+frontier models, mostly on tasks that need an unlisted tool (agents rarely
+reached for `request_tools`), and saved no tokens. Narrow the list only for a
+client that cannot hold the full catalog.
+
 `tools/list` then shows the advertised surface, and the initialize
 instructions tell the agent how many more tools are callable. On stdio,
 `request_tools` with `tools: [names]` returns their schemas and adds them to

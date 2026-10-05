@@ -11,7 +11,6 @@
 
 import { shellQuote } from './shell-quote.ts';
 import type { McpSurface } from '../mcp/surface.ts';
-import { newInstallServeSurface } from '../mcp/new-install-surface.ts';
 
 export { shellQuote };
 
@@ -20,11 +19,8 @@ export { shellQuote };
  * memory verbs plus the page reads/writes, timeline write, skills and agent
  * lane bootstrap's instructions name (`get_timeline` is the known gap the F6
  * hint and `request_tools` cover), and stays far below the full catalogue.
- * Once the held-out benchmark picks an advertised surface for new installs
- * (NEW_INSTALL_ADVERTISED_SURFACE), registrations pin `full` and the advertised
- * surface narrows the list instead.
  */
-export const REGISTRATION_SURFACE: McpSurface = newInstallServeSurface();
+export const REGISTRATION_SURFACE: McpSurface = 'starter';
 
 /** A registration command's surface value (`verbs`, `starter` or `full`). */
 export function isRegistrationSurface(v: unknown): v is McpSurface {

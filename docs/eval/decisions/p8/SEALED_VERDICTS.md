@@ -9,7 +9,7 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 | Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6%; the second custodian's rescore with the fixed scorer: 16 of 319 (5.0%), upper bound 8.0% | FAIL | `think.quote_verify` and `dream.quote_verify` off by default (opt-in) |
 | Quote grounding retest (section 6, amendment 2026-10-05) | same gate, fresh sealed quotes | pending (second custodian) | — | stays off until PASS |
 | Semantic withdrawal review (section 3) | precision LB ≥ 0.90, end-to-end recall ≥ 0.60, zero proposals on corrected values, N5 unchanged | precision LB 0.970 (124/124 eval families, 248 actions), end-to-end recall 0.977, 0 proposals on corrected values, N5 contracts pass | PASS | `review_withdraw` on (proposes where the conflict slot is on with a TypeSafe key); reference calibration shipped |
-| Advertised tool surface (section 7) | pooled success ≥ control − 3 pts, no leak rise, hidden-tool family ≥ control − 5 pts | pending | — | new installs advertise `full` |
+| Advertised tool surface (section 7) | pooled success ≥ control − 3 pts, no leak rise, hidden-tool family ≥ control − 5 pts | `starter` −8.5 pts pooled (95% CI −12.5 to −4.8), hidden-tool −50.0; `verbs` −9.9 pts (−13.3 to −6.7), hidden-tool −21.2; no leaks | FAIL (both arms) | new installs advertise `full`; `mcp.advertised_surface` stays opt-in; `rate_answer` not added as an eighth verb |
 | HTTP graph freshness (report-only) | remote `put_page`: timeline row at commit; mention links after the `links` effect; typed edges only after extract | as stated, on PGLite (`test/remote-graph-freshness.test.ts`) | REPORT | no switch |
 | Duplicate review kinds (section 4) | per kind, as section 3 | not run until P1/P5 enqueue candidates | — | off |
 
@@ -38,6 +38,29 @@ estimate, not a verdict: per the 2026-10-05 retest amendment in the preregistrat
 fresh sealed quote set and runs it against the frozen build with the same gate. Quote grounding stays off by
 default until that retest passes. The dream synthesis quote check (`dream.synthesize.quote_verify`) stays
 byte-identical to master; none of these changes reach it.
+
+## Advertised tool surface
+
+Cat 40 on P0's seed-disjoint held-out world, callable surface `full` in every arm, uncapped tool results, four
+models (`claude-sonnet-5-5`, `gpt-6.1-sol`, `claude-opus-5-5`, `claude-fable-5-1`). Disclosure: per the 2026-10-05
+amendment, Fable ran 1 repeat per task; the other models ran 2. Spend about $767 of the $800 limit.
+
+| Arm | Pooled success | Δ vs `full` (95% CI) | Hidden-tool success | Δ vs `full` |
+|---|---|---|---|---|
+| `full` (control) | 93.2% | — | 96.9% | — |
+| `starter` | 84.7% | −8.5 (−12.5 to −4.8) | 46.9% | −50.0 |
+| `verbs` | 83.3% | −9.9 (−13.3 to −6.7) | 75.6% | −21.2 |
+
+Neither narrower arm passes the pooled gate (≥ control − 3 points) or the hidden-tool gate (≥ control − 5 points),
+so the held-out result rejects narrowing the default list. Hidden-tool tasks collapse under `starter`: GPT goes from
+87.5% to 5% and Fable from 100% to 25%. Opus is the only model that passes `starter`; the outcome is the same
+without Fable. No arm raised leaks or context exposures, no model sat at a ceiling, and the arms cost about the
+same, so the narrower lists saved no tokens.
+
+Default: fresh installs keep advertising every callable tool, and new stdio registrations keep master's
+`serve --surface starter` pin. The `mcp.advertised_surface` setting (every tool stays callable; `request_tools`
+reaches the unlisted ones) ships as an opt-in. `rate_answer` stays on the `full` surface only and does not join the
+verbs.
 
 ## HTTP graph freshness (report-only)
 
