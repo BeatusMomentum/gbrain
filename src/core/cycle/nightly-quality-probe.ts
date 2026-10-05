@@ -408,7 +408,7 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
     });
     capFields = { cap_usd: maxUsd, cap_source: policy.capSource };
     const runTracker = tracker;
-    meter = { calls: 0, cost_usd: 0, unpriced_calls: 0 };
+    meter = { calls: 0, cost_usd: 0, unpriced_calls: 0, ...(policy.pricingOverrides ? { pricing_overrides: policy.pricingOverrides } : {}) };
     const runMeter = meter;
     await withBudgetTracker(runTracker, () => withChatCallMeter(runMeter, () =>
       deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes })));

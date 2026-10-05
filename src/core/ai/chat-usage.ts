@@ -31,6 +31,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalLookup } from '../model-pricing.ts';
+import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 
 export interface ChatUsageRecord {
   /** "provider:modelId" of the model that actually answered. */
@@ -63,14 +64,17 @@ export function currentChatPhase(): string | null {
 /**
  * Successful chat calls counted for one cycle phase (phase containment,
  * dream_paid_loop) or one nightly probe run. A meter that declares
- * `cost_usd` also prices each call from canonical pricing: priced calls add
- * to `cost_usd`, unpriced ones (`estimateChatCostUsd` null) add to
+ * `cost_usd` also prices each call with the budget tracker's resolver
+ * (`priceFor`: `pricing_overrides`, then the shipped tables, the claude-cli
+ * sibling rate and free local providers; table rows keep their cache-token
+ * rates): priced calls add to `cost_usd`, unpriced ones add to
  * `unpriced_calls` instead of counting as 0.
  */
 export interface ChatCallMeter {
   calls: number;
   cost_usd?: number;
   unpriced_calls?: number;
+  pricing_overrides?: PricingOverrides;
 }
 const __chatMeterStore = new AsyncLocalStorage<ChatCallMeter>();
 
@@ -158,8 +162,13 @@ export function recordChatUsage(input: {
   try {
     const cost_usd = estimateChatCostUsd(input.model, input.usage);
     if (pricedMeter) {
-      if (cost_usd === null) pricedMeter.unpriced_calls = (pricedMeter.unpriced_calls ?? 0) + 1;
-      else pricedMeter.cost_usd = (pricedMeter.cost_usd ?? 0) + cost_usd;
+      const price = priceFor(input.model, 'chat', pricedMeter.pricing_overrides);
+      const { input_tokens, output_tokens, cache_read_tokens = 0, cache_write_tokens = 0 } = input.usage;
+      const meterCost = price === null ? null
+        : price.source === 'table' && cost_usd !== null ? cost_usd
+        : ((input_tokens + cache_read_tokens + cache_write_tokens) * price.pricing.input + output_tokens * price.pricing.output) / 1_000_000;
+      if (meterCost === null) pricedMeter.unpriced_calls = (pricedMeter.unpriced_calls ?? 0) + 1;
+      else pricedMeter.cost_usd = (pricedMeter.cost_usd ?? 0) + meterCost;
     }
     if (!sink) return;
     const record: ChatUsageRecord = {

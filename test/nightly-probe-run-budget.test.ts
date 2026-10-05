@@ -219,6 +219,9 @@ describe('pricing policy for the run cap', () => {
       }));
       expect(r.outcome).toBe('pass');
       expect(providerCalls).toEqual([UNPRICED, UNPRICED]);
+      const [event] = readRecentQualityProbeEvents(1);
+      expect(event!.unpriced_chat_calls).toBe(0);
+      expect(event!.chat_cost_usd).toBeCloseTo(2 * (1000 * 1 + 200 * 2) / 1_000_000, 9);
     });
   });
 });
