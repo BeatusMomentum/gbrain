@@ -40,8 +40,8 @@ import { cl100kAvailable, estimateTokens } from '../src/core/chunkers/token-esti
 
 const SERVED_STARTER_MAX_CHARS = 25_000;
 const SERVED_STARTER_MAX_TOKENS = 5_700;
-/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; temporal status/as_of params under 26,000; +279 for traverse_graph's optional `hops` typed-chain parameter, 26,278 measured). */
-const SERVED_STARTER_MAX_JSON_CHARS = 26_300;
+/** The whole tools/list JSON, annotations included (25,735 measured at v0.60.46.0; +279 for traverse_graph's optional `hops` typed-chain parameter, 26,220 measured with the temporal params on get_links/get_backlinks). */
+const SERVED_STARTER_MAX_JSON_CHARS = 26_250;
 /** 4,042 at the cost wave + 586 for the operator contract's error protocol, notice prefix and memory loop (F1); no schema guidance moved here. */
 const INSTRUCTIONS_MAX_CHARS = 4_628;
 const DESCRIPTION_HARD_CAP = 1_200;
@@ -55,7 +55,7 @@ const TOOL_BUDGETS: Record<string, number> = {
   get_skill_asset: 790, get_write_request: 330, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
   list_link_sources: 220, list_pages: 1090, list_skills: 670, list_write_requests: 450, put_page: 1320,
   put_skill: 1420, query: 3250, recall: 1590, remember: 1370, request_tools: 560, resolve_slugs: 410, search: 1760,
-  submit_agent: 750, sync_brain_skills: 770, synthesize: 550, traverse_graph: 1090, whoami: 230,
+  submit_agent: 750, sync_brain_skills: 770, synthesize: 550, traverse_graph: 960, whoami: 230,
 };
 
 /** DX-14: phrases each tool's description must keep. */

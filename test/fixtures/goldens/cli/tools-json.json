@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 199254,
-    "stdoutSha256": "61d83356099b57f1ad5d538d8a9bad4770eb427597f084fb42200b5cf754a0a6",
+    "stdoutBytes": 199096,
+    "stdoutSha256": "df226db4f7613a8e9c158b25db57bc595413bf3cfc5ccef5130111051f18b2d9",
     "toolNames": [
       "remember",
       "entity",
@@ -1648,6 +1648,7 @@
               "type": "boolean"
             },
             "as_of": {
+              "description": "YYYY-MM-DD",
               "type": "string"
             },
             "slug": {
@@ -1659,6 +1660,7 @@
               "type": "string"
             },
             "status": {
+              "description": "Default live.",
               "enum": [
                 "live",
                 "all"
@@ -1696,14 +1698,12 @@
         "name": "traverse_graph",
         "parameters": {
           "all_sources": "boolean?",
-          "as_of": "string?",
           "depth": "number?",
           "direction": "string?",
           "hops": "array?",
           "link_type": "string?",
           "slug": "string",
-          "source_id": "string?",
-          "status": "string?"
+          "source_id": "string?"
         },
         "required_scopes": [],
         "schema": {
@@ -1711,9 +1711,6 @@
             "all_sources": {
               "description": "Same as source_id __all__.",
               "type": "boolean"
-            },
-            "as_of": {
-              "type": "string"
             },
             "depth": {
               "description": "Max depth (cap 10).",
@@ -1755,13 +1752,6 @@
             },
             "source_id": {
               "description": "One source, or '__all__'.",
-              "type": "string"
-            },
-            "status": {
-              "enum": [
-                "live",
-                "all"
-              ],
               "type": "string"
             }
           },

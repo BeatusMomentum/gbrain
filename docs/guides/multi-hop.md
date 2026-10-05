@@ -131,8 +131,8 @@ ended is skipped, while events such as founding and investing stay true after
 they happen. A tense marker right before a relationship that can end sets
 that hop alone: "the companies Alice formerly advised" walks ended advisory
 roles, "used to work at" and "worked at" walk every job, "currently works at"
-walks live ones; the other hops keep the default. `traverse_graph` with `hops` takes `status` and `as_of` like a
-plain walk, and `graph.edge_validity off` turns the rule off.
+walks live ones; the other hops keep the default. `traverse_graph` with
+`hops` walks live relationships, and `graph.edge_validity off` turns the rule off.
 
 ## Direction and evidence
 

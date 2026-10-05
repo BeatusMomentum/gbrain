@@ -113,7 +113,7 @@ describe('traverse_graph hops', () => {
 });
 
 describe('traverse_graph hops: relationship validity', () => {
-  test('an ended state relationship is not walked by default; status "all" walks it', async () => {
+  test('an ended state relationship is not walked; a "formerly" question walks it', async () => {
     await engine.putPage('people/carol-example', { type: 'person', title: 'carol', compiled_truth: 'carol', timeline: '' });
     await engine.putPage('companies/old-example', { type: 'company', title: 'old', compiled_truth: 'old', timeline: '' });
     await engine.addLink('companies/old-example', 'people/bob-example', 'founded by bob', 'founded', 'markdown');
@@ -124,10 +124,6 @@ describe('traverse_graph hops: relationship validity', () => {
     const live = await runLocal({ slug: 'people/carol-example', hops });
     expect(live.answers).toEqual([]);
     expect(live.diagnostics.status).toBe('no_edges');
-    const all = await runLocal({ slug: 'people/carol-example', hops, status: 'all' });
-    expect(all.answers.map((a: { slug: string }) => a.slug)).toEqual(['people/bob-example']);
-    const then = await runLocal({ slug: 'people/carol-example', hops, as_of: '2020-03-01' });
-    expect(then.answers.map((a: { slug: string }) => a.slug)).toEqual(['people/bob-example']);
 
     // The search arm: present tense walks live relationships, "formerly" walks the ended one.
     for (const slug of ['people/bob-example', 'companies/old-example']) {
