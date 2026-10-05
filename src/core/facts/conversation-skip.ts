@@ -16,6 +16,10 @@
  * On a managed brain the single-email and prose outcomes are not durable:
  * recording them would turn a page that wrote nothing into a derived-facts
  * write without a persistence receipt, so those pages stay retryable there.
+ * A multi-message email thread on a managed brain is skipped the same way:
+ * replacing a page's conversation facts has no receipted publication path
+ * yet, so it writes nothing and is retried (TODOS.md, managed conversation
+ * facts).
  */
 import { looksLikeMeetingNotes } from '../conversation-parser/builtins.ts';
 import { deriveDateContext } from '../conversation-parser/parse.ts';
@@ -46,6 +50,13 @@ export function conversationSkip(
       reason: 'no page date to place message times',
       message: 'no page date to place message times (they would read 1970-01-01); add a date: to the page frontmatter to extract it',
       durable: true,
+    };
+  }
+  if (opts.managed && messages.length > 1 && parse.matched_pattern_id === 'email-thread-heading') {
+    return {
+      reason: `an email thread in this ${page.type} page`,
+      message: `an email thread in this ${page.type} page; managed brains do not extract email-thread conversation facts yet (no receipted publication path); skipped`,
+      durable: false,
     };
   }
   let reason: string | null = null;
