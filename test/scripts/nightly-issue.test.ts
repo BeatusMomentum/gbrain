@@ -49,6 +49,7 @@ const heavy = () => ({
   annotations: Object.fromEntries([111415376248, 111415376292, 111415376359].map(id => [id, load<unknown[]>(`annotations-${id}.json`)])),
 });
 const realRows = parseKnownRed(readFileSync(join(ROOT, '.github/nightly-known-red.tsv'), 'utf8')).rows;
+const hermesRow: KnownRow = { workflow: 'Heavy Tests', job: 'Hermes door e2e (credentialed, real binary, loud-fail)', signature: 'Run hermes door tests', kind: 'known-skipped', todo: 'PR time to green', review_by: '2026-10-25' };
 const scaleRow: KnownRow = { workflow: 'Scale tier', job: 'scale pglite 20000', signature: 'phase watchdog: vectors', kind: 'known-red', todo: 'PGLite bulk-embedding cost at 20k+ chunks', review_by: '2026-10-25' };
 const scaleRows = [...realRows, scaleRow];
 const recordOf = (body: unknown) => readJsonBlock<IncidentRecord>(String(body), JSON_MARKER)!;
@@ -163,12 +164,12 @@ describe('nightly-watch incidents', () => {
     expect(quiet.calls.some(c => c.path.endsWith('/comments'))).toBe(false);
   });
 
-  test('the keyless Hermes leg is known-skipped: the run is not green and the issue stays open with an owner action', async () => {
+  test('a known-skipped row (the keyless Hermes leg) keeps the run from reading green: the run is not green and the issue stays open with an owner action', async () => {
     const h = heavy();
     const jobs = h.jobs.jobs.map(j => j.name.startsWith('Hermes') ? { ...j, conclusion: 'success', steps: j.steps!.map(s => ({ ...s, conclusion: s.name === 'Run hermes door tests' ? 'skipped' : 'success' })) }
       : { ...j, conclusion: j.conclusion === 'failure' ? 'success' : j.conclusion });
     const { client } = fakeClient({ ...h, jobs: { ...h.jobs, jobs } });
-    const { assessment, plan } = await watchRun({ client, repo: REPO, runId: 1, rows: realRows, today: TODAY, dryRun: true });
+    const { assessment, plan } = await watchRun({ client, repo: REPO, runId: 1, rows: [...realRows, hermesRow], today: TODAY, dryRun: true });
     expect(assessment.state).toBe('known-skipped');
     expect(plan.action).toBe('create');
     expect(plan.record!.next_step).toBe('owner_action');
