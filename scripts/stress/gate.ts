@@ -308,12 +308,12 @@ export function missingWork(plan: Plan, manifests: Manifest[]): string[] {
   return missing;
 }
 
-export interface JobTiming { name: string; created_at: string; started_at: string | null; completed_at: string | null }
+export interface JobTiming { name: string; conclusion?: string | null; created_at: string; started_at: string | null; completed_at: string | null }
 const p95 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]! : 0; };
 
 /** p95 queue (created → started) and completion (created → completed) minutes of the shard jobs, and their runner-minutes. */
 export function shardTimings(jobs: JobTiming[]): { shards: number; p95QueueMin: number; p95CompletionMin: number; runnerMin: number } {
-  const shards = jobs.filter(j => /Stress shard|Race hunt shard/.test(j.name) && j.started_at && j.completed_at);
+  const shards = jobs.filter(j => /Stress shard|Race hunt shard/.test(j.name) && j.conclusion !== 'skipped' && j.started_at && j.completed_at);
   const min = (a: string, b: string) => (Date.parse(b) - Date.parse(a)) / 60_000;
   return {
     shards: shards.length,

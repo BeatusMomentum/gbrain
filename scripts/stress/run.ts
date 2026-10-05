@@ -105,7 +105,16 @@ class PgServer {
   urlFor(db: string): string { const u = new URL(this.adminUrl); u.pathname = `/${db}`; return u.toString(); }
   private async sql<T>(fn: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
     const sql = postgres(this.adminUrl, { max: 1, onnotice: () => {}, connect_timeout: 10 });
-    try { return await fn(sql); } finally { await sql.end({ timeout: 5 }); }
+    try {
+      return await fn(sql);
+    } catch (e) {
+      const err = e as Error & { code?: string; errors?: Array<{ code?: string }> };
+      const code = err.code ?? err.errors?.map(x => x.code).filter(Boolean).join('/') ?? '';
+      if (!err.message || /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|CONNECT_TIMEOUT/.test(code + err.message)) {
+        throw new Error(`cannot reach the stress database server ${redact(this.adminUrl)} (${code || err.name}). Why: every database iteration clones its own database there. Fix: start the server (or unset GBRAIN_STRESS_ADMIN_URL/DATABASE_URL so --postgres starts a container) and re-run`);
+      }
+      throw e;
+    } finally { await sql.end({ timeout: 5 }).catch(() => {}); }
   }
   async create(index: number): Promise<string> {
     if (!this.template) {
@@ -325,7 +334,7 @@ const relativeToRoot = (p: string) => p.startsWith(ROOT) ? p.slice(ROOT.length +
 function killTree(pid: number) { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } setTimeout(() => { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }, 5000).unref(); }
 
 function executedIdentities(dir: string): string[] {
-  const full = join(ROOT, dir);
+  const full = resolve(ROOT, dir);
   const report = readdirSync(full).find(f => f.endsWith('.junit.xml'));
   if (!report) return [];
   try { return parseJUnit(readFileSync(join(full, report), 'utf8')).filter(c => c.status === 'pass' || c.status === 'fail').map(c => c.test); } catch { return []; }
@@ -455,6 +464,8 @@ async function main(argv: string[]): Promise<number> {
   process.on('SIGTERM', onSignal(143));
 
   const results: FileResult[] = [];
+  let setupMs = 0;
+  const runStarted = Date.now();
   try {
     if (needsDb.length) {
       if (!args.postgres) {
@@ -471,9 +482,8 @@ async function main(argv: string[]): Promise<number> {
       if (built.status !== 0) throw new Error(`building the pre-feature executable failed (scripts/build-shared-skills-baseline.sh): ${built.stderr.trim().split('\n').pop()}`);
       ctx.oldBinary = bin;
     }
-    const setupMs = Date.now() - setupStarted;
+    setupMs = Date.now() - setupStarted;
     log(`  setup ${(setupMs / 1000).toFixed(1)}s`);
-    const runStarted = Date.now();
     for (const p of plan) {
       if (p.reason) { results.push({ file: p.file, profile: p.profile.name, env: p.profile.env, arm: p.profile.arm, status: 'not-stressed', reason: p.reason, seedBase: 0, firstIteration: 1, iterations: [], reproduce: '' }); continue; }
       const items = args.work ? args.work.filter(w => w.file === p.file) : [{ file: p.file, first: args.firstIteration, count: args.iterations }];
@@ -483,7 +493,8 @@ async function main(argv: string[]): Promise<number> {
     const manifest = writeManifest(ctx, results, selection, setupMs, runMs);
     return summarize(results, manifest, setupMs, runMs);
   } catch (e) {
-    console.error(`test:stress: ${(e as Error).message}\n  Docs: ${STRESS_DOCS}`);
+    console.error(`test:stress: ${(e as Error).message || String(e)}\n  Docs: ${STRESS_DOCS}`);
+    if (results.length) writeManifest(ctx, results, selection, setupMs, Date.now() - runStarted);
     return 2;
   } finally {
     await ctx.pg?.close().catch(() => {});

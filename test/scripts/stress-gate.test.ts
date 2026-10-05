@@ -175,7 +175,7 @@ describe('report', () => {
 
   test('p95 queue and completion come from the shard jobs only', () => {
     const t = (name: string, c: number, s: number, e: number) => ({ name, created_at: new Date(c * 60_000).toISOString(), started_at: new Date(s * 60_000).toISOString(), completed_at: new Date(e * 60_000).toISOString() });
-    const timings = shardTimings([t('stress-changed-tests / Stress shard 1', 0, 1, 11), t('stress-changed-tests / Stress shard 2', 0, 3, 23), t('test (1)', 0, 0, 99)]);
+    const timings = shardTimings([t('stress-changed-tests / Stress shard 1', 0, 1, 11), t('stress-changed-tests / Stress shard 2', 0, 3, 23), t('test (1)', 0, 0, 99), { ...t('race-hunt / Race hunt shard ${{ matrix.shard }}', 0, 0, 0), conclusion: 'skipped' }]);
     expect(timings).toEqual({ shards: 2, p95QueueMin: 3, p95CompletionMin: 23, runnerMin: 30 });
   });
 });

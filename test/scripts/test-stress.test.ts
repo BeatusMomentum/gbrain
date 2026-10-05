@@ -26,8 +26,11 @@ function stress(root: string, ...args: string[]) {
   const env: Record<string, string | undefined> = { ...process.env, GBRAIN_STRESS_ROOT: root };
   delete env.DATABASE_URL;
   delete env.GITHUB_SHA;
-  const r = spawnSync(process.execPath, [RUNNER, ...args, '--out', join(root, 'out')], { encoding: 'utf8', env, timeout: 120_000 });
-  const manifestPath = join(root, 'out', 'stress-manifest.json');
+  // CI writes receipts outside the checkout ($RUNNER_TEMP); so does this test.
+  const out = mkdtempSync(join(tmpdir(), 'gbrain-test-stress-out-'));
+  dirs.push(out);
+  const r = spawnSync(process.execPath, [RUNNER, ...args, '--out', out], { encoding: 'utf8', env, timeout: 120_000 });
+  const manifestPath = join(out, 'stress-manifest.json');
   return { code: r.status, out: `${r.stdout}\n${r.stderr}`, manifest: existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : undefined };
 }
 
@@ -40,7 +43,7 @@ describe('test:stress runner', () => {
     expect(file).toMatchObject({ file: 'test/stable.test.ts', profile: 'unit', env: 'no-database', status: 'pass', seedBase: 40 });
     expect(file.iterations.map((it: { index: number; seed: number; executed: number }) => [it.index, it.seed, it.executed])).toEqual([[1, 40, 2], [2, 41, 2], [3, 42, 2]]);
     for (const it of file.iterations) {
-      const dir = join(root, it.receipt);
+      const dir = it.receipt;
       expect(readdirSync(dir).filter(f => f.endsWith('.junit.xml') || f.endsWith('.receipt')).sort()).toEqual(['stress--stable.test.ts-i' + it.index + '--primary.receipt', 'stress.junit.xml']);
     }
     expect(r.out).toContain('setup');
