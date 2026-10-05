@@ -271,6 +271,7 @@ jobs:
                 test/repair-frontmatter.test.ts
                 test/shared-skills-catalog.test.ts
                 test/shared-skills-retention-capacity.test.ts
+                test/shared-skills-source-opt-out.test.ts
                 test/stats-health-source-scope.test.ts
                 test/sync-frontmatter-recovery.test.ts
                 test/sync-frontmatter-slug-conflict.test.ts

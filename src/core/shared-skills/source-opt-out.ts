@@ -17,7 +17,7 @@ export interface SharedSkillsSourceView {
   reason_code: string | null;
   reason: string | null;
   explanation: string;
-  parked: (SharedSourceParked & { next_step: string }) | null;
+  parked: (SharedSourceParked & { resume: string }) | null;
 }
 
 const statusArgv = (sourceId: string) => ['gbrain', 'sources', 'shared-skills', sourceId, 'status', '--json'];
@@ -52,7 +52,7 @@ export async function readSharedSkillsSourceView(engine: BrainEngine, sourceId: 
   const policy = await sharedSkillSourcePolicyOrPreserve(engine, sourceId);
   const reasonCode = policy.mode === 'content' ? null : policy.reason.split(':')[0]!;
   const record = await readRecord(engine, sourceId, source.incarnation);
-  const parked = policy.mode !== 'preserve_files' && record?.parked ? { ...record.parked, next_step: parkedReason(sourceId, record.parked) } : null;
+  const parked = policy.mode !== 'preserve_files' && record?.parked ? { ...record.parked, resume: parkedReason(sourceId, record.parked) } : null;
   const explanation = policy.mode === 'content'
     ? `Shared skills are on for ${sourceId}: the migration may inventory and adopt its skillpack. Opt out with gbrain sources shared-skills ${sourceId} off.`
     : configured === false
@@ -66,7 +66,7 @@ export function sharedSkillsStatusLines(view: SharedSkillsSourceView): string[] 
   return [
     `${view.source_id}: config.shared_skills = ${view.configured === null ? 'unset (on)' : String(view.configured)}; effective policy ${view.mode}${view.reason_code ? ` (${view.reason_code})` : ''}`,
     `  ${view.explanation}`,
-    ...(view.parked ? [`  parked inventory since ${view.parked.parked_at} (${view.parked.limit}): ${view.parked.next_step}`] : []),
+    ...(view.parked ? [`  parked inventory since ${view.parked.parked_at} (${view.parked.limit}): ${view.parked.resume}`] : []),
   ];
 }
 
