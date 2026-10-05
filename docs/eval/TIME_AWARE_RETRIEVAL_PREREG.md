@@ -74,3 +74,34 @@ Anything that fails ships off or is removed.
 
 Estimates and approved caps (caps are 2× estimates): early-kill path ≈ $500
 cap; full path ≈ $2,290 cap. Spend stops at a cap and is reported.
+
+## Amendment 1 — 2026-10-05 (before any sealed cell)
+
+Recorded before any sealed fact-key cell runs; development results so far are
+in [`TIME_AWARE_RETRIEVAL_RESULTS.md`](TIME_AWARE_RETRIEVAL_RESULTS.md).
+
+1. **Cost bounds are reported, not gated.** The embedding-multiplier bound
+   (≤ 1.3× for fact-bearing pages) and the sync wall-time bound (≤ +5%) no
+   longer decide the default. Fact keys re-embed keyed chunks after
+   extraction by design, so their extra embedding spend is the price of the
+   intended work; accuracy decides. The verdict and the release notes report
+   the embedding-spend ratio on the fact-bearing cohort (keyed pages over a
+   full write → extract → refresh cycle) and sync wall time, both against
+   the same build with `search.fact_keys off`. The `think` p95 bound is
+   unchanged for R-arms.
+2. **Visibility coverage is reported under both settings.** Fact keys fail
+   closed: a private fact never keys a world-visible page. The verdict
+   reports keyed-page coverage with `facts.default_visibility` unset
+   (private) and set to `world` (the single-principal posture bootstrap
+   configures). The benchmark arms run with `world`, the configuration under
+   which a single-user brain keys its own conversations.
+3. **The `tokenmax` comparison stays in the gate and runs.** The benchmark
+   harness gains production per-chunk synopsis generation for
+   `--mode tokenmax`, so the F2 gate compares fact keys under `balanced`
+   against synopsis embeddings as production builds them, on LongMemEval-M
+   development questions, before any sealed cell.
+4. **Shipping configuration under test.** Sealed cells run the frozen build's
+   production fact-key path (not the eval arm), with `search.fact_keys on`,
+   the release-default `balanced` bundle, and the production default facts
+   extraction model; Haiku 4.5 remains disclosed as the development-gate
+   stand-in.
