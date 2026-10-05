@@ -232,6 +232,9 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // Authority remains nullable: bootstrap must never authorize historical work.
   { kind: 'column', table: 'minion_jobs', column: 'submission_authority' },
   { kind: 'column', table: 'minion_jobs', column: 'claim_generation' },
+  // v201 spend protocol: the fence trigger reads both; the group index reads the record.
+  { kind: 'column', table: 'minion_jobs', column: 'spend_authorization' },
+  { kind: 'column', table: 'minion_jobs', column: 'spend_claim_token' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -351,6 +354,9 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS submission_authority;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS claim_generation;
+      DROP INDEX IF EXISTS idx_minion_jobs_spend_group;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS spend_authorization;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS spend_claim_token;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -455,6 +461,9 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS submission_authority;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS claim_generation;
+      DROP INDEX IF EXISTS idx_minion_jobs_spend_group;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS spend_authorization;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS spend_claim_token;
 
       -- WP4 (v127) strip: surface columns + the wedge-signal index; replay
       -- must succeed from the pre-v127 shape.
@@ -873,6 +882,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // columns from the migration chain.
   'takes.embedding_model',
   'takes.embedded_text_hash',
+  // Spend meter budget owner (v201): mcp_spend_reservations and mcp_spend_log
+  // are migration-only tables (no CREATE TABLE in the schema blob), so there is
+  // no blob forward reference; the migration chain adds the column and index.
+  'mcp_spend_reservations.budget_key',
+  'mcp_spend_log.budget_key',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so

@@ -166,6 +166,8 @@ const FORWARD_REFERENCE_PROBES: readonly Probe[] = [
   ['minion_jobs_pq_lease_exists', 'minion_jobs', 'private_queue_lease_until'],
   ['minion_jobs_submission_authority_exists', 'minion_jobs', 'submission_authority'],
   ['minion_jobs_claim_generation_exists', 'minion_jobs', 'claim_generation'],
+  ['minion_jobs_spend_authorization_exists', 'minion_jobs', 'spend_authorization'],
+  ['minion_jobs_spend_claim_token_exists', 'minion_jobs', 'spend_claim_token'],
   ['facts_exists', 'facts'],
   ['facts_embedding_model_exists', 'facts', 'embedding_model'],
   ['facts_embedded_text_hash_exists', 'facts', 'embedded_text_hash'],
@@ -297,10 +299,12 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
   const needsMinionJobsPrivateQueue = probe.minion_jobs_exists
     && (!probe.minion_jobs_pq_owner_exists || !probe.minion_jobs_pq_token_exists
         || !probe.minion_jobs_pq_lease_exists);
-  // v149: the schema-blob queue protocol references both fields. Repair either
-  // missing field without assigning authority to historical work.
+  // v149/v201: the schema-blob queue protocol references these fields and the
+  // blob indexes the spend group. Repair any missing field without assigning
+  // authority to historical work.
   const needsMinionJobsAuthority = probe.minion_jobs_exists
-    && (!probe.minion_jobs_submission_authority_exists || !probe.minion_jobs_claim_generation_exists);
+    && (!probe.minion_jobs_submission_authority_exists || !probe.minion_jobs_claim_generation_exists
+        || !probe.minion_jobs_spend_authorization_exists || !probe.minion_jobs_spend_claim_token_exists);
   // v143 (dream_verdicts_ttl, #4657): the Postgres blob index
   // dream_verdicts_expires_idx references expires_at, but the column only
   // lands via migration v143 — a Postgres brain at schema v30-v142
@@ -715,6 +719,8 @@ async function applyLaterColumnGaps(target: ForwardReferenceBootstrapTarget, gap
     await exec(`
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS submission_authority JSONB;
       ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS claim_generation BIGINT NOT NULL DEFAULT 0;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS spend_authorization JSONB;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS spend_claim_token BIGINT;
     `);
   }
 }
