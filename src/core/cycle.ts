@@ -1029,24 +1029,30 @@ export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: B
     // competing module-style engine that nulls the shared db singleton
     // mid-cycle (which broke every phase after lint with a misleading
     // "connect() has not been called").
-    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined, signal, sourceId }); // #5180: sourceId scopes the managed-brain coordinator write path
+    // `cycle.lint_fix` (default on): only an explicit falsy value makes the phase report-only; a config
+    // read failure keeps the default. `gbrain lint --fix` is unaffected.
+    const lintFix = !/^\s*(false|0|off|no)\s*$/i.test(await engine?.getConfig('cycle.lint_fix').catch(() => null) ?? '');
+    const result = await runLintCore({ target: brainDir, fix: lintFix, dryRun, engine: engine ?? undefined, signal, sourceId }); // #5180: sourceId scopes the managed-brain coordinator write path
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
     // 'ok' when nothing noteworthy remains:
     //   - no issues at all, or
     //   - non-dry-run and everything fixable was fixed.
-    // 'warn' when issues remain after the run.
+    // 'warn' when issues remain after the run (a managed repair left pending counts as remaining).
     const status: PhaseStatus =
-      issues === 0 || (!dryRun && remaining === 0) ? 'ok' : 'warn';
+      issues === 0 || (!dryRun && lintFix && remaining === 0) ? 'ok' : 'warn';
     return {
       phase: 'lint',
       status,
       duration_ms: 0, // set by caller
       summary: dryRun
         ? `${issues} issue(s) found (dry-run, no writes)`
-        : `${fixed} fix(es) applied, ${remaining} remaining`,
-      details: { issues, fixed, pages_scanned: result.pages_scanned, dryRun, write_path: result.write_path, fix_pending: result.fix_pending },
+        : !lintFix
+          ? `${issues} issue(s) found (report-only: cycle.lint_fix=false)`
+          : `${fixed} fix(es) applied, ${remaining} remaining`,
+      details: { issues, fixed, pages_scanned: result.pages_scanned, dryRun, lint_fix: lintFix, write_path: result.write_path,
+        fix_pending: result.fix_pending, ...(result.pending_issues.length ? { pending: result.pending_issues } : {}) },
     };
   } catch (e) {
     return {
