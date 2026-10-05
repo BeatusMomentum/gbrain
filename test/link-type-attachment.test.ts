@@ -51,3 +51,9 @@ test('links joined by "and" share the verb before the first: works at [A] and at
   expect(inferLinkType('person', window, undefined, 'companies/widget-co', undefined, window.indexOf('[Widget]'))).toBe('works_at');
   expect(inferLinkType('person', 'Alice works at [Acme](companies/acme-example) and also advises [Widget](companies/widget-co).', undefined, 'companies/widget-co')).toBe('advises');
 });
+
+test('a verb right before a preposition and the next link belongs to that link: "Took an advisory role with [X]"', async () => {
+  const content = 'Alice works at [Beta](companies/beta-example).\n\n## Timeline\n\n- **2024-03-01** | linkedin — Took an advisory role with [Acme](companies/acme-example)';
+  const r = await extractPageLinks('people/alice-example', content, {}, 'person', { resolve: async () => null } as SlugResolver, {});
+  expect(r.candidates.map(c => [c.targetSlug, c.linkType])).toEqual([['companies/beta-example', 'works_at'], ['companies/acme-example', 'advises']]);
+});

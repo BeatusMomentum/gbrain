@@ -1277,7 +1277,7 @@ function attachedVerb(context: string, targetSlug?: string, anchor?: number): st
       const start = m.index ?? 0; const end = start + m[0].length;
       if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))
         && !coordinated(context.slice(end, linkStart))) continue;
-      if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s{0,3}\[/.test(context.slice(end)))) continue;
+      if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s*(?:(?:with|at|to|for|of|in|on)\s+)?\[/i.test(context.slice(end)))) continue;
       return verb;
     }
   }
