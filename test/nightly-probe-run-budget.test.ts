@@ -161,6 +161,19 @@ describe('one budget across LongMemEval and the judges (CEO B4)', () => {
       expect(event!.cap_usd).toBe(5);
     });
   });
+
+  test('each call settles its own reservation, so the cap counts actual spend, not held worst cases', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let refused = -1;
+      const r = await runNightlyQualityProbe(deps({
+        resolveMaxUsd: () => 0.02,
+        runLongMemEval: async () => { refused = await chatCalls(PRICED, 8); },
+      }));
+      expect(refused).toBe(0);
+      expect(r.outcome).toBe('pass');
+      expect(providerCalls).toHaveLength(8);
+    });
+  });
 });
 
 describe('pricing policy for the run cap', () => {

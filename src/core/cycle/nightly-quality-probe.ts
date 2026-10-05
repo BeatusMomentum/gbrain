@@ -42,6 +42,7 @@ import {
   BudgetTracker,
   type BudgetActualUsage,
   type BudgetEstimate,
+  type BudgetReservation,
   type PricingOverrides,
 } from '../budget/budget-tracker.ts';
 import { resolveAuditDir } from '../minions/handlers/shell-audit.ts';
@@ -178,9 +179,9 @@ export function resolveProbeCap(
 class ProbeBudgetTracker extends BudgetTracker {
   exhausted: BudgetExhausted | null = null;
 
-  override reserve(estimate: BudgetEstimate): void {
+  override reserve(estimate: BudgetEstimate): BudgetReservation | undefined {
     try {
-      super.reserve(estimate);
+      return super.reserve(estimate);
     } catch (err) {
       if (err instanceof BudgetExhausted) this.exhausted ??= err;
       throw err;
