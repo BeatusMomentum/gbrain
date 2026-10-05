@@ -47,7 +47,8 @@ boundary and add its link here rather than raising the cap.
 | [Core Persistence (engine graduation)](key-files/core-persistence-graduation.md) | `engine-graduation*.ts`, `graduation-*.ts`, `src/commands/migrate-graduation.ts`, the graduation doctor finding |
 | [Core Search (1/2)](key-files/core-search-1.md) | `src/core/search/` through `src/core/search/rerank.ts` |
 | [Core Search (2/2)](key-files/core-search-2.md) | `src/core/search/return-policy.ts` through `src/core/search/vector-pool.ts` |
-| [Core Services (1/3)](key-files/core-services-1.md) | `src/core/advisor/{types,run,render,recommended-set,history,apply,collect-*}.ts` through `src/core/context/ipc-path.ts` |
+| [Core Services (1/3)](key-files/core-services-1.md) | `src/core/advisor/{types,run,render,recommended-set,history,apply,collect-*}.ts` through `src/core/connectors/` |
+| [Core Services (1/3, continued)](key-files/core-services-1-continued.md) | `src/core/context/` through `src/core/context/ipc-path.ts` |
 | [Core Services (2/3)](key-files/core-services-2.md) | `src/core/conversation-parser/` through `src/core/progressive-batch/`, except `src/core/persistence/` |
 | [Core Services (3/3)](key-files/core-services-3.md) | `src/core/think/index.ts` through `src/core/verbs/usage-log.ts` |
 | [Core Utilities (1/2)](key-files/core-utilities-1.md) | `src/core/archive-crawler-config.ts` through `src/core/remediation-checkpoint.ts` |
@@ -59,7 +60,7 @@ boundary and add its link here rather than raising the cap.
 | [Files And Sync (1/2)](key-files/files-and-sync-1.md) | `src/core/audit-week-file.ts` through `src/core/sync-git.ts:resolveSlugByPathOrSourcePath` |
 | [Files And Sync (2/2)](key-files/files-and-sync-2.md) | `src/core/sync-policy.ts` through `src/core/write-through.ts` |
 | [Graph And Facts](key-files/graph-and-facts.md) | `src/core/check-resolvable.ts` through `src/core/trajectory-format.ts` |
-| [Entity recall](key-files/entity-recall.md) | `src/core/mentions/*`, `src/core/ops/backlinks-paged.ts`, `extract mentions --explain`, migration v202 |
+| [Entity recall](key-files/entity-recall.md) | `src/core/mentions/*`, `src/core/ops/backlinks-paged.ts`, `extract mentions --explain`, migration v204 |
 | [Mcp](key-files/mcp.md) | `src/mcp/dispatch.ts` through `src/mcp/validate-params.ts` |
 | [Providers](key-files/providers.md) | `src/core/anthropic-pricing.ts` through `src/core/transcription.ts` |
 | [Runtime](key-files/runtime.md) | `src/core/abort-check.ts` through `src/core/zombie-reap.ts` |

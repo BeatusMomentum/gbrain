@@ -1,7 +1,7 @@
 /**
  * Entity mention index: PGLite and Postgres parity.
  *
- * Protects: the v202 migration shape (origin-aware page_aliases, mention
+ * Protects: the v204 migration shape (origin-aware page_aliases, mention
  * state, entry and status tables) and the pass, alias writes, entity card
  * and get_backlinks paging producing the same rows on both engines. Bound
  * `text[]` parameters, the JSONB-free status writes and the conditional

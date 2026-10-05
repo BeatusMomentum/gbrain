@@ -745,6 +745,28 @@ More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/mo
 
 More: [docs/guides/write-refusals.md#facts_absorb_write_refused](../../docs/guides/write-refusals.md#facts_absorb_write_refused)
 
+### facts_drain_deferred
+
+<a id="facts_drain_deferred"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The automatic facts drain left queued facts-absorb jobs waiting; `reason` says why and `fix`, when present, is the next step. Nothing is dropped: the jobs run on a later drain. | A capability this request needs is not configured or not reachable on this brain. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `no_key`, `extraction_unavailable`, `budget_exhausted`, `daily_budget_exhausted`, `job_over_budget`, `no_pricing`, `provider_halted`, `drain_error`.
+
+More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
+
+### facts_drain_job_failed
+
+<a id="facts_drain_job_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A facts-absorb job failed inside the automatic facts drain; it retries with backoff until its attempts run out. | The server failed; this is not a caller mistake. | Read doctor `facts_drain`: its message names the cause and its fix the next step (raising a spend cap is paid; ask the user first). Run: gbrain doctor --only facts_drain --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
+
 ### facts_payload_expired
 
 <a id="facts_payload_expired"></a>
