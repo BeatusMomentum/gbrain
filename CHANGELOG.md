@@ -38,6 +38,30 @@ cost to replace any cleared vectors.
 - Projection rebuilds no longer accept an unstamped vector on an explicit `none` page as proof that it came from raw text; they still preserve verified current inputs and grandfather pre-contextual NULL-mode pages.
 - Markdown re-import cannot reinstate an unstamped title vector after the mode switch and label it as raw. Repairing a pre-contextual NULL-mode page into `none` records raw provenance for retained vectors so a later rebuild does not discard them.
 
+## [0.60.69.0] - 2026-10-05
+
+**Korean entity names stop linking from inside longer words: mention precision on Hangul goes from 7% to 86%, and 65 of 74 real name mentions still link.**
+
+The mention linker required a Hangul name to start a word but let anything follow it, because Korean particles attach directly to names (지원에게). On 7.3M characters of public Korean text, 39% of all Hangul matches were the name sitting inside another word: 지원 in 지원하는 ("supporting"), 우리 in 우리나라. A name now has to end at a non-Hangul character or at an attached title, particle or copula form (지원씨는, 지원 대표가, 지원이었다).
+
+Measured with the real matcher over 30 Korean name-like titles, every match labeled in context ([method](docs/designs/hangul-mention-boundaries.md)):
+
+| | Before | Now |
+| --- | --- | --- |
+| Word-internal matches (지원하는, 우리나라) | 1,041 | 11 |
+| Real name mentions linked | 74 | 65 |
+| Precision over name + word-internal matches | 7% | 86% |
+
+A name that is also an everyday word (우리, "we") still links where that word stands alone; `mentions.ignore` stops it.
+
+**Existing brains rescan their mentions once.** The mention extractor version moved to 2 (and the `extract links --by-mention` resume fingerprint to `hangul-boundaries-v2`), so the next mention pass rescans every page and removes plain mention links the old rule made. It is local work with no paid calls.
+
+Also: `docs/architecture/key-files/` gains a `src/core/by-mention.ts` entry and an up-to-date `src/core/enrichment-service.ts` entry, and the Chinese mention fixtures use placeholder names.
+
+## To take advantage of v0.60.69.0
+
+`gbrain upgrade` does this automatically. The one-time mention rescan runs on the next autopilot cycle; to run it now: `gbrain extract --stale`.
+
 ## [0.60.68.0] - 2026-10-05
 
 **`delta` no longer skips changes after a failed read, and the 21 contributor fixes merged on 2026-10-05 are brought up to the house bar.**
