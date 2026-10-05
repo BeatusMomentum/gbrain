@@ -33,6 +33,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { dispatchToolCall, __resetBackupNoticeForTests } from '../src/mcp/dispatch.ts';
+import { withEnv } from './helpers/with-env.ts';
 import type { ListPagesPagination } from '../src/core/ops/list-pages-pagination.ts';
 
 const list_pages = operations.find(o => o.name === 'list_pages')!;
@@ -238,7 +239,9 @@ describe('list_pages pagination meta for remote callers', () => {
     __resetBackupNoticeForTests();
     await seed(12);
     const opts = { remote: true, transport: 'stdio' as const, sourceId: 'default' };
-    const res = await dispatchToolCall(engine as any, 'list_pages', { limit: 10, type: 'note' }, opts);
+    // The once-per-process post-upgrade notice reads the shared upgrade log; another file in the same shard can leave
+    // one behind, which would add a block here. Opt out so this test counts only the listing notice.
+    const res = await withEnv({ GBRAIN_NO_ONBOARD_NUDGE: '1' }, () => dispatchToolCall(engine as any, 'list_pages', { limit: 10, type: 'note' }, opts));
     expect(res.isError).toBeUndefined();
     expect(JSON.parse(res.content[0].text)).toHaveLength(10);
     expect(res.content).toHaveLength(2);
