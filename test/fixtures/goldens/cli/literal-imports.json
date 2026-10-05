@@ -103,6 +103,7 @@
       ],
       "migrate": [
         "./commands/migrate-embeddings.ts",
+        "./commands/migrate-graduation.ts",
         "./commands/migrate-engine.ts"
       ],
       "models": [

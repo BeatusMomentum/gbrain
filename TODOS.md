@@ -12,6 +12,16 @@ Context: `docs/guides/core-memory.md`, `docs/architecture/key-files/core-memory.
 - [ ] **P2 — Writer-version fence for core.** **What:** refuse `gbrain core add` while an older gbrain writer that lacks the core guard is still registered on the brain. **Why:** an old serve publishes remote edits to core pages without the budget or owner-only checks. **Fix:** record a `core_guard_v1` capability per writer registration and check it in `core add` and the `core_memory` doctor check. **Effort:** M.
 - [ ] **P3 — Per-turn context drops core slugs.** **What:** the per-turn context (hook `turn_context`, OpenClaw reflex) still volunteers core pages that are already in the session. **Fix:** pass the core slugs as already-delivered. **Effort:** S.
 - [ ] **P3 — Pressure notice record-after-write.** **What:** the once-per-segment state is written before the hook's stdout lands; a deadline-expired turn loses that segment's notice. **Fix:** commit the state after the write, like the session-start deferred records. **Effort:** S.
+## Engine graduation follow-ups (filed 2026-10-04, GBRA-50)
+
+Context: `docs/guides/move-to-postgres.md`, `docs/ENGINES.md#engine-migration-refused`.
+
+- [ ] **P2 — Postgres → PGLite graduation.**
+  **What:** `gbrain migrate --to pglite` uses the legacy copier, which refuses any brain with write history, withdrawals or worktree ownership. **Why:** a brain that moved to Postgres (or started there) cannot come back to a single-machine PGLite brain without losing its history. **Fix:** a reverse adapter (Postgres source, PGLite target) for the graduation inventory, copier and verify in `src/core/persistence/engine-graduation.ts`, with the same plan, fence, verify, cutover and crash tests. **Effort:** L. **Priority:** P2.
+- [ ] **P3 — `gbrain migrate --discard-source`.**
+  **What:** after a verified graduation the PGLite copy stays at `<path>.graduated-<run_id>` and the user deletes it by hand (doctor's `pglite_leftovers` names the command). **Why:** the copy still holds private memory and token hashes. **Fix:** a confirmation-gated command that deletes the retained copy and the tombstone only when the run is `graduated` and no rollback is pending, with `--yes --expect` and a dry run. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — Windows graduation.**
+  **What:** on Windows a PGLite brain with history gets `graduation_unsupported_platform` (history-free brains use the legacy copier). **Why:** the tombstone, kernel-lock retention and SIGKILL crash tests have not run on a Windows runner, so custody across a crash is unproven there. **Fix:** run the tombstone, older-binary and crash suites on a Windows CI runner, fix what fails, then lift the platform refusal. **Effort:** M. **Priority:** P2.
 
 ## Held files follow-ups (filed 2026-10-04, follow-up from v0.60.47.0)
 
