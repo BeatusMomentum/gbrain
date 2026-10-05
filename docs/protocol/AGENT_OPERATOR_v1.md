@@ -748,7 +748,18 @@ final document.
 is stateless, so dedupe is per authenticated client and session, and
 `degraded` and `safety` notices ride every affected call. At most 2
 `coaching` notices per session. Notices that describe one call's result
-(`empty_retrieval`, `unknown_param`, `listing_truncated`) are never deduped.
+(`empty_retrieval`, `unknown_param`, `listing_truncated`, `delta_incomplete`)
+are never deduped.
+
+**Degraded retry hint.** A `degraded` notice whose fix has `actor: provider`
+renders `next: wait`: repeat the same call (the fix carries it) after the delay
+the `why` states, in seconds. `delta_incomplete` uses it: delta moved no cursor
+past what it did not deliver, so the retry re-reads the same window. When the
+same session has been incomplete on three consecutive wakes, the fix has no
+command and renders `next: report`: tell the user and run
+`gbrain doctor --json`. Stateless callers always get `wait`. A session store
+that cannot be read at all refuses the call with `unavailable` (reason
+`session_state`) and the same wait/report fix.
 
 **Mute.** `coaching` and `info` notices can be muted, plus one `ask`:
 `first_run_decisions`, so an unanswered first-run bundle stays dismissible.
