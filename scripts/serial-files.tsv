@@ -259,6 +259,7 @@ test/pglite-reconnect.serial.test.ts	global-state	global-state: R3: constructs P
 test/pglite-repair-command.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
 test/pglite-snapshot-timezone.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/pglite-wal-repair.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; patches process stdout/stderr/console
+test/physical-root-overlap-vanished-dir.serial.test.ts	R2	R2: mock.module(node:fs) makes readdirSync throw ENOENT for one path
 test/projections-drain-cli.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/put-page-push-reporting.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/query-cache-knobs-hash.serial.test.ts	R1	R1: mutates process.env (GBRAIN_FTS_LANGUAGE)
