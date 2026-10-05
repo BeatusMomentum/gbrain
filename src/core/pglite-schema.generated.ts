@@ -343,7 +343,9 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   grant_profile           TEXT NULL,
   grant_revision          INTEGER NOT NULL DEFAULT 0,
   grant_repair_reasons    TEXT[] NOT NULL DEFAULT '{}',
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_grant            TEXT NULL CHECK (source_grant IN ('none')),
+  takes_holders           TEXT[] NULL
 );
 CREATE INDEX IF NOT EXISTS idx_oauth_clients_source_id
   ON oauth_clients(source_id) WHERE source_id IS NOT NULL;

@@ -135,6 +135,7 @@
       "oauth_clients.fk_oauth_clients_bound_source": "f FOREIGN KEY (bound_source_id) REFERENCES sources(id) ON DELETE SET NULL",
       "oauth_clients.oauth_clients_complete_agent_grant": "c CHECK (((NOT (COALESCE(scope, ''::text) ~ '(^|[[:space:]])agent([[:space:]]|$)'::text)) OR ((COALESCE(cardinality(bound_tools), 0) > 0) AND (source_id IS NOT NULL) AND (bound_source_id IS NOT NULL) AND (bound_source_id = source_id) AND COALESCE((source_id = ANY (federated_read)), false) AND (((delegated_namespace = 'job'::text) AND (delegated_slug_prefixes IS NULL)) OR ((delegated_namespace = 'prefixes'::text) AND (COALESCE(cardinality(delegated_slug_prefixes), 0) > 0))) AND (bound_max_concurrent > 0))))",
       "oauth_clients.oauth_clients_pkey": "p PRIMARY KEY (client_id)",
+      "oauth_clients.oauth_clients_source_grant_check": "c CHECK ((source_grant = 'none'::text))",
       "oauth_clients.oauth_clients_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT",
       "oauth_codes.oauth_codes_client_id_fkey": "f FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE",
       "oauth_codes.oauth_codes_pkey": "p PRIMARY KEY (code_hash)",
@@ -1937,7 +1938,9 @@
           "25 grant_profile text/text NULL",
           "26 grant_revision integer/int4 NOT NULL DEFAULT 0",
           "27 grant_repair_reasons ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
-          "28 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "28 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "29 source_grant text/text NULL",
+          "30 takes_holders ARRAY/_text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
