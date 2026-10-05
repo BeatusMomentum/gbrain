@@ -3,7 +3,7 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  * Engine migration: transfer brain data between PGLite and Postgres.
  *
  * Usage:
- *   gbrain migrate --to supabase [--url <connection_string>]
+ *   gbrain migrate --to supabase [--url <connection_string>]   (PGLite -> Postgres: graduation, src/commands/migrate-graduation.ts)
  *   gbrain migrate --to pglite [--path <db_path>]
  *   gbrain migrate --to <engine> --force  (overwrite non-empty target)
  */
@@ -842,8 +842,31 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
   return resume;
 }
 
+/**
+ * PGLite -> Postgres reaches this legacy copier only when graduation is not
+ * routed (src/commands/migrate-graduation.ts routesToGraduation): opted out
+ * with migrate.graduation=false, or Windows. On Windows a brain with write
+ * history gets graduation's platform refusal; a history-free brain copies here.
+ */
+export async function assertWindowsGraduationPlatform(sourceEngine: BrainEngine, opts: Pick<MigrateOpts, 'targetEngine'>, platform: NodeJS.Platform = process.platform): Promise<void> {
+  if (platform !== 'win32' || sourceEngine.kind !== 'pglite' || opts.targetEngine !== 'postgres') return;
+  const { graduationOptedOut } = await import('./migrate-graduation.ts');
+  if (graduationOptedOut(loadConfig())) return;
+  const tables = ['persistence_requests', 'fact_withdrawals', 'persistence_worktrees'];
+  const present = await sourceEngine.executeRaw<{ name: string }>(
+    `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1::text[])`, [tables]);
+  for (const { name } of present) {
+    const [row] = await sourceEngine.executeRaw<{ present: boolean }>(`SELECT EXISTS(SELECT 1 FROM ${name}) AS present`);
+    if (row?.present) {
+      const { unsupportedPlatformError } = await import('../core/persistence/graduation-errors.ts');
+      throw unsupportedPlatformError({ platform: 'Windows' });
+    }
+  }
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
+  await assertWindowsGraduationPlatform(sourceEngine, opts);
   await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration');
   await assertLegacyEngineMigration(sourceEngine);
   const config = loadConfig();
