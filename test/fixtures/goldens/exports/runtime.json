@@ -618,6 +618,7 @@
         "isImageFilePath",
         "pLimit",
         "slugConflictHoldMessage",
+        "verifyPageReadable",
         "withImportTransaction"
       ],
       "./ingestion": [
