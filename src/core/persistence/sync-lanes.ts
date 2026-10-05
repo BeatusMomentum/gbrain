@@ -19,20 +19,23 @@ import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from './model.ts';
 import { leaseDraining, leaseWounded } from './worktree-lease.ts';
 
-export interface LanePolicy { run: string; asked: number; effective: number; stepDown: string | null }
-interface LaneState extends LanePolicy { coordinationPath: string | null; claimed: Set<string>; begun: Set<string> }
+export interface LanePolicy { run: string; asked: number; effective: number; stepDown: string | null;
+  /** Groups whose transaction began while the group before them was still publishing in this process. */
+  overlapped: number }
+export interface LaneState extends LanePolicy { coordinationPath: string | null; claimed: Set<string>; begun: Set<string> }
 const policies = new Map<string, LaneState>();
 
 /** The drain's lane policy for a worktree; replaces any earlier one. */
 export function openLanes(worktreeId: string, run: string, lanes: number, coordinationPath: string | null): void {
-  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, coordinationPath, claimed: new Set(), begun: new Set() });
+  policies.set(worktreeId, { run, asked: lanes, effective: lanes, stepDown: null, overlapped: 0, coordinationPath, claimed: new Set(), begun: new Set() });
 }
-export function closeLanes(worktreeId: string, run: string): void {
-  if (policies.get(worktreeId)?.run === run) policies.delete(worktreeId);
+/** Ends a drain's lane run on every worktree it opened; its unclaimed groups go back to the FIFO claim. */
+export function closeLaneRun(run: string): void {
+  for (const [worktreeId, state] of policies) if (state.run === run) policies.delete(worktreeId);
 }
 export function lanePolicy(worktreeId: string): LanePolicy | null {
   const state = policies.get(worktreeId);
-  return state ? { run: state.run, asked: state.asked, effective: state.effective, stepDown: state.stepDown } : null;
+  return state ? { run: state.run, asked: state.asked, effective: state.effective, stepDown: state.stepDown, overlapped: state.overlapped } : null;
 }
 /** The open lane runs and how many lanes each may run now (0 while the worktree's lease drains for an exclusive writer). */
 export function laneRoots(): Array<{ worktreeId: string; run: string; capacity: number }> {
@@ -72,6 +75,7 @@ export async function awaitLaneBegin(state: LaneState, rows: WriteRequest[], max
   const after = predecessorOf(rows);
   const started = Date.now();
   while (after && state.claimed.has(after) && !state.begun.has(after) && Date.now() - started < maxMs) await sleep(20);
+  if (after && state.claimed.has(after)) state.overlapped++;
   state.begun.add(groupKey(rows));
 }
 

@@ -53,7 +53,8 @@ export async function cancelWindow(engine: BrainEngine, window: Array<Array<{ re
   await cancelRows(engine, rows);
 }
 
-async function cancelRows(engine: BrainEngine, rows: WriteRequest[]): Promise<WriteRequest[]> {
+/** Cancels unpublished rows (queued, or claimed with the given token) with the window reason. */
+export async function cancelRows(engine: BrainEngine, rows: WriteRequest[]): Promise<WriteRequest[]> {
   const settled: WriteRequest[] = [];
   for (const row of rows) {
     const done = await engine.transaction(async tx => {

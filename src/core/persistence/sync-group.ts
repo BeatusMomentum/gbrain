@@ -23,7 +23,9 @@ import type { SyncAuthority } from './sync-authority.ts';
 
 export interface BulkSettings { enabled: boolean; reason: string | null; size: number; maxTxnMs: number;
   /** #5984 lanes: groups published at once (1 = one at a time), and why it is lower than asked when it is. */
-  lanes?: number; lanesReason?: string | null }
+  lanes?: number; lanesReason?: string | null;
+  /** The drain's lane run (set by the drain when lanes > 1); lane groups carry it as `intent.lane`. */
+  laneRun?: string }
 export interface BulkReport { enabled: boolean; reason: string | null; groups: number; grouped_pages: number; largest_group: number }
 
 /** Flag > env > config > default (on), as for the other sync knobs (DX-A8). */
