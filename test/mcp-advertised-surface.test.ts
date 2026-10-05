@@ -76,7 +76,7 @@ describe('advertised surface (pure)', () => {
   test('new installs: init and registration move together', () => {
     if (NEW_INSTALL_ADVERTISED_SURFACE === 'full') {
       expect(newInstallAdvertisedSurface()).toEqual({});
-      expect(newInstallServeSurface()).toBe('verbs');
+      expect(newInstallServeSurface()).toBe('starter');
     } else {
       expect(newInstallAdvertisedSurface()).toEqual({ advertised_surface: NEW_INSTALL_ADVERTISED_SURFACE });
       expect(newInstallServeSurface()).toBe('full');

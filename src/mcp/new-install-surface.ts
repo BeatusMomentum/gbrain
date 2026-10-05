@@ -12,13 +12,13 @@ type Surface = 'verbs' | 'starter' | 'full';
 export const NEW_INSTALL_ADVERTISED_SURFACE: Surface = 'full';
 
 /**
- * The `serve --surface` a readiness/quickstart registration writes. Once the
- * benchmark picks an advertised surface, registrations call everything
- * (`full`) and init's advertised surface narrows the list; until then they
- * keep the seven verbs.
+ * The `serve --surface` every new stdio registration pins (REGISTRATION_SURFACE
+ * in core/mcp-registration.ts). Once the benchmark picks an advertised surface,
+ * registrations call everything (`full`) and init's advertised surface narrows
+ * the list; until then they pin `starter`.
  */
 export function newInstallServeSurface(): Surface {
-  return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? 'verbs' : 'full';
+  return NEW_INSTALL_ADVERTISED_SURFACE === 'full' ? 'starter' : 'full';
 }
 
 /** What a fresh `gbrain init` writes into `mcp`: the advertised surface, unless it is 'full'. */
