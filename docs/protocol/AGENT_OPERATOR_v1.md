@@ -814,8 +814,10 @@ model's per-token rates (for example by web search) and register them with
   for consent. To keep writes text-only, use `--no-embed` where the command has
   it, or a keyless brain.
 - **Unattended library paths keep their authorization.** Autopilot, dream
-  cycles and queued jobs keep running under their configured budget; the
-  gates above apply to the explicit CLI invocations only.
+  cycles and other queued jobs keep running under their configured budget;
+  the gates above apply to the explicit CLI invocations only. Consent-gated
+  commands that queue paid jobs carry the user's approval onto every job
+  (next section).
 - **Looking never spends.** Plain `gbrain doctor`, `doctor --only`,
   `--remediation-plan`, MCP `run_doctor`, readiness, `features` without
   `--auto-fix` and `onboard --check` make no provider call: the embedding
@@ -824,6 +826,39 @@ model's per-token rates (for example by web search) and register them with
   `consent: ["paid", "egress"]`; one tiny request). Run it only after the
   user agrees. Local providers that bill nothing (ollama, llama-server,
   LM Studio) need no consent for either.
+
+### Queued paid jobs
+
+`gbrain book-mirror`, `gbrain enrich --background` and
+`gbrain jobs submit enrich|subagent` ask for consent before they queue
+anything (exit 3 with the consent payload; `--dry-run` queues nothing and
+needs none). The approval is stored on every job the command queues, never
+in job data, and all of them share one approved total (a spend group). The
+`enrich --background` payload's `fix` already carries `--yes --max-usd
+<derived cap>`, so it runs verbatim once the user agrees.
+
+The worker enforces the group's total on every provider attempt. What you
+see:
+
+| Situation | Outcome |
+|---|---|
+| Sibling jobs' calls in flight fill the group | the job is delayed (no attempt burned) and retried; after 6 retries it dies like exhaustion |
+| The group's settled spend reaches its cap | the job dies with `derived_cap_exhausted` (derived cap) or `cost_cap_exceeded`; its `result.spend_refusal` envelope carries the group's spent, reserved and remaining amounts and a `fix` that reruns the command with twice the cap (`next: ask_user`) |
+| A model with no known price, derived or default cap | runs unmetered and warns `BUDGET_TRACKER_NO_PRICING` |
+| A model with no known price, user cap | dies with `no_pricing` before the provider call; register the rate with `gbrain pricing set` and rerun |
+
+A rerun queues the unfinished work under a new group: completed jobs are
+reused, dead ones are replaced, and still-queued jobs keep their earlier
+approval (the command prints the `gbrain jobs cancel --group <id>` to use
+first if the user wants the new cap to apply). Inspect a group with
+`gbrain jobs list --group <id> --json`; `gbrain jobs get <id> --json` shows
+`spend_basis` (`authorized`, `legacy_default`, `unrecorded`), `spend_why`
+and the group amounts. Jobs of these commands queued before submit-time
+authorization run as `legacy_default` under the $5 default cap (or the
+job's own `--max-usd`); every other job is `unrecorded` and runs under its
+producer's own budget. Spend-authorized jobs run only on upgraded workers:
+an older worker cannot claim them, and `gbrain doctor` warns when such jobs
+wait while workers run.
 
 ### A brain whose automatic repair failed
 

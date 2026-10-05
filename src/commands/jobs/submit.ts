@@ -279,8 +279,8 @@ async function authorizePaidSubmit(engine: JobsCommandContext['engine'], name: s
       ? 'An enrich job writes model-generated summaries into thin pages and pays the chat model provider per page.'
       : 'A subagent job runs a model tool loop and pays the model provider for every turn.',
     risk: estUsd !== null
-      ? `Spends about $${estUsd.toFixed(2)} with the chat model provider once a worker runs it.`
-      : 'Spends with the model provider once a worker runs it; with no estimate the default $5 cap applies unless --max-usd sets one.',
+      ? `Spends about $${estUsd.toFixed(2)} with the chat model provider once a worker runs it. Without --max-usd, a model with no known price runs unmetered under the derived or default cap.`
+      : 'Spends with the model provider once a worker runs it; with no estimate the default $5 cap applies unless --max-usd sets one. Without --max-usd, a model with no known price runs unmetered under the derived or default cap.',
     user_message: estUsd !== null
       ? `Queue an enrich job that spends about $${estUsd.toFixed(2)}?`
       : `Queue a subagent job that spends up to $5 unless you set another cap?`,

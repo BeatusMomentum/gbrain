@@ -1001,7 +1001,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
       command: 'enrich', effects: ['paid'], actor: 'agent',
       what: `Enrich up to ${limit} page(s) per source across ${sourceIds.length} source(s)${background ? ' as background jobs' : ''}`,
       why: 'Fills thin person and company pages with model-written summaries from the brain\'s own evidence.',
-      risk: `Spends about $${estUsd.toFixed(2)} with the chat model provider; pages gain model-written text (each write is attributed and can be reviewed).`,
+      risk: `Spends about $${estUsd.toFixed(2)} with the chat model provider; pages gain model-written text (each write is attributed and can be reviewed).${background ? ' Without --max-usd, a model with no known price runs unmetered under the derived or default cap.' : ''}`,
       user_message: `Enrich up to ${limit} thin page(s) per source across ${sourceIds.length} source(s) for about $${estUsd.toFixed(2)}?`,
       argv: ['gbrain', 'enrich', ...base, ...(background && parsed.maxCostUsd === undefined ? ['--max-usd', derivedCapUsd(estUsd).toFixed(2)] : [])],
       preview_argv: ['gbrain', 'enrich', ...base.filter(a => a !== '--json' && a !== '--background' && a !== '--follow'), '--dry-run'],

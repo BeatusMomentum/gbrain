@@ -429,7 +429,7 @@ export async function runBookMirrorCmd(engine: BrainEngine, args: string[]): Pro
     command: 'book-mirror', effects: ['paid'], actor: 'agent',
     what: `Run ${chapters.length} chapter subagent(s) for ${targetSlug}`,
     why: `Writes a personalized two-column mirror of "${bookTitle}" from the brain's context, one ${flags.model} subagent per chapter.`,
-    risk: `Spends about $${estimateUsd.toFixed(2)} (~$${(estimateUsd / chapters.length).toFixed(2)} per chapter) with the model provider. Subagents are read-only; the result is one new page.`,
+    risk: `Spends about $${estimateUsd.toFixed(2)} (~$${(estimateUsd / chapters.length).toFixed(2)} per chapter) with the model provider. Subagents are read-only; the result is one new page. Without --max-usd, a model with no known price runs unmetered under the derived or default cap.`,
     user_message: `Spend about $${estimateUsd.toFixed(2)} to mirror ${chapters.length} chapter(s) of "${bookTitle}" against your brain?`,
     argv: consentArgv,
     preview_argv: [...consentArgv, '--dry-run'],
