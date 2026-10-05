@@ -37,7 +37,7 @@ This skill guarantees:
 - `notify` mode prompts the operator before applying and records a snooze if
   they decline. `auto` mode applies without a prompt (the operator opted in).
 - A migration playbook outranks `self_upgrade.mode: auto`. When any playbook
-  between the installed and the new version (`skills/migrations/v<version>.md`)
+  between the installed and the new version (the `skills/migrations/` playbooks)
   says not to upgrade unattended (an attended cutover, for example
   `skills/migrations/v0.50.0.0.md`), the upgrade is NOT silent: stop, show the
   operator that playbook, and follow it with their go-ahead (#5038).

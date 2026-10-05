@@ -487,7 +487,7 @@ const takes_remove: Operation = {
   idempotent: true,
   outputRedaction: 'no_stored_text',
   description:
-    'Remove one take row from a page\'s takes fence and the takes table together (#5167). Local-only. ' +
+    'Remove one take row from a page\'s takes fence and the takes table together. Local-only. ' +
     'Other rows keep their numbers. Refuses a resolved row, a row another row cites as "superseded by" it, ' +
     'and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). ' +
     'CLI: `gbrain takes remove <slug> --row N`.',

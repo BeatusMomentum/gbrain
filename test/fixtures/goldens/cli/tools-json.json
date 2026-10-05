@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204379,
-    "stdoutSha256": "0a92173c7d03c33fa0d630a5aefacdfc0209b52802129b7b75a761c424aa0bfc",
+    "stdoutBytes": 204371,
+    "stdoutSha256": "8d33599cb8debc9c7e0151a455c12cb1a79d802b27456fbc85db6bd48a20aace",
     "toolNames": [
       "remember",
       "entity",
@@ -4204,7 +4204,7 @@
         "scope": "write"
       },
       {
-        "description": "Remove one take row from a page's takes fence and the takes table together (#5167). Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). CLI: `gbrain takes remove <slug> --row N`.",
+        "description": "Remove one take row from a page's takes fence and the takes table together. Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). CLI: `gbrain takes remove <slug> --row N`.",
         "idempotent": true,
         "local_only": true,
         "mutating": true,

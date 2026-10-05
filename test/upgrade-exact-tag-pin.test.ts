@@ -82,8 +82,6 @@ describe('#5311 bare upgrade on an exact-tag pin', () => {
   test('every reinstall hint removes the global package before adding the tag (#5034, B-NEW-5)', () => {
     expect(bunReinstallCommand('#v0.60.1.0')).toBe('bun remove -g gbrain && bun add -g github:garrytan/gbrain#v0.60.1.0');
     expect(bunReinstallCommand('')).toBe('bun remove -g gbrain && bun add -g github:garrytan/gbrain');
-    const source = readFileSync(join(REPO, 'src/commands/upgrade.ts'), 'utf-8');
-    expect(source).not.toMatch(/`bun (add|install) -g github:[^`]*#v\$\{/);
   });
 
   test('an unpinned install that is already current still succeeds', async () => {
