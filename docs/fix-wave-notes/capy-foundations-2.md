@@ -54,6 +54,21 @@ Every P0 item shipped. Nothing was cut.
   for 10,000 rows. The refresh now runs after every N pages, where the batch
   is already flushed; Lane F's planner-stats test walks 301 pages so its check
   after page 300 still sees 600 rows.
+- Master merge (v0.60.52.0: engine graduation, auto_chronicle date quality,
+  contributor fixes): runMigrateEngine runs graduation's Windows platform
+  check before Lane F's source checks; the legacy copier's PGLite refusal,
+  which now only fires with graduation turned off, asks the user to turn
+  graduation back on and preview the read-only plan, or to stay on PGLite and
+  share it with `gbrain mcp expose`; chronicle publication applies the
+  invite marking to the events the date screen keeps, so an ended invite is
+  projected (no judge call) and still dated by its `end`; `auth rescope
+  --client` takes `--operations all` and `--sources none` / `--takes-holders`
+  together; `core-services-1.md` was split under the 60 KB cap.
+- `test/e2e/graduation-clients.test.ts` picked its "older released binaries"
+  as the newest tags at or below VERSION. Once v0.60.52.0 was tagged that
+  included the graduation release itself, which correctly refuses a lock-gap
+  write with `graduation_interrupted`, so the lock-gap case failed (on master
+  too). The helper now takes the newest tags before v0.60.52.0.
 - `consumer.ts` composes Lane A's `consumer:prepared` seam and first-tick
   PGLite `releaseAbandonedClaims` with Lane F's refresh-fence predicate in the
   idle probe; released claims are still fenced when they are claimed again.

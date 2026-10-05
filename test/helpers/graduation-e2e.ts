@@ -259,7 +259,14 @@ export function manifestPath(home: string): string {
 
 // ── Older released binaries ───────────────────────────────────────────────────
 
-/** The last `count` release tags at or below this checkout's VERSION, newest first (from origin). */
+/** The first release that ships engine graduation; an "older release" predates it and knows nothing of the graduation protocol. */
+export const GRADUATION_RELEASE = '0.60.52.0';
+
+/**
+ * The last `count` release tags older than both this checkout's VERSION and
+ * GRADUATION_RELEASE, newest first (from origin). Once v0.60.52.0 is tagged,
+ * "at or below VERSION" would pick a graduation-aware binary.
+ */
 export function previousReleaseTags(count = 2): string[] {
   const version = readFileSync(join(REPO, 'VERSION'), 'utf8').trim();
   const out = Bun.spawnSync(['git', '-C', REPO, 'ls-remote', '--tags', '--refs', 'origin', 'v*'], { stdout: 'pipe', stderr: 'pipe' });
@@ -268,7 +275,7 @@ export function previousReleaseTags(count = 2): string[] {
   const cmp = (a: number[], b: number[]) => { for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = (a[i] ?? 0) - (b[i] ?? 0); if (d) return d; } return 0; };
   const current = version.split('.').map(Number);
   return out.stdout.toString().split('\n').map(line => line.split('refs/tags/')[1]).filter((t): t is string => !!t && /^v\d+(\.\d+){3}$/.test(t))
-    .filter(t => cmp(parse(t), current) <= 0).sort((a, b) => cmp(parse(b), parse(a))).slice(0, count);
+    .filter(t => cmp(parse(t), current) <= 0 && cmp(parse(t), GRADUATION_RELEASE.split('.').map(Number)) < 0).sort((a, b) => cmp(parse(b), parse(a))).slice(0, count);
 }
 
 /**
