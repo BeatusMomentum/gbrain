@@ -300,7 +300,7 @@ gbrain auth rescope --client CLIENT_ID --sources none          # deny-all, secre
 | `--sources` | `a,b` or `none` | Source grant; the first id is the write source, the list is the read set. `default` is the source named `default`; to restore the no-grant floor use `--reset-default sources`. `none` grants no source, so reads and writes to every source are refused (`permission_denied`, `fence=no_source_grant`), including writes accepted before the change; the token or client keeps its scopes and secret. A client with `none` takes no `--read-sources`, and a delegating agent client cannot hold it. |
 | `--read-sources` | `a,b` | Client only: a read set that differs from `--sources`. |
 | `--takes-holders` | `a,b` or `none` | Takes-holder allow-list for a token or client (default `world`); `none` hides every take. |
-| `--operations` | `op,...` or `none` | Operation snapshot; `none` refuses every operation. |
+| `--operations` | `op,...`, `none` or `all` | Operation snapshot; `none` refuses every operation. Client only: `all` stores no snapshot and clears the profile, so the scopes and the surface alone decide, including operations later upgrades add (tokens: `--reset-default operations`). |
 | `--scopes` | `read,write,...` | Replaces the scopes. |
 | `--reset-default` | `sources,takes-holders,operations` | Token only: restores the `auth create` default for those axes: no source grant (the historical `default` floor), holders `world`, no operation snapshot. |
 | `--refresh-operations` | with optional `--add op,...` or `--all-new` | Token only: previews operations added since the snapshot. Without `--add` or `--all-new` nothing is widened. |
@@ -453,7 +453,8 @@ mutations; owner maintenance on the same process (startup migrations, hook
 IPC banking) is a separate control. The default is `--access full`.
 `gbrain serve --http --access read-only` refuses: narrow HTTP access per token
 with `gbrain auth rescope-token <name> --operations <op,...>` or
-`gbrain auth rescope-client <client_id> --allowed-operations <op,...>`.
+`gbrain auth rescope-client <client_id> --allowed-operations <op,...>`
+(`all` removes a client's snapshot again).
 
 ## Invalidate tokens, revoke, or delete
 

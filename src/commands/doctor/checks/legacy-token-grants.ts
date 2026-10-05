@@ -2,7 +2,7 @@
  * F3 legacy token grants (O-CEO-8, O-DX-9).
  *
  * `legacy_token_grant_shape` (warn when non-zero): active tokens still on
- * the JSONB-only grant shape. Schema migration v201 converts every
+ * the JSONB-only grant shape. Schema migration v202 converts every
  * well-formed one; an older binary's `auth create` can add more, which
  * convert on their next authorization read or with
  * `gbrain auth rescope --migrate-legacy`. A malformed one denies every axis

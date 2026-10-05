@@ -214,7 +214,6 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'brainstorm_health',
   'connectors',
   'dream_paid_loop',
-  'chat_fallback_chain_inert',
   'connection',
   'db_only_collector_collision',
   'federation_health',
@@ -241,6 +240,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pglite_scale',
   'db_repair_recurrence',
   'pglite_leftovers',
+  // Engine graduation (PGLite -> Postgres) interrupted / split brain.
+  'graduation_interrupted',
   'pgvector',
   'postgres_cancellation_driver',
   'plugin_lane_collision',

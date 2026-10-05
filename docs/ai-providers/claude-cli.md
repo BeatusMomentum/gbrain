@@ -159,6 +159,36 @@ patterns, so it lands in the catch-all. A persistent `unknown` is worth
 investigating directly (run the same model via `gbrain models doctor
 --json` or call `claude` by hand) rather than assuming cold-start.
 
+## Falling back to an API model at the subscription limit
+
+When the Claude subscription's usage window is used up, the CLI reports
+`claude-cli API error 429: You've hit your session limit · resets <time>`.
+Set `chat_fallback_chain` and `gateway.chat()` retries the same call on the
+next model in the chain instead of failing it:
+
+```bash
+gbrain config set chat_fallback_chain "anthropic:claude-sonnet-4-6"
+# per process, comma-separated: GBRAIN_CHAT_FALLBACK_CHAIN="anthropic:claude-sonnet-4-6,openai:gpt-4o-mini"
+```
+
+**Say to your agent:** *"When my Claude subscription runs out, fall back to an API model instead of failing."*
+
+- Entries run in order after the call's own model, on a provider error (the
+  429 above, an outage, a timeout, a rejected key) or a refusal, with one
+  `[ai.gateway]` line per hop on stderr. A budget refusal or your own cancel
+  stops the chain; when every entry fails, the claude-cli error is the one
+  reported.
+- A fallback call is billed per token by the entry's provider. Budget caps
+  price each attempt by the model that actually ran.
+- Judges, critics and evals, the `models doctor` / `providers test` probes,
+  `decide()`, `think --model` and `auto_think` keep their own model and fail
+  as before.
+- A synthesize triage verdict or concept narrative a fallback model wrote is
+  used for that run but not cached: the next cycle redoes it on the
+  configured model.
+- Every call still tries the claude-cli model first, so during the limit
+  window each call pays one failed CLI spawn before the fallback runs.
+
 ## Troubleshooting
 
 <a id="claude-cli-troubleshooting"></a>

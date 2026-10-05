@@ -497,13 +497,13 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 103/103 public tables",
+          "message": "RLS enabled on 104/104 public tables",
           "name": "rls",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "Version 202 (latest: 202)",
+          "message": "Version 203 (latest: 203)",
           "name": "schema_version",
           "status": "ok"
         },

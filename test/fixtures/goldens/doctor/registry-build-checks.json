@@ -190,6 +190,10 @@
         "name": "pglite_leftovers"
       },
       {
+        "category": "ops",
+        "name": "graduation_interrupted"
+      },
+      {
         "category": "meta",
         "name": "default_source_local_path"
       },
@@ -640,10 +644,6 @@
       {
         "category": "meta",
         "name": "revision_backfill"
-      },
-      {
-        "category": "ops",
-        "name": "chat_fallback_chain_inert"
       },
       {
         "category": "ops",

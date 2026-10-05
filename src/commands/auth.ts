@@ -1126,7 +1126,10 @@ Usage:
                                                           scopes and secret unchanged)
      --read-sources <id1,id2,...>                         Client only: a read set that differs from --sources
      --takes-holders <h1,h2,...|none>                     Takes-holder allow-list (default world; 'none' = deny-all)
-     --operations <op1,op2,...|none>                      Operation snapshot ('none' = deny-all)
+     --operations <op1,op2,...|none|all>                  Operation snapshot ('none' = deny-all). Client only:
+                                                          'all' = no snapshot: every operation the scopes and the
+                                                          surface allow, including ones later upgrades add; clears
+                                                          the profile (tokens: --reset-default operations)
      --scopes <read,write,...>                            Replace the scopes
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;

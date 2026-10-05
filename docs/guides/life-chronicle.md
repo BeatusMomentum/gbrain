@@ -44,6 +44,29 @@ A page is extracted automatically when all of these hold:
 The page must also stay unchanged for `chronicle.auto_settle_seconds` (default
 180) so a note written in several passes is extracted once.
 
+## What becomes an event
+
+An event is something the page records as having happened by the end of its
+own day: the meeting or conversation itself, what was decided, said or agreed
+in it, and earlier events the text dates. Plans, follow-ups, deadlines and
+scheduled meetings are not events, even when the page gives them a date.
+
+Two rules are enforced after the model answers, before anything is written:
+
+- **No event after the page's own day.** The page's own day is the latest of
+  its own date (frontmatter `date` or `start`, or an authored effective date),
+  a calendar invite's `end`, and a conversation's last message, read in
+  `chronicle.tz` (default UTC). Anything on that day counts. A proposed event
+  dated later, or after today, is dropped as `future_dated`. "Board meeting in
+  Austin on May 15" in an April 18 meeting note never becomes a May 15 event.
+- **No invented days.** Events are stored by day. A past event the text dates
+  only by year or month ("back in 2024", "last month") is dropped as
+  `date_imprecise` rather than pinned to January 1 or the first of the month.
+
+The phase result reports dropped proposals by reason in `events_dropped`. When
+every proposed event of a page is dropped, its ledger row records that reason
+instead of `no_events`.
+
 ## Calendar invites
 
 A calendar invite is a page under `calendar/` or `cal/` (or of type
@@ -66,6 +89,7 @@ that it happened; meeting notes under `meetings/` carry what happened. The
 projection takes no daily-limit slot and records a zero cost; publication,
 operator-edit protection and retirement work exactly as for judged events. A
 calendar page without a title, `start` and `end` is judged like a meeting page.
+The date rules above apply to projected invites too.
 
 ## Event pages
 
@@ -198,6 +222,8 @@ brackets are filled in with real values on each surface.
 | `judge_refused` | execution | The chat model refused or filtered the page; no events were written. | — | — | — |
 | `page_missing` | execution | The page was deleted before extraction ran. | — | — | — |
 | `no_events` | execution | Extraction read the page and found no events. | — | — | — |
+| `future_dated` | execution | Every event the extraction proposed was dated after the page's own day (a plan, follow-up or scheduled item), so none was written; only what happened by the end of the page's day becomes an event. | — | — | — |
+| `date_imprecise` | execution | Every event the extraction proposed had only a year or a month ("back in 2024"), so none was written; the timeline stores days and never invents one. | — | — | — |
 | `no_chat_provider` | phase | No chat provider is configured on the brain host, so the chronicle phase made no calls. | — | user | credentials |
 <!-- chronicle-reasons:end -->
 

@@ -32,7 +32,10 @@ function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
       case '--federated-read': result.patch.federatedRead = csv(value); break;
       case '--scopes': result.patch.scopes = parseScopeString(value.replaceAll(',', ' ')); assertAllowedScopes(result.patch.scopes); break;
       case '--bound-slug-prefixes': result.patch.boundSlugPrefixes = value === 'none' ? null : csv(value); break;
-      case '--allowed-operations': result.patch.allowedOperations = csv(value); break;
+      case '--allowed-operations':
+        if (value === 'all') clearOperationSnapshot(result.patch);
+        else result.patch.allowedOperations = csv(value);
+        break;
       case '--bound-tools': result.patch.boundTools = csv(value); break;
       case '--bound-source': result.patch.boundSourceId = value; break;
       case '--bound-brain': result.patch.boundBrainId = value === 'current' || value === 'host' ? null : value; break;
@@ -60,7 +63,25 @@ function parseRescopeGrantFlags(args: string[]): RescopeGrantArgs {
       default: throw new GrantError('invalid_grant', `Unknown flag: ${flag}`);
     }
   }
+  assertProfileKept(result, '--allowed-operations all');
   return result;
+}
+
+/**
+ * `all`: store no operation snapshot, so the scopes and the surface alone
+ * decide, including operations later releases add. A null list is valid only
+ * without a profile (the profile is where the snapshot came from), so the
+ * profile is cleared with it, matching a fresh `register-client`.
+ */
+function clearOperationSnapshot(patch: GrantPatch): void {
+  patch.allowedOperations = null;
+  patch.profile = null;
+}
+
+function assertProfileKept(result: RescopeGrantArgs, flag: string): void {
+  if (result.profile && result.patch.profile === null) {
+    throw new GrantError('invalid_grant', `${flag} clears the grant profile and its operation snapshot; pass it or --profile, not both`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -125,14 +146,14 @@ const TOKEN_ONLY_FLAGS: Record<string, string> = {
  * Client flags of `auth rescope --client`: the unified `--sources a,b|none`
  * (element 0 = write source, the list = read set unless `--read-sources`
  * names a different one; `none` is the explicit no-source grant that refuses
- * every read and write), `--read-sources`, `--operations a,b|none`,
+ * every read and write), `--read-sources`, `--operations a,b|none|all`,
  * `--takes-holders a,b|none` and every `auth rescope-client` flag.
  */
 export function parseClientRescopeArgs(clientId: string, args: string[]): RescopeGrantArgs {
   const legacy: string[] = [];
   let sources: string[] | undefined;
   let readSources: string[] | undefined;
-  let operations: string[] | undefined;
+  let operations: string[] | 'all' | undefined;
   let takesHolders: string[] | undefined;
   const csv = (value: string): string[] => [...new Set(value.split(',').map(s => s.trim()).filter(Boolean))];
   for (let i = 0; i < args.length; i++) {
@@ -149,7 +170,7 @@ export function parseClientRescopeArgs(clientId: string, args: string[]): Rescop
     if (value === undefined || value.startsWith('--')) throw new GrantError('invalid_grant', `${flag} requires a value`);
     if (flag === '--sources') sources = value === 'none' ? [] : csv(value);
     if (flag === '--read-sources') readSources = csv(value);
-    if (flag === '--operations') operations = value === 'none' ? [] : csv(value);
+    if (flag === '--operations') operations = value === 'none' ? [] : value === 'all' ? 'all' : csv(value);
     if (flag === '--takes-holders') takesHolders = value === 'none' ? [] : csv(value);
   }
   const result = parseRescopeGrantFlags(legacy);
@@ -165,7 +186,10 @@ export function parseClientRescopeArgs(clientId: string, args: string[]): Rescop
   if (readSources !== undefined && readSources.length === 0) throw new GrantError('invalid_grant', '--read-sources needs at least one source id');
   if (sources?.length === 0 && readSources !== undefined) throw new GrantError('invalid_grant', '--sources none grants no source, so it takes no --read-sources');
   if (sources !== undefined || readSources !== undefined) result.patch.federatedRead = readSources ?? sources;
-  if (operations !== undefined) result.patch.allowedOperations = operations;
+  if (operations === 'all') {
+    clearOperationSnapshot(result.patch);
+    assertProfileKept(result, '--operations all');
+  } else if (operations !== undefined) result.patch.allowedOperations = operations;
   if (takesHolders !== undefined) {
     const invalid = takesHolders.filter(h => !isValidHolder(h));
     if (invalid.length) throw new GrantError('invalid_grant', `Invalid takes holder: ${invalid.join(', ')} (use world, brain, people/<slug>, companies/<slug> or a bare slug)`, ['takes_holders_invalid']);

@@ -13,15 +13,15 @@ import type { Migration } from './types.ts';
 // `permissions` value has no faithful column form, so it stays on the legacy
 // shape and denies every axis; doctor `legacy_token_grant_shape` lists it.
 // Handler-only and rerun-safe (a second run finds no unconverted rows).
-export const v201: Migration = {
-  version: 201,
+export const v202: Migration = {
+  version: 202,
   name: 'legacy_token_grant_conversion',
   idempotent: true,
   sql: '',
   handler: async engine => {
     const result = await migrateLegacyTokens(engine, { dryRun: false });
     if (result.migrated.length === 0 && result.skipped.length === 0) return;
-    migrationNotice(`  v201: converted ${result.migrated.length} legacy token grant(s) to the unified grant columns; no grant changed.`
+    migrationNotice(`  v202: converted ${result.migrated.length} legacy token grant(s) to the unified grant columns; no grant changed.`
       + (result.skipped.length
         ? ` ${result.skipped.length} token(s) with malformed permissions stay denied; gbrain doctor (legacy_token_grant_shape) lists each one with its fix.`
         : '')

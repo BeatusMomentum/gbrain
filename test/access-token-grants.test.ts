@@ -221,6 +221,11 @@ describe('5. lazy migration on rescope', () => {
     await rescope(t.name, '--sources', 'other', '--dry-run');
     expect((await rowOf(t.id)).source_grant).toBeNull();
   });
+
+  test('--operations all is client-only and points a token at --reset-default operations', () => {
+    expect(() => parseRescopeTokenArgs(['tok-example', '--operations', 'all'])).toThrow('--reset-default operations');
+    expect(parseRescopeTokenArgs(['tok-example', '--reset-default', 'operations']).reset).toEqual(['operations']);
+  });
 });
 
 describe('6. drift: an older binary edits the JSONB after migration', () => {

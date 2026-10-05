@@ -111,6 +111,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/ENGINES.md",
       },
       {
+        title: "docs/guides/move-to-postgres.md",
+        description:
+          "Move a PGLite brain to Postgres with its history: --url-env target setup, plan (exit 3) then --yes --expect, status/resume/rollback, what moves vs stays on this computer, recovery by error code.",
+        path: "docs/guides/move-to-postgres.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/GBRAIN_RECOMMENDED_SCHEMA.md",
         description:
           "MECE directory structure (people/, companies/, concepts/).",

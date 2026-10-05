@@ -437,6 +437,7 @@ export async function defaultJudge(input: {
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 600,
+    allowFallback: false,
   });
   const parsed = parseJudgeOutput(result.text);
   if (!parsed) {

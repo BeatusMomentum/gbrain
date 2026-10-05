@@ -23,6 +23,14 @@ const MIGRATION_WAVE_TESTS = [
   "test/e2e/migration-wave-provider-outcomes.test.ts",
 ];
 
+const GRADUATION_E2E_TESTS = [
+  "test/e2e/graduation-cli.test.ts",
+  "test/e2e/graduation-clients.test.ts",
+  "test/e2e/graduation-crash.test.ts",
+  "test/e2e/graduation-faults.test.ts",
+  "test/e2e/graduation-legacy-copy.test.ts",
+];
+
 export const E2E_TEST_MAP: Record<string, string[]> = {
   // #5984: the env-gated wire-level SQL trace for the managed-sync catch-up bench.
   "src/core/sql-trace.ts": ["test/e2e/sql-trace-postgres.test.ts"],
@@ -135,8 +143,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/grants/oauth-client-axes-schema.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
   "src/core/grants/cli.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
   "src/core/grants/service.ts": ["test/e2e/oauth-client-grant-axes.test.ts", "test/e2e/client-grants.test.ts"],
-  "src/core/schema-migrations/v201-legacy-token-grant-conversion.ts": ["test/e2e/access-token-grants.test.ts"],
-  "src/core/schema-migrations/v202-oauth-client-grant-axes.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
+  "src/core/schema-migrations/v202-legacy-token-grant-conversion.ts": ["test/e2e/access-token-grants.test.ts"],
+  "src/core/schema-migrations/v203-oauth-client-grant-axes.ts": ["test/e2e/oauth-client-grant-axes.test.ts"],
   "src/core/facts/withdrawal*.ts": ["test/e2e/delegated-grants-withdrawal.test.ts", "test/e2e/withdrawal-bounded-safety-postgres.test.ts", "test/e2e/withdrawal-crash-postgres.test.ts", "test/e2e/memory-safety-wave-postgres.test.ts", "test/e2e/fact-withdrawal-scope-postgres.test.ts"],
   "src/commands/mcp*.ts": ["test/e2e/harness-access.test.ts"],
   // OpenRouter subagent-loop families: the family allowlist + recipe feed the
@@ -267,7 +275,19 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/commands/migrate-engine.ts": [
     "test/e2e/multi-source-bug-class.test.ts",
     "test/e2e/migrate-engine-pglite-to-postgres.test.ts",
+    "test/e2e/graduation-legacy-copy.test.ts",
   ],
+  // Engine graduation (PGLite -> Postgres): the CLI, the orchestrator modules and the serve guard.
+  "src/commands/migrate-graduation.ts": GRADUATION_E2E_TESTS,
+  "src/core/persistence/engine-graduation*.ts": GRADUATION_E2E_TESTS,
+  "src/core/persistence/graduation-*.ts": GRADUATION_E2E_TESTS,
+  "src/core/persistence/graduation-copy.ts": ["test/e2e/graduation-copy.test.ts"],
+  "src/core/persistence/graduation-target.ts": ["test/e2e/graduation-copy.test.ts"],
+  "test/helpers/graduation-copy-harness.ts": ["test/e2e/graduation-copy.test.ts"],
+  "src/commands/doctor/checks/engine-graduation.ts": ["test/e2e/graduation-clients.test.ts"],
+  "scripts/persistence/graduation-*.ts": GRADUATION_E2E_TESTS,
+  "test/helpers/graduation-*.ts": GRADUATION_E2E_TESTS,
+  "test/fixtures/graduation/**": GRADUATION_E2E_TESTS,
   // Any minions queue/worker/handler change exercises all minion E2E.
   "src/core/minions/**": [
     "test/e2e/job-deferral-postgres.test.ts",
@@ -514,6 +534,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/chronicle-event-privacy-postgres.test.ts",
     "test/e2e/chronicle-event-identity-postgres.test.ts",
     "test/e2e/chronicle-invite-projection-postgres.test.ts",
+    "test/e2e/chronicle-date-quality-postgres.test.ts",
     "test/e2e/chronicle-surfaces-postgres.test.ts",
   ],
   // #5876: doctor auto_chronicle + the chronicle advisor read the ledger rollups.

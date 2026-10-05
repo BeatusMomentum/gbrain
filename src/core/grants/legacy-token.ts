@@ -18,7 +18,7 @@
  * `source_id`, `federated_read`, `allowed_operations`, `takes_holders`), bumps
  * `grant_revision`, and rewrites `permissions` as a mirror with every other key
  * preserved, so older binaries enforce the same grant. Rows still on the
- * JSONB-only shape convert in bulk (migration v201, `--migrate-legacy`), on
+ * JSONB-only shape convert in bulk (migration v202, `--migrate-legacy`), on
  * their first HTTP read (`resolveTokenGrant`) or on their first write. A
  * drifted row (JSONB edited by an older binary) refuses grant edits until
  * `--adopt-permissions` or `--adopt-columns` resolves it.
@@ -110,7 +110,10 @@ export function parseRescopeTokenArgs(args: string[]): RescopeTokenArgs {
         break;
       case '--sources': out.sources = csvOrNone(value); break;
       case '--takes-holders': out.takesHolders = csvOrNone(value); break;
-      case '--operations': out.operations = csvOrNone(value); break;
+      case '--operations':
+        if (value === 'all') throw new GrantError('invalid_grant', '--operations all applies to OAuth clients; to give a token every operation again, use --reset-default operations');
+        out.operations = csvOrNone(value);
+        break;
       case '--add': out.add = csvOrNone(value); break;
       case '--scopes':
         out.scopes = csvOrNone(value.replaceAll(' ', ','));

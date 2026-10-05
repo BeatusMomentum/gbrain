@@ -201,8 +201,9 @@ import { v197 } from './v197-managed-guard-null-source-fallback.ts';
 import { v198 } from './v198-publication-failure-detail.ts';
 import { v199 } from './v199-chronicle-page-state.ts';
 import { v200 } from './v200-sync-hold-page-index.ts';
-import { v201 } from './v201-legacy-token-grant-conversion.ts';
-import { v202 } from './v202-oauth-client-grant-axes.ts';
+import { v201 } from './v201-persistence-graduation.ts';
+import { v202 } from './v202-legacy-token-grant-conversion.ts';
+import { v203 } from './v203-oauth-client-grant-axes.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -404,4 +405,5 @@ export const MIGRATIONS: Migration[] = [
   v200,
   v201,
   v202,
+  v203,
 ];

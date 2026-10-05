@@ -5,8 +5,9 @@
  * Protects: the envelope an agent reads when the legacy engine copier refuses
  * a brain. The history refusal and the managed-brain refusal are `opError`s
  * with `why` and a filled `fix` that names the refusing side: a PGLite brain
- * gets the user's choice (stay on PGLite and share it with `gbrain mcp
- * expose`, or wait for graduation, which is not available yet), a Postgres
+ * gets the user's choice (turn graduation back on and preview the move with
+ * its read-only plan, or stay on PGLite and share it with `gbrain mcp
+ * expose`), a Postgres
  * brain moving down keeps its datastore, and a target that already holds
  * history needs an empty database. Every branch verifies read-only with
  * `gbrain doctor --no-migrate --json`. The unknown-engine error is an
@@ -45,25 +46,22 @@ async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
 const envelope = (e: unknown, render: RenderContext) => toAgentError(e, { transport: render.transport, render });
 
 describe('history refusal names the refusing side', () => {
-  test('a PGLite brain moving to Postgres: ask the user, stay on PGLite and expose it, graduation not available yet', async () => {
+  test('a PGLite brain moving to Postgres: ask the user, preview graduation or stay on PGLite and expose it', async () => {
     const e = await refusal(() => assertLegacyEngineMigration(engine, { side: 'source', from: 'pglite', to: 'postgres' }));
     expect(e.code).toBe('writer_coordinator_required');
     expect(e.why).toContain('fact_withdrawals');
     const env = envelope(e, cli);
     expect(env.code).toBe('writer_coordinator_required');
-    expect(env.fix).toMatchObject({ next: 'ask_user', consent: ['persistent_install', 'egress'], verify: { argv: expect.arrayContaining(VERIFY) } });
-    expect(env.fix?.argv?.slice(0, 3)).toEqual(['gbrain', 'mcp', 'expose']);
+    expect(env.fix).toMatchObject({ next: 'ask_user', consent: ['egress'], verify: { argv: expect.arrayContaining(VERIFY) } });
+    expect(env.fix?.argv?.slice(0, 4)).toEqual(['gbrain', 'config', 'unset', 'migrate.graduation']);
+    expect(env.fix?.then?.argv?.slice(0, 8)).toEqual(['gbrain', 'migrate', '--to', 'postgres', '--url-env', 'GBRAIN_TARGET_URL', '--plan', '--json']);
+    expect(env.fix?.then?.consent).toEqual([]);
+    expect(env.fix?.user_message).toContain('preview the move to Postgres (nothing changes yet)');
     expect(env.fix?.user_message).toContain('gbrain mcp expose');
-    expect(env.fix?.user_message).toContain('until graduation to Postgres is available');
-    expect(env.fix?.why).toContain('not available yet');
-    expect(JSON.stringify(env)).not.toContain('--plan');
+    expect(env.fix?.why).toContain('graduation copies it intact');
+    expect(JSON.stringify(env)).not.toContain('not available yet');
     // Over MCP the CLI command is the user's to run; the choice they are asked about is unchanged.
     expect(envelope(e, stdio).fix).toMatchObject({ next: 'tell_user_to_run', user_message: env.fix?.user_message });
-  });
-
-  test('the default side is the PGLite source moving up', async () => {
-    const e = await refusal(() => assertLegacyEngineMigration(engine));
-    expect(envelope(e, cli).fix?.argv?.slice(0, 3)).toEqual(['gbrain', 'mcp', 'expose']);
   });
 
   test('a Postgres brain moving to PGLite keeps its datastore', async () => {
@@ -99,7 +97,7 @@ describe('managed-brain refusal', () => {
     expect(e.code).toBe('writer_coordinator_required');
     expect(e.why).toContain('managed');
     expect(envelope(e, cli).fix?.next).toBe('ask_user');
-    expect(envelope(e, cli).fix?.argv?.slice(0, 3)).toEqual(['gbrain', 'mcp', 'expose']);
+    expect(envelope(e, cli).fix?.then?.argv).toContain('--plan');
   });
 
   test('another legacy writer names the coordinated path and verifies read-only', async () => {

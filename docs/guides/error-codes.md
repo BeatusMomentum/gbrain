@@ -321,7 +321,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Automatic event extraction (auto_chronicle) skipped or failed this page; `reason` says why and `fix`, when present, is the next step. | A capability this request needs is not configured or not reachable on this brain. | Read the receipt or doctor `auto_chronicle` check: its `why` explains the reason and its `fix`, when present, is the next step (paid fixes need the user's agreement). | agent | `gbrain doctor --json` | 1 | no |
 
-Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `no_chat_provider`.
+Reasons: `auto_chronicle_off`, `auto_chronicle_invalid`, `slug_bound_client`, `operation_bound_client`, `no_extract`, `history`, `not_yet_happened`, `too_short`, `dream_generated`, `no_write_decision`, `not_chronicle_shaped`, `already_extracted`, `superseded`, `daily_limit`, `judge_llm_unavailable`, `no_pricing`, `budget_exhausted`, `judge_chat_error`, `judge_truncated`, `judge_parse_failed`, `malformed_proposal`, `publish_error`, `judge_refused`, `page_missing`, `no_events`, `future_dated`, `date_imprecise`, `no_chat_provider`.
 
 More: [docs/guides/life-chronicle.md#skip-and-failure-codes](../../docs/guides/life-chronicle.md#skip-and-failure-codes)
 
@@ -685,6 +685,16 @@ More: [docs/guides/write-refusals.md#embedding_auth_failed](../../docs/guides/wr
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### engine_graduated
+
+<a id="engine_graduated"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A client opened a PGLite brain that moved to Postgres; its old path holds a tombstone. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#graduated-datastore](../../docs/guides/move-to-postgres.md#graduated-datastore)
+
 ### export_limit
 
 <a id="export_limit"></a>
@@ -846,6 +856,166 @@ More: [docs/guides/write-refusals.md#fetch_failed](../../docs/guides/write-refus
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A git command did not complete. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### graduation_drain_timeout
+
+<a id="graduation_drain_timeout"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Queued or running writes did not drain within --drain-timeout; the move stopped before copying and the source is unchanged. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 11 | yes |
+
+Reasons: `progressing`, `blocked`.
+
+More: [docs/guides/move-to-postgres.md#drain](../../docs/guides/move-to-postgres.md#drain)
+
+### graduation_embedding_dimension_mismatch
+
+<a id="graduation_embedding_dimension_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An existing, non-empty target database has a different embedding column layout than the brain being moved. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#embeddings](../../docs/guides/move-to-postgres.md#embeddings)
+
+### graduation_foreign_host_binding
+
+<a id="graduation_foreign_host_binding"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source's worktree is owned by another host, so this host cannot move it to Postgres. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#hosts](../../docs/guides/move-to-postgres.md#hosts)
+
+### graduation_in_progress
+
+<a id="graduation_in_progress"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another process is moving this brain to Postgres; neither engine may be opened until it finishes. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 75 | yes |
+
+More: [docs/guides/move-to-postgres.md#in-progress](../../docs/guides/move-to-postgres.md#in-progress)
+
+### graduation_interrupted
+
+<a id="graduation_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An engine graduation stopped before it finished and no process owns it. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#resume](../../docs/guides/move-to-postgres.md#resume)
+
+### graduation_rollback_writes_lost
+
+<a id="graduation_rollback_writes_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Rolling back to PGLite would drop changes made on Postgres since the move. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `user_data`, `security_changes`.
+
+More: [docs/guides/move-to-postgres.md#rollback](../../docs/guides/move-to-postgres.md#rollback)
+
+### graduation_source_writer_held
+
+<a id="graduation_source_writer_held"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A live serve or daemon holds the PGLite brain and did not hand it over to the move. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#graduation-writer-held](../../docs/ENGINES.md#graduation-writer-held)
+
+### graduation_split_brain
+
+<a id="graduation_split_brain"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A different brain appeared at the graduated brain's old path; the target is withheld from authority until the user decides. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#split-brain](../../docs/guides/move-to-postgres.md#split-brain)
+
+### graduation_target_auth_failed
+
+<a id="graduation_target_auth_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target database rejected the credentials recorded for this move. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#credentials](../../docs/guides/move-to-postgres.md#credentials)
+
+### graduation_target_ddl_unreachable
+
+<a id="graduation_target_ddl_unreachable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target's direct (schema) connection is unreachable or names a different database than its main URL. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#ddl-connection](../../docs/guides/move-to-postgres.md#ddl-connection)
+
+### graduation_target_not_empty
+
+<a id="graduation_target_not_empty"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target database already holds data that is not this move's. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#target-not-empty](../../docs/guides/move-to-postgres.md#target-not-empty)
+
+### graduation_target_unsupported
+
+<a id="graduation_target_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The target database is missing a prerequisite (server version, vector extension with halfvec, CREATE privilege or a matching column). | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `server_version`, `vector`, `halfvec`, `create_privilege`, `column`, `env_override`.
+
+More: [docs/guides/move-to-postgres.md#target-requirements](../../docs/guides/move-to-postgres.md#target-requirements)
+
+### graduation_unclassified_table
+
+<a id="graduation_unclassified_table"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A database has a relation the graduation inventory does not classify, so moving it could lose data. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `newer_schema`, `missing_inventory_row`.
+
+More: [docs/guides/move-to-postgres.md#inventory](../../docs/guides/move-to-postgres.md#inventory)
+
+### graduation_unsupported_platform
+
+<a id="graduation_unsupported_platform"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Moving a brain with write history to Postgres is not available on this platform yet. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/move-to-postgres.md#platforms](../../docs/guides/move-to-postgres.md#platforms)
+
+### graduation_verify_failed
+
+<a id="graduation_verify_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The moved copy did not verify against the source; the target stays fenced and the source stays authoritative. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `count`, `digest`, `sequence`, `fk`, `trigger`, `relation_set`, `replay`, `doctor`.
+
+More: [docs/guides/move-to-postgres.md#verify](../../docs/guides/move-to-postgres.md#verify)
 
 ### graph_incomplete
 

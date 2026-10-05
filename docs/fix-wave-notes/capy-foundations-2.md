@@ -3,9 +3,9 @@
 One integrated PR. Five lanes were built in parallel from master at
 `5bd9e8497` and merged here with merge commits in the order F (scale and
 operations), A (crash robot), E (keys and grants), C (write attribution), D
-(silent failures). Lane E's placeholder migrations became v201
-`legacy_token_grant_conversion` and v202 `oauth_client_grant_axes`, the next
-numbers after master's v200. Generated files (migration registry, CLI flag
+(silent failures). Lane E's placeholder migrations became v202
+`legacy_token_grant_conversion` and v203 `oauth_client_grant_axes`, the next
+numbers after master's v201 (engine graduation). Generated files (migration registry, CLI flag
 registry, schema blobs, llms bundles, goldens) were regenerated, never
 hand-merged; the module-size ratchet rows that two lanes both grew were merged
 to measured line counts, keeping every lane's rationale.
@@ -41,7 +41,7 @@ Ceiling enforcement stays report-only.
 | A | Crash robot over the real operations (generator, reference model, SIGKILL at every crash seam, process faults, replay and shrink); crash-robot CI job per engine with PgBouncer; restarted PGLite owner releases its dead predecessor's claims; `buildHistoryFixture`; lock-order trace; would-have-caught runner | P0 |
 | C | Unmanaged writers through `maintenanceTransaction`, bounded per batch; attribution-backfill verified on a 10k managed history; `calibration undo-wave` on Postgres | P1 |
 | D | Automatic facts drain on PGLite (serve, serve --http, `facts_drain` cycle phase) with job deferral; #5299 cycle fence; `repair take-supersession` (#5886); doctor `revision_backfill` and the backfill on managed brains (#5216); chronicle event identity and invite projection | P0 drain, P1 rest |
-| E | Dashboard key mint fix (read+write default, revoke by id); v201 bulk legacy grant conversion and column reads on both HTTP transports; v202 client `--sources none` and `--takes-holders`; doctor `legacy_token_null_scope` | P0 mint fix, P2 rest |
+| E | Dashboard key mint fix (read+write default, revoke by id); v202 bulk legacy grant conversion and column reads on both HTTP transports; v203 client `--sources none` and `--takes-holders`; doctor `legacy_token_null_scope` | P0 mint fix, P2 rest |
 | F | `find_orphans` known answer on Postgres; PGLite planner stats in the timeline walk; autocommit WAL checkpoint guard; migrate refusals with why and fix; `sources refresh` inside a resident PGLite owner; projection-readiness cache; F4d ceilings in the scale tier; seat heartbeat and pattern-page seat follow-ups | P0 scale fixes and refusal, P2 rest |
 
 Every P0 item shipped. Nothing was cut.

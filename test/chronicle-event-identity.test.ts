@@ -59,8 +59,9 @@ const live = async (engine: BrainEngine) => (await eventPages(engine)).filter((e
 const at = (whenIso: string) => new Date(whenIso).toISOString();
 
 function slugsFor(proposals: ChronicleEventProposal[], tz = 'UTC', existing = new Map<string, string>()) {
-  const ctx = { input: {} as never, effectiveDate: today, attendees: [] };
-  const built = buildChronicleEvents(proposals, ctx, { slug: 'meetings/day', visibility: 'world', contentHash: 'h' }, tz);
+  const ctx = { input: {} as never, effectiveDate: today, attendees: [], pageDates: [new Date(`${today}T23:59:59Z`)] };
+  const { events: built, dropped } = buildChronicleEvents(proposals, ctx, { slug: 'meetings/day', visibility: 'world', contentHash: 'h' }, { tz, now: new Date(`${today}T23:59:59Z`) });
+  expect(dropped).toEqual({});
   return { legacy: built.map((e) => e.slug), assigned: assignChronicleEventSlugs(built, existing).map((e) => e.slug) };
 }
 

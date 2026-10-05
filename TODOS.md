@@ -19,6 +19,17 @@ Context: `scripts/persistence/README.md` ("Crash robot"), `scripts/persistence/{
 - [ ] **P2 — Pre-activation claim lock order.**
   **What:** the unmanaged `claimWorktree` locks brain > sources > worktrees; managed paths lock worktrees before sources. No publication runs before activation, so nothing deadlocks today. **Fix:** reorder the unmanaged claim to brain > worktrees > sources so `lock-order.ts` can trace setup too. **Effort:** S. **Priority:** P2.
 
+## Engine graduation follow-ups (filed 2026-10-04, GBRA-50)
+
+Context: `docs/guides/move-to-postgres.md`, `docs/ENGINES.md#engine-migration-refused`.
+
+- [ ] **P2 — Postgres → PGLite graduation.**
+  **What:** `gbrain migrate --to pglite` uses the legacy copier, which refuses any brain with write history, withdrawals or worktree ownership. **Why:** a brain that moved to Postgres (or started there) cannot come back to a single-machine PGLite brain without losing its history. **Fix:** a reverse adapter (Postgres source, PGLite target) for the graduation inventory, copier and verify in `src/core/persistence/engine-graduation.ts`, with the same plan, fence, verify, cutover and crash tests. **Effort:** L. **Priority:** P2.
+- [ ] **P3 — `gbrain migrate --discard-source`.**
+  **What:** after a verified graduation the PGLite copy stays at `<path>.graduated-<run_id>` and the user deletes it by hand (doctor's `pglite_leftovers` names the command). **Why:** the copy still holds private memory and token hashes. **Fix:** a confirmation-gated command that deletes the retained copy and the tombstone only when the run is `graduated` and no rollback is pending, with `--yes --expect` and a dry run. **Effort:** S. **Priority:** P3.
+- [ ] **P2 — Windows graduation.**
+  **What:** on Windows a PGLite brain with history gets `graduation_unsupported_platform` (history-free brains use the legacy copier). **Why:** the tombstone, kernel-lock retention and SIGKILL crash tests have not run on a Windows runner, so custody across a crash is unproven there. **Fix:** run the tombstone, older-binary and crash suites on a Windows CI runner, fix what fails, then lift the platform refusal. **Effort:** M. **Priority:** P2.
+
 ## Held files follow-ups (filed 2026-10-04, follow-up from v0.60.47.0)
 
 Context: `docs/guides/repair.md#held-files`, `docs/guides/write-refusals.md#held-files-and-content-refusals`.
@@ -118,10 +129,10 @@ Spec: `docs/designs/AGENT_OPERATOR_WAVE.md` (Deferred list). Contract: `docs/pro
 - [x] **P2 — `--json` refusals from CLI-only ops print to stderr only.** **Completed (#5991):** `src/cli/cli-error.ts` prints one JSON refusal envelope on stdout under `--json`.
 - [x] **P2 — PGLite `sources refresh` while `gbrain serve` owns the database.** **Completed: Foundations 2** — the refresh runs inside the resident owner through the `writer_refresh` administration operation (`src/commands/sources-refresh-delegate.ts`).
 - [x] **P3 — The consumer's idle probe ignores the refresh effect fence.** **Completed: Foundations 2** — the idle probe applies `refreshFenceClear` to effects like the claims do.
-- [x] **P2 — Drop the JSONB grant authority for legacy tokens.** **Completed: Foundations 2** — the dashboard mints through `mintLegacyToken`, migration v201 converts every legacy grant, the HTTP auth paths read the columns (a later legacy row converts on its first read), and minting no longer writes a JSONB-only grant.
+- [x] **P2 — Drop the JSONB grant authority for legacy tokens.** **Completed: Foundations 2** — the dashboard mints through `mintLegacyToken`, migration v202 converts every legacy grant, the HTTP auth paths read the columns (a later legacy row converts on its first read), and minting no longer writes a JSONB-only grant.
 - [ ] **P2 — Remove the `permissions` grant mirror after its window.**
-  **What:** tokens still write the `permissions` JSONB mirror and enforce drift until `GRANT_MIRROR_WINDOW_ENDS` (2026-11-04, `src/core/grants/model.ts`) so older binaries keep working. **Fix:** after that date stop writing the mirror, drop the drift comparison and `legacy_token_grant_drift`, and keep `migrateLegacyTokens` only for brains that skipped v201. **Effort:** M. **Priority:** P2.
-- [x] **P2 — `--sources none` for OAuth clients.** **Completed: Foundations 2** — `auth rescope --client <id> --sources none` and `--takes-holders a,b|none` (migration v202).
+  **What:** tokens still write the `permissions` JSONB mirror and enforce drift until `GRANT_MIRROR_WINDOW_ENDS` (2026-11-04, `src/core/grants/model.ts`) so older binaries keep working. **Fix:** after that date stop writing the mirror, drop the drift comparison and `legacy_token_grant_drift`, and keep `migrateLegacyTokens` only for brains that skipped v202. **Effort:** M. **Priority:** P2.
+- [x] **P2 — `--sources none` for OAuth clients.** **Completed: Foundations 2** — `auth rescope --client <id> --sources none` and `--takes-holders a,b|none` (migration v203).
 - [x] **P2 — Seat follow-ups (#4618).** **Completed: Foundations 2** — the OpenClaw context-engine heartbeat reports seat reasons (write failure, conflict, invalid label) with their hints, and a pattern page drops a seat its reflections no longer share. The Codex trust-hash item closed with no code: the Codex SessionEnd command never carries a seat (`buildCodexSessionEndCommand` takes only the gbrain binary; `--seat` prints a note to set `GBRAIN_SEAT` instead), so adding a seat cannot change its trust hash.
 - [x] **P2 — Large-brain ceilings in the scale tier.** **Completed: Foundations 2** — every scale run asserts the F4d ceilings through the real CLI (`scripts/scale/f4d.ts`: progress-aware sync deadline, loud embed budget stop and serve boot window at every tier, the 20,000-file `sources add` at 20k and up), so the 50k tier carries them once `trend.ts` unlocks it; delegated syncs keep the progress-aware deadline.
 - [ ] **P2 — MCP search on Postgres slows sharply between 10k and 20k pages.**
@@ -3368,7 +3379,7 @@ Deferred from the #2529/#2477 security-fix wave (plan-eng-review + codex outside
 voice CLEARED). None block the wave.
 
 - [x] **P2 — Per-OAuth-client `takes_holders` storage (#2529 follow-up).**
-  **Completed: Foundations 2** — `oauth_clients.takes_holders` (migration v202),
+  **Completed: Foundations 2** — `oauth_clients.takes_holders` (migration v203),
   set with `gbrain auth rescope --client <id> --takes-holders a,b|none`, read by
   `verifyAccessToken` and the publication holder reauthorization.
 - [ ] **P3 — `register-client --takes-holders` and effective holders in `whoami`.**

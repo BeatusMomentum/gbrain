@@ -175,9 +175,11 @@ Nothing is inferred for older rows. `gbrain repair attribution-backfill` fills
 only rows the write journal proves exactly (the page write whose recorded
 result is that revision, the `remember` that inserted that fact) and leaves the
 rest `unrecorded`. Attribution is not file-backed: rebuilding from Markdown
-loses it, and `gbrain migrate --to` copies it verbatim only for facts (pages, takes
-and timeline rows are re-created on the target and start `unrecorded`; version
-history is not copied).
+loses it. Graduation (`gbrain migrate --to postgres` on a PGLite brain) copies
+every attributed row verbatim, version history included. The legacy copier
+(`gbrain migrate --to pglite`, or graduation turned off) copies it verbatim only
+for facts (pages, takes and timeline rows are re-created on the target and
+start `unrecorded`; version history is not copied).
 
 - **Managed brains:** creation attribution is complete. The writer guard
   refuses a canonical write outside `withCoordinatedWrite`, so a direct writer

@@ -8,8 +8,8 @@ import type { Migration } from './types.ts';
 // and a per-client takes-holder allow-list (fragment
 // src/core/grants/oauth-client-axes-schema.ts). Additive and metadata-only:
 // every existing client keeps NULL in both, which is its current grant.
-export const v202: Migration = {
-  version: 202,
+export const v203: Migration = {
+  version: 203,
   name: 'oauth_client_grant_axes',
   idempotent: true,
   sql: OAUTH_CLIENT_GRANT_AXES_SQL,
