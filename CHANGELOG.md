@@ -10,6 +10,65 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.58.0] - 2026-10-04
+
+**A managed Postgres brain far from its database catches up a sync backlog about 2.7 times faster again, and every write to it costs fewer round trips (#5984).**
+
+On a brain with managed writes and a database across the internet, `gbrain sync` drains a backlog in one run, but each page still took about 48 network round trips to save, and the next batch of pages waited until the previous one had committed. Each page now costs about 17 round trips, and the next batch is prepared and queued while the current one is still being saved. On a test rig with 57 ms to the database, a 10,000-file backlog now takes about 5.4 hours instead of about 11. Every page still gets its own write receipt, pages still land in file order, and a failed page still stops the run before anything after it is published.
+
+### The numbers that matter
+
+| 57 ms to the database | Before | Now |
+| --- | --- | --- |
+| 500-file backlog, pages per minute | 10.6 | 28.8 |
+| 10,000-file backlog (300-word pages) | about 10.7 h | about 5.4 h |
+| Round trips to save one page in a bulk group | 48 | 17 |
+| Time the brain-wide write counter stays locked per batch | 0.72 s | 0.12 s |
+| A foreground write while catching up (p95) | 18.2 s (15.5 s idle) | 15.1 s (14.9 s idle), no failures |
+| Same backlog next to the database | 527 pages/min | 545 pages/min |
+
+### Things to watch
+
+- Finish a running catch-up before downgrading gbrain. An older version refuses a batch this version queued ahead, and its sync stops with a conflict instead of saving a page twice.
+- Nothing is queued ahead while foreground writes are recent (one in the last minute), so a busy agent session slows a catch-up but its own writes stay fast.
+- 150 pages/min at 57 ms is still not reached. It needs several batches saved at once, which is a separate change.
+
+## To take advantage of v0.60.58.0
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+2. **Nothing else to migrate.** There is no schema change; the next `gbrain sync` uses the new path.
+3. **Verify the outcome:**
+   ```bash
+   gbrain sync --source <id> --no-pull --json
+   ```
+   `drain.bulk.admitted_ahead` counts the batches queued while the previous one was saving.
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with:
+   - output of `gbrain doctor`
+   - contents of `~/.gbrain/upgrade-errors.jsonl` if it exists
+   - which step broke
+
+   This feedback loop is how the gbrain maintainers find fragile upgrade paths. Thank you.
+
+### Itemized changes
+
+- **Admit-ahead** (`src/core/persistence/sync-window.ts`, `admitAhead` in `sync-run.ts`): while a bulk group publishes, the drain freezes and admits the next group into the cursor's `window`. Window members name the previous group's last request (`intent.after`); the consumer cancels a window group whose predecessor did not commit, publication re-checks it once per transaction, and the drain cancels the window's queued members after a failed page (reason: "An earlier page of the same sync did not commit"). The publication fence reads the cursor `FOR KEY SHARE` and accepts window members, so cursor saves no longer wait for the publishing group. `drain.bulk.admitted_ahead` reports the count.
+- **One preimage and one postimage per page**: publishers pass their in-transaction page read to `apply(tx, preimage)` and the version row; managed-sync imports run coordinated (no re-read, one read after the last write feeds the read-back check, projections, a single text seal, provenance, receipt and effects).
+- **Per-transaction memos** (`transactionMemo`, `src/core/page-state/transactions.ts`) for the local writer row, source membership, embedding config and the hold summary.
+- **Chunks**: the chunk insert binds its rows as one JSON document (stable, prepared text); a complete replacement seals `chunker_version` in the statement that locks the page row.
+- **Set-based group completion** (`completeGroup`, `group-publish.ts`): effect bytes are read before the counter lock; the counter lock and one `UPDATE ... FROM unnest(...) RETURNING` that checks every member's claim and terminal reservation are pipelined; a short `RETURNING` rolls the group back to the single path, where each member gets its own error code.
+- **Pipelining** (`pipelined`): independent statements inside one page's chain share a round trip on direct Postgres; PGLite and transaction-mode PgBouncer run them one by one.
+
+### For contributors
+
+- The bench reports a per-phase critical path, group publication and counter-hold breakdowns, effects per group and foreground round trips (`--analyze <trace.jsonl>` for a kept trace); `scripts/bench/managed-sync-pipeline-spike.ts` records what postgres.js pipelines. Results are in `docs/eval/managed-sync-catchup.md` ("Round-trip diet 2" and "Admit-ahead").
+- Goldens regenerated for the prepared chunk insert (`sql-text/chunks.json`, `_driver.json`) and the export surface (`verifyPageReadable`; optional `preimage` on `createVersion`, `sealChunkerVersion` on `upsertChunks`).
+
 ## [0.60.57.0] - 2026-10-05
 
 **gbrain now knows when a relationship was true: a person who left a company stops showing up as working there, "where did Alice work in 2022" answers from dated evidence, and a nightly check closes jobs that cannot both still hold.**
