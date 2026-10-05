@@ -174,6 +174,17 @@ describe('E-N4: assistant turns with no user turn are flagged, never silent', ()
     expect(diag.userTurnsMissing).toBe(true);
   });
 
+  test('claude-code adapter: a session started by automation (non-human or meta user records) is not flagged', async () => {
+    const p = writeRollout('claude-automation.jsonl', [
+      JSON.stringify({ type: 'user', sessionId: 's-2', origin: { kind: 'task-notification' }, timestamp: '2026-10-01T09:00:00.000Z', message: { role: 'user', content: 'scheduled run' } }),
+      JSON.stringify({ type: 'user', sessionId: 's-2', isMeta: true, timestamp: '2026-10-01T09:00:01.000Z', message: { role: 'user', content: 'expanded command' } }),
+      JSON.stringify({ type: 'assistant', sessionId: 's-2', isSidechain: false, timestamp: '2026-10-01T09:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }),
+    ]);
+    const { diag } = await drain(claudeCodeAdapter.parse(p));
+    expect(diag.sessions).toBe(1);
+    expect(diag.userTurnsMissing).toBeUndefined();
+  });
+
   test('session-end heartbeats degraded:no_user_turns for an assistant-only rollout and still banks the corpus', async () => {
     const codexHome = join(tmp, 'codex');
     process.env.CODEX_HOME = codexHome;
