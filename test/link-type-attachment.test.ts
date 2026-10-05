@@ -44,3 +44,10 @@ test('the verb is read at this link, not at an earlier mention of the same targe
   expect(inferLinkType('person', window, undefined, 'companies/widget-co', undefined, anchor)).toBe('works_at');
   expect(inferLinkType('person', window, undefined, 'companies/widget-co')).toBe('mentions');
 });
+
+test('links joined by "and" share the verb before the first: works at [A] and at [B]', async () => {
+  const content = 'Alice works at [Acme](companies/acme-example) and at [Widget](companies/widget-co).';
+  const window = content.replace(/\s+/g, ' ');
+  expect(inferLinkType('person', window, undefined, 'companies/widget-co', undefined, window.indexOf('[Widget]'))).toBe('works_at');
+  expect(inferLinkType('person', 'Alice works at [Acme](companies/acme-example) and also advises [Widget](companies/widget-co).', undefined, 'companies/widget-co')).toBe('advises');
+});

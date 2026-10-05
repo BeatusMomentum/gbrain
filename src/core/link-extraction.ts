@@ -1256,6 +1256,13 @@ const VERB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
  * located in the window (callers fall back to plain precedence).
  */
 const LINK_MARK_RE = /\]\(|\]\]|\[\[/;
+// "works at [A] and at [B]": links joined only by commas and conjunctions share the verb before the first.
+const INLINE_LINK_RE = /\[\[[^\]\n]*\]\]|\[[^\]\n]*\]\([^)\n]*\)/g;
+const CONNECTOR_RE = /^\s*(?:,\s*(?:(?:and|or)\s+)?|(?:and|or|&|as well as)\s+)(?:(?:at|in|with|for|of|to)\s+)?$/i;
+const coordinated = (between: string) => {
+  const [lead, ...gaps] = between.split(INLINE_LINK_RE);
+  return !lead.trim() && gaps.length > 0 && gaps.every(gap => CONNECTOR_RE.test(gap));
+};
 const GLOBAL_VERB_RULES = VERB_RULES.map(([re, verb]) => [new RegExp(re.source, `${re.flags.replace('g', '')}g`), verb] as const);
 function attachedVerb(context: string, targetSlug?: string, anchor?: number): string | null | undefined {
   const fromAnchor = targetSlug && anchor !== undefined ? context.indexOf(targetSlug, anchor) : -1;
@@ -1268,7 +1275,8 @@ function attachedVerb(context: string, targetSlug?: string, anchor?: number): st
   for (const [re, verb] of GLOBAL_VERB_RULES) {
     for (const m of context.matchAll(re)) {
       const start = m.index ?? 0; const end = start + m[0].length;
-      if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))) continue;
+      if (end <= linkStart && LINK_MARK_RE.test(context.slice(end, linkStart))
+        && !coordinated(context.slice(end, linkStart))) continue;
       if (start >= linkEnd && (LINK_MARK_RE.test(context.slice(linkEnd, start)) || /^\s{0,3}\[/.test(context.slice(end)))) continue;
       return verb;
     }
