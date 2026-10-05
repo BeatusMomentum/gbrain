@@ -238,10 +238,11 @@ describe('list_pages pagination meta for remote callers', () => {
   test('MCP dispatch: content[0] stays the bare array; the listing_truncated notice names the next call', async () => {
     __resetBackupNoticeForTests();
     await seed(12);
+    // Once-per-process notices (backup coverage, post-upgrade) depend on files other tests in the same shard leave in
+    // the shared home; switch them off so this test counts only the listing notice.
+    await withEnv({ GBRAIN_BACKUP_CHECK: 'off', GBRAIN_NO_ONBOARD_NUDGE: '1' }, async () => {
     const opts = { remote: true, transport: 'stdio' as const, sourceId: 'default' };
-    // The once-per-process post-upgrade notice reads the shared upgrade log; another file in the same shard can leave
-    // one behind, which would add a block here. Opt out so this test counts only the listing notice.
-    const res = await withEnv({ GBRAIN_NO_ONBOARD_NUDGE: '1' }, () => dispatchToolCall(engine as any, 'list_pages', { limit: 10, type: 'note' }, opts));
+    const res = await dispatchToolCall(engine as any, 'list_pages', { limit: 10, type: 'note' }, opts);
     expect(res.isError).toBeUndefined();
     expect(JSON.parse(res.content[0].text)).toHaveLength(10);
     expect(res.content).toHaveLength(2);
@@ -256,5 +257,6 @@ describe('list_pages pagination meta for remote callers', () => {
     const complete = await dispatchToolCall(engine as any, 'list_pages', { limit: 20 }, opts);
     expect(complete.content).toHaveLength(1);
     expect(complete._meta?.pagination).toEqual({ truncated: false, limit: 20 });
+    });
   }, 30_000);
 });
