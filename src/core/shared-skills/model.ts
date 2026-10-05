@@ -55,8 +55,10 @@ export interface SkillMetadata {
   writes_pages: boolean;
   mutating: boolean;
   file_policy: Array<Pick<SharedSkillFile, 'file_class' | 'audience'>>;
+  /** #5150: false when the SKILL.md declared no `tools`, so readers inherit the caller's brain tools; absent on revisions published before it was recorded. */
+  tools_declared?: boolean;
 }
-export interface SharedSkillSummary extends SharedSkillKey, Omit<SkillMetadata, 'file_policy'> {
+export interface SharedSkillSummary extends SharedSkillKey, Omit<SkillMetadata, 'file_policy' | 'tools_declared'> {
   qualified_id: string;
   revision: string;
   policy_epoch: string;
