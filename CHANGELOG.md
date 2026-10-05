@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.72.0] - 2026-10-05
+## [0.60.73.0] - 2026-10-05
 
 **A managed Postgres brain far from its database now catches up a sync backlog at about 150 pages a minute: a 10,000-file backlog takes about 1.2 hours instead of 5.4 (#5984).**
 
@@ -69,6 +69,21 @@ Nothing to do: lanes are on by default for managed Postgres syncs. `--lanes N` (
 ### For contributors
 
 - `test/managed-sync-lanes.test.ts` (Postgres; laned in CI) covers lane settings, the shared lease, the commit-order wait, a lane drain, a failure mid-run and a cross-linked corpus built the same with and without lanes. Results are in `docs/eval/managed-sync-catchup.md` ("Parallel lanes").
+
+## [0.60.72.0] - 2026-10-05
+
+**`ci:ubicloud` VMs carry their owner's name, an interrupted run destroys every VM it asked for, and no run destroys another owner's VMs.**
+
+VMs are named `ubirun-<owner>-<epoch>-<suffix>`, where the owner is `UBI_OWNER` or a per-machine id. Before, nothing showed which thread a VM belonged to, and every `up` destroyed any `ubirun-*` VM older than 12 hours, whoever started it. That sweep is now off unless `UBI_GC_HOURS` is set, and even then it only destroys the caller's own VMs. `ubi-runner.sh gc HOURS` runs the same sweep by hand.
+
+A run stopped with SIGTERM while VMs were still provisioning used to tear down before their create requests finished. Those VMs appeared afterwards and leaked (three `standard-16` VMs sat idle for 84 minutes). SIGHUP, which a dropped terminal or a cancelled background operation sends, was not handled at all, so the run died with every VM still up (14 leaked VMs on 2026-10-04). Now SIGINT, SIGTERM, SIGHUP and SIGQUIT all take the same teardown path, and a second signal can't cut it short. Each name is recorded before its create is sent. An interrupted `up` finishes its create request and destroys its own VM. Teardown then polls every recorded name until it is confirmed gone. Mock-API tests reproduce both old leaks (SIGTERM left two of three VMs behind, SIGHUP all three) and pass with the fix.
+
+`ubi-runner.sh list --mine` lists your VMs, and `ubi-runner.sh usage` shows VMs and vCPUs per owner across the project. A create refused for vCPU quota now says how many vCPUs it needed, how many the project uses and the maximum, followed by that per-owner table.
+
+## To take advantage of v0.60.72.0
+
+- Run `UBI_OWNER=<your-thread-code> bun run ci:ubicloud`. You no longer need `UBI_GC_HOURS=0`.
+- In a multi-lane wave, lanes run `ci:ubicloud:diff` or targeted suites, and only the integrator runs the full gate. One full gate takes 64 of the project's 256 vCPUs.
 
 ## [0.60.71.0] - 2026-10-05
 
