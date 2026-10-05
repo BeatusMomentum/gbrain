@@ -141,14 +141,15 @@ Recorded before any sealed cell runs.
    first text of this amendment named `17c5765ba` as the baseline, but the
    master merged into the candidate is `67c4ff27`.)
 3. **Harness.** gbrain-evals `p0-heldout-harness` at
-   `0dd5b75c20f958c0cb57ea8e47f998c1a64f525a`, `memory-qa` think lane,
+   `cf270c2093d381f104715cd9db7331e6ffe890c8`, `memory-qa` think lane,
    official judge prompts, the development lane's settings (`balanced`,
    reranker off, autocut off, top 10, five sessions read). `think` receives
    the question date as `referenceDate`; LoCoMo questions carry no date, so
    the reference date is the conversation's latest session date, exactly as
-   in the development measurement. At `0dd5b75c` the harness passes no date
-   for LoCoMo, so the LoCoMo cell runs only with that fallback; a run without
-   it is a deviation and is reported as one.
+   in the development measurement. (Corrected 2026-10-05, before any result
+   was read: this item first pinned `0dd5b75c`, which passes no date for
+   LoCoMo; `cf270c2` adds the latest-session-date fallback this item
+   requires.)
 4. **Cells and bar.** Primary: LoCoMo sealed (seven conversations; diagnostic
    evidence per the split's note). Disclosed confirmation: LongMemEval-M
    sealed, same lane. Default on requires a paired interval excluding zero on

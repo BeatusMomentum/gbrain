@@ -16,8 +16,9 @@
  "harness": {
   "repo": "garrytan/gbrain-evals",
   "ref": "p0-heldout-harness",
-  "sha": "0dd5b75c20f958c0cb57ea8e47f998c1a64f525a",
-  "reference_date": "question date (YYYY-MM-DD); for LoCoMo, which has no question date, the latest session date of the conversation, as in the development measurement"
+  "sha": "cf270c2093d381f104715cd9db7331e6ffe890c8",
+  "reference_date": "question date (YYYY-MM-DD); for LoCoMo, which has no question date, the latest session date of the conversation (harness cf270c2), as in the development measurement",
+  "pin_note": "Corrected 2026-10-05 before any result was read: the first pin named 0dd5b75c, which lacks the LoCoMo latest-session-date fallback amendment 3 requires."
  },
  "sources": [
   {
