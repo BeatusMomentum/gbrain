@@ -22,7 +22,6 @@ Both tests find their migration by name (`MIGRATIONS.find(m => m.name.endsWith(.
 - **`gbrain doctor` warns instead of failing on missing RLS when nothing exposes the public schema.** It still fails when PostgREST roles or a Supabase URL are present. (#4939)
 - **`extract_health` dates a high halt rate by the last halt** ("last halt 4d ago"), not the last clean run. (#5863)
 - **Doctor's migration row reads the ledger like `get_health`:** a `--force-retry` marker resets the wedge, and a host migration a newer one skipped past is reported with `gbrain apply-migrations --yes`. (C-NEW-2, C-NEW-3)
-- **Code pages that contain a facts/takes fence marker are withheld from remote reads** and left out of `repair safe-chunks` and `safe_index_pending` counts. (D-NEW-2)
 - **Remote code reads stay suspended with a clearer error** that names the follow-up (#5052) and points at `search`/`query`. (#5052)
 - **Every gbrain plpgsql function pins `search_path`;** the fingerprint functions keep identical output and stay inlinable; the `check:search-path` guard now sees every definition. (#5190, C-NEW-1)
 
@@ -37,7 +36,6 @@ Both tests find their migration by name (`MIGRATIONS.find(m => m.name.endsWith(.
 | `config get/show schema_pack` print the resolved pack | Scripts reading `config get schema_pack` (now the effective value, default `gbrain-base` when nothing is set, exit 0) | `gbrain schema active` | Read `~/.gbrain/config.json` directly for the file value |
 | RLS check: plain Postgres → warn | Self-hosted Postgres with no PostgREST roles and a missing-RLS table (doctor no longer exits 1 for it) | `rls` (warn), docs/guides/rls-and-you.md | Create the PostgREST roles to get the fail verdict, or enable RLS |
 | Migration ledger row | Hosts after a `--force-retry`, or with a skipped host migration (new warn) | `minions_migration` | Run `gbrain apply-migrations --yes` |
-| Protected code pages withheld | Code files that literally contain a gbrain facts/takes fence marker (e.g. gbrain's own source) | `safe_index_pending` counts them as kept; `repair safe-chunks` residual `code_with_fence_marker` | None |
 | Function `search_path` pinned | All Postgres/PGLite brains (no behavior change; ~10-15% more time per bulk fact insert through the withdrawal trigger in a 10k-row benchmark) | Supabase linter still lists the 3 fingerprint SQL functions (expected) | None |
 
 ## Numbers that change and why
