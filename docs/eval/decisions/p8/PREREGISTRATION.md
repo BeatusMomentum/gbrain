@@ -33,7 +33,7 @@ budget ledger. An underpowered, incomplete or invalid run never turns a default 
 ### 1. Write-inference guard (part 1) — always on
 
 - Evidence: CI only. `test/write-path-zero-llm.serial.test.ts`, `test/write-path-no-egress.serial.test.ts`,
-  `test/op-write-inference.test.ts`, `scripts/check-ai-sdk-importers.sh`, the layering rule.
+  `test/op-write-inference.test.ts`, `scripts/check-ai-sdk-importers.ts`, the layering rule.
 - Gate: every write-classified operation and CLI writer makes zero generative attempts before commit. No sealed run.
 
 ### 2. Write cost (part 1, published)
