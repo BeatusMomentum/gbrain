@@ -3059,10 +3059,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "core_edit_notices",
+        "name": "retrieval_feedback",
         "sql": {
-          "length": 721,
-          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
+          "length": 2490,
+          "sha256": "d1e3de98a671e85253ee73b0e67ccf297ba16c663832560c20f88788c1c43600"
         },
         "sqlFor": "absent",
         "transaction": "absent",

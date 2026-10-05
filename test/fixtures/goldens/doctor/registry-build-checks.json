@@ -647,6 +647,10 @@
       },
       {
         "category": "meta",
+        "name": "retrieval_feedback_health"
+      },
+      {
+        "category": "meta",
         "name": "revision_backfill"
       },
       {

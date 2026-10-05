@@ -516,7 +516,7 @@
         },
         {
           "category": "meta",
-          "message": "911 column(s) verified against live schema",
+          "message": "932 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1658,27 +1658,32 @@
         {
           "category": "meta",
           "details": {
+            "answers_recorded": 0,
+            "docs": "docs/guides/retrieval-feedback.md",
+            "enabled": false,
+            "implicit": false,
+            "influence": 0.1,
+            "last_rating_at": null,
+            "learn": true,
+            "ratings_cited": 0,
+            "ratings_explicit": 0,
+            "top_client_share_7d": null,
+            "weights": 0,
+            "weights_off_neutral": 0
+          },
+          "message": "Retrieval feedback is off; rankings do not learn from ratings. Turn it on with: gbrain config set feedback.enabled true",
+          "name": "retrieval_feedback_health",
+          "status": "ok"
+        },
+        {
+          "category": "meta",
+          "details": {
             "column": "not_null",
             "failed": [],
             "pending": 0
           },
           "message": "Every page has its revision; the page revision backfill is complete.",
           "name": "revision_backfill",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
-            "bad_config": [],
-            "chars_limit": 4000,
-            "chars_used": 0,
-            "compiled": [],
-            "docs": "docs/guides/core-memory.md",
-            "enabled": true,
-            "pages": 0
-          },
-          "message": "No core pages. Start one with gbrain core init, then fill it in with the user.",
-          "name": "core_memory",
           "status": "ok"
         },
         {
