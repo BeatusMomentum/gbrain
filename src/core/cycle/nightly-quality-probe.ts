@@ -6,7 +6,9 @@
  *      fixture (test/fixtures/longmemeval-nightly.jsonl) → JSONL output.
  *   2. `gbrain eval cross-modal --batch <jsonl> --max-usd $cap --yes`
  *      → batch summary with verdict.
- *   3. Audit JSONL row recording outcome / cost / pass-fail counts.
+ *   3. Audit JSONL row recording outcome / cost / pass-fail counts, the
+ *      judge panel, the non-passing questions with per-judge scores and
+ *      the run's metered chat spend (#5506).
  *
  * Default: DISABLED. Opt-in via `gbrain config set
  * autopilot.nightly_quality_probe.enabled true`. Doctor surfaces a
@@ -23,12 +25,24 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { logQualityProbeEvent, readRecentQualityProbeEvents } from '../audit-quality-probe.ts';
+import {
+  logQualityProbeEvent,
+  readRecentQualityProbeEvents,
+  type QualityProbeAuditEvent,
+  type QualityProbeFailure,
+} from '../audit-quality-probe.ts';
+import { withChatCallMeter, type ChatCallMeter } from '../ai/chat-usage.ts';
+import type { CrossModalBatchSummary } from './nightly-probe-adapters.ts';
+import { NightlyProbeModelRoutesError, type NightlyProbeModelRoutes } from './nightly-probe-routes.ts';
 
 /** Run-once gate window in ms. 24h matches the "nightly" cadence. */
 const NIGHTLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Default max spend per run; matches eval-cross-modal --max-usd default. */
+/**
+ * Default value passed as the batch's --max-usd (matches the eval-cross-modal
+ * default). The probe also passes --yes, which skips that refusal, so this
+ * value does not bound the probe's spend.
+ */
 const DEFAULT_MAX_USD = 5.0;
 
 /** Committed fixture used as the probe's input dataset. */
@@ -55,20 +69,32 @@ export interface NightlyProbeDeps {
   isEnabled: () => boolean | Promise<boolean>;
   /** Returns true when an embedding provider is configured + reachable. */
   hasEmbeddingProvider: () => boolean | Promise<boolean>;
-  /** Resolves the cost cap (config override OR DEFAULT_MAX_USD). */
+  /** Resolves the batch's --max-usd value (config override OR DEFAULT_MAX_USD); --yes makes it no cap. */
   resolveMaxUsd: () => number | Promise<number>;
   /** Resolves the repo root so we can find the committed fixture. */
   resolveRepoRoot: () => string | Promise<string>;
   /** Resolves live search-mode/reranker overrides copied into the isolated benchmark brain. */
   resolveSearchConfigSnapshot?: () => Record<string, string> | Promise<Record<string, string>>;
+  /**
+   * Refreshes the gateway from the live brain and resolves the reader,
+   * extractor and judge-slot routes (#5872). Runs only on a run that passed
+   * the rate limit; a rejection becomes an `error` audit row.
+   */
+  resolveModelRoutes?: () => Promise<NightlyProbeModelRoutes>;
   /** Runs the longmemeval command; returns the path to the JSONL output. */
-  runLongMemEval: (args: { fixturePath: string; outputPath: string; searchConfigSnapshot?: Record<string, string> }) => Promise<void>;
+  runLongMemEval: (args: {
+    fixturePath: string;
+    outputPath: string;
+    searchConfigSnapshot?: Record<string, string>;
+    modelRoutes?: NightlyProbeModelRoutes;
+  }) => Promise<void>;
   /** Runs the cross-modal batch; returns exit code (0/1/2). */
   runCrossModalBatch: (args: {
     batchPath: string;
     summaryPath: string;
     maxUsd: number;
-  }) => Promise<{ exitCode: number; summary?: { pass_count: number; fail_count: number; inconclusive_count: number; error_count: number; est_cost_usd: number; verdict: string } }>;
+    modelRoutes?: NightlyProbeModelRoutes;
+  }) => Promise<{ exitCode: number; summary?: CrossModalBatchSummary }>;
   /** Now provider — overridable for tests of the 24h rate limit. */
   now: () => Date;
 }
@@ -90,7 +116,8 @@ export function resolveProbeEnabled(
 }
 
 /**
- * Same dual-plane rule for the per-run cost cap. Malformed or negative
+ * Same dual-plane rule for the batch's --max-usd value (not a spend cap:
+ * the probe passes --yes). Malformed or negative
  * values on either plane fall through to the next plane / the default.
  */
 export function resolveProbeMaxUsd(
@@ -135,6 +162,74 @@ function sha8File(p: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** A non-pass audit row lists at most this many questions; its digest counts them all. */
+const AUDIT_MAX_FAILURES = 10;
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The non-pass row's one-line `detail`: questions that did not pass out of
+ * the total, the count per failing dimension and reason (per verdict for a
+ * question with no failing dimension, and the malformed rows, which have
+ * no failure entry), and the judge panel. Undefined when the batch names
+ * no question that did not pass.
+ */
+function failureDigest(summary: CrossModalBatchSummary, failures: QualityProbeFailure[]): string | undefined {
+  const tally = new Map<string, number>();
+  for (const f of failures) {
+    const keys = f.dimensions?.length ? f.dimensions.map(d => `${d.dimension} ${d.fail_reason}`) : [f.verdict];
+    for (const key of keys) tally.set(key, (tally.get(key) ?? 0) + 1);
+  }
+  const malformed = summary.malformed_count ?? 0;
+  if (malformed > 0) tally.set('malformed', malformed);
+  const notPassed = failures.length + malformed;
+  if (notPassed === 0) return undefined;
+  const total = summary.total ?? summary.pass_count + notPassed;
+  const reasons = [...tally].map(([key, n]) => `${key} x${n}`).join(', ');
+  return `${notPassed}/${total} questions did not pass (${reasons})${panelDigest(summary)}`;
+}
+
+/** The digest's judge panel, naming each slot (A, B, C in slot order) that scored no question. */
+function panelDigest(summary: CrossModalBatchSummary): string {
+  const panel = summary.panel;
+  if (!panel) return '';
+  const silent = (panel.slot_scored_questions ?? []).flatMap((scored, i) => {
+    if (scored > 0) return [];
+    const model = summary.judge_models?.[i];
+    return [`, slot ${String.fromCharCode(65 + i)}${model ? ` (${model})` : ''} scored no question`];
+  });
+  return `; judges: ${plural(panel.distinct_models, 'distinct model')} from ` +
+    `${plural(panel.distinct_providers, 'provider')}${silent.join('')}`;
+}
+
+/** The judge panel of a completed batch: models in slot order, per-slot scored counts, distinct counts. */
+function panelFields(summary: CrossModalBatchSummary): Partial<QualityProbeAuditEvent> {
+  const panel = summary.panel;
+  return {
+    ...(summary.judge_models ? { judge_models: summary.judge_models } : {}),
+    ...(panel?.slot_scored_questions ? { judge_scored_questions: panel.slot_scored_questions } : {}),
+    ...(panel
+      ? { distinct_judge_models: panel.distinct_models, distinct_judge_providers: panel.distinct_providers }
+      : {}),
+  };
+}
+
+/** Reader and extractor of a run whose routes resolved (#5872). */
+function routeFields(routes: NightlyProbeModelRoutes | undefined): Partial<QualityProbeAuditEvent> {
+  return routes ? { reader_model: routes.reader.model, extractor_model: routes.extractor.model } : {};
+}
+
+/** Metered chat spend of every call; `est_cost_usd` stays the batch's pre-flight estimate for its judges. */
+function spendFields(meter: ChatCallMeter): Partial<QualityProbeAuditEvent> {
+  return {
+    chat_calls: meter.calls,
+    chat_cost_usd: Math.round((meter.cost_usd ?? 0) * 1e6) / 1e6,
+    unpriced_chat_calls: meter.unpriced_calls ?? 0,
+  };
 }
 
 /**
@@ -208,16 +303,31 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
   const lmeOutPath = path.join(workDir, 'lme-output.jsonl');
   const summaryPath = path.join(workDir, 'summary.json');
 
+  // Set once a stage that makes model calls starts: the routes the run
+  // uses (#5872) and the meter pricing its chat calls (#5506), so a row
+  // written after a part-way failure still carries both.
+  let modelRoutes: NightlyProbeModelRoutes | undefined;
+  let meter: ChatCallMeter | undefined;
   try {
     const searchConfigSnapshot = deps.resolveSearchConfigSnapshot
       ? await deps.resolveSearchConfigSnapshot()
       : undefined;
-    await deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot });
-    const { exitCode, summary } = await deps.runCrossModalBatch({
+    if (deps.resolveModelRoutes) {
+      try {
+        modelRoutes = await deps.resolveModelRoutes();
+      } catch (err) {
+        throw err instanceof NightlyProbeModelRoutesError ? err : new NightlyProbeModelRoutesError(err);
+      }
+    }
+    meter = { calls: 0, cost_usd: 0, unpriced_calls: 0 };
+    await withChatCallMeter(meter, () =>
+      deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot, modelRoutes }));
+    const { exitCode, summary } = await withChatCallMeter(meter, () => deps.runCrossModalBatch({
       batchPath: lmeOutPath,
       summaryPath,
       maxUsd,
-    });
+      modelRoutes,
+    }));
 
     const outcome: NightlyProbeResult['outcome'] = (() => {
       if (summary) {
@@ -231,6 +341,8 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       return 'error';
     })();
 
+    const failures = outcome !== 'pass' ? summary?.failures : undefined;
+    const detail = summary && outcome !== 'pass' ? failureDigest(summary, failures ?? []) : undefined;
     logQualityProbeEvent({
       outcome,
       exit_code: exitCode,
@@ -240,6 +352,11 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       error_count: summary?.error_count ?? 0,
       est_cost_usd: summary?.est_cost_usd ?? 0,
       fixture_sha8: fixtureSha8,
+      ...(detail ? { detail } : {}),
+      ...routeFields(modelRoutes),
+      ...(summary ? panelFields(summary) : {}),
+      ...(failures?.length ? { failures: failures.slice(0, AUDIT_MAX_FAILURES) } : {}),
+      ...spendFields(meter),
     });
 
     return { outcome, exit_code: exitCode };
@@ -256,6 +373,8 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
       est_cost_usd: 0,
       fixture_sha8: fixtureSha8,
       detail,
+      ...routeFields(modelRoutes),
+      ...(meter ? spendFields(meter) : {}),
     });
     return { outcome: 'error', exit_code: 1, detail };
   } finally {

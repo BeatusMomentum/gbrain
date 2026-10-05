@@ -237,6 +237,7 @@ test/minions-spend-authorization.serial.test.ts	R2	R2: mock.module replaces the 
 test/minions/delegated-execution.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests
 test/model-config.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_MODEL, OPENAI_API_KEY)
 test/models-newer-hint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_MODEL)
+test/models-nightly-probe-routes.serial.test.ts	global-state	global-state: patches process stdout/stderr/console and the process-global gateway
 test/models-per-task-extract-atoms.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/models-probe-max-output-tokens.serial.test.ts	global-state	global-state: binds local servers/ports
 test/native-base-url-fold.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, OPENAI_BASE_URL)
