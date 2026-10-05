@@ -37,6 +37,7 @@ export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from 
 import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
+import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -3022,6 +3023,12 @@ export interface ChatOpts {
   temperature?: number;
   abortSignal?: AbortSignal;
   /**
+   * Replaces the default chat backstop (`GBRAIN_AI_CHAT_TIMEOUT_MS`, 300 s)
+   * for this call; `abortSignal` still composes (shorter wins). Set by
+   * callers that own a longer budget, such as a subagent turn (#4921).
+   */
+  timeoutMs?: number;
+  /**
    * Per-call provider options keyed by recipe id, deep-merged LAST — after
    * the derived cache markers and configured `provider_chat_options` — so a
    * call site can pin provider behavior it depends on (e.g. the triage judge
@@ -3050,6 +3057,13 @@ export interface ChatOpts {
   responseSchema?: { name: string; description?: string; schema: Record<string, unknown> };
   /** Caller purpose (`skillopt.judge`, …) stamped on the BudgetTracker ledger row. */
   purpose?: string;
+  /**
+   * `'off'` turns thinking off for this call on routes with a per-call switch
+   * (native Anthropic, DeepSeek, OpenRouter DeepSeek), replacing a configured
+   * thinking object; elsewhere a thinking-by-default model keeps thinking and
+   * gets the thinking output headroom instead (see `thinking-off.ts`).
+   */
+  thinking?: 'off';
   /**
    * `false` pins the call to its own model: `chat_fallback_chain` is not
    * consulted (see `chat-fallback.ts`). Judge, critic and eval call sites set
@@ -3442,7 +3456,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     }
   }
   const estimatedInputTokens = estimateChatInputTokens(opts);
-  const maxOutputTokens = opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly);
+  const maxOutputTokens = thinkingOffMaxOutputTokens(modelStrEarly, opts.maxTokens ?? defaultMaxOutputTokens(modelStrEarly), opts.thinking === 'off' && isThinkingModel(modelStrEarly), THINKING_MODEL_MAX_OUTPUT_TOKENS);
 
   // TX5: reserve BEFORE the provider call (BudgetExhausted on cost, runtime,
   // or no_pricing under a user cap) with the pre-resolution model id. record()
@@ -3559,6 +3573,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
   // Call-scoped options merge last so they win over configured siblings.
   providerOptions = deepMergeRecords(providerOptions, opts.providerOptions);
+  if (opts.thinking === 'off') applyThinkingOff(providerOptions, `${recipe.id}:${modelId}`);
 
   // Derive ONE canonical cache-control value AFTER config merging and reuse
   // it for every breakpoint (system block, last tool def, call-level). If
@@ -3631,13 +3646,13 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     system: systemParam,
     messages: toModelMessages(repairToolPairing(opts.messages)) as any,
     tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
-    maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+    maxOutputTokens,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     output: out,
     // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
     // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
     // Fresh signal per attempt so the schemaless retry gets its own timeout.
-    abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
+    abortSignal: withDefaultTimeout(opts.abortSignal, opts.timeoutMs ?? AI_CHAT_TIMEOUT_MS),
     providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
     ...(requestHeaders ? { headers: requestHeaders } : {}),
   });
@@ -3798,6 +3813,8 @@ export interface ToolLoopOpts {
   purpose?: string;
   /** Forwarded to every `chat()` turn; see `ChatOpts.allowFallback`. */
   allowFallback?: boolean;
+  /** Forwarded to every `chat()` turn as `ChatOpts.timeoutMs`. */
+  turnTimeoutMs?: number;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -3948,6 +3965,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         cacheSystem: opts.cacheSystem,
         purpose: opts.purpose,
         allowFallback: opts.allowFallback,
+        timeoutMs: opts.turnTimeoutMs,
       });
     } catch (err) {
       if (isAIInvocationPolicyError(err)) throw err;
