@@ -288,7 +288,7 @@ const put_page: Operation = {
   name: 'put_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.',
+  description: 'Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links wait for a stdio `gbrain serve` sweep (`gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.',
   params: {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', description: 'Page slug.', required: true },

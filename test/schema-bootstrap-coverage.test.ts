@@ -859,6 +859,13 @@ test('every CREATE INDEX column in PGLITE_SCHEMA_SQL is covered by CREATE TABLE 
 // ─────────────────────────────────────────────────────────────────
 
 const COLUMN_EXEMPTIONS = new Set<string>([
+  // page_aliases origin / case_sensitive / alias_text (entity mention index,
+  // migration v206): page_aliases is a PGLite bootstrap table and a
+  // Postgres migration-only table; no schema blob references these columns
+  // (no index or view reads them), so there is nothing to forward-reference.
+  'page_aliases.origin',
+  'page_aliases.case_sensitive',
+  'page_aliases.alias_text',
   // takes.embedding: the takes table is migration-only (no CREATE TABLE in
   // PGLITE_SCHEMA_SQL / src/schema.sql), so there is no schema-blob forward
   // reference for the bootstrap to trip on. The column is created inline in
@@ -873,6 +880,17 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // columns from the migration chain.
   'takes.embedding_model',
   'takes.embedded_text_hash',
+  // Spend meter budget owner (v205): mcp_spend_reservations and mcp_spend_log
+  // are migration-only tables (no CREATE TABLE in the schema blob), so there is
+  // no blob forward reference; the migration chain adds the column and index.
+  'mcp_spend_reservations.budget_key',
+  'mcp_spend_log.budget_key',
+  // Spend fence columns (v205): migration-only, appended after every earlier
+  // migration-added column so fresh and upgraded catalogs agree. No blob index
+  // references them; the blob's queue-protocol trigger reads them only on a
+  // claim, after the migration chain has run.
+  'minion_jobs.spend_authorization',
+  'minion_jobs.spend_claim_token',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so

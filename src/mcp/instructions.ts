@@ -57,9 +57,12 @@ function contractClauses(c: CallablePredicate): string[] {
     const batch = c('put_pages');
     out.push(`Writing:${batch ? ' for more than 3 pages use put_pages (one request_id per batch, about 5-8 large pages per call).' : ''} Pass wait_ms (e.g. 25000) instead of polling; if still pending, ${batch ? 'follow the reply\'s `next`' : 'replay with the same request_id'} no sooner than retry_after_ms.`);
   }
+  // Entity recall: a brief starts from the entity card's referrers, wherever `entity` is served.
+  const brief = c('entity') ? `For a brief on an account, person or company, call \`entity\`, then walk \`referenced_by\`${c('get_backlinks') ? ' or `get_backlinks`' : ''} by type.` : null;
+  if (brief && !any('search', 'query')) out.push(brief);
   if (any('search', 'query')) {
     // Cat 40 (#5932): measured answer-completeness guidance; keep its wording.
-    out.push(`Answering from the brain: a search returns the best-ranked excerpts, not every relevant page, so keep going until the evidence is complete. Run separate searches for separate parts of a question. People and companies appear under several names (abbreviations, codes, nicknames); when a page lists another name, search for that too. For what is true now, prefer the newest governing source: a later correction, handoff or executed change outranks an older record, and drafts, proposals and agent-written notes do not override records.${c('recall') ? ` Facts saved with remember are read back with recall${c('entity') ? ' (or entity)' : ''}, not search.` : ''}`);
+    out.push(`Answering from the brain: a search returns the best-ranked excerpts, not every relevant page, so keep going until the evidence is complete. Run separate searches for separate parts of a question. ${brief ?? 'People and companies appear under several names (abbreviations, codes, nicknames); when a page lists another name, search for that too.'} For what is true now, prefer the newest governing source: a later correction, handoff or executed change outranks an older record, and drafts, proposals and agent-written notes do not override records.${c('recall') ? ` Facts saved with remember are read back with recall${c('entity') ? ' (or entity)' : ''}, not search.` : ''}`);
   }
   out.push('Errors: every gbrain error is a JSON envelope with a `code` and usually a `fix`. Follow `fix.next`: run → run it; ask_user → relay `user_message` and wait; tell_user_to_run → give the user the command; wait → retry later; report → tell the user. Then run `fix.verify`. Extra blocks starting with `[gbrain notice <code> kind=<kind>]` are addressed to you; after a degraded notice, a thin result is not proof the brain has nothing.');
   if (c('list_skills') && c('get_skill')) {

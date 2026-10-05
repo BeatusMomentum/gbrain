@@ -18,7 +18,7 @@ import {
   resolveSelfUpgradeMode,
   justUpgradedPath,
 } from './core/self-upgrade.ts';
-import { loadConfig, loadConfigFileOnly, loadConfigWithEngine, toEngineConfig, isThinClient, getDbUrlSource, envShadowDetected } from './core/config.ts';
+import { loadConfig, loadConfigFileOnly, loadConfigWithEngine, isThinClient, getDbUrlSource, envShadowDetected } from './core/config.ts';
 import {
   classifyPgAccessError as classifyDbAccessError,
   diagnoseDbConfig as diagnoseDbConfigForMarker,
@@ -807,7 +807,7 @@ async function runThinClientRouted(
       // D1: a server tool error renders its own code/fix; --json gets the one v1
       // envelope on stdout while transport failures keep their human text on stderr.
       const scopeDenied = isScopeErrorCode(e.detail?.code, e.detail?.canonical_code, e.detail?.reason);
-      if (e.reason === 'tool_error' && !scopeDenied) { process.off('SIGINT', onSigint); exitCliError(e, op.cliHints?.name ?? op.name); }
+      if ((e.reason === 'tool_error' && !scopeDenied) || e.detail?.code === 'serve_status_only') { process.off('SIGINT', onSigint); exitCliError(e, op.cliHints?.name ?? op.name); }
       const failExit = params.json === true ? writeCliError(e, op.cliHints?.name ?? op.name, { stderr: false }) : 1;
       const url = cfg.remote_mcp!.mcp_url;
       switch (e.reason) {
@@ -1758,7 +1758,7 @@ export function formatResult(
       if (process.argv.includes('--json')) break;
       const r = result as any;
       if (!r.found) {
-        const lines = [`No entity found. (${r.latency_ms}ms)`];
+        const lines = [`No entity found. (${r.latency_ms}ms)${r.coverage && r.coverage.state !== 'complete' ? ` Mention coverage: ${r.coverage.state}, ${r.coverage.pending_pages} page(s) pending.` : ''}`];
         if (Array.isArray(r.suggestions) && r.suggestions.length) {
           lines.push('Did you mean:');
           for (const s of r.suggestions) lines.push(`  ${s.slug} — ${s.title} [${s.create_safety}]`);
@@ -1781,6 +1781,8 @@ export function formatResult(
         for (const e of c.edges) lines.push(`    ${e.direction === 'out' ? '→' : '←'} ${e.type} ${e.slug}`);
       }
       lines.push(`  backlinks: ${c.backlink_count} | active facts: ${c.active_fact_count}`);
+      if (c.referenced_by_count) lines.push(`  referenced by ${c.referenced_by_count} page(s):`, ...c.referenced_by.map((g: any) => `    ${g.canonical_type} (${g.total}): ${g.rows.map((x: any) => x.slug).join(', ')}${g.next ? ', ...' : ''}`));
+      if (c.coverage && c.coverage.state !== 'complete') lines.push(`  mention coverage: ${c.coverage.state}, ${c.coverage.pending_pages} page(s) pending`);
       if (Array.isArray(r.suggestions) && r.suggestions.length) {
         lines.push('  other matches:');
         for (const s of r.suggestions) lines.push(`    ${s.slug} — ${s.title}`);
@@ -1906,6 +1908,7 @@ function thinRefusalSubcommand(command: string): string[] {
 
 const THIN_CLIENT_BRAIN_FLAG_MESSAGE = '--brain is not supported on a thin-client install: the remote server is a single brain.';
 
+const ENGINE_CONNECT_HOOKS: EngineConnectHooks = { SELECTED_CONFIG_BY_ENGINE, completeStartup: completeEngineStartup };
 /** Dispatcher-owned pieces the command modules under src/cli/commands/ receive (see CliDispatchContext). */
 const CLI_DISPATCH_CONTEXT: CliDispatchContext = {
   connectEngine,
@@ -2564,15 +2567,15 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
   // no-config path still exits inside connectEngine (keyless cold-home is
   // TODOS 1050, out of scope). Kill switch: GBRAIN_SERVE_DEGRADED=0.
   let engine: BrainEngine;
-  // F4: a stdio serve with no brain / a missing or repair-failed brain / unreadable config
-  // completes the MCP handshake in status-only mode instead of exiting (connectEngine exits).
+  // F4: a serve (stdio or --http) with no brain / a missing or repair-failed brain / unreadable config
+  // answers in status-only mode instead of exiting; it re-probes through the throw-only connect.
   // Engine graduation (§6.4): a serve (re)launched while a run owns the host brain exits 75 with graduation_in_progress.
   if (command === 'serve' && (dbMarkerBrainId() ?? 'host') === 'host') (await import('./core/persistence/graduation-serve-guard.ts')).exitIfGraduationRunning();
   const serveStatus = command === 'serve' ? await import('./commands/serve-status.ts') : null;
   const serveStatusEligible = !!serveStatus?.statusModeEligible(args, (dbMarkerBrainId() ?? 'host') === 'host');
   const preConnectReason = serveStatusEligible ? serveStatus!.preConnectStatusReason() : null;
   if (preConnectReason) {
-    await serveStatus!.runStatusModeServe(preConnectReason, null, args, () => connectEngine());
+    await serveStatus!.runStatusModeServe(preConnectReason, null, args, () => connectEngineForServe(ENGINE_CONNECT_HOOKS));
     return null;
   }
   try {
@@ -2615,7 +2618,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     }
     const connectStatusReason = serveStatusEligible ? serveStatus!.statusReasonForError(serveConnectError) : null;
     if (connectStatusReason) {
-      await serveStatus!.runStatusModeServe(connectStatusReason, serveConnectError, args, () => connectEngine());
+      await serveStatus!.runStatusModeServe(connectStatusReason, serveConnectError, args, () => connectEngineForServe(ENGINE_CONNECT_HOOKS));
       return null;
     }
     if (command === 'serve' &&
@@ -2710,6 +2713,7 @@ async function dispatchReadOnlyCommand(engine: BrainEngine, command: string, arg
 // re-exported) so cli.ts's own connectEngine() call sites bind it locally.
 import { buildGatewayConfig } from './core/ai/build-gateway-config.ts';
 export { buildGatewayConfig };
+import { connectEngineForServe, noBrainError, type EngineConnectHooks } from './core/engine-connect.ts';
 
 /**
  * Which brain this process's engine targets. Set by connectEngine after brain
@@ -2779,10 +2783,7 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
       }
       if (d?.reason === 'env_shadowed') console.error(d.remediation);
     } catch { /* marker is best-effort — the message below always prints */ }
-    exitCliError(opError('no_brain', 'No brain configured. Run: gbrain init', 'Run `gbrain init --pglite --no-embedding` for a local keyless brain, or `gbrain init --help` for hosted and Postgres options.', {
-      fix: { argv: ['gbrain', 'init', '--pglite', '--no-embedding'], consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Creates a local PGLite brain with no API keys; nothing leaves this machine.' },
-    }), cliCommandOf());
+    exitCliError(noBrainError(), cliCommandOf());
   }
 
   // A thin client has no local database. Every command that gets here would die
@@ -2791,31 +2792,8 @@ async function connectEngine(opts?: { probeOnly?: boolean }): Promise<BrainEngin
   if (isThinClient(config) && !config.database_url) {
     refuseThinClient(dispatchedCommand, config.remote_mcp!.mcp_url);
   }
-
-  // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.
-  // Env is read once here; the gateway never reads process.env at call time (Codex C3).
-  const { configureGateway } = await import('./core/ai/gateway.ts');
-  configureGateway(buildGatewayConfig(config));
-
-  const { createEngine } = await import('./core/engine-factory.ts');
-  const engine = await createEngine(toEngineConfig(config));
-  SELECTED_CONFIG_BY_ENGINE.set(engine, config);
-  const noRetry = process.argv.includes('--no-retry-connect') ||
-                  process.env.GBRAIN_NO_RETRY_CONNECT === '1';
-  const { connectWithRetry } = await import('./core/db.ts');
-  await exitOnRepairFailed(() => connectWithRetry(engine, toEngineConfig(config), { noRetry }));
-  // Engine graduation: a fenced target or a cut-over source refuses every connect but the run's own.
-  await (await import('./core/persistence/graduation-custody.ts')).gateGraduationConnect(engine);
-
-  // v0.30.1 (Codex X1 / C2): probeOnly skips both hasPendingMigrations() probe
-  // AND initSchema(). Used by `get_health` MCP op + `gbrain upgrade --status`
-  // + doctor's migration_wedge check — these surfaces report wedge state and
-  // must NEVER themselves start or block on migrations.
-  if (opts?.probeOnly === true) {
-    return engine;
-  }
-  await completeEngineStartup(engine);
-  return engine;
+  // The throw-only connect (src/core/engine-connect.ts) behind the CLI's exits.
+  return exitOnRepairFailed(() => connectEngineForServe(ENGINE_CONNECT_HOOKS, opts));
 }
 
 /** A6/D1: the pending-migrations warning as a notice whose fix applies them (stderr; stdout stays the command's). */

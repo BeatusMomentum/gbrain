@@ -14,6 +14,7 @@ import { lagFromContentMs, loadSyncFreshnessSources, resolveStalenessCeilingSeco
 import { resolveEnvNumber, resolveHoursEnv, warnOnceForEnv } from '../../../core/env-number.ts';
 import { CHUNKER_VERSION } from '../../../core/chunkers/code.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../../../core/link-extraction.ts';
+import { previewMentionPass } from '../../../core/mentions/stale.ts';
 import { isUndefinedColumnError } from '../../../core/utils.ts';
 import {
   loadStorageConfig,
@@ -159,14 +160,18 @@ export async function checkLinksExtractionLag(
       }
     }
 
-    const details = { total, stale, attendance_blocked: attendanceBlocked, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null };
+    // Entity mention index: pages the mention pass has not scanned at their current content.
+    const mention = await previewMentionPass(engine, sourceId).catch(() => null);
+    const mentionNote = mention?.due ? `; ${mention.due} page(s) await the mention pass (last pass: ${mention.last_pass_at ?? 'never'})` : '';
+    const details = { total, stale, attendance_blocked: attendanceBlocked, pct: Number(pctStr), warn_pct: warnPct, fail_pct: failPct ?? null, source_id: sourceId ?? null,
+      mention_due: mention?.due ?? null, mention_last_pass_at: mention?.last_pass_at ?? null };
     if (failPct !== undefined && pct > failPct) {
-      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold). ${fix}${blockedNote}`, details };
+      return { name, status: 'fail', message: `${stale}/${total} pages (${pctStr}%)${scope} need link/timeline extraction (> ${failPct}% fail threshold)${mentionNote}. ${fix}${blockedNote}`, details };
     }
     if (pct > warnPct) {
-      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges. ${fix}${blockedNote}`, details };
+      return { name, status: 'warn', message: `${stale}/${total} pages (${pctStr}%)${scope} have un-extracted edges${mentionNote}. ${fix}${blockedNote}`, details };
     }
-    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}${blockedNote}`, details };
+    return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}${mentionNote}${blockedNote}`, details };
   } catch (e) {
     // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
     // (migration/bootstrap adds it; nothing to assess until then).

@@ -49,7 +49,7 @@ the same registry.
 
 ```bash
 gbrain init --pglite                                      # 2-second local brain
-claude mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs     # the memory-verb surface
+claude mcp add gbrain -- "$(command -v gbrain)" serve --surface starter   # the verbs plus page tools
 gbrain remember "gbrain install check" --provenance install-check
 gbrain recall --query "gbrain install check"              # …now ask your agent in a NEW session
 ```
@@ -64,21 +64,21 @@ If `claude` is not found: install Claude Code first, or use a block below.
 
 **Codex**
 ```bash
-codex mcp add gbrain -- "$(command -v gbrain)" serve --surface verbs
+codex mcp add gbrain -- "$(command -v gbrain)" serve --surface starter
 ```
 
 **Grok Build** (verify with `grok mcp doctor gbrain` — the add is lazy)
 ```bash
-grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface verbs
+grok mcp add gbrain -e "GBRAIN_HOME=$HOME" -- "$(command -v gbrain)" serve --surface starter
 ```
 
 **opencode** (verify with `opencode mcp list` — the add is lazy, and list SPAWNS the server)
 ```bash
-opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface verbs
+opencode mcp add gbrain --env GBRAIN_HOME=$HOME -- "$(command -v gbrain)" serve --surface starter
 ```
 
 **OpenClaw / any stdio MCP host** — register the server command
-`gbrain serve --surface verbs`. Remote brains: `gbrain serve --http` on the
+`gbrain serve --surface starter`. Remote brains: `gbrain serve --http` on the
 host, then `gbrain connect https://host/mcp --token gbrain_xxx --install` on
 each client.
 
@@ -90,10 +90,15 @@ verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and 
 `request_tools` discovery meta-op (re-derivable from production usage via
 `scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
 (pinned by test) — starter extends the ladder ABOVE verbs and never changes
-verb semantics. `--surface full` (the default) exposes every operation,
-verbs included. Why default full: verbs/starter are for agents and
-quickstarts; full preserves existing advanced tooling. Persist a default
-with `gbrain config set mcp_surface verbs`.
+verb semantics. `--surface full` (the default for a bare `serve`) exposes
+every operation, verbs included. Every stdio registration gbrain writes
+(`gbrain init`'s quickstart, readiness, `gbrain bootstrap hooks`, the plugins)
+pins `starter`, because `verbs` lacks the page reads and writes bootstrap's
+instructions use and `full` puts the whole catalogue in front of the model.
+Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
+On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
+session widens itself with `request_tools {"surface":"full"}` (see
+`docs/operations/mcp-surface-runbook.md`).
 
 **Ceiling semantics (OAuth HTTP transport):** the server-resolved surface
 is a CEILING, not the final answer. Each request resolves
@@ -287,8 +292,11 @@ Optional response fields; clients must ignore any they do not know.
 One known person/company/project card. NEVER errors on a miss.
 
 Resolution (frozen precedence): alias > exact slug > exact title > slug-suffix.
-When multiple pages share an exact title, canonical entity types (`person`,
-`company`, `organization`, `entity`) outrank note/conversation containers;
+A derived alias (a title subject such as `X` in `CRM record: X`, or a code the
+page declares) never answers for another live page's exact title. When
+multiple pages share an exact title, linkable entity types (the source pack's
+entity types, at least `person`, `company`, `organization`, `entity`) outrank
+note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
@@ -301,6 +309,29 @@ backlink_count, active_fact_count }`.
 
 - `summary` passes the same privacy fences as `get_page` (takes + private
   facts stripped); remote callers never see private facts in the card.
+
+#### entity references and coverage (additive)
+
+The `entity` verb adds three optional card fields (ambient callers,
+`context_pack` and `delta`, do not compute them):
+
+- `referenced_by_count` — distinct pages with any inbound link to the entity,
+  every link source included (`backlink_count` keeps excluding mentions).
+- `referenced_by[]` — those pages grouped by pack-canonical type:
+  `{ canonical_type, total, rows[], next? }`, groups ordered by their newest
+  row. Each row: `{ slug, title, type, canonical_type, date, date_source,
+  preview }`; `date` is `COALESCE(effective_date, updated_at)`, rows newest
+  first, at most 10 per group and 50 per card. `preview` is the first 160
+  characters of body text with private fences stripped; it is not evidence.
+  A truncated group's `next` is `{ tool: "get_backlinks", arguments: { slug,
+  source_id, type, group: "page", limit, cursor } }` and returns exactly the
+  rest of the group; on a verbs-only connection it carries
+  `requires_surface: "starter"`.
+- `coverage` — `{ state, pending_pages, last_pass_at, degraded? }` with
+  `state` one of `complete`, `pending`, `disabled`, `type_not_linkable`,
+  `failed`. A miss carries `coverage` at the top level. Any state but
+  `complete` sets `degraded: true` and adds a `[gbrain notice mention_index]`
+  block. Coverage means recognized names within the caller's source.
 - `open_threads` (best-effort in v1): active commitment-kind facts + timeline
   entries from the last 90 days, capped at 3.
 
