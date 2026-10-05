@@ -78,6 +78,8 @@ export const CLI_WRITE_INFERENCE: Readonly<Record<string, WriteInference>> = {
   'transcripts ingest': 'async_derived',
   'connectors sync': 'async_derived',
   'hook ipc banking': 'none',
+  // P1: accept/undo/date append or remove a timeline line and re-derive links; reject records a verdict.
+  'edge-proposals': 'none',
 };
 
 export function writeInferenceOf(op: Pick<Operation, 'name' | 'writeInference'>): WriteInference {

@@ -24,6 +24,7 @@ import { registerBuiltinHandlers } from '../src/commands/jobs.ts';
 import type { MinionHandler } from '../src/core/minions/types.ts';
 import { writeInferenceOf, ZERO_GENERATIVE_BEFORE_COMMIT } from '../src/core/ops/write-inference.ts';
 import { installTripwire, type Tripwire } from './helpers/ai-tripwire.ts';
+import { runPhaseEdgeContradictions, applyEdgeProposal, rejectEdgeProposal, undoEdgeProposal } from '../src/core/cycle/edge-contradictions.ts';
 
 let engine: PGLiteEngine;
 let wire: Tripwire;
@@ -160,6 +161,23 @@ describe('writes commit with zero generative model calls', () => {
     const deleted = await call('get_page', { slug: 'notes/temp', include_content: true, include_deleted: true }).catch(() => ({} as Record<string, any>));
     await call('restore_page', { slug: 'notes/temp', ...(deleted.revision ? { expected_revision: deleted.revision } : {}) });
     expectNoGenerative('delete/restore');
+  });
+
+  test('CLI edge-proposals accept, undo and reject (P1 edge contradictions)', async () => {
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+    await call('put_page', { slug: 'companies/edge-a', content: '---\ntype: company\ntitle: Edge A\n---\nA company.' });
+    await call('put_page', { slug: 'companies/edge-b', content: '---\ntype: company\ntitle: Edge B\n---\nA company.' });
+    await call('put_page', { slug: 'people/edge-person', content: '---\ntype: person\ntitle: Edge Person\n---\nWorks at [Edge A](../companies/edge-a) and at [Edge B](../companies/edge-b).\n\n## Timeline\n\n- **2019-02-01** | test — joined [Edge A](../companies/edge-a)\n- **2024-05-01** | test — joined [Edge B](../companies/edge-b)' });
+    await runPhaseEdgeContradictions(engine, { judge: async () => [{ a: 1, b: 2, conflict: true, confidence: 0.9 }] });
+    const [p] = await engine.executeRaw<{ id: number }>("SELECT id FROM link_edge_proposals WHERE status = 'proposed' ORDER BY id DESC LIMIT 1");
+    expect(p).toBeDefined();
+    wire.reset();
+    expect((await applyEdgeProposal(engine, Number(p!.id))).status).toBe('applied');
+    expect((await undoEdgeProposal(engine, Number(p!.id))).status).toBe('undone');
+    expectNoGenerative('edge-proposals accept/undo');
+    const [q] = await engine.executeRaw<{ id: number }>("SELECT id FROM link_edge_proposals ORDER BY id DESC LIMIT 1");
+    await rejectEdgeProposal(engine, Number(q!.id));
+    expectNoGenerative('edge-proposals reject');
   });
 
   test('CLI import (importFromContent)', async () => {
