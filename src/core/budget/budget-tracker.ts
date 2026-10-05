@@ -164,6 +164,15 @@ export function parsePricingOverrides(raw: unknown): PricingOverrides | undefine
       }
     }
   }
+  // An override keyed by the alias the operator configured
+  // (`nvidia:nemotron-3-super`) must also price the id the gateway records
+  // for it (`nvidia:nvidia/nemotron-3-super-120b-a12b`): overrideFor
+  // canonicalizes the looked-up id, so the stored key needs its canonical
+  // twin. An explicit row for the canonical id wins. (From #5959.)
+  for (const [key, rate] of Object.entries(out)) {
+    const canonical = canonicalPricingKey(key).toLowerCase();
+    if (!(canonical in out)) out[canonical] = rate;
+  }
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

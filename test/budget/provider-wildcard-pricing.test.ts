@@ -97,3 +97,18 @@ describe('#5847 deepseek:deepseek-flash is priced', () => {
     expect(res.estimatedCostUsd).toBeCloseTo(32_000 / 1_000_000 * 1.2, 9);
   });
 });
+
+describe('#5873 an override keyed by a model alias prices the id the provider serves for it', () => {
+  test('nvidia:nemotron-3-super override prices nvidia:nvidia/nemotron-3-super-120b-a12b', () => {
+    const served = 'nvidia:nvidia/nemotron-3-super-120b-a12b';
+    expect(isModelPriceable(served, 'chat', { 'nvidia:nemotron-3-super': { input: 1, output: 2 } })).toBe(false);
+    const parsed = parsePricingOverrides({ 'nvidia:nemotron-3-super': { input: 1, output: 2 } });
+    expect(priceFor(served, 'chat', parsed)).toEqual({ pricing: { input: 1, output: 2 }, source: 'override' });
+  });
+
+  test('an explicit row for the served id wins over the alias row', () => {
+    const served = 'nvidia:nvidia/nemotron-3-super-120b-a12b';
+    const parsed = parsePricingOverrides({ 'nvidia:nemotron-3-super': 1, [served]: 5 });
+    expect(priceFor(served, 'chat', parsed)?.pricing).toEqual({ input: 5, output: 5 });
+  });
+});
