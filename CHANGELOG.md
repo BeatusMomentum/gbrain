@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.70.0] - 2026-10-05
+## [0.60.72.0] - 2026-10-05
 
 **Fix wave 9: cost caps hold under concurrency and bound what DeepSeek really bills, stopping a job supervisor no longer leaves work running, the nightly quality probe uses your models and tells the truth, email threads and synced fact sections reach your facts, long filenames and images stop blocking writes and sync, and OAuth access tokens can no longer live forever.**
 
@@ -35,7 +35,7 @@ Each fix has a test that fails on the previous release.
 
 Thanks to the contributors whose work is folded in: @andreineacsu (#5959, #6005, #5973, #5940, #5975, #5515), @kvnloo (#5972) and @Masashi-Ono0611 (#5257).
 
-## To take advantage of v0.60.70.0
+## To take advantage of v0.60.72.0
 
 `gbrain upgrade` installs the binary and runs three schema migrations: v209 adds the empty `page_facts_reconcile` table, v210 clamps stored OAuth token lifetimes and shortens outstanding access tokens to 90 days after issue, v211 pins `search_path` on every gbrain database function. Upgraded brains show a one-time notice listing the behavior changes below; `gbrain doctor --only behavior_changes` shows it again.
 
@@ -171,6 +171,34 @@ Thanks to the contributors whose work is folded in: @andreineacsu (#5959, #6005,
 
 - New guards in `bun run verify`: `check:recipe-pricing` (every recipe model priced or declared unpriced) and `check:skill-publication` (every bundled SKILL.md passes the shared-skill parser).
 - `test/helpers/managed-connector-job-contract.ts` gains `extract_conversation_facts_thread`.
+
+## [0.60.71.0] - 2026-10-05
+
+**Turning off contextual retrieval no longer serves vectors built from an old title.**
+
+If a page switches from title or synopsis context to plain text, its previous
+text vectors are cleared in the same database operation as the mode change.
+This prevents an old title-aware result from being treated as a plain-text
+match. Pages marked to skip embedding keep their retained vectors; switching
+mode does not start a paid re-embed.
+
+### How to use it
+
+Run `gbrain upgrade` to get the fix. If you deliberately switch a source to
+plain-text embeddings, run `gbrain embed --stale` after reviewing its expected
+cost to replace any cleared vectors.
+
+| Page state | After the change |
+| --- | --- |
+| Title or synopsis mode switches to `none` | Previous active text vectors are cleared immediately, before search can use them as plain text. |
+| Legacy `none` page with an unverified vector | A later projection rebuild clears the vector; re-embedding is opt-in. |
+| Pre-contextual page with no stored mode | Its legacy raw vectors remain grandfathered when the text and model still match. |
+
+### Itemized changes
+
+- The shared page-state writer clears active vectors and their completion stamps atomically on a contextual-to-`none` transition, in both PGLite and PostgreSQL.
+- Projection rebuilds no longer accept an unstamped vector on an explicit `none` page as proof that it came from raw text; they still preserve verified current inputs and grandfather pre-contextual NULL-mode pages.
+- Markdown re-import cannot reinstate an unstamped title vector after the mode switch or race a concurrent contextual update. Repair and contextual reindex record raw provenance when they move a pre-contextual NULL-mode page to `none`, so a later rebuild does not discard retained raw vectors.
 
 ## [0.60.69.0] - 2026-10-05
 
