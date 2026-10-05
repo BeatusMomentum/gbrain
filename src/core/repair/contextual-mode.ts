@@ -16,7 +16,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
-import { acceptedEmbeddingInputHashes, isContextualMode } from '../embedding-input-hash.ts';
+import { acceptedEmbeddingInputHashes, embeddingInputHash, isContextualMode } from '../embedding-input-hash.ts';
 import { embeddingInputContext, embeddingWriteTarget } from '../page-state/projections.ts';
 import { resolveImportContextualMode } from '../import-contextual-mode.ts';
 import { embedStalePages } from '../embed-stale.ts';
@@ -53,10 +53,17 @@ export const contextualModeRepair: RepairHandler = {
         'SELECT id,embedding_input_hash FROM content_chunks WHERE page_id=$1', [snapshot.page.id])).map(r => [Number(r.id), r.embedding_input_hash]));
       const stale = chunks.filter(chunk => !chunk.embedding_is_null).filter(chunk => {
         const hash = recorded.get(Number(chunk.id)) ?? null;
-        return hash === null ? isContextualMode(mode) : !acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
+        return hash === null ? isContextualMode(mode) || chunk.model !== target.provenanceModel
+          : !acceptedEmbeddingInputHashes(provenance, mode, chunk).includes(hash);
       }).map(chunk => Number(chunk.id));
       if (stale.length) await tx.executeRaw(`UPDATE content_chunks SET ${quoteIdentifier(target.column.name)}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL WHERE page_id=$1 AND id=ANY($2::int[])`, [snapshot.page.id, stale]);
+      const staleIds = new Set(stale);
+      const raw = chunks.filter(chunk => !chunk.embedding_is_null && !staleIds.has(Number(chunk.id))
+        && recorded.get(Number(chunk.id)) == null);
+      if (raw.length) await tx.executeRaw(`UPDATE content_chunks c SET embedding_input_hash=proof.hash
+        FROM unnest($2::int[],$3::text[]) AS proof(id,hash) WHERE c.page_id=$1 AND c.id=proof.id`,
+      [snapshot.page.id, raw.map(chunk => Number(chunk.id)), raw.map(chunk => embeddingInputHash(provenance, 'none', chunk))]);
       return stale.length;
     });
     if (cleared === null) return false;

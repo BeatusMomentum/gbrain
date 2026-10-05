@@ -26,6 +26,7 @@ interface StoredChunk {
   embedding: string | null;
   embedded_text_hash: string | null;
   embedded_at: string | null;
+  embedding_input_hash: string | null;
   model: string;
   embedding_projection_test?: string | null;
 }
@@ -169,7 +170,7 @@ for (const kind of backends) {
       await installPageProjection(engine, pending, (await preparePageProjection(pending)).chunks, preserve);
       const prepared = (await readProjectionSnapshot(engine, slug, sourceId))!;
       expect(await installPageEmbeddings(engine, prepared, prepared.chunks.map(c => ({
-        ...c, embedding: vector,
+        chunk_index: c.chunk_index, chunk_text: c.chunk_text, chunk_source: c.chunk_source, embedding: vector,
       })))).toBe(true);
       const before = await storedChunks();
       expect(before.map(c => c.embedding_input_hash).every(Boolean)).toBe(true);
