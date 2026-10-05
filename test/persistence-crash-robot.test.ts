@@ -170,6 +170,33 @@ describe('injected session drops', () => {
     });
   }, 120_000);
 
+  // Local replay of the pooler_disconnect fault (Bun 1.4.2, seed 5105): drops kept a put pending past its caller's
+  // wait, so the model never folded it; the next remember on that page created a model entry saying "not live"
+  // and the drained page then read as an untrue receipt.
+  test('a fact write on a page whose put is still pending claims nothing about that page', async () => {
+    await robotBrain(async ({ world }) => {
+      const source = world.remotes[0].sourceId;
+      const model = new ReferenceModel(world);
+      const put = descriptor('pending-put', 'put_page', 'local', source, { slug: 'notes/alpha', content: pageBody('notes/alpha', 'mk-pending0') });
+      const fact = descriptor('fact', 'remember', 'local', source, { fact: 'Alpha fact mk-fact0', entity: 'notes/alpha' });
+      const forget = descriptor('forget', 'forget', 'local', source, { fact_id: { $ref: fact.id, field: 'fact_id' } });
+      world.descriptors = new Map([put, fact, forget].map(d => [d.id, d]));
+      const committed = await executeOp(world, put);
+      expect(committed.status).toBe('committed');
+      model.beginStep(false);
+      await model.observe(put, { ...committed, status: 'pending', values: {} });
+      await model.checkGlobal('after the pending put');
+      for (const d of [fact, forget]) {
+        const seen = await executeOp(world, d);
+        expect(seen.status).toBe('committed');
+        model.beginStep(false);
+        await model.observe(d, seen);
+        await model.checkGlobal(`after ${d.id}`);
+      }
+      expect(model.violations).toEqual([]);
+    });
+  }, 120_000);
+
   test('a drop round counts once it terminated a session, including a round still in flight', async () => {
     const drops = new SessionDrops();
     expect(await drops.injectedBefore()).toBe(false);

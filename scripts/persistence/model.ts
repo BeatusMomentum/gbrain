@@ -396,11 +396,11 @@ const pageWrite = (kind: 'put' | 'edit'): Fold => async (m, d, o) => {
   }
   else if (page.lastMarker && !markersIn(String(read.content)).includes(page.lastMarker)) m.violate({ class: 'untrue_receipt', op: d.id, detail: `committed ${d.kind} marker ${page.lastMarker} not visible` });
 };
+/** A write that moves a page's revision. A page the model has not seen committed (its put may still be pending) stays untracked. */
 const touch = (slugOf: (d: OpDescriptor) => string): Fold => async (m, d, o) => {
   const k = key(d.source, slugOf(d)); m.touched.add(k);
-  const page = m.page(d.source, slugOf(d));
-  if (o.values.revision) page.revision = o.values.revision;
-  else page.revision = null;
+  const page = m.pages.get(k);
+  if (page) page.revision = o.values.revision ?? null;
 };
 
 /** A file edit picked up by sync, or a connector item: the page now carries its marker. */
@@ -437,7 +437,8 @@ export const MODEL: Record<OpKind, Fold> = {
     if (fact) {
       if (fact.source !== d.source) m.violate({ class: 'source_isolation', op: d.id, detail: `forget in ${d.source} expired fact ${id} of ${fact.source}` });
       fact.withdrawn = true; m.reasserted.delete(`${fact.source}\u0000${fact.text}`);
-      m.touched.add(key(fact.source, fact.entity)); m.page(fact.source, fact.entity).revision = null;
+      const k = key(fact.source, fact.entity); m.touched.add(k);
+      const page = m.pages.get(k); if (page) page.revision = null;
     }
   },
   takes_add: touch(d => String(d.args.slug)),
