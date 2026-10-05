@@ -1,6 +1,6 @@
 # Explaining search results
 
-`search` and `query` explain their own ranking. With `explain: true` every
+`query` (and the CLI `gbrain search`) explain their own ranking. With `explain: true` every
 returned row carries `score_details`: which retrieval arms found it and at
 what rank, how fusion scored it, and every boost or demotion applied after
 fusion. With `explain_target` the response says what happened to a page you
@@ -16,7 +16,7 @@ expected but did not get, and what to do next.
 MCP:
 
 ```json
-{ "tool": "search", "arguments": { "query": "acme-example renewal terms", "explain": true } }
+{ "tool": "query", "arguments": { "query": "acme-example renewal terms", "expand": false, "explain": true } }
 ```
 
 CLI:
@@ -46,7 +46,7 @@ reason, never as an invented value.
 MCP:
 
 ```json
-{ "tool": "search", "arguments": { "query": "acme-example renewal terms", "explain_target": "meetings/2026-03-02-acme-example" } }
+{ "tool": "query", "arguments": { "query": "acme-example renewal terms", "expand": false, "explain_target": "meetings/2026-03-02-acme-example" } }
 ```
 
 The response meta `explain_target` holds the diagnosis, and a notice carries
@@ -67,9 +67,12 @@ the next step:
 | `target_ambiguous` | The slug exists in several sources. | Repeat with `explain_target` as `source:slug`. |
 | `target_not_found_or_not_visible` | No page with that slug is readable here. | Ask the user whether it exists and where; private pages are never confirmed. |
 
-Agents on the default seven-verb memory surface do not have `search` or
-`query`; ask the brain host to run `gbrain search "<question>" --explain --json`,
-or enable the full tool surface.
+Both params are declared on `query` on the full MCP tool surface; the cheap
+`search` tool and the starter list stay lean because every declared param is
+re-sent to the model on each turn. A starter-surface session calls
+`request_tools {"surface": "full"}` first. Agents on the default seven-verb
+memory surface do not have `query`; ask the brain host to run
+`gbrain search "<question>" --explain --json`, or enable the full tool surface.
 
 ## Hub dampening
 

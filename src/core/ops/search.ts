@@ -506,13 +506,15 @@ const SOURCE_ID_PARAM_DESCRIPTION = "One source, or '__all__'.";
 const SALIENCE_PARAM = { type: 'string' as const, enum: ['off', 'on', 'strong'], description: 'Boost emotional pages (default: auto).' };
 
 /**
- * Ranking explanation params, declared on `query` only: every declared param
- * is re-sent to the model on each turn, so the cheap `search` tool stays
- * lean. The local CLI passes them to `search` too (`gbrain search --explain`).
+ * Ranking explanation params, declared on `query` only and advertised on the
+ * full MCP surface only: every declared param is re-sent to the model on each
+ * turn, so the cheap `search` tool and the starter list stay lean (a starter
+ * session reaches them with `request_tools {surface: 'full'}`). The local CLI
+ * passes them to `search` too (`gbrain search --explain`).
  */
 const EXPLAIN_PARAMS = {
-  explain: { type: 'boolean' as const, description: 'Per-row score_details.' },
-  explain_target: { type: 'string' as const, description: 'Expected page (slug or source:slug): why it is missing.' },
+  explain: { type: 'boolean' as const, description: 'Per-row score_details.', fullSurfaceOnly: true },
+  explain_target: { type: 'string' as const, description: 'Expected page (slug or source:slug): why it is missing.', fullSurfaceOnly: true },
 };
 
 /** `explain_target` is `slug` or `source_id:slug` (slugs never contain ':'). */

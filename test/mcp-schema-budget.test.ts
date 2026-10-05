@@ -38,8 +38,6 @@
  * disclosure), get_write_request (poll cadence and final states),
  * add_timeline_entry (when no call is needed) and the instructions (write
  * guidance); the served list still fits 25,000 model-visible characters.
- * query +175 (P2): the `explain` and `explain_target` params (score_details
- * and missing-page diagnosis), declared on query only so search stays lean.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -66,7 +64,7 @@ const TOOL_BUDGETS: Record<string, number> = {
   get_backlinks: 770, get_ingest_log: 280, get_page: 930, get_recent_salience: 660, get_skill: 910,
   get_skill_asset: 790, get_write_request: 360, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,
   list_link_sources: 220, list_pages: 1060, list_skills: 670, list_write_requests: 450, put_page: 1460,
-  mute_notice: 460, put_skill: 1420, query: 3280, recall: 1540, remember: 1330, request_tools: 560, resolve_slugs: 410, search: 1670,
+  mute_notice: 460, put_skill: 1420, query: 3100, recall: 1540, remember: 1330, request_tools: 560, resolve_slugs: 410, search: 1670,
   submit_agent: 750, sync_brain_skills: 770, synthesize: 550, traverse_graph: 810, whoami: 230,
 };
 
