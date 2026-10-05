@@ -60,6 +60,7 @@ import {
   type BrainstormCostGate,
 } from './cost-gate.ts';
 import { capNotice } from '../budget/cap-flag.ts';
+import { peakRateNote } from '../model-pricing.ts';
 import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { PricingOverrides } from '../budget/reservation-cost.ts';
 import { ensureWellFormed } from '../text-safe.ts';
@@ -343,7 +344,7 @@ export async function previewCostAndWait(opts: {
   const estimate = estimateCost(opts.profile, opts.model, opts.pricingOverrides, opts.judgeModel);
   const interactive = opts.interactive ?? isInteractive();
   opts.stderrWrite(
-    `[${opts.profile.label}] estimated cost: ${fmtUsd(estimate)} (${opts.profile.k_close}×${opts.profile.m_far} = ${opts.profile.k_close * opts.profile.m_far} crosses × ${opts.profile.ideas_per_cross} ideas + judge)\n`
+    `[${opts.profile.label}] estimated cost: ${fmtUsd(estimate)}${peakRateNote([opts.model, opts.judgeModel])} (${opts.profile.k_close}×${opts.profile.m_far} = ${opts.profile.k_close * opts.profile.m_far} crosses × ${opts.profile.ideas_per_cross} ideas + judge)\n`
   );
   if (opts.skip) return { aborted: false, estimate };
   if (!interactive) {

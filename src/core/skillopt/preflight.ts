@@ -41,6 +41,7 @@
 import { defaultMaxOutputTokens } from '../ai/gateway.ts';
 import { priceFor, reservationCostUsd, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { noPricingGuidance, noPricingMessage, type NoPricingGuidance } from '../budget/no-pricing.ts';
+import { peakRateNote } from '../model-pricing.ts';
 import { skilloptOutputCap } from './output-cap.ts';
 import { JUDGE_SITE_MAX_TOKENS } from './score.ts';
 import { VALIDATION_RUNS_PER_TASK } from './types.ts';
@@ -251,7 +252,7 @@ export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpt
     `  Reflects:   ${est.reflect_calls.toLocaleString()} calls`,
     `  Judges:     ${est.judge_calls.toLocaleString()} calls`,
     `  Tokens:     ~${(est.est_input_tokens / 1000).toFixed(0)}K in / ~${(est.est_output_tokens / 1000).toFixed(0)}K out`,
-    `  Est. cost:  ${est.est_cost_usd === null ? `unpriced (no price for ${est.unpriced_models.join(', ')}; register a rate with gbrain pricing set)` : `$${est.est_cost_usd.toFixed(2)}`} (cap: ${opts.maxCostUsd > 0 ? `$${opts.maxCostUsd.toFixed(2)}${opts.maxCostSource === 'default' ? ' default' : ''}` : 'uncapped'})`,
+    `  Est. cost:  ${est.est_cost_usd === null ? `unpriced (no price for ${est.unpriced_models.join(', ')}; register a rate with gbrain pricing set)` : `$${est.est_cost_usd.toFixed(2)}${peakRateNote([opts.targetModel, opts.optimizerModel, ...(opts.judgeModels ?? [opts.judgeModel])])}`} (cap: ${opts.maxCostUsd > 0 ? `$${opts.maxCostUsd.toFixed(2)}${opts.maxCostSource === 'default' ? ' default' : ''}` : 'uncapped'})`,
     est.largest_reservation
       ? `  Per call:   largest single call reserves $${est.largest_reservation.reservation_usd!.toFixed(2)} (${est.largest_reservation.role} ${est.largest_reservation.model}, ${est.largest_reservation.max_output_tokens} output tokens)`
       : '',

@@ -290,3 +290,12 @@ describe('canonicalLookup — case-insensitive fallback (#4123 / TODOS case-sens
     }
   });
 });
+
+describe('D3 peak-rate label', () => {
+  test('an estimate touching a deepseek row says it is a peak-rate upper bound; router rows and others do not', async () => {
+    const { peakRateNote } = await import('../src/core/model-pricing.ts');
+    expect(peakRateNote(['deepseek:deepseek-flash'])).toBe(' (DeepSeek at peak rates, an upper bound; off-peak bills half)');
+    expect(peakRateNote(['anthropic:claude-sonnet-5-5', 'deepseek:deepseek-v4-pro'])).not.toBe('');
+    expect(peakRateNote(['openrouter:deepseek/deepseek-v4-flash-0731', 'anthropic:claude-sonnet-5-5', undefined])).toBe('');
+  });
+});

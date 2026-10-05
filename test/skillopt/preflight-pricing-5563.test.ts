@@ -120,3 +120,11 @@ describe('D19 skillopt cap flags (real parser)', () => {
     expect(parseFlags([SKILL, '--max-cost-usd', '3', '--max-usd', '3']).maxCostUsd).toBe(3);
   });
 });
+
+describe('D3 the preflight labels DeepSeek peak-rate estimates', () => {
+  test('a deepseek target prints the peak-rate label next to the estimate', () => {
+    const opts = { ...base, targetModel: 'deepseek:deepseek-flash', optimizerModel: 'deepseek:deepseek-flash', judgeModel: 'deepseek:deepseek-flash' };
+    const report = formatPreflightReport(estimateCost(opts), opts);
+    expect(report).toMatch(/Est\. cost:  \$\d+\.\d\d \(DeepSeek at peak rates, an upper bound; off-peak bills half\)/);
+  });
+});
