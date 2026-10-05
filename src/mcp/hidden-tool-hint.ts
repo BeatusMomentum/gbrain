@@ -12,7 +12,7 @@ import type { Action } from '../core/agent-output.ts';
 import type { Operation } from '../core/operations.ts';
 import { cliEquivalent } from '../core/ops/cli-equivalent.ts';
 
-const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in this harness\'s gbrain server env '
+const PERSISTENT_ROUTE = 'To keep the full surface for new sessions, set GBRAIN_SURFACE=full in the env of this harness\'s MCP server entry for gbrain '
   + '(`claude mcp add gbrain -e GBRAIN_SURFACE=full -- …`, the env table of the Codex server entry, or the plugin\'s GBRAIN_SURFACE setting on launcher installs), '
   + 'or re-register the server with `--surface full`. An inherited GBRAIN_SURFACE overrides a pinned --surface.';
 

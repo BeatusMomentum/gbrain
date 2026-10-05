@@ -125,7 +125,7 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   const session = ctx.stdioSurface!;
   const { clampSurface, sessionWidenAllowed, surfaceWiderThan } = await import('../../mcp/surface.ts');
   session.widenAllowed = await sessionWidenAllowed(ctx.engine, ctx.config);
-  const persistent = `For a lasting change, set GBRAIN_SURFACE=${requested} in this harness's gbrain server env (or re-register the server with --surface ${requested}) and start a new session.`;
+  const persistent = `For a lasting change, set GBRAIN_SURFACE=${requested} in the env of this harness's MCP server entry for gbrain (or re-register the server with --surface ${requested}) and start a new session.`;
   if (!session.widenAllowed) {
     throw opError('permission_denied',
       'Session widening is off on this brain (mcp.allow_session_widen is false), so request_tools cannot add tools to this stdio session.',

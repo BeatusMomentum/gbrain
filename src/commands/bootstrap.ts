@@ -64,8 +64,8 @@ import {
   removeClaudeHooks,
 } from '../core/bootstrap/hooks.ts';
 import { removeCodexHooks, writeCodexHooks } from '../core/bootstrap/codex-hooks.ts';
-import { registeredSurface, stdioServeArgv } from '../core/mcp-registration.ts';
-import { parseSurfaceFlag, type McpSurface } from '../mcp/surface.ts';
+import { isRegistrationSurface, registeredSurface, stdioServeArgv } from '../core/mcp-registration.ts';
+import type { McpSurface } from '../mcp/surface.ts';
 import {
   guardReceiptOverwrite,
   readHarnessReceiptState,
@@ -1086,7 +1086,9 @@ async function runHooks(
   // gbrain binary still matches. This flag forces the hand-wired MCP
   // registration through anyway.
   const mcpEvenIfPlugin = rest.includes('--mcp-even-if-plugin');
-  const surfaceFlag = parseSurfaceFlag(rest);
+  const surfaceArg = rest.includes('--surface') ? flagValue(rest, '--surface') ?? '' : undefined;
+  if (surfaceArg !== undefined && !isRegistrationSurface(surfaceArg)) { console.error(`unknown --surface '${surfaceArg}' — pass --surface verbs, starter, or full`); return 2; }
+  const surfaceFlag = surfaceArg ?? null;
 
   const state = readManifest(ws);
   if (state.state !== 'initialized') {

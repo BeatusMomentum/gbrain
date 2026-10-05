@@ -361,7 +361,7 @@ stdout (`--json`):
           "options": [
             {
               "id": "wire",
-              "label": "Register `<absolute path to gbrain> serve --surface verbs` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
+              "label": "Register `<absolute path to gbrain> serve --surface starter` as a stdio MCP server in your agent host; the install section lists the exact command per harness (Claude Code, Codex, Grok Build, opencode, OpenClaw)."
             },
             {
               "id": "skip",
@@ -540,7 +540,9 @@ gbrain returns these content blocks:
     }
   },
   "checked_at": "2026-10-03T16:20:00.000Z",
-  "contract_version": 1
+  "contract_version": 1,
+  "surface": "full",
+  "surface_source": "default"
 }
 ```
 
@@ -1101,7 +1103,7 @@ each with a `fix`.
   so call them by name. Where `request_tools` is not callable (the `verbs`
   surface, `--access read-only`, or `mcp.allow_session_widen` off), the fix is
   the CLI equivalent rendered `tell_user_to_run`, and its `why` names the
-  lasting route: `GBRAIN_SURFACE=full` in the harness's gbrain server env.
+  lasting route: `GBRAIN_SURFACE=full` in the env of the harness's MCP server entry for gbrain.
 
 Coach at most once per topic, at a natural point, and never about something
 the user turned off on purpose.

@@ -406,6 +406,6 @@ export function surfaceEnvInvalidNotice(raw: string, served: McpSurface, source:
   return {
     code: 'surface_env_invalid', kind: 'info',
     why: `GBRAIN_SURFACE="${raw}" is not a tool surface (use verbs, starter or full), so this server ignored it and serves '${served}' (source: ${SURFACE_SOURCE_LABEL[source]}).`,
-    user_message: `The gbrain MCP server's GBRAIN_SURFACE setting ("${raw}") is not valid; it takes verbs, starter or full. Can you fix it in your agent app's gbrain server env?`,
+    user_message: `The gbrain MCP server's GBRAIN_SURFACE setting ("${raw}") is not valid; it takes verbs, starter or full. Can you fix it in the env of your agent app's MCP server entry for gbrain?`,
   };
 }

@@ -22,6 +22,11 @@ export { shellQuote };
  */
 export const REGISTRATION_SURFACE: McpSurface = 'starter';
 
+/** A registration command's surface value (`verbs`, `starter` or `full`). */
+export function isRegistrationSurface(v: unknown): v is McpSurface {
+  return v === 'verbs' || v === 'starter' || v === 'full';
+}
+
 /**
  * `<bin> serve --surface <surface>`. `null` renders a bare `<bin> serve`
  * (config/default resolution): never-narrow keeps an existing bare
