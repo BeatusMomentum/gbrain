@@ -259,6 +259,7 @@ jobs:
                 test/managed-sweep-corpus-windows.test.ts
                 test/managed-sweep-timeline.test.ts
                 test/managed-sync-bulk.test.ts
+                test/managed-sync-lanes.test.ts
                 test/managed-sync-chunker-version.test.ts
                 test/managed-sync-group-completion.test.ts
                 test/persistence-diagnostics.test.ts
