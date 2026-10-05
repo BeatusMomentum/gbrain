@@ -63,9 +63,12 @@ general-purpose corpus real names are rare. `gbrain extract mentions --explain
 <name>` shows how a name was matched, and `mentions.ignore` stops a name from
 linking.
 
-**Matcher version.** `hashGazetteer` mixes a matcher-semantics version into the
-resume fingerprint (`hangul-boundaries-v2`), so the next mention pass re-scans
-pages instead of resuming with links from the old rule.
+**Existing brains.** `MENTION_EXTRACTOR_VERSION` moved to 2, so the next
+mention pass (`gbrain extract --stale`, or autopilot) rescans every page once
+and drops plain mention links the old rule made. The resume checkpoint of
+`gbrain extract links --by-mention` uses a matcher tag inside `hashGazetteer`
+(`hangul-boundaries-v2`), so an interrupted run restarts instead of resuming
+with old results.
 
 ## Changelog
 
