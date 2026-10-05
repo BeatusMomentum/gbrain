@@ -12,7 +12,7 @@ import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } f
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
-import { belowSafeChunkFence } from '../search/safe-chunks.ts';
+import { belowSafeChunkFence, protectedCodeFilter } from '../search/safe-chunks.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, isContextualMode, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 
@@ -174,7 +174,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });
     if (opts.code) await installCodeChunkEdges(tx, slug, sourceId, opts.code);
     if (opts.seal) {
-      await tx.executeRaw(`UPDATE pages SET chunker_version=$3
+      await tx.executeRaw(`UPDATE pages SET chunker_version=CASE WHEN ${protectedCodeFilter('pages')} THEN -1 ELSE $3 END
         WHERE source_id=$1 AND slug=$2`, [sourceId, slug, MARKDOWN_CHUNKER_VERSION]);
       await sealPageTextProjection(tx, slug, sourceId, current!);
       await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [snapshot.sourceIncarnation, slug, snapshot.revision]);
@@ -249,7 +249,7 @@ export async function queuePageProjection(engine: Pick<BrainEngine, 'executeRaw'
 /** #5050/#5247: whether a live page's installed chunks predate the safe-chunk fence. */
 export async function projectionBelowSafeFence(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<boolean> {
   const [row] = await engine.executeRaw<{ chunker_version: number | null }>(
-    'SELECT chunker_version FROM pages WHERE id=$1 AND deleted_at IS NULL', [pageId]) ?? [];
+    `SELECT chunker_version FROM pages WHERE id=$1 AND deleted_at IS NULL AND NOT ${protectedCodeFilter('pages')}`, [pageId]) ?? [];
   return row !== undefined && belowSafeChunkFence(row.chunker_version === null ? null : Number(row.chunker_version));
 }
 

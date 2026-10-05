@@ -14,18 +14,20 @@
 import type { BrainEngine } from '../engine.ts';
 import { resealSafeChunks } from '../page-state/projections.ts';
 import { PageRevisionConflictError } from '../page-state/types.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { SAFE_FENCE_CHUNKER_VERSION, protectedCodeFilter } from '../search/safe-chunks.ts';
 import { embedStalePages } from '../embed-stale.ts';
 import { afterCursor, type RepairCursor, type RepairHandler, type RepairItem, type RepairScope } from './core.ts';
 
-interface PendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number }
+interface PendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; protected_code: boolean; chars: number }
 
 export const safeChunksRepair: RepairHandler = {
   kind: 'safe-chunks',
   publication: 'projection',
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null) {
     const rows = await engine.executeRaw<PendingRow>(`SELECT p.id,p.source_id,p.slug,p.page_kind,
-        (p.page_kind='markdown' OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file',p.source_path) IS NOT NULL)) AS rebuildable,
+        (p.page_kind='markdown' OR (p.page_kind='code' AND COALESCE(p.frontmatter->>'file',p.source_path) IS NOT NULL))
+          AND NOT ${protectedCodeFilter('p')} AS rebuildable,
+        ${protectedCodeFilter('p')} AS protected_code,
         length(p.compiled_truth)+length(COALESCE(p.timeline,'')) AS chars
       FROM pages p WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.chunker_version < ${SAFE_FENCE_CHUNKER_VERSION}
       ORDER BY p.id`, [scope.source_ids]);
@@ -35,7 +37,8 @@ export const safeChunksRepair: RepairHandler = {
       .filter(item => afterCursor(item.cursor, after));
     const kept = rows.filter(row => !row.rebuildable);
     return { items, residuals: {
-      code_without_source_path: kept.filter(row => row.page_kind === 'code').length,
+      code_without_source_path: kept.filter(row => row.page_kind === 'code' && !row.protected_code).length,
+      code_with_fence_marker: kept.filter(row => row.protected_code).length,
       unsupported_page_kind: kept.filter(row => row.page_kind !== 'code').length,
     } };
   },
