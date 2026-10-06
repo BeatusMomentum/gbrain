@@ -177,6 +177,8 @@ export interface GmailMessageMeta {
   internalDateMs: number;
   labelIds: string[];
   listUnsubscribe: boolean;
+  /** RFC 3834 `Auto-Submitted` other than `no` (tracker notices, auto-replies); absent means human mail. */
+  autoSubmitted?: boolean;
   /**
    * iCalendar method when the message carries a `text/calendar` part or an
    * `.ics` attachment — 'REQUEST' | 'REPLY' | 'CANCEL' | 'COUNTER' | '' when a
