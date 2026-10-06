@@ -3143,10 +3143,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "core_edit_notices",
+        "name": "decide_review_proposals",
         "sql": {
-          "length": 721,
-          "sha256": "d025431d38cc094b0f5ea0b852fa2a8c288a67c10c61cdb5a16c72bee8e7dd1f"
+          "length": 1700,
+          "sha256": "8a20d8dac7096056bb53512bcb34316d15d44582b7d9b0f4f6fff3891c9daac3"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204614,
-    "stdoutSha256": "f1d8d227be55ee3ffc867b75cd931feedaf325f916350b152e004db5757d1f47",
+    "stdoutBytes": 204870,
+    "stdoutSha256": "87248fb10a23b5d78ed0ba90f26502697a22858793ac38cf8af9b499a05bafc5",
     "toolNames": [
       "remember",
       "entity",
@@ -167,7 +167,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -175,12 +175,12 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string?",
+          "fact": "string",
           "force": "boolean?",
           "infer_entity": "boolean?",
-          "items": "array?",
           "kind": "string?",
-          "provenance": "string?",
+          "provenance": "string",
+          "replaces": "string?",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -190,7 +190,7 @@
         "schema": {
           "properties": {
             "entity": {
-              "description": "Subject (name or slug).",
+              "description": "Who or what it is about (name or slug).",
               "type": "string"
             },
             "expected_revision": {
@@ -209,13 +209,6 @@
               "description": "Default true.",
               "type": "boolean"
             },
-            "items": {
-              "description": "≤20 facts: [{fact, provenance}]",
-              "items": {
-                "type": "object"
-              },
-              "type": "array"
-            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -228,7 +221,11 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Fact source (max 500 chars).",
+              "description": "Where the fact came from (max 500 chars).",
+              "type": "string"
+            },
+            "replaces": {
+              "description": "fact_id this fact replaces (same entity).",
               "type": "string"
             },
             "request_id": {
@@ -252,7 +249,10 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "fact",
+            "provenance"
+          ],
           "type": "object"
         },
         "scope": "write"
@@ -324,7 +324,8 @@
         "parameters": {
           "id": "string",
           "reason": "string?",
-          "request_id": "string?"
+          "request_id": "string?",
+          "semantic_review": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -340,6 +341,10 @@
             "request_id": {
               "description": "UUID; retry with it on timeout.",
               "type": "string"
+            },
+            "semantic_review": {
+              "description": "false: skip overnight rewording review.",
+              "type": "boolean"
             }
           },
           "required": [
@@ -5413,14 +5418,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string?",
+          "entities": "string",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5449,7 +5454,9 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "entities"
+          ],
           "type": "object"
         },
         "scope": "read"

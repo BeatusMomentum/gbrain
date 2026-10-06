@@ -513,7 +513,7 @@
         },
         {
           "category": "meta",
-          "message": "945 column(s) verified against live schema",
+          "message": "960 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -562,7 +562,7 @@
         },
         {
           "category": "meta",
-          "message": "Nothing to disclose: this brain is a fresh install at v<version> or later, so the one-time behavior-change notice does not apply.",
+          "message": "Nothing to disclose: this brain is a fresh install at v<version>, after every disclosed behavior change, so the one-time behavior-change notice does not apply.",
           "name": "behavior_changes",
           "status": "ok"
         },
@@ -1619,21 +1619,6 @@
           },
           "message": "Every page has its revision; the page revision backfill is complete.",
           "name": "revision_backfill",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
-            "bad_config": [],
-            "chars_limit": 4000,
-            "chars_used": 0,
-            "compiled": [],
-            "docs": "docs/guides/core-memory.md",
-            "enabled": true,
-            "pages": 0
-          },
-          "message": "No core pages. Start one with gbrain core init, then fill it in with the user.",
-          "name": "core_memory",
           "status": "ok"
         },
         {
