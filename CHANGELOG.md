@@ -10,6 +10,12 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.80.0] - 2026-10-06
+
+**Sync lanes that start at the same moment share the worktree lock instead of all but one reporting it busy, so a clean catch-up no longer falls back to slower paths mid-run (#5984).**
+
+Lanes in one process share the worktree's native lock through a counted lease. When no lease existed, every lane that arrived together asked the operating system for the lock: one got it and the rest were told the worktree was busy. Each of those released its group back to the queue, and the groups behind it followed, because a lane gives way when the group before it is back in the queue. One master CI run saw three fallbacks this way in a clean 80-page sync. The same happened when a lane arrived while the last holder was still releasing the lock. Now one lane takes the lock while the others wait and join its lease, and a lease stays registered until its lock is actually free. Lanes still refuse to join while an exclusive writer is waiting, and a lock held by another process still reports busy.
+
 ## [0.60.79.0] - 2026-10-06
 
 **js-yaml 4: no more vulnerable YAML command-line dependency, and frontmatter reads clock times and leading-zero numbers the way YAML 1.2 does.**
