@@ -1161,6 +1161,46 @@ describe('runExtractConversationFactsCore', () => {
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
+  // #5430 item E.3: completion means every in-scope segment was processed.
+  // A page with exactly --segment-limit segments is complete; a page cut
+  // short by the limit is a partial run that advances its checkpoint but
+  // never writes the terminal audit row.
+  test.each([
+    { name: 'unlimited (0) on a two-segment page', slug: 'conversations/imessage/alice-example', limit: 0, segments: 2, terminal: 1 },
+    { name: 'limit 1 on a two-segment page (partial)', slug: 'conversations/imessage/alice-example', limit: 1, segments: 1, terminal: 0 },
+    { name: 'limit 2 on a two-segment page (exact boundary)', slug: 'conversations/imessage/alice-example', limit: 2, segments: 2, terminal: 1 },
+    { name: 'limit 3 on a two-segment page', slug: 'conversations/imessage/alice-example', limit: 3, segments: 2, terminal: 1 },
+    { name: 'limit 1 on a one-segment page (exact boundary)', slug: 'conversations/imessage/one-segment-example', limit: 1, segments: 1, terminal: 1 },
+  ])('segment limit: $name (#5430)', async (c) => {
+    await engine.putPage('conversations/imessage/one-segment-example', {
+      type: 'conversation',
+      title: 'iMessage: One segment example',
+      compiled_truth: [
+        fmt('Alice Example', '2024-03-15', '9:00 AM', 'Shipping the report today.'),
+        fmt('Bob Demo', '2024-03-15', '9:02 AM', 'Thanks, I will review it.'),
+      ].join('\n'),
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: c.slug,
+      segmentLimit: c.limit,
+      sleepMs: 0,
+    });
+    expect(result).toMatchObject({ pages_processed: 1, pages_failed: 0, segments_processed: c.segments });
+    const terminalRows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_markdown_slug = $2`,
+      [TERMINAL_AUDIT_SOURCE, c.slug],
+    );
+    expect(Number(terminalRows[0]?.count ?? 0)).toBe(c.terminal);
+    const checkpoint = await loadOpCheckpoint(engine, {
+      op: 'extract-conversation-facts',
+      fingerprint: extractConversationFactsFingerprint({ sourceId: 'default' }),
+    });
+    expect(checkpoint.filter(entry => entry.includes(c.slug))).toHaveLength(1);
+  });
+
   test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
     chatTextOverride = JSON.stringify({
       facts: [{
