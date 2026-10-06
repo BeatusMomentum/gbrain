@@ -19,6 +19,8 @@
  *   0.60.77.0  quote grounding on by default (think, syntheses, concepts,
  *              patterns); forget's `similar_active` and the TypeSafe-gated
  *              overnight withdrawal review.
+ *   0.60.87.0  the save-before-compaction notice in Claude Code and OpenClaw
+ *              sessions (core memory ships off, so it is not a change).
  * A release that changes behavior appends its rows; a shipped row's release
  * never changes.
  *
@@ -242,6 +244,12 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.60.77.0', text: 'forget responses list close active facts it did not withdraw (`similar_active`); with a TypeSafe key, forgetting also queues an overnight review that only proposes withdrawing rewordings (`gbrain decide proposals list`; `gbrain config set decide.slots.conflict.review_withdraw false` turns it off).' },
   { since: '0.60.78.0', text: 'On a brain with embedding turned off, search, query, recall, think and fact writes no longer send text to an embedding provider: reads run keyword-only and say so, and `gbrain doctor --json` names the enable command if the user wants semantic search back.' },
   { since: '0.60.79.0', text: 'Frontmatter is parsed as YAML 1.2: clock-like values such as `10:30` stay text (they were read as base-60 numbers, so 10:30 became 630), a leading zero is decimal (`010` is 10, not 8), `0o` marks octal, and `1_000` stays text. Re-syncing a page whose frontmatter used those forms stores the new values.' },
+  { since: '0.60.87.0', text: 'Near automatic context compaction, Claude Code and OpenClaw sessions get one notice per compaction segment asking the agent to save what it needs with `remember` (up to 20 facts per call). In the held-out test it raised accuracy after compaction from 51.7% to 63.0% and cost about 28% more per question (5% more per correct answer). `gbrain config set memory.pressure.enabled false` turns it off. Always-loaded core memory is new and off; `gbrain config set memory.core.enabled true` turns it on.' },
+  { since: '0.60.88.0', text: '`think` now answers with the current date (in `brain.timezone`) and each page\'s content date, so relative words like "last month" resolve against today and dates inside a page against that page. In the held-out test it raised accuracy from 74.2% to 88.2% with unchanged latency. Pass `reference_date` (MCP) or `--reference-date` (CLI) to answer as of another day.' },
+  { since: '0.60.93.0', text: 'Links to pages that do not exist yet are now kept instead of dropped, including links in remote agents\' writes: `gbrain wanted` (MCP `wanted_pages`) lists them, most-linked first, and the edge appears once the page is created. Existing pages are re-extracted once to fill the list. In the held-out test no edge was lost and every withheld entity was listed. `gbrain config set wanted_pages.enabled false` turns it off.' },
+  { since: '0.60.94.0', text: 'Fact extraction, dream synthesis, atom extraction and take proposals now rewrite relative dates ("last week", "3 days ago") as the actual date, resolved against when the text was written. In the held-out test, saved facts with an unresolved relative date fell from 9% to 2% with no loss in answer accuracy. Facts saved earlier keep their wording. `gbrain config set extraction.date_grounding false` turns it off.' },
+  { since: '0.60.94.0', text: 'Saved facts now record who said them (you, the assistant or someone else), so an assistant recommendation is no longer saved as your plan; recall shows the speaker. In the held-out test, answers about what the assistant said rose from 44% to 96%. Expect about 41% more saved facts on assistant-heavy conversations. `gbrain config set facts.attribution false` turns it off.' },
+  { since: '0.60.94.0', text: 'Facts extracted from a dated page (a meeting or daily note) are stored at the page date instead of the sync time.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */

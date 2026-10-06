@@ -213,6 +213,9 @@ import { v209 } from './v209-page-facts-reconcile.ts';
 import { v210 } from './v210-clamp-oauth-token-ttl.ts';
 import { v211 } from './v211-function-search-path.ts';
 import { v212 } from './v212-decide-review-proposals.ts';
+import { v213 } from './v213-core-edit-notices.ts';
+import { v214 } from './v214-wanted-links.ts';
+import { v215 } from './v215-facts-attributed-to.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -424,4 +427,7 @@ export const MIGRATIONS: Migration[] = [
   v210,
   v211,
   v212,
+  v213,
+  v214,
+  v215,
 ];

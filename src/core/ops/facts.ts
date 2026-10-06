@@ -544,7 +544,7 @@ const recall: Operation = {
         // pre-v1 consumers — legacy fields are frozen byte-equal). `provenance`
         // is the protocol name for the stored source attribution.
         fact_id: String(r.id),
-        provenance: r.source,
+        provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
       })),
       total: packedFacts.length,
       ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
@@ -614,9 +614,9 @@ const context_pack: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.',
+  description: 'MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.',
   params: {
-    entities: { type: 'string', required: true, description: 'Comma-separated names or slugs (max 8).' },
+    entities: { type: 'string', description: 'Comma-separated names or slugs (max 8).' },
     budget_tokens: { type: 'number', description: 'Token budget; cards pack first.' },
     since: { type: 'string', description: 'Only open-thread events after this ISO time.' },
     session_id: { type: 'string', description: 'Opaque session id.' },
@@ -651,14 +651,24 @@ const context_pack: Operation = {
       typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
         ? Math.floor(p.budget_tokens)
         : null;
-    const res = await assembleContextPack(ctx.engine, {
-      sourceId,
-      entities,
-      since,
-      sessionId: typeof p.session_id === 'string' ? p.session_id : undefined,
-      includePrivate,
-      maxEntities: PACK_DEFAULT_MAX_ENTITIES,
-    });
+    const res = entities.length === 0
+      ? { cards: [], facts: [], text: '', pointers: [], factsCount: 0 } as unknown as Awaited<ReturnType<typeof assembleContextPack>>
+      : await assembleContextPack(ctx.engine, {
+        sourceId,
+        entities,
+        since,
+        sessionId: typeof p.session_id === 'string' ? p.session_id : undefined,
+        includePrivate,
+        maxEntities: PACK_DEFAULT_MAX_ENTITIES,
+      });
+    // Always-loaded core tier (core-memory.ts): owner-designated pages of
+    // `default` plus this source, inside the caller's grant; it packs first.
+    const { loadCoreBlock } = await import('../core-memory.ts');
+    const allowed = ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
+    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate })
+      .catch(() => null);
+    const coreText = core?.text ?? '';
+    const coreTokens = estimateTokens(coreText);
 
     // Pack, price and render the redacted presentation sets (one echo
     // dictionary); local callers get the delivered facts back raw below.
@@ -676,7 +686,7 @@ const context_pack: Operation = {
     if (budgetTokens !== null) {
       // #4761: reserve the envelope + headers, then price each card as its
       // rendered line plus its rendered (since-filtered) thread lines.
-      const itemBudget = budgetTokens - packHeaderCost();
+      const itemBudget = budgetTokens - packHeaderCost() - coreTokens;
       const cardCost = (c: (typeof cards)[number]) =>
         lineCost(renderCardLine(c)) + threadsOf(c).reduce((n, t) => n + lineCost(renderThreadLine(t)), 0);
       const cardPack = itemBudget > 0 ? packToBudget(cards, cardCost, itemBudget) : dropAll(cards);
@@ -691,7 +701,8 @@ const context_pack: Operation = {
     // `text` is what harnesses inject, so it must honor the same budget the
     // structured arrays report — the assembler's pre-budget rendering would
     // overrun the declared budget_tokens. budget_used reports that text.
-    const text = budgetTokens !== null ? renderPack(cards, open_threads, facts) : res.text;
+    const packText = entities.length === 0 ? '' : budgetTokens !== null ? renderPack(cards, open_threads, facts) : res.text;
+    const text = [coreText, packText].filter(Boolean).join('\n\n');
     const budgetUsed = budgetTokens !== null ? estimateTokens(text) : undefined;
 
     return {
@@ -718,6 +729,8 @@ const context_pack: Operation = {
         confidence: f.confidence,
       })),
       text,
+      ...(core && core.enabled ? { core: { text: core.text, chars_used: core.chars_used, chars_limit: core.chars_limit, pages: core.pages,
+        truncated: core.truncated, revision: core.revision } } : {}),
       ...(res.degradedReason ? { degraded_reason: res.degradedReason } : {}),
       ...(budgetTokens !== null
         ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }

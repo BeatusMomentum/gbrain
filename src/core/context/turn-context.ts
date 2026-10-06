@@ -84,6 +84,8 @@ export interface TurnContextFact {
   created_at?: string;
   /** #4206: provenance context (e.g. extract_facts' source_slug). */
   context?: string | null;
+  /** Who asserted the claim; rendered so an assistant suggestion never reads as the user's own claim. */
+  attributed_to?: 'user' | 'assistant' | 'other' | null;
   confidence: number;
 }
 
@@ -98,6 +100,13 @@ export interface DeltaPage {
 export interface TurnContextResult {
   /** Rendered block ('' when there is nothing to inject). */
   text: string;
+  /**
+   * Always-loaded core block (core-memory.ts) on session-start and coreOnly
+   * requests; absent from older serves and from every other trigger.
+   */
+  core?: { text: string; revision: string; chars_used: number; chars_limit: number; truncated: boolean };
+  /** Context-pressure gate (pressure.ts), serve-sourced; an older serve omits it and no notice fires. */
+  pressure?: import('./pressure.ts').PressureGate;
   /** Reflex pointers that survived suppression + budget. */
   pointers: ReflexPointer[];
   /**
@@ -662,6 +671,7 @@ async function assembleDelta(
             // #4206: provenance context rides delta like the other projections.
             context: r.context ?? null,
             confidence: r.confidence,
+            ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
           })),
         };
       } catch {
@@ -756,7 +766,7 @@ export const renderCardLine = (c: EntityCard): string =>
 export const renderThreadLine = (t: EntityOpenThread): string =>
   `- [${t.kind}] ${t.text}${t.date ? ` (${t.date})` : ''}`;
 export const renderFactLine = (f: TurnContextFact): string =>
-  `- ${f.fact}${f.entity_slug ? ` [${f.entity_slug}]` : ''} (${f.confidence.toFixed(2)})`;
+  `- ${f.attributed_to === 'assistant' ? '(assistant said) ' : ''}${f.fact}${f.entity_slug ? ` [${f.entity_slug}]` : ''} (${f.confidence.toFixed(2)})`;
 export const renderPageLine = (p: DeltaPage): string => `- **${p.title}** → \`${p.slug}\` (${p.updated_at})`;
 
 const PACK_HEADERS = ['## Standing entities', '## Open threads', '## Hot memory (recent facts)'] as const;

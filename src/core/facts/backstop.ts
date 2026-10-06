@@ -37,6 +37,7 @@
  * commit 13 wires it.
  */
 
+import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
@@ -163,6 +164,16 @@ export type FactsBackstopResult =
       /** Set when the LLM extraction step failed non-transport-fatally (see runPipelineWithBody). */
       skipped_reason?: import('./extract.ts').ExtractFailureReason;
     };
+
+/** One pipeline run's input: the turn text plus its page provenance and observation date. */
+interface PipelineInput {
+  turnText: string;
+  isDreamGenerated: boolean;
+  ref?: string;
+  pageSlug?: string;
+  /** When the text was written or said; null/undefined = unknown. */
+  observationDate?: ObservationDate | null;
+}
 
 interface ParsedPageInput {
   slug: string;
@@ -524,6 +535,7 @@ async function runPipeline(
       // #4819: page provenance for DB-only rows. The turn-path entry
       // (runFactsPipeline) has no page, so it leaves this unset.
       pageSlug: parsedPage.slug,
+      observationDate: resolveObservationDate({ slug: parsedPage.slug, frontmatter: parsedPage.frontmatter }),
     },
     ctx,
     abortSignal,
@@ -558,7 +570,7 @@ async function runPipeline(
  * fallback regardless of local_path.
  */
 async function runPipelineWithBody(
-  input: { turnText: string; isDreamGenerated: boolean; ref?: string; pageSlug?: string },
+  input: PipelineInput,
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
@@ -570,6 +582,10 @@ async function runPipelineWithBody(
   // never throw BudgetExhausted (cost/runtime gates need a cap); the
   // pipeline's failure surface is unchanged. An ambient tracker (cycle
   // phases, transcripts ingest) wins — no double scope, labels preserved.
+  // Observation time (date-grounding.ts): a dated page's facts default to the
+  // page's own date, never the sync/run time. Precedence stays extractor-stated
+  // event date > caller validFrom > observation date > now (resolveValidFrom).
+  if (!ctx.validFrom && input.observationDate) ctx = { ...ctx, validFrom: new Date(`${input.observationDate.date}T00:00:00.000Z`) };
   const { getCurrentBudgetTracker, withBudgetTracker } = await import('../ai/gateway.ts');
   if (!getCurrentBudgetTracker()) {
     const { BudgetTracker } = await import('../budget/budget-tracker.ts');
@@ -581,7 +597,7 @@ async function runPipelineWithBody(
 
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
-  input: { turnText: string; isDreamGenerated: boolean; ref?: string; pageSlug?: string },
+  input: PipelineInput,
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
@@ -626,7 +642,7 @@ async function runPipelineBodyInner(
     engine: ctx.engine,
     abortSignal,
     model: ctx.model,
-    notabilityAdmission,
+    notabilityAdmission, observationDate: input.observationDate ?? observationDateFrom(ctx.validFrom ?? null),
     ...(managed ? { embedding: managed.embedding ?? null } : {}),
   });
   const outcome = managed ? await withAIInvocationPreflight(async call => {
@@ -702,14 +718,14 @@ async function runPipelineBodyInner(
     // Dedup against DB candidates (correct per Codex Q7: fence rows
     // have no embeddings; FS lock + sync invariant means DB == fence
     // at write time). cosineVerdict: 0.95 for explicit lanes; capture lanes never drop by cosine (#5888).
-    const exact = resolvedSlug ? await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility }, null) : null;
+    const exact = resolvedSlug ? await decideSingleFact(ctx.engine, ctx.sourceId, { entity_slug: resolvedSlug, fact: f.fact, kind: f.kind ?? 'fact', visibility, attributed_to: f.attributed_to ?? null }, null) : null;
     let matchedExistingId: number | null = exact?.candidate?.id ?? null;
     if (matchedExistingId === null && resolvedSlug && f.embedding && !f.entity_inferred) {
       const candidates = await ctx.engine.findCandidateDuplicates(
         ctx.sourceId,
         resolvedSlug,
         f.fact,
-        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT },
+        { embedding: f.embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null },
       );
       let top: { id: number; score: number; fact: string } | null = null;
       for (const c of candidates) {
@@ -794,7 +810,7 @@ async function runPipelineBodyInner(
       source_session: f.source_session ?? null,
       confidence: f.confidence,
       embedding: f.embedding ?? null,
-      embedding_model: f.embedding_model ?? null,
+      embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
       // #4206: caller event-time fallback + provenance context. #4819: a
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
@@ -834,7 +850,7 @@ async function runPipelineBodyInner(
       // (historical imports); then import time.
       validFrom: f.valid_from ?? ctx.validFrom ?? new Date(),
       embedding: f.embedding ?? null,
-      embedding_model: f.embedding_model ?? null,
+      embedding_model: f.embedding_model ?? null, attributedTo: f.attributed_to ?? undefined,
       sessionId: f.source_session ?? null,
     }));
 
@@ -883,7 +899,7 @@ async function runPipelineBodyInner(
           source_session: f.source_session ?? null,
           confidence: f.confidence,
           embedding: f.embedding ?? null,
-          embedding_model: f.embedding_model ?? null,
+          embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: f.valid_from ?? ctx.validFrom,
           context: ctx.sourceSlug ?? input.pageSlug ?? null,
@@ -916,7 +932,7 @@ async function runPipelineBodyInner(
           source_session: f.source_session ?? null,
           confidence: f.confidence,
           embedding: f.embedding ?? null,
-          embedding_model: f.embedding_model ?? null,
+          embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: f.valid_from ?? ctx.validFrom,
           context: ctx.sourceSlug ?? input.pageSlug ?? null,

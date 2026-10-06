@@ -129,6 +129,7 @@ CREATE TRIGGER bump_page_generation_clock_trg
 CREATE INDEX IF NOT EXISTS idx_pages_type ON pages(type);
 CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN(frontmatter);
 CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_pages_slug_basename ON pages (source_id, (regexp_replace(slug, '^.*/', '')));
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
   ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
@@ -197,6 +198,24 @@ CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 CREATE OR REPLACE VIEW page_links AS
   SELECT id, from_page_id, to_page_id FROM links;
 
+
+CREATE TABLE IF NOT EXISTS wanted_links (
+  id               BIGSERIAL PRIMARY KEY,
+  origin_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  producer         TEXT NOT NULL CHECK (producer IN ('body','frontmatter')),
+  ref_kind         TEXT NOT NULL CHECK (ref_kind IN ('slug','name')),
+  target_source_id TEXT NOT NULL,
+  target_ref       TEXT NOT NULL,
+  link_type        TEXT NOT NULL DEFAULT '',
+  context          TEXT NOT NULL DEFAULT '',
+  checked_at       TIMESTAMPTZ NOT NULL,
+  first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT wanted_links_reference_unique
+    UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)
+);
+CREATE INDEX IF NOT EXISTS wanted_links_target_idx ON wanted_links (target_source_id, target_ref);
+CREATE INDEX IF NOT EXISTS wanted_links_source_idx ON wanted_links (source_id);
 
 CREATE TABLE IF NOT EXISTS tags (
   id      SERIAL PRIMARY KEY,
@@ -2007,6 +2026,26 @@ DO \$rls\$ BEGIN
   END IF;
 END \$rls\$;
 CREATE SEQUENCE IF NOT EXISTS graph_generation_seq;
+
+-- Always-loaded core memory: remote-edit notices.
+CREATE TABLE IF NOT EXISTS core_edit_notices (
+  id              BIGSERIAL PRIMARY KEY,
+  source_id       TEXT NOT NULL,
+  slug            TEXT NOT NULL,
+  page_id         BIGINT,
+  revision        TEXT,
+  base_revision   TEXT,
+  base_text       TEXT,
+  actor           TEXT NOT NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  acked_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS core_edit_notices_pending_idx ON core_edit_notices (source_id, slug, id) WHERE acked_at IS NULL;
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
 
 
 

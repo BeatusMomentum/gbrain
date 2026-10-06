@@ -443,6 +443,10 @@
       },
       {
         "category": "brain",
+        "name": "extraction_date_grounding"
+      },
+      {
+        "category": "brain",
         "name": "integrity"
       },
       {
@@ -668,6 +672,10 @@
       {
         "category": "meta",
         "name": "revision_backfill"
+      },
+      {
+        "category": "brain",
+        "name": "core_memory"
       },
       {
         "category": "ops",

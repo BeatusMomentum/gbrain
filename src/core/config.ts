@@ -1444,6 +1444,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // B-16: confidence stored for an extracted candidate whose confidence is
   // missing or non-numeric (a number in 0..1). Unset keeps the legacy 1.0.
   'facts.extraction_missing_confidence',
+  'extraction.date_grounding', 'facts.attribution', // extraction prompt variants (facts/extract.ts getExtractorVariant)
   // [ENG-8] Brain-level default visibility for facts writes when the caller
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
@@ -1462,6 +1463,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Fire-once sentinel for the ambient-writeback consent nudge (WP8):
   // stamped 'true' after the init/post-upgrade ask has been shown once.
   'memory.auto_writeback_notice_shown',
+  // Always-loaded core memory + context-pressure notice (docs/guides/core-memory.md#configuration).
+  'memory.core.enabled', 'memory.core.max_chars', 'memory.core.remote_edit',
+  'memory.pressure.enabled', 'memory.pressure.warn_ratio', 'memory.pressure.context_window',
   // Declared brain audience: 'personal' | 'shared'. Set by the operator, by
   // company-brainify's Phase-5 handoff (shared), or from the bootstrap
   // interview. Declaration beats the conservative client-count heuristic in
@@ -1602,6 +1606,21 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.
   'auto_timeline',
+  // Wanted pages: record unresolved authored links and wake their origins
+  // when the target appears (src/core/wanted-links.ts). On by default; the
+  // off switch is `gbrain config set wanted_pages.enabled false`.
+  'wanted_pages.enabled',
+  // Remote writes (the persistence `links` effect) record missing mention targets too. On by default (held-out verdict H8).
+  'wanted_pages.remote',
+  // Line grammar (src/core/line-grammar.ts): typed relation lines, off by default
+  // (held-out verdict H3); undeclared relation types fall back to inference unless allowed.
+  'line_grammar.enabled',
+  'line_grammar.allow_undeclared_types',
+  // Validity ranges on typed relation lines stored as dated edge transitions
+  // (core/link-effective.ts). On by default (held-out verdict H7); applies while line_grammar.enabled is on.
+  'line_grammar.effective_ranges',
+  // put_page "did you mean an existing page?" advisory on creates (core/similar-pages.ts). Off by default (held-out verdict H5b).
+  'put_page.similar_pages',
   // #5584: skillopt optimizer output cap (default 32000 thinking / 4096 otherwise).
   'skillopt.reflect_max_tokens',
   // #5585: skillopt strict model provenance (true|1|yes|on; other values count as on).

@@ -32,6 +32,7 @@
       "context_volunteer_events.context_volunteer_events_pkey": "p PRIMARY KEY (id)",
       "conversation_parser_llm_cache.conversation_parser_llm_cache_call_shape_check": "c CHECK ((call_shape = ANY (ARRAY['polish'::text, 'fallback'::text])))",
       "conversation_parser_llm_cache.conversation_parser_llm_cache_pkey": "p PRIMARY KEY (content_sha256, model_id, call_shape)",
+      "core_edit_notices.core_edit_notices_pkey": "p PRIMARY KEY (id)",
       "decide_calibrations.decide_calibrations_pkey": "p PRIMARY KEY (id)",
       "decide_proposals.decide_proposals_pkey": "p PRIMARY KEY (id)",
       "decide_proposals.decide_proposals_sweep_id_pair_index_key": "u UNIQUE (sweep_id, pair_index)",
@@ -72,6 +73,7 @@
       "fact_withdrawals.fact_withdrawals_pkey": "p PRIMARY KEY (source_id, visibility, subject, fact_hash)",
       "fact_withdrawals.fact_withdrawals_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "fact_withdrawals.fact_withdrawals_visibility_check": "c CHECK ((visibility = ANY (ARRAY['private'::text, 'world'::text])))",
+      "facts.facts_attributed_to_check": "c CHECK ((attributed_to = ANY (ARRAY['user'::text, 'assistant'::text, 'other'::text])))",
       "facts.facts_confidence_check": "c CHECK (((confidence >= (0)::double precision) AND (confidence <= (1)::double precision)))",
       "facts.facts_kind_check": "c CHECK ((kind = ANY (ARRAY['event'::text, 'preference'::text, 'commitment'::text, 'belief'::text, 'fact'::text, 'idea'::text])))",
       "facts.facts_notability_check": "c CHECK ((notability = ANY (ARRAY['high'::text, 'medium'::text, 'low'::text])))",
@@ -352,7 +354,13 @@
       "think_ab_results.think_ab_results_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "timeline_entries.timeline_entries_event_page_id_fkey": "f FOREIGN KEY (event_page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "timeline_entries.timeline_entries_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
-      "timeline_entries.timeline_entries_pkey": "p PRIMARY KEY (id)"
+      "timeline_entries.timeline_entries_pkey": "p PRIMARY KEY (id)",
+      "wanted_links.wanted_links_origin_page_id_fkey": "f FOREIGN KEY (origin_page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "wanted_links.wanted_links_pkey": "p PRIMARY KEY (id)",
+      "wanted_links.wanted_links_producer_check": "c CHECK ((producer = ANY (ARRAY['body'::text, 'frontmatter'::text])))",
+      "wanted_links.wanted_links_ref_kind_check": "c CHECK ((ref_kind = ANY (ARRAY['slug'::text, 'name'::text])))",
+      "wanted_links.wanted_links_reference_unique": "u UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
+      "wanted_links.wanted_links_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE"
     },
     "extensions": [
       "pg_trgm",
@@ -382,7 +390,7 @@
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "gbrain_stamp_revision_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=d446ed1145d8bb9c93cb0ca4aa076a5dc7a5fe07b3e79518adaf1b17b0a51216",
       "gbrain_stamp_version_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=1b28a0e5769198d86490dc20b2aee80b7e6595670428a63ac9c6825cd2a35b10",
-      "gbrain_stamp_write_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=022ddf5754968b6a6647f32a0c42db94b7aa4e680e739b79c1ec8931d06cfb92",
+      "gbrain_stamp_write_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=50e9b0e5bf37eeae6555dd16c8104cb0807be6c05a79e0c82237d45162c21dc2",
       "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e099e8a1d30bd74b7632b6055d3edffe753c00c00183e3bdac34d28d23347555",
       "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=078bd418f597924b56e631887aaddc41d98c231b3d27c6a52a9460b0ef252dd9"
     },
@@ -427,6 +435,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "conversation_parser_llm_cache": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "core_edit_notices": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "decide_calibrations": [
@@ -746,6 +757,9 @@
       ],
       "timeline_entries": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "wanted_links": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ]
     },
     "indexes": {
@@ -777,6 +791,8 @@
       "context_volunteer_events_src_slug_idx": "CREATE INDEX context_volunteer_events_src_slug_idx ON public.context_volunteer_events USING btree (source_id, slug)",
       "context_volunteer_events_src_time_idx": "CREATE INDEX context_volunteer_events_src_time_idx ON public.context_volunteer_events USING btree (source_id, volunteered_at DESC)",
       "conversation_parser_llm_cache_pkey": "CREATE UNIQUE INDEX conversation_parser_llm_cache_pkey ON public.conversation_parser_llm_cache USING btree (content_sha256, model_id, call_shape)",
+      "core_edit_notices_pending_idx": "CREATE INDEX core_edit_notices_pending_idx ON public.core_edit_notices USING btree (source_id, slug, id) WHERE (acked_at IS NULL)",
+      "core_edit_notices_pkey": "CREATE UNIQUE INDEX core_edit_notices_pkey ON public.core_edit_notices USING btree (id)",
       "decide_calibrations_lookup_idx": "CREATE INDEX decide_calibrations_lookup_idx ON public.decide_calibrations USING btree (slot, provider, model_resolved, created_at DESC)",
       "decide_calibrations_pkey": "CREATE UNIQUE INDEX decide_calibrations_pkey ON public.decide_calibrations USING btree (id)",
       "decide_proposals_pkey": "CREATE UNIQUE INDEX decide_proposals_pkey ON public.decide_proposals USING btree (id)",
@@ -908,6 +924,7 @@
       "idx_pages_frontmatter": "CREATE INDEX idx_pages_frontmatter ON public.pages USING gin (frontmatter)",
       "idx_pages_projection_pending": "CREATE INDEX idx_pages_projection_pending ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision))",
       "idx_pages_search": "CREATE INDEX idx_pages_search ON public.pages USING gin (search_vector)",
+      "idx_pages_slug_basename": "CREATE INDEX idx_pages_slug_basename ON public.pages USING btree (source_id, regexp_replace(slug, '^.*/'::text, ''::text))",
       "idx_pages_source_id": "CREATE INDEX idx_pages_source_id ON public.pages USING btree (source_id)",
       "idx_pages_trgm": "CREATE INDEX idx_pages_trgm ON public.pages USING gin (title gin_trgm_ops)",
       "idx_pages_type": "CREATE INDEX idx_pages_type ON public.pages USING btree (type)",
@@ -1112,7 +1129,11 @@
       "timeline_entries_pkey": "CREATE UNIQUE INDEX timeline_entries_pkey ON public.timeline_entries USING btree (id)",
       "uniq_minion_attachments_job_filename": "CREATE UNIQUE INDEX uniq_minion_attachments_job_filename ON public.minion_attachments USING btree (job_id, filename)",
       "uniq_minion_jobs_idempotency": "CREATE UNIQUE INDEX uniq_minion_jobs_idempotency ON public.minion_jobs USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL)",
-      "uniq_subagent_messages_idx": "CREATE UNIQUE INDEX uniq_subagent_messages_idx ON public.subagent_messages USING btree (job_id, message_idx)"
+      "uniq_subagent_messages_idx": "CREATE UNIQUE INDEX uniq_subagent_messages_idx ON public.subagent_messages USING btree (job_id, message_idx)",
+      "wanted_links_pkey": "CREATE UNIQUE INDEX wanted_links_pkey ON public.wanted_links USING btree (id)",
+      "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
+      "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
+      "wanted_links_target_idx": "CREATE INDEX wanted_links_target_idx ON public.wanted_links USING btree (target_source_id, target_ref)"
     },
     "policies": {},
     "sequences": {
@@ -1124,6 +1145,7 @@
       "code_traversal_cache_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=code_traversal_cache.id",
       "content_chunks_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=content_chunks.id",
       "context_volunteer_events_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=context_volunteer_events.id",
+      "core_edit_notices_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=core_edit_notices.id",
       "decide_calibrations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_calibrations.id",
       "decide_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_proposals.id",
       "decide_review_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=decide_review_proposals.id",
@@ -1169,7 +1191,8 @@
       "take_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=take_proposals.id",
       "takes_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=takes.id",
       "think_ab_results_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=think_ab_results.id",
-      "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id"
+      "timeline_entries_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=timeline_entries.id",
+      "wanted_links_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=wanted_links.id"
     },
     "tables": {
       "access_tokens": {
@@ -1393,6 +1416,21 @@
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "core_edit_notices": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('core_edit_notices_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 slug text/text NOT NULL",
+          "4 page_id bigint/int8 NULL",
+          "5 revision text/text NULL",
+          "6 base_revision text/text NULL",
+          "7 base_text text/text NULL",
+          "8 actor text/text NOT NULL",
+          "9 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "10 acked_at timestamp with time zone/timestamptz NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "decide_calibrations": {
         "columns": [
@@ -1796,7 +1834,8 @@
           "37 last_write_request_id uuid/uuid NULL",
           "38 last_write_principal_kind text/text NULL",
           "39 last_write_principal_id text/text NULL",
-          "40 last_written_at timestamp with time zone/timestamptz NULL"
+          "40 last_written_at timestamp with time zone/timestamptz NULL",
+          "41 attributed_to text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3119,6 +3158,22 @@
           "15 last_written_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "wanted_links": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('wanted_links_id_seq'::regclass)",
+          "2 origin_page_id integer/int4 NOT NULL",
+          "3 source_id text/text NOT NULL",
+          "4 producer text/text NOT NULL",
+          "5 ref_kind text/text NOT NULL",
+          "6 target_source_id text/text NOT NULL",
+          "7 target_ref text/text NOT NULL",
+          "8 link_type text/text NOT NULL DEFAULT ''::text",
+          "9 context text/text NOT NULL DEFAULT ''::text",
+          "10 checked_at timestamp with time zone/timestamptz NOT NULL",
+          "11 first_seen_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       }
     },
     "triggers": {
