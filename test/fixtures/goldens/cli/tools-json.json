@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204538,
-    "stdoutSha256": "14baa283cc6c3428ec4ab5205ee7a23660cb9c516c8bea96dbb84f8e421d5f3c",
+    "stdoutBytes": 204822,
+    "stdoutSha256": "9a26bd923b7df9ef6f736b0e32860aa43ca0ae13db09459e9b3e9f8da1b73b4a",
     "toolNames": [
       "remember",
       "entity",
@@ -6308,6 +6308,7 @@
           "as_of": "string?",
           "counterparty": "string?",
           "group_by": "string?",
+          "id": "number?",
           "include_context": "boolean?",
           "limit": "number?",
           "loop_type": "string?",
@@ -6337,6 +6338,10 @@
               ],
               "type": "string"
             },
+            "id": {
+              "description": "One loop by id (from a previous open_loops result), at any status unless `status` is given. Stays inside the resolved source scope; returns no text digest.",
+              "type": "number"
+            },
             "include_context": {
               "description": "Attach the counterparty entity card per group (trusted local only). Default true.",
               "type": "boolean"
@@ -6361,7 +6366,7 @@
               "type": "string"
             },
             "status": {
-              "description": "Default 'open'.",
+              "description": "Default 'open' (no default with `id`).",
               "enum": [
                 "open",
                 "done",
