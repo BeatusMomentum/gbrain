@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.96.0] - 2026-10-06
+
+**A lane catch-up that stops on a failed page now settles every later page before it reports, and two flaky test families are fixed.**
+
+`gbrain sync --drain` with lanes could report `blocked` while one group after the failed page was still claimed and `running`. The consumer cancelled that group a moment later, and no page after the failure was ever published. But an agent that read the receipts right after the drain returned could see a request still in flight. The drain now waits for that claim too, so every page after the failure reads `cancelled` when it reports.
+
+### Itemized changes
+
+- **Lane drain report (#6153, #6189).** A lane group head was counted as a lane task only after its claim query returned. The drain's close (`closeLaneRun`) could see zero tasks during that query and return while the head it had just claimed was `running`. Each consumer claim that can take a lane row now counts from before its query until its task is counted, on both the lane path and the FIFO path, and the close waits for claims in flight as well as tasks. Forced probe: with a 500 ms pause between the claim and the task count, `test/managed-sync-lanes.test.ts` › "a failed page under lanes stops the run" failed 8 of 8 runs before and passed 8 of 8 after. A new unit test pins the close waiting for a claim in flight.
+- **Managed atom compaction tests (#6167, #6168).** The `success` scenarios stopped the persistence consumer while a committed atom's embedding effect was still running. Stopping requeues the effect, and compaction keeps a receipt whose effect is unfinished, so compaction returned 2 instead of 3, and the leftover receipt made the next test return one too many. The helper now waits for the source's effects to settle before it stops the consumer. Forced probe: a 400 ms pause in the embedding effect failed both `success` cases on PostgreSQL and PGLite before the fix and passed after. No assertion changed.
+- **#6129** was fixed by #6130 and hasn't recurred on master since.
+
+## To take advantage of v0.60.96.0
+
+Nothing to do. `gbrain sync --drain` picks up the fix after `gbrain upgrade`.
+
 ## [0.60.95.0] - 2026-10-06
 
 **The full Ubicloud test gate finishes in about five and a half minutes instead of ten to fifteen, and the embedding-migration bad-flag test stops timing out.**

@@ -9,7 +9,7 @@ import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { cancelOrphanedWindowGroup } from './sync-window.ts';
-import { laneOf, laneRoots, laneTask } from './sync-lanes.ts';
+import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { isWriteErrorCode } from './types.ts';
@@ -357,16 +357,19 @@ export class PersistenceConsumer {
     const concurrency = this.opts.concurrency ?? 2;
     const attemptedRoots = new Set([...this.activeRoots, ...this.laneTasks.keys(), ...this.rootRetryAfter.keys()]);
     while (!this.stopping && this.active.size - this.laneTaskCount() < concurrency) {
-      const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, 30_000, [...attemptedRoots]));
-      if (!row) break;
-      if (this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); break; }
-      const key = row.worktree_id ?? `db:${row.source_incarnation}`;
-      attemptedRoots.add(key);
-      // #5984 lanes: the FIFO head of an open lane run runs as the run's first lane.
-      if (laneOf(row)) { this.startLaneTask(row, key); continue; }
-      if (this.activeRoots.has(key)) { await releaseUnpublishedClaim(this.engine, row, 'writer_busy'); break; }
-      this.activeRoots.add(key);
-      this.track(row, () => this.activeRoots.delete(key), key);
+      const claimed = laneClaim();
+      try {
+        const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, 30_000, [...attemptedRoots]));
+        if (!row) break;
+        if (this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); break; }
+        const key = row.worktree_id ?? `db:${row.source_incarnation}`;
+        attemptedRoots.add(key);
+        // #5984 lanes: the FIFO head of an open lane run runs as the run's first lane.
+        if (laneOf(row)) { this.startLaneTask(row, key); continue; }
+        if (this.activeRoots.has(key)) { await releaseUnpublishedClaim(this.engine, row, 'writer_busy'); break; }
+        this.activeRoots.add(key);
+        this.track(row, () => this.activeRoots.delete(key), key);
+      } finally { claimed(); }
     }
     await this.claimLanes();
   }
@@ -375,9 +378,12 @@ export class PersistenceConsumer {
     for (const { worktreeId, run, capacity } of laneRoots()) {
       if (this.rootRetryAfter.has(worktreeId) || this.activeRoots.has(worktreeId)) continue;
       while (!this.stopping && (this.laneTasks.get(worktreeId) ?? 0) < capacity) {
-        const row = await this.phase('claim', () => claimNextLaneHead(this.engine, this.hostId, worktreeId, run));
-        if (!row) break;
-        this.startLaneTask(row, worktreeId);
+        const claimed = laneClaim();
+        try {
+          const row = await this.phase('claim', () => claimNextLaneHead(this.engine, this.hostId, worktreeId, run));
+          if (!row) break;
+          this.startLaneTask(row, worktreeId);
+        } finally { claimed(); }
       }
     }
   }
