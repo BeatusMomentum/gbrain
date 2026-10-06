@@ -24,6 +24,7 @@ import { runSources } from '../src/commands/sources.ts';
 import { runCall } from '../src/commands/call.ts';
 import { runDoctor } from '../src/commands/doctor.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
@@ -46,6 +47,8 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  // runDoctor records a process-wide CLI exit verdict; later files in the same process must start clean.
+  _resetCliExitVerdictForTests();
   await disposePersistenceConsumer(engine);
   await engine.disconnect();
 });
