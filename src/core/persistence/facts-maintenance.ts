@@ -103,10 +103,14 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
   const model = values.embedding_model;
   if (!model) return null;
   const dimensions = /^[1-9]\d*$/.test(values.embedding_dimensions ?? '') ? Number(values.embedding_dimensions) : null;
-  if (!/^[^\s:]+:[^\s]+$/.test(model) || !dimensions || !Number.isSafeInteger(dimensions)) {
+  const badModel = !/^[^\s:]+:[^\s]+$/.test(model);
+  const badDimensions = !dimensions || !Number.isSafeInteger(dimensions);
+  if (badModel || badDimensions) {
+    const shown = (v: string | undefined) => v === undefined ? 'unset' : JSON.stringify(v.length > 100 ? `${v.slice(0, 100)}…` : v);
     throw opError('embedding_configuration', 'The selected brain has no verifiable facts embedding model and dimensions.',
       `The brain's embedding_model (${JSON.stringify(model)}) is not provider:model or embedding_dimensions is not a positive integer, so fact extraction stopped before admission. Check embedding readiness; correcting the configuration is the user's decision.`,
-      { fix: embeddingsFix() });
+      { fix: embeddingsFix(), why: `Invalid DB-plane config key(s): ${[badModel && 'embedding_model', badDimensions && 'embedding_dimensions'].filter(Boolean).join(', ')}. ` +
+        `Read from the selected brain's config table: embedding_model=${shown(model)}, embedding_dimensions=${shown(values.embedding_dimensions)}.` });
   }
   const shape = await readFactsEmbeddingDim(engine);
   if (!shape.exists || !shape.columnType || shape.dims !== dimensions) {

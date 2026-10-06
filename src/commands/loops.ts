@@ -25,6 +25,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { ALL_SOURCES } from '../core/source-id.ts';
+import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
+import { opError } from '../core/ops/contract.ts';
 
 function sourceFlag(args: string[]): string | undefined {
   const i = args.indexOf('--source');
@@ -162,23 +164,33 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
   if (sub === 'list' || sub === 'show') {
     const statusIdx = rest.indexOf('--status');
     const typeIdx = rest.indexOf('--type');
+    const id = sub === 'show' ? Number(rest.find((a) => /^\d+$/.test(a))) : undefined;
+    if (id !== undefined && !(Number.isSafeInteger(id) && id > 0)) {
+      exitCliError(usageError('gbrain loops show needs a positive loop id.',
+        'Usage: gbrain loops show <id> [--json]. Example: gbrain loops show 42 (`gbrain loops list` shows ids).'), 'loops', { json });
+    }
+    // show looks the id up in the op (any status, any rank), never in the
+    // listed page: a page holds only the most recent loops of one status.
     const result = (await handleToolCall(
       engine,
       'open_loops',
       {
         group_by: 'none',
         limit: 200,
+        ...(id !== undefined ? { id } : {}),
         ...(statusIdx !== -1 ? { status: rest[statusIdx + 1] } : {}),
         ...(typeIdx !== -1 ? { loop_type: rest[typeIdx + 1] } : {}),
       },
       { sourceId: sourceFlag(rest) ?? ALL_SOURCES },
     )) as { loops: Array<Record<string, unknown>>; count: number };
     if (sub === 'show') {
-      const id = Number(rest.find((a) => /^\d+$/.test(a)));
       const loop = result.loops.find((l) => l.id === id);
       if (!loop) {
-        console.error(`No loop ${id}. (gbrain loops list shows ids; closed loops need --status done/dropped/stale)`);
-        setCliExitVerdict(1);
+        setCliExitVerdict(writeCliError(opError('not_found', `No loop ${id} in the sources this command reads.`,
+          'Run `gbrain loops list` to see loop ids.', {
+            why: 'A loop outside the sources this command reads, or outside an explicit --status or --type, looks the same as a missing loop.',
+            fix: { argv: ['gbrain', 'loops', 'list'], consent: [], actor: 'agent', why: 'Lists the loops this command can read, with their ids.', requires_exclusive: false },
+          }), 'loops', { json }));
         return;
       }
       if (json) {

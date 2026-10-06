@@ -322,7 +322,8 @@ const open_loops: Operation = {
     'answer as partial and name the held items and their retry command.',
   params: {
     group_by: { type: 'string', enum: ['counterparty', 'none'], description: "Default 'counterparty' (ranked groups)." },
-    status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open'." },
+    status: { type: 'string', enum: ['open', 'done', 'dropped', 'stale'], description: "Default 'open' (no default with `id`)." },
+    id: { type: 'number', description: 'One loop by id (from a previous open_loops result), at any status unless `status` is given. Stays inside the resolved source scope; returns no text digest.' },
     loop_type: { type: 'string', enum: ['commitment_owed_by_me', 'commitment_owed_to_me', 'unanswered_inbound', 'unanswered_outbound', 'decision_pending'], description: 'Filter to one loop type.' },
     counterparty: { type: 'string', description: 'Filter to one counterparty (slug or email).' },
     limit: { type: 'number', description: 'Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.' },
@@ -341,7 +342,14 @@ const open_loops: Operation = {
         { def: open_loops.params.as_of, example: '2026-04-03T09:00:00Z' });
     }
     const groupBy = (p.group_by as string | undefined) ?? 'counterparty';
-    const status = ((p.status as string | undefined) ?? 'open') as LoopStatus;
+    // An id names one loop whatever its status, so the 'open' default only
+    // applies to lists; an explicit status still narrows the lookup.
+    const id = (p.id ?? undefined) as number | undefined;
+    if (id !== undefined && !(Number.isSafeInteger(id) && id > 0)) {
+      throw invalidParam(ctx, 'open_loops', 'id', 'open_loops: id must be a positive integer loop id.',
+        { def: open_loops.params.id, example: 42 });
+    }
+    const status = (p.status as LoopStatus | undefined) ?? (id === undefined ? 'open' : undefined);
     // Per-call scope via the canonical trust+grant resolver: an MCP caller
     // whose transport is bound to another source can point this read at the
     // google source (`source_id`) or, trusted-local, span the brain
@@ -390,6 +398,7 @@ const open_loops: Operation = {
       status,
       ...(p.loop_type ? { loopType: p.loop_type as LoopType } : {}),
       ...(p.counterparty ? { counterparty: p.counterparty as string } : {}),
+      ...(id !== undefined ? { id } : {}),
       limit: 500,
     });
     const freshness = await googleSourceFreshness(ctx, scope);
@@ -495,7 +504,9 @@ const open_loops: Operation = {
       no_google_sources: noGoogleSources,
       redacted: !trusted,
       as_of: new Date(nowMs).toISOString(),
-      ...(trusted ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage, nowMs, partialStaleSources) } : {}),
+      // The digest reads as "waiting on you" over open loops; an id lookup
+      // can hit a closed loop or nothing at all, so it gets no digest.
+      ...(trusted && id === undefined ? { text: renderText(groups, freshness.stale, noGoogleSources, coverage, nowMs, partialStaleSources) } : {}),
     };
   },
 };
