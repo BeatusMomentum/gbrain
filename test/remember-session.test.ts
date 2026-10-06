@@ -58,6 +58,20 @@ describe('remember records the MCP session', () => {
     expect(byTransport.facts.map((f: { fact_id: string }) => f.fact_id)).toContain(id);
   });
 
+  test('an overlong transport session is clamped to 256 characters before it is stored', async () => {
+    const res = await dispatchToolCall(
+      engine,
+      'remember',
+      { fact: 'the vault opens at nine', provenance: 'test' },
+      { ...STDIO, sessionId: 's'.repeat(1000) },
+    );
+    expect(res.isError ?? false).toBe(false);
+    const rows = await engine.executeRaw<{ source_session: string | null }>(
+      `SELECT source_session FROM facts WHERE fact = 'the vault opens at nine'`,
+    );
+    expect(rows).toEqual([{ source_session: 's'.repeat(256) }]);
+  });
+
   test('a fact remembered with no session has none', async () => {
     const res = await dispatchToolCall(engine, 'remember', { fact: 'payroll runs monthly', provenance: 'test' }, { ...STDIO });
     const { id } = parsed(res);
