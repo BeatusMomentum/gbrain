@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 203155,
-    "stdoutSha256": "bd15db2081718707b94f345237707ee99b39814eefffbaeb11fa92c50e88c907",
+    "stdoutBytes": 204538,
+    "stdoutSha256": "14baa283cc6c3428ec4ab5205ee7a23660cb9c516c8bea96dbb84f8e421d5f3c",
     "toolNames": [
       "remember",
       "entity",
@@ -102,6 +102,7 @@
       "takes_update",
       "takes_resolve",
       "takes_supersede",
+      "takes_remove",
       "whoami",
       "sources_add",
       "sources_list",
@@ -166,7 +167,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -174,12 +175,11 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string?",
+          "fact": "string",
           "force": "boolean?",
           "infer_entity": "boolean?",
-          "items": "array?",
           "kind": "string?",
-          "provenance": "string?",
+          "provenance": "string",
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
@@ -189,7 +189,7 @@
         "schema": {
           "properties": {
             "entity": {
-              "description": "Subject (name or slug).",
+              "description": "Who or what it is about (name or slug).",
               "type": "string"
             },
             "expected_revision": {
@@ -208,13 +208,6 @@
               "description": "Default true.",
               "type": "boolean"
             },
-            "items": {
-              "description": "≤20 facts: [{fact, provenance}]",
-              "items": {
-                "type": "object"
-              },
-              "type": "array"
-            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -227,7 +220,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Fact source (max 500 chars).",
+              "description": "Where the fact came from (max 500 chars).",
               "type": "string"
             },
             "request_id": {
@@ -251,7 +244,10 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "fact",
+            "provenance"
+          ],
           "type": "object"
         },
         "scope": "write"
@@ -4208,6 +4204,46 @@
         "scope": "write"
       },
       {
+        "description": "Remove one take row from a page's takes fence and the takes table together. Local-only. Other rows keep their numbers. Refuses a resolved row, a row another row cites as \"superseded by\" it, and a row whose database copy disagrees with the fence (run `gbrain takes rebuild <slug>` first). CLI: `gbrain takes remove <slug> --row N`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "takes_remove",
+        "parameters": {
+          "local_dir": "string?",
+          "request_id": "string?",
+          "row_num": "number",
+          "slug": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "local_dir": {
+              "description": "Trusted CLI directory hint; must equal the registered source root.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "UUID; retry with it on timeout.",
+              "type": "string"
+            },
+            "row_num": {
+              "description": "Take row number to remove (from takes_list).",
+              "type": "number"
+            },
+            "slug": {
+              "description": "Page slug.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug",
+            "row_num"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
         "description": "Your identity: transport, scopes and, over OAuth, client, source_id and federated_read.",
         "idempotent": true,
         "local_only": false,
@@ -5372,14 +5408,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string?",
+          "entities": "string",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5408,7 +5444,9 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "entities"
+          ],
           "type": "object"
         },
         "scope": "read"
@@ -6216,7 +6254,7 @@
               "type": "number"
             },
             "max_cost_usd": {
-              "description": "Default 5.00",
+              "description": "Default 5.00 (an unpriced model then warns and runs). When set, an unpriced model is refused with no_pricing. Remote callers must pass a positive value; 0 (uncapped) is host-only.",
               "type": "number"
             },
             "no_mutate": {
