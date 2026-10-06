@@ -23,18 +23,13 @@
  */
 
 import { describe, test, expect, afterEach, beforeEach } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import {
   configureGateway,
   resetGateway,
   rerank,
   RerankError,
-  withBudgetTracker,
   __setRerankTransportForTests,
 } from '../../src/core/ai/gateway.ts';
-import { BudgetExhausted, BudgetTracker } from '../../src/core/budget/budget-tracker.ts';
 
 function configureVoyage(model: string = 'voyage:rerank-2.5'): void {
   configureGateway({
@@ -566,47 +561,5 @@ describe('gateway.rerank() — v0.46.3 Voyage wire dialect', () => {
       /rerank-9000.*not listed/s,
     );
     expect(called).toBe(false);
-  });
-});
-
-describe('gateway.rerank() — Voyage rerank-2.5 routes through OpenRouter (#3657)', () => {
-  const docs = ['alpha '.repeat(200), 'beta '.repeat(200)];
-  let auditDir: string;
-
-  function configureOpenRouter(model: string): void {
-    configureGateway({ reranker_model: model, env: { OPENROUTER_API_KEY: 'sk-or-test' } });
-  }
-
-  beforeEach(() => { auditDir = mkdtempSync(join(tmpdir(), 'gb-rerank-budget-')); });
-
-  for (const [model, pricePerMTok] of [['voyageai/rerank-2.5-lite', 0.02], ['voyageai/rerank-2.5', 0.05]] as const) {
-    test(`openrouter:${model} is allowlisted, posts the routed id, and reserves and records at its exact rate under a cap`, async () => {
-      configureOpenRouter(`openrouter:${model}`);
-      let sentModel = '';
-      let capturedUrl = '';
-      __setRerankTransportForTests(async (url, init) => {
-        capturedUrl = url;
-        sentModel = JSON.parse(String(init.body)).model;
-        return mockResp({ results: [{ index: 1, relevance_score: 0.8 }, { index: 0, relevance_score: 0.3 }] });
-      });
-      const tracker = new BudgetTracker({ maxCostUsd: 1, label: 'rerank-test', auditPath: join(auditDir, 'audit.jsonl') });
-      const results = await withBudgetTracker(tracker, () => rerank({ query: 'q', documents: docs }));
-      expect(results.map(r => r.index)).toEqual([1, 0]);
-      expect(capturedUrl).toBe('https://openrouter.ai/api/v1/rerank');
-      expect(sentModel).toBe(model);
-      const chars = 1 + docs.reduce((s, d) => s + d.length, 0);
-      expect(tracker.totalSpent).toBeCloseTo((Math.ceil(chars / 4) * pricePerMTok) / 1_000_000, 12);
-    });
-  }
-
-  test('a cap smaller than the projected cost refuses before any request', async () => {
-    configureOpenRouter('openrouter:voyageai/rerank-2.5');
-    let calls = 0;
-    __setRerankTransportForTests(async () => { calls++; return mockResp({ results: [] }); });
-    const tracker = new BudgetTracker({ maxCostUsd: 1e-9, label: 'rerank-test', auditPath: join(auditDir, 'audit.jsonl') });
-    const err = await withBudgetTracker(tracker, () => rerank({ query: 'q', documents: docs })).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(BudgetExhausted);
-    expect((err as BudgetExhausted).reason).toBe('cost');
-    expect(calls).toBe(0);
   });
 });

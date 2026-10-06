@@ -53,10 +53,6 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:rerank-2.5-lite':        { pricePerMTok: 0.02 },
   'voyage:rerank-3':               { pricePerMTok: 0.05 },
   'voyage:rerank-3-lite':          { pricePerMTok: 0.02 },
-  // Voyage rerankers routed through OpenRouter, keyed by the full routed id
-  // (https://openrouter.ai/voyageai/rerank-2.5 and /rerank-2.5-lite, verified 2026-10-06).
-  'openrouter:voyageai/rerank-2.5':      { pricePerMTok: 0.05 },
-  'openrouter:voyageai/rerank-2.5-lite': { pricePerMTok: 0.02 },
   // voyage-4-nano is deliberately absent: it's the open-weight variant (see
   // src/core/ai/recipes/voyage.ts) and Voyage's pricing page lists no hosted
   // rate for it. A 0 entry would under-estimate anyone paying for it via the

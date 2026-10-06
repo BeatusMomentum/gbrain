@@ -210,8 +210,8 @@ export const openrouterCompatFetch = (async (
  * envelope, not every individual model's capability. When in doubt about a
  * specific model, check https://openrouter.ai/models.
  *
- * Reranker: `/api/v1/rerank` proxies cross-encoder rerankers (Cohere v3.5/4-fast/4-pro,
- * NVIDIA Nemotron VL and Voyage rerank-2.5 / rerank-2.5-lite). Wire shape matches `gateway.rerank()`:
+ * Reranker: `/api/v1/rerank` proxies cross-encoder rerankers (Cohere v3.5/4-fast/4-pro
+ * and NVIDIA Nemotron VL). Wire shape matches `gateway.rerank()`:
  * `{ query, documents, model }` → `{ results: [{ index, relevance_score }] }`.
  * Unlike embedding/chat, the reranker path strictly enforces the `models`
  * allowlist (no openai-compat bypass) — adding new rerank models requires a
@@ -350,9 +350,6 @@ export const openrouter: Recipe = {
         'cohere/rerank-4-fast',
         'cohere/rerank-4-pro',
         'nvidia/llama-nemotron-rerank-vl-1b-v2:free',
-        // Voyage bills per token; priced by full routed id in embedding-pricing.ts.
-        'voyageai/rerank-2.5-lite',
-        'voyageai/rerank-2.5',
       ],
       default_model: 'cohere/rerank-v3.5',
       // Cohere bills per-search, not per-token. This is a pseudo-per-1M rate

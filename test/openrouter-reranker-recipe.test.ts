@@ -1,6 +1,5 @@
 import { describe, test, expect } from 'bun:test';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
-import { isModelPriceable } from '../src/core/budget/reservation-cost.ts';
 
 describe('OpenRouter recipe — reranker touchpoint', () => {
   test('declares a reranker touchpoint', () => {
@@ -18,15 +17,6 @@ describe('OpenRouter recipe — reranker touchpoint', () => {
     // string matching against the allowlist (no v0.31.12 extended-model bypass
     // on the rerank path), so truncating to `nvidia/.../v2` would 403.
     expect(m).toContain('nvidia/llama-nemotron-rerank-vl-1b-v2:free');
-  });
-
-  test('Voyage rerank-2.5 routes are allowlisted and priced by full routed id (not unpriced)', () => {
-    const r = getRecipe('openrouter')!;
-    for (const model of ['voyageai/rerank-2.5', 'voyageai/rerank-2.5-lite']) {
-      expect(r.touchpoints.reranker!.models).toContain(model);
-      expect(isModelPriceable(`openrouter:${model}`, 'rerank')).toBe(true);
-      expect(r.unpriced_models ?? []).not.toContain(model);
-    }
   });
 
   test('default_model is cohere/rerank-v3.5', () => {
