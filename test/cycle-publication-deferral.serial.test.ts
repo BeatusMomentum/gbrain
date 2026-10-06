@@ -105,6 +105,18 @@ describe('managed dream publication deferral (#6052)', () => {
       expect(await engine.getPage('reports/drift-2030-01-20')).toBeNull();
     });
   }
+  test('patterns defers a pending quote-grounding publish and skips stamping that page', async () => {
+    await engine.putPage('wiki/personal/patterns/example', { type: 'note', title: 'Example pattern', compiled_truth: 'A recurring synthetic theme.' });
+    publishError = pending();
+    const result = await runPhasePatterns(engine, { brainDir: scratch, dryRun: false, once: true });
+    expect(result.status).toBe('warn');
+    expect(result.details.publish_deferred).toBe(1);
+    expect(result.details.patterns_written).toBe(0);
+    expect(publishCalls).toBe(1);
+    expect(stampCalls).toBe(0);
+    expect(verified).toBe(0);
+    expect(await engine.getConfig(STAMP_KEY)).toBeNull();
+  });
   test('a failed patterns child remains a failure even if its partial output is pending', async () => {
     childStatus = 'failed'; publishError = pending();
     const result = await runPhasePatterns(engine, { brainDir: scratch, dryRun: false, once: true });
