@@ -598,6 +598,7 @@ const WANTED_MAX_LIMIT = 100;
 const wanted_pages: Operation = {
   name: 'wanted_pages',
   mutating: false,
+  writeInference: 'none',
   idempotent: true,
   outputRedaction: 'retrieval',
   description: 'Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.',
