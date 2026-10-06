@@ -1,11 +1,11 @@
-import { safeLoad, safeDump, Schema, Type, DEFAULT_SAFE_SCHEMA } from 'js-yaml';
+import { load, dump, Type, DEFAULT_SCHEMA } from 'js-yaml';
 import { NAIVE_DATETIME } from './effective-date.ts';
 
 // js-yaml's timestamp type builds `2024-02-30` as March 1 (Date.UTC rolls the
 // day over). A calendar-invalid timestamp stays the string the author wrote,
 // so date consumers reject it instead of storing the wrong day.
 type TimestampBehavior = { resolve(data: string): boolean; construct(data: string): Date; represent(data: object): string };
-const baseTimestamp = (DEFAULT_SAFE_SCHEMA as unknown as { compiledTypeMap: { scalar: Record<string, TimestampBehavior> } })
+const baseTimestamp = (DEFAULT_SCHEMA as unknown as { compiledTypeMap: { scalar: Record<string, TimestampBehavior> } })
   .compiledTypeMap.scalar['tag:yaml.org,2002:timestamp']!;
 const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
   kind: 'scalar',
@@ -27,7 +27,7 @@ const calendarTimestamp = new Type('tag:yaml.org,2002:timestamp', {
   instanceOf: Date,
   represent: baseTimestamp.represent,
 });
-export const FRONTMATTER_SCHEMA = new Schema({ include: [DEFAULT_SAFE_SCHEMA], implicit: [calendarTimestamp] });
+export const FRONTMATTER_SCHEMA = DEFAULT_SCHEMA.extend({ implicit: [calendarTimestamp] });
 
 export interface DataFrontmatter {
   data: Record<string, unknown>;
@@ -62,7 +62,7 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
   const block = closing ? rest.slice(0, closing.index) : rest;
   let value: unknown;
   try {
-    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : safeLoad(block, { schema: FRONTMATTER_SCHEMA });
+    value = block.trim() === '' ? {} : language === 'json' ? JSON.parse(block) : load(block, { schema: FRONTMATTER_SCHEMA });
   } catch (error) {
     // Parser messages can contain the document itself. Report only location,
     // so request/job diagnostics never copy private frontmatter into logs.
@@ -81,7 +81,7 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
 
 /** Serialize metadata without ever interpreting the body as frontmatter. */
 export function stringifyDataFrontmatter(content: string, data: Record<string, unknown>): string {
-  const yaml = safeDump(data).trim();
+  const yaml = dump(data).trim();
   const header = yaml === '{}' ? '' : `---\n${yaml}\n---\n`;
   return header + (content.endsWith('\n') ? content : content + '\n');
 }
