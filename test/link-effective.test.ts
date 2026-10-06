@@ -1,7 +1,8 @@
 /**
  * Validity ranges on typed relation lines (`- works_at @effective[a,b) [[x]]`)
  * stored as dated edge transitions (producer 'inline', core/link-effective.ts)
- * (`line_grammar.effective_ranges`, on by default).
+ * (`line_grammar.effective_ranges`, on by default; applies only while the
+ * grammar, off by default, is on: setup checks nothing is stored before enabling it).
  *
  * Protects: an ended range hides the edge from default graph reads and shows
  * it to as_of reads; an open range keeps it live; editing the range replaces
@@ -38,6 +39,9 @@ beforeAll(async () => {
   engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); resetGateway();
   await put('companies/acme-example', 'type: company\ntitle: Acme', 'A company.');
   await put('companies/widget-co', 'type: company\ntitle: Widget', 'Another company.');
+  await put('people/alice-example', 'type: person\ntitle: Alice', '- works_at @effective[2021-03,2024-06) [[companies/acme-example]]');
+  expect(await inline()).toEqual([]);
+  await engine.setConfig('line_grammar.enabled', 'true');
 });
 afterAll(async () => { await engine.disconnect(); resetGateway(); });
 

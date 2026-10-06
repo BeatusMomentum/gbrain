@@ -1,14 +1,24 @@
 # Typed lines, wanted pages and similar-page hints
 
 Three write-path features keep the graph honest without an LLM call: typed
-relation and fact lines a person can type in any editor, a queue of link
-targets that have no page yet, and an opt-in "did you mean an existing page?"
-hint when a write creates a page.
+relation and fact lines a person can type in any editor (opt-in), a queue of
+link targets that have no page yet, and an opt-in "did you mean an existing
+page?" hint when a write creates a page.
 
 ## Typed relation lines
 
-A list item that names a relation type and exactly one link states that
-link's type:
+Off by default; turn the line grammar on with
+`gbrain config set line_grammar.enabled true`. While it is off, these lines are
+ordinary list text and their links keep their inferred types. In the held-out
+junk audit, the grammar read 18 of 696,295 list lines in public notes and
+transcripts as grammar lines, and none of the 18 were real: all were fact
+lines, mostly unfilled template slots (`- [Time] - [Event]`) and a few
+dictionary usage labels. That failed the 0.95 precision bar. No relation line
+was minted, and no timecode, citation, task box, date or machine-written
+section was read.
+
+When it is on, a list item that names a relation type and exactly one link
+states that link's type:
 
 ```markdown
 - works_at [[companies/acme-example]] (since 2024)
@@ -23,7 +33,7 @@ same rule `add_link` follows; set `line_grammar.allow_undeclared_types true`
 to accept any snake_case verb. The full convention for agents is
 [`skills/conventions/line-grammar.md`](../../skills/conventions/line-grammar.md).
 
-**Say to your agent:** *"Record that alice-example works at acme-example since 2024, as a typed line on her page."*
+**Say to your agent:** *"Turn on typed relation lines, then record that alice-example works at acme-example since 2024 as a typed line on her page."*
 
 ## Fact lines
 
@@ -46,6 +56,7 @@ default graph reads hide it and `as_of` reads find it. A range on a type that
 is not a dated relationship, or on a link the page does not store with that
 type, is reported and stores nothing. `gbrain config set line_grammar.effective_ranges false` turns
 range storage off; the next extraction of each page drops its stored ranges.
+Ranges are stored only while the line grammar is on.
 
 ## What `put_page` reports
 

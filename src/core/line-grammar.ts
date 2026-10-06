@@ -323,21 +323,20 @@ function parseRelationContent(content: string, declared: ReadonlySet<string> | n
 }
 
 const FALSY = new Set(['false', '0', 'no', 'off']);
+const isTrue = (value: string | null) => value != null && ['true', '1', 'yes', 'on'].includes(value.trim().toLowerCase());
 
-/** `line_grammar.enabled` (default on) and `line_grammar.allow_undeclared_types` (default off). */
+/** `line_grammar.enabled` (default off, held-out verdict H3) and `line_grammar.allow_undeclared_types` (default off). */
 export async function lineGrammarOptions(engine: { getConfig(key: string): Promise<string | null> }): Promise<{ enabled: boolean; allowUndeclaredTypes: boolean }> {
   const read = (key: string) => engine.getConfig(key).catch(() => null);
   const [enabled, allow] = await Promise.all([read('line_grammar.enabled'), read('line_grammar.allow_undeclared_types')]);
-  return { enabled: enabled == null || !FALSY.has(enabled.trim().toLowerCase()),
-    allowUndeclaredTypes: allow != null && ['true', '1', 'yes', 'on'].includes(allow.trim().toLowerCase()) };
+  return { enabled: isTrue(enabled), allowUndeclaredTypes: isTrue(allow) };
 }
 
-/** `line_grammar.effective_ranges` (default on; needs the grammar on): store relation-line ranges on edges (core/link-effective.ts). */
+/** `line_grammar.effective_ranges` (default on; applies only while `line_grammar.enabled` is on): store relation-line ranges on edges (core/link-effective.ts). */
 export async function effectiveRangesEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
   const read = (key: string) => engine.getConfig(key).catch(() => null);
   const [ranges, enabled] = await Promise.all([read('line_grammar.effective_ranges'), read('line_grammar.enabled')]);
-  const on = (value: string | null) => value == null || !FALSY.has(value.trim().toLowerCase());
-  return on(ranges) && on(enabled);
+  return (ranges == null || !FALSY.has(ranges.trim().toLowerCase())) && isTrue(enabled);
 }
 
 /**

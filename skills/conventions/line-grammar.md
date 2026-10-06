@@ -4,6 +4,13 @@ Two line shapes in a page's compiled truth carry structure that gbrain reads
 with zero LLM calls. Write them when the relationship type or the fact
 category is known; write prose for everything else.
 
+gbrain reads these lines only when `line_grammar.enabled` is on, and it is off
+by default. Check with `gbrain config get line_grammar.enabled`. While it is
+off, a relation line is plain list text: its link keeps the inferred type, and
+`put_page` returns no `line_grammar` block. Turn it on only when the user asks
+or agrees (`gbrain config set line_grammar.enabled true`); for one typed edge
+now, use `add_link` instead.
+
 ## Typed relation lines
 
 ```markdown

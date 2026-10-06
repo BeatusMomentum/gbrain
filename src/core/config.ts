@@ -1607,12 +1607,12 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'wanted_pages.enabled',
   // Remote writes (the persistence `links` effect) record missing mention targets too. On by default (held-out verdict H8).
   'wanted_pages.remote',
-  // Line grammar (src/core/line-grammar.ts): typed relation lines on by default;
-  // undeclared relation types fall back to inference unless allowed.
+  // Line grammar (src/core/line-grammar.ts): typed relation lines, off by default
+  // (held-out verdict H3); undeclared relation types fall back to inference unless allowed.
   'line_grammar.enabled',
   'line_grammar.allow_undeclared_types',
   // Validity ranges on typed relation lines stored as dated edge transitions
-  // (core/link-effective.ts). On by default (held-out verdict H7).
+  // (core/link-effective.ts). On by default (held-out verdict H7); applies while line_grammar.enabled is on.
   'line_grammar.effective_ranges',
   // put_page "did you mean an existing page?" advisory on creates (core/similar-pages.ts). Off by default (held-out verdict H5b).
   'put_page.similar_pages',

@@ -1,7 +1,7 @@
 /**
  * put_page reports what the line grammar read: typed relation lines (stored
  * with the page's links), fact lines (page text only) and near-misses with
- * their fix. Managed PGLite brain.
+ * their fix. The grammar is off by default (`line_grammar.enabled`). Managed PGLite brain.
  */
 import { expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -13,8 +13,17 @@ const put = (ctx: OperationContext, slug: string, body: string, type = 'person')
   submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(),
     content: `---\ntype: ${type}\ntitle: ${slug}\n---\n\n${body}\n` } }) as Promise<Record<string, any>>;
 
+test('the grammar is off by default (held-out verdict H3): put_page reads no typed lines', async () => {
+  await managedBrain(async ({ ctx }) => {
+    await put(ctx, 'companies/acme-example', 'Acme.', 'company');
+    const written = await put(ctx, 'people/alice-example', '- works_at [[companies/acme-example]] (since 2024)\n- [preference] Prefers oat milk');
+    expect((written.outcome ?? written).line_grammar).toBeUndefined();
+  });
+}, 120_000);
+
 test('put_page types the stated relation, reports fact lines and explains near-misses', async () => {
   await managedBrain(async ({ engine, ctx }) => {
+    await engine.setConfig('line_grammar.enabled', 'true');
     await put(ctx, 'companies/acme-example', 'Acme.', 'company');
     const written = await put(ctx, 'people/alice-example', [
       'Alice builds things.',

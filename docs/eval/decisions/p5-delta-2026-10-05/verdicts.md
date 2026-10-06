@@ -30,5 +30,6 @@ and idiomatic leaves, exchange moves, first-day starts). Link typing is as at `0
 
 ## First run
 
-First-run verdicts are in `../p5-dev-2026-10-04/verdicts.md`: H5b (agent loop duplicates) failed, so
-`put_page.similar_pages` is off by default. H3 (junk audit) and H6 (typed lines help answers) are pending.
+First-run verdicts are in `../p5-dev-2026-10-04/verdicts.md`. H5b (agent loop duplicates) failed, so
+`put_page.similar_pages` is off by default. H3 (junk audit) failed, so `line_grammar.enabled` is off by default and H6
+did not run. H7's `line_grammar.effective_ranges` stays on by default and applies once a user turns the grammar on.
