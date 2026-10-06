@@ -84,12 +84,10 @@ the decision rule is critical path first, vCPU-minutes second.
 
 Every test file runs on every push to master, on the nightly schedule and on
 manual dispatch, and pull requests and merge-queue runs (`merge_group`) run
-every Bun-version cell too. Each narrower PR behavior (soak and crash-robot
-budgets, native-lock scope, export scale, the PR-only stress gate) is a named
-exception whose comment beside the condition names the scheduled run that
-covers it; `test/scripts/ci-pr-scope.test.ts` fails on an unclassified one.
-The table, the dependency-audit rule and the measured cost of parity are in
-[docs/ci-event-parity.md](ci-event-parity.md). Required checks stay keyed on
+every Bun-version cell too. Each narrower PR behavior is a named exception
+whose comment names the scheduled run that covers it
+(`test/scripts/ci-pr-scope.test.ts` fails on an unclassified one). Table,
+dependency-audit rule and cost: [docs/ci-event-parity.md](ci-event-parity.md). Required checks stay keyed on
 the `test-status` and `e2e-status` aggregators.
 
 The `changes` job classifies a pull request's changed files with
