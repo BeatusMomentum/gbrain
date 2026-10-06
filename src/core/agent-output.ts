@@ -666,10 +666,10 @@ const ROWS: Row[] = [
   // ── generic rows: the DB classifier runs before these ──
   {
     match: e => named('AIConfigError')(e) || named('AITransientError')(e),
-    map: (e: Error & { fix?: string; why?: string }) => ({
+    map: (e: Error & { fix?: string }) => ({
       error: 'unavailable', code: 'unavailable', message: e.message,
       reason: e.name === 'AIConfigError' ? 'ai_config' : 'ai_transient',
-      suggestion: e.fix, why: e.why, retryable: e.name === 'AITransientError',
+      suggestion: e.fix, retryable: e.name === 'AITransientError',
     }),
   },
   {

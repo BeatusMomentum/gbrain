@@ -55,7 +55,7 @@ import {
 } from './recipes/openrouter.ts';
 import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
-import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource, withModelNotFoundWhy } from './gateway-model-sources.ts';
+import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -2563,9 +2563,9 @@ export async function expand(query: string): Promise<string[]> {
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
-    const normalized = withModelNotFoundWhy(normalizeAIError(err, 'expand', redactKeys), 'expansion', _config?.expansion_model ?? DEFAULT_EXPANSION_MODEL);
+    const normalized = normalizeAIError(err, 'expand', redactKeys);
     if (normalized instanceof AIConfigError) {
-      console.warn(`[ai.gateway] expansion disabled: ${normalized.message}${normalized.why ? ` ${normalized.why}` : ''}`);
+      console.warn(`[ai.gateway] expansion disabled: ${normalized.message}`);
     }
     return [query];
   }
@@ -3754,7 +3754,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
     _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
-    throw withModelNotFoundWhy(normalizeAIError(err, `chat(${recipe.id}:${modelId})`, redactKeys), 'chat', modelStr, cfg.chat_fallback_chain);
+    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`, redactKeys);
   }
 }
 
