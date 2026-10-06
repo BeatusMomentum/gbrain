@@ -31,6 +31,14 @@ Since v0.60.68.0 an upgraded brain gets a one-time notice listing the behaviors 
 1. **Verify:** `gbrain doctor --only behavior_changes --json` lists each change with the release that introduced it, and `details.shown` says whether this brain's CLI and stdio channels have seen the newest notice.
 2. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
 
+## [0.60.75.0] - 2026-10-06
+
+**The scale tier's import-rate gate judges a PGLite import by the CPU time its main thread spends per page, so a busy CI host no longer fails it with no code change (#6118).**
+
+The gate compares what the last 10% of pages cost against the first 10% (at most 1.5x), and the whole import against the time at the halfway mark (at most 2.5x). Each page used to be timed by the wall clock. On a shared CI runner, a few minutes in which other tenants had the CPU looked like import slowing as the brain grew: fix wave 9 failed at 2.63x with import code identical to runs that passed at 0.89x and 0.88x. PGLite runs on the import's main thread, so that thread's CPU time holds all the import's work and none of the borrowed minutes. A forced probe (8 CPU-burning processes on 4 cores for the whole second half of the import) fails the old gate at 2.23x and 3.45x; the new gate passes at 0.92x and 2.15x. On an idle machine the two ratios match (0.79x on CPU time, 0.78x on the wall clock), so the gate is no looser. Postgres keeps the wall clock, because the server's work never shows up in the import process. Every report now carries both bases for both engines.
+
+`--progress-json` `tick` events gain `cpu_ms`: the CPU time the command's main thread has used since the phase started. Unlike `elapsed_ms`, it leaves out time the host gave to other work, plus work done in other processes (a Postgres server, a model provider). See [progress events](docs/progress-events.md).
+
 ## [0.60.74.0] - 2026-10-05
 
 **Fix wave 9: cost caps hold under concurrency and bound what DeepSeek really bills, stopping a job supervisor no longer leaves work running, the nightly quality probe uses your models and tells the truth, email threads and synced fact sections reach your facts, long filenames and images stop blocking writes and sync, and OAuth access tokens can no longer live forever.**
