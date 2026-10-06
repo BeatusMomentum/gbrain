@@ -20,16 +20,28 @@ custodian; the eval records are in garrytan/gbrain-evals#82. Verdict:
 conversations was dropped at its shard cap, so its 20 questions are not in
 either arm.
 
+## Caveat: session dates
+
+The gbrain-evals BEAM loader dated only the first turn group of each batch,
+so about 96% of BEAM-500K sessions reached the agent headed "[Conversation on
+an unknown date]". Both arms saw identical headers, so the paired B − A′
+(+11.3 points) and the verdict stand. The per-type numbers below were measured
+with most session dates hidden, which matters most for temporal reasoning and
+event ordering: read those two rows as measured under missing dates, not as
+the size of the effect with dated sessions. The core gate (preference and
+instruction questions, which do not depend on dates) is unaffected. The loader
+fix goes into gbrain-evals separately.
+
 ## By question type (B − A′, points)
 
 | Type | Δ |
 |---|---|
-| Temporal reasoning | +24.3 |
+| Temporal reasoning (most session dates hidden) | +24.3 |
 | Knowledge update | +20.7 |
 | Multi-session reasoning | +20.1 |
 | Information extraction | +19.2 |
 | Contradiction resolution | +15.5 |
-| Event ordering | +10.3 |
+| Event ordering (most session dates hidden) | +10.3 |
 | Preference following | +4.6 |
 | Summarization, instruction following, abstention | flat |
 
