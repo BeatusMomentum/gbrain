@@ -31,34 +31,34 @@ const asText = (v: unknown, indent = 2) => JSON.stringify(v, null, indent);
 
 describe('parseLlmJson recovers replies whose strings quote ``` (#6069)', () => {
   test('a fenced object whose quote holds a whole code block', () => {
-    expect(parseLlmJson(fence(asText(judged(quotedRun))))).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(fence(asText(judged(quotedRun))))).toEqual(judged(quotedRun));
   });
 
   test('a fenced object whose quote holds one stray ```', () => {
-    expect(parseLlmJson(fence(asText(judged(clippedQuote))))).toEqual(judged(clippedQuote));
+    expect(parseLlmJson<unknown>(fence(asText(judged(clippedQuote))))).toEqual(judged(clippedQuote));
   });
 
   test('a bare fence (no json tag) behaves the same', () => {
-    expect(parseLlmJson(fence(asText(judged(quotedRun)), ''))).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(fence(asText(judged(quotedRun)), ''))).toEqual(judged(quotedRun));
   });
 
   test('an unfenced object whose quote holds ```', () => {
-    expect(parseLlmJson(asText(judged(quotedRun)))).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(asText(judged(quotedRun)))).toEqual(judged(quotedRun));
   });
 
   test('an unfenced one-line object after a lead-in sentence', () => {
     const reply = `Verdict follows. ${asText(judged(quotedRun), 0)}`;
-    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(reply)).toEqual(judged(quotedRun));
   });
 
   test('prose with its own braces before and after a fenced answer', () => {
     const reply = `Scoring {draft 2}:\n${fence(asText(judged(quotedRun)))}\nThat is all {end}.`;
-    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(reply)).toEqual(judged(quotedRun));
   });
 
   test('a reasoning block that drafts an object before the fenced answer', () => {
     const reply = `<think>first try: {"score": 0.2}</think>\n${fence(asText(judged(quotedRun)))}`;
-    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(reply)).toEqual(judged(quotedRun));
   });
 
   test('an array reply (conversation-parser fallback) whose turns quote ```', () => {
@@ -66,46 +66,46 @@ describe('parseLlmJson recovers replies whose strings quote ``` (#6069)', () => 
       { role: 'user', text: `why does ${TICKS}make${TICKS} fail?` },
       { role: 'assistant', text: `run ${TICKS}sh\nmake -j1\n${TICKS} and read the first error` },
     ];
-    expect(parseLlmJson(fence(asText(turns)), { array: true })).toEqual(turns);
+    expect(parseLlmJson<unknown>(fence(asText(turns)), { array: true })).toEqual(turns);
   });
 
   test('a fenced answer with a ``` quote followed by a note holding another object', () => {
     const reply = `${fence(asText(judged(quotedRun)))}\nNote: the schema was {"version": 2}.`;
-    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+    expect(parseLlmJson<unknown>(reply)).toEqual(judged(quotedRun));
   });
 });
 
 describe('controls: what parsed or failed before still does (#6069)', () => {
   test('a clean fenced object parses from its extract', () => {
-    expect(parseLlmJson(fence('{"score": 0.4}'))).toEqual({ score: 0.4 });
+    expect(parseLlmJson<unknown>(fence('{"score": 0.4}'))).toEqual({ score: 0.4 });
   });
 
   test('a clean fenced object wins over a later object in prose', () => {
-    expect(parseLlmJson(`${fence('{"score": 0.4}')}\nCompare {"score": 0.9}.`)).toEqual({ score: 0.4 });
+    expect(parseLlmJson<unknown>(`${fence('{"score": 0.4}')}\nCompare {"score": 0.9}.`)).toEqual({ score: 0.4 });
   });
 
   test('a fenced answer cut off inside a quote stays null', () => {
-    expect(parseLlmJson(`${TICKS}json\n{"score": 0.71, "segments": [{"quote": "paste ${TICKS}sh`)).toBeNull();
+    expect(parseLlmJson<unknown>(`${TICKS}json\n{"score": 0.71, "segments": [{"quote": "paste ${TICKS}sh`)).toBeNull();
   });
 
   test('a reasoning draft never stands in for a cut-off fenced answer', () => {
     const reply = `<think>first try: {"score": 0.2}</think>\n${TICKS}json\n{"score": 0.71, "segments": [{"quote": "paste ${TICKS}sh`;
-    expect(parseLlmJson(reply)).toBeNull();
+    expect(parseLlmJson<unknown>(reply)).toBeNull();
   });
 
   test('a prose object before a fence that holds no JSON is not picked up', () => {
-    expect(parseLlmJson(`Earlier {"score": 0.3} was wrong.\n${fence('no verdict today', '')}`)).toBeNull();
+    expect(parseLlmJson<unknown>(`Earlier {"score": 0.3} was wrong.\n${fence('no verdict today', '')}`)).toBeNull();
   });
 
   test('a ``` quoted mid-string never yields a nested fragment as the answer', () => {
     // The leading prose brace hides the enclosing object; guessing from the
     // inner ``` would return the second segment instead of the reply.
     const reply = `Note {x}: {"segments": [{"quote": "${TICKS}sh${TICKS} first"}, {"quote": "second"}]}`;
-    expect(parseLlmJson(reply)).toBeNull();
+    expect(parseLlmJson<unknown>(reply)).toBeNull();
   });
 
   test('array mode still refuses an object-only reply that quotes ```', () => {
-    expect(parseLlmJson(fence(asText(judged(quotedRun))), { array: true })).toBeNull();
+    expect(parseLlmJson<unknown>(fence(asText(judged(quotedRun))), { array: true })).toBeNull();
   });
 });
 

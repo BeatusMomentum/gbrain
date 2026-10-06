@@ -224,7 +224,7 @@ describe('the phase resolves dream.propose_takes.call_timeout_ms into callBoundM
   });
 
   test('control: unset or blank leaves the bound to the output-cap scaling, silently', async () => {
-    for (const config of [{}, { [BOUND_KEY]: '' }, { [BOUND_KEY]: '   ' }]) {
+    for (const config of [{}, { [BOUND_KEY]: '' }, { [BOUND_KEY]: '   ' }] as Record<string, string>[]) {
       const run = await phaseRunWith(config);
       expect(run.bound).toBeUndefined();
       expect(run.warnings).toEqual([]);
