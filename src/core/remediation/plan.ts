@@ -11,7 +11,7 @@ import {
 } from '../brain-score-recommendations.ts';
 import { loadRecommendationContext } from './context.ts';
 import type { RemediationPlan, RemediationPlanOpts } from './types.ts';
-import { planRepairSteps, type RepairPreviewFailure } from './repairs.ts';
+import { planRepairStepsReport, previewFailureField, type RepairPlanReport } from './repairs.ts';
 import { explicitRepairNotices } from '../repair/registry.ts';
 
 /**
@@ -65,9 +65,8 @@ export async function computeRemediationPlan(
     .filter((c) => c.status === 'blocked')
     .map((c) => ({ check: c.check, reason: c.reason ?? 'prerequisite missing' }));
 
-  const repairPreviewFailures: RepairPreviewFailure[] = [];
-  const repairSteps = opts.repairs
-    ? await planRepairSteps(engine, { noEmbed: opts.repairs.noEmbed, onPreviewError: (failure) => repairPreviewFailures.push(failure) })
+  const repairReport: RepairPlanReport | undefined = opts.repairs
+    ? await planRepairStepsReport(engine, { noEmbed: opts.repairs.noEmbed })
     : undefined;
 
   return {
@@ -80,7 +79,10 @@ export async function computeRemediationPlan(
     est_total_seconds: estTotalSeconds,
     est_total_usd_cost: Number(estTotalUsd.toFixed(2)),
     blocked,
-    ...(repairSteps ? { repair_steps: repairSteps, explicit_repairs: explicitRepairNotices(),
-      ...(repairPreviewFailures.length ? { repair_preview_failures: repairPreviewFailures } : {}) } : {}),
+    ...(repairReport ? {
+      repair_steps: repairReport.steps,
+      explicit_repairs: explicitRepairNotices(),
+      ...previewFailureField(repairReport.previewFailures),
+    } : {}),
   };
 }

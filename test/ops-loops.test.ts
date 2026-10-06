@@ -20,8 +20,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { loopsOperations } from '../src/core/ops/loops.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { toAgentError } from '../src/core/agent-output.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { toAgentError } from '../src/core/agent-output.ts';
 import {
   closeOpenLoop,
   listOpenLoops,
@@ -615,112 +615,152 @@ describe('open_loops per-call scope (source_id / all_sources)', () => {
   });
 });
 
-describe('open_loops id lookup (#5870)', () => {
-  interface FlatResult {
-    loops: Array<{ id: number; status: string; quote?: string }>;
+describe('open_loops single-loop lookup by id (#5870)', () => {
+  interface LookupFlat {
+    loops: Array<{ id: number; status: string; quote?: string; deep_link?: string }>;
     count: number;
-    truncated: boolean;
     redacted: boolean;
   }
 
-  // 501 open loops in g1 one hour apart (the oldest sits past the 500-row
-  // internal fetch), one done loop in g1, and g2 as a second google source.
-  async function seed(): Promise<{ oldestOpen: number; done: number }> {
+  /**
+   * g1: one aged loop (2019) behind 510 newer fillers, so it sits past the
+   * op's 500-row internal fetch, plus one loop closed as `stale`.
+   * g3: a second google source with one loop the g1-scoped callers must not see.
+   */
+  async function seedLookup(): Promise<{ aged: number; closed: number; foreign: number }> {
+    const googleConfig = { kind: 'google' };
     await engine.executeRaw(
-      `INSERT INTO sources (id, name, config, last_sync_at)
-       VALUES ('g2', 'g2', '{"kind":"google"}'::jsonb, now())
-       ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO sources (id, name, config, last_sync_at) VALUES ($1, $1, $2::jsonb, now()) ON CONFLICT (id) DO NOTHING`,
+      ['g3', googleConfig],
     );
+    const { id: aged } = await upsertOpenLoop(engine, loop({ threadId: 'cccc000000000001', counterpartyEmail: 'carol@example.com' }));
+    await engine.executeRaw(`UPDATE open_loops SET last_activity_at = '2019-06-01T00:00:00Z' WHERE id = $1`, [aged]);
     await engine.executeRaw(
-      `INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_email, summary, detector, last_activity_at)
-       SELECT 'g1', 'thread:bulk' || g || ':unanswered_inbound', 'unanswered_inbound',
-              'p' || g || '@example.com', 'Reply owed to p' || g || '@example.com', 'deterministic_thread',
-              now() - make_interval(hours => g)
-       FROM generate_series(1, 501) AS g`,
+      `INSERT INTO open_loops (source_id, detector, loop_type, dedup_key, summary, counterparty_email, last_activity_at)
+       SELECT 'g1', 'deterministic_thread', 'unanswered_inbound', 'thread:filler-' || n || ':unanswered_inbound',
+              'Filler loop ' || n, 'filler' || n || '@example.com',
+              now() - (n || ' minutes')::interval
+       FROM generate_series(1, 510) AS n`,
     );
-    const oldestOpen = Number((await engine.executeRaw<{ id: number }>(
-      `SELECT id FROM open_loops ORDER BY last_activity_at ASC LIMIT 1`,
-    ))[0].id);
-    const { id: done } = await upsertOpenLoop(engine, loop());
-    await closeOpenLoop(engine, 'g1', done, 'done', 'manual');
-    return { oldestOpen, done };
+    const { id: closed } = await upsertOpenLoop(engine, loop({ threadId: 'cccc000000000002', counterpartyEmail: 'frank@example.com' }));
+    await closeOpenLoop(engine, 'g1', closed, 'stale', 'staleness');
+    const { id: foreign } = await upsertOpenLoop(engine, loop({ sourceId: 'g3', threadId: 'dddd000000000003', counterpartyEmail: 'dave@example.com' }));
+    return { aged, closed, foreign };
   }
 
-  const granted = (allowedSources: string[]) =>
+  const federated = (allowedSources: string[]) =>
     ctx({ remote: true, sourceId: undefined, auth: { token: 't', clientId: 'c', scopes: ['read'], allowedSources } });
+  const flat = async (caller: OperationContext, params: Record<string, unknown>) =>
+    (await openLoopsOp.handler(caller, { group_by: 'none', ...params })) as LookupFlat;
 
-  test.each([
-    { name: 'a closed loop, no status given', caller: () => ctx(), target: 'done', found: true, quote: 'Can you review the plan?' },
-    { name: 'an open loop past the 500-row fetch', caller: () => ctx(), target: 'oldestOpen', found: true },
-    { name: 'an explicit status the loop has', caller: () => ctx(), target: 'done', params: { status: 'done' }, found: true, quote: 'Can you review the plan?' },
-    { name: 'an explicit status the loop lacks', caller: () => ctx(), target: 'done', params: { status: 'open' }, found: false },
-    { name: 'an explicit loop_type the loop lacks', caller: () => ctx(), target: 'done', params: { loop_type: 'decision_pending' }, found: false },
-    { name: 'an explicit counterparty the loop lacks', caller: () => ctx(), target: 'done', params: { counterparty: 'eve@example.com' }, found: false },
-    { name: 'a trusted call narrowed to another source', caller: () => ctx(), target: 'done', params: { source_id: 'g2' }, found: false },
-    { name: 'a remote grant covering the source (redacted)', caller: () => granted(['g1', 'g2']), target: 'done', found: true },
-    { name: 'a remote grant outside the source', caller: () => granted(['g2']), target: 'done', found: false },
-  ] as const)('id lookup: $name', async (c) => {
-    const ids = await seed();
-    const id = ids[c.target];
-    const caller = c.caller();
-    const res = (await openLoopsOp.handler(caller, {
-      group_by: 'none',
-      id,
-      ...('params' in c ? c.params : {}),
-    })) as FlatResult;
-    expect(res.loops.map((l) => l.id)).toEqual(c.found ? [id] : []);
-    expect(res.count).toBe(c.found ? 1 : 0);
-    expect(res.redacted).toBe(caller.remote !== false);
-    if (c.found) {
-      expect(res.loops[0].status).toBe(c.target === 'done' ? 'done' : 'open');
-      expect(res.loops[0].quote).toBe('quote' in c ? c.quote : undefined);
+  test('trusted: a loop past the 500-row fetch comes back alone, with its quote', async () => {
+    const { aged } = await seedLookup();
+    const res = await flat(ctx(), { id: aged });
+    expect(res.loops.map((l) => l.id)).toEqual([aged]);
+    expect(res.count).toBe(1);
+    expect(res.loops[0].status).toBe('open');
+    expect(res.loops[0].quote).toBe('Can you review the plan?');
+  });
+
+  test('trusted: a closed (stale) loop is found with no status given', async () => {
+    const { closed } = await seedLookup();
+    const res = await flat(ctx(), { id: closed });
+    expect(res.loops.map((l) => [l.id, l.status])).toEqual([[closed, 'stale']]);
+  });
+
+  test('explicit filters still narrow: status, loop_type and counterparty mismatches return nothing', async () => {
+    const { closed, aged } = await seedLookup();
+    expect((await flat(ctx(), { id: closed, status: 'open' })).count).toBe(0);
+    expect((await flat(ctx(), { id: closed, status: 'stale' })).count).toBe(1);
+    expect((await flat(ctx(), { id: aged, loop_type: 'commitment_owed_by_me' })).count).toBe(0);
+    expect((await flat(ctx(), { id: aged, counterparty: 'someone-else@example.com' })).count).toBe(0);
+    expect((await flat(ctx(), { id: aged, counterparty: 'carol@example.com' })).count).toBe(1);
+  });
+
+  test('trusted source_id still bounds the lookup: the g3 loop is not visible from g1', async () => {
+    const { foreign } = await seedLookup();
+    expect((await flat(ctx(), { id: foreign })).count).toBe(0);
+    expect((await flat(ctx(), { id: foreign, source_id: 'g3' })).count).toBe(1);
+  });
+
+  test('deny: a foreign id reads exactly like a missing id for scalar and federated remote callers', async () => {
+    const { foreign } = await seedLookup();
+    const asOf = '2026-04-03T09:00:00.000Z';
+    for (const caller of [ctx({ remote: true, sourceId: 'g1' }), federated(['g1'])]) {
+      for (const group_by of ['none', 'counterparty'] as const) {
+        const foreignRes = await openLoopsOp.handler(caller, { group_by, id: foreign, as_of: asOf });
+        const missingRes = await openLoopsOp.handler(caller, { group_by, id: foreign + 900_000, as_of: asOf });
+        expect(foreignRes).toEqual(missingRes);
+        expect((foreignRes as { count: number }).count).toBe(0);
+      }
     }
   });
 
-  test.each([['omitted', {}], ['null', { id: null }]] as const)('id %s: the open default still applies, the closed loop stays out of a list', async (_label, extra) => {
-    const { done } = await seed();
-    const res = (await openLoopsOp.handler(ctx(), { group_by: 'none', limit: 500, ...extra })) as FlatResult;
-    expect(res.loops.map((l) => l.id)).not.toContain(done);
-    expect(res.loops.every((l) => l.status === 'open')).toBe(true);
-    expect(res.truncated).toBe(true);
+  test('deny: a narrowed grant cannot reach the id through an out-of-grant source_id', async () => {
+    const { foreign } = await seedLookup();
+    await expect(flat(federated(['g1']), { id: foreign, source_id: 'g3' })).rejects.toMatchObject({ code: 'permission_denied' });
+    await expect(flat(ctx({ remote: true, sourceId: 'g1' }), { id: foreign, source_id: 'g3' })).rejects.toMatchObject({ code: 'permission_denied' });
   });
 
-  // Grouped (the default view): the trusted "waiting on you" digest would
-  // misdescribe a closed loop, and call a missing id "You are clean".
-  test.each([['a closed loop', true], ['an id with no loop', false]] as const)('grouped id lookup of %s returns its groups and no text digest', async (_label, found) => {
-    const { done } = await seed();
-    const id = found ? done : done + 10_000;
-    const res = (await openLoopsOp.handler(ctx(), { id })) as GroupsResult;
-    expect(res.groups.flatMap((g) => g.loops.map((l) => l.id))).toEqual(found ? [id] : []);
-    expect(res.count).toBe(found ? 1 : 0);
-    expect('text' in res).toBe(false);
+  test('deny: an unscoped remote id lookup fails closed', async () => {
+    const { aged } = await seedLookup();
+    await expect(flat(ctx({ remote: true, sourceId: undefined }), { id: aged })).rejects.toMatchObject({ code: 'permission_denied' });
   });
 
-  test.each([0, -1, 1.5, '7'])('id %p is rejected with invalid_params', async (bad) => {
+  test('allow: a grant covering the source finds the loop redacted (no quote, no deep link)', async () => {
+    const { foreign } = await seedLookup();
+    const res = await flat(federated(['g3']), { id: foreign });
+    expect(res.loops.map((l) => l.id)).toEqual([foreign]);
+    expect(res.redacted).toBe(true);
+    expect(JSON.stringify(res)).not.toContain('"quote"');
+    expect(JSON.stringify(res)).not.toContain('"deep_link"');
+  });
+
+  test.each([
+    ['zero', 0],
+    ['negative', -4],
+    ['fractional', 3.25],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['past the safe-integer range', 2 ** 53],
+    ['a numeric string', '12'],
+    ['a boolean', true],
+    ['an object', { id: 1 }],
+  ])('invalid id (%s) is refused with invalid_params before any read', async (_label, bad) => {
     await expect(openLoopsOp.handler(ctx(), { id: bad })).rejects.toMatchObject({ code: 'invalid_params' });
   });
 
-  test('a rejected id renders the agent contract without echoing the value', async () => {
-    const thrown = await openLoopsOp.handler(ctx({ remote: true }), { id: 987654.25 }).catch((e: unknown) => e);
+  test('the refusal renders the agent contract and does not echo the rejected value', async () => {
+    const thrown = await openLoopsOp.handler(ctx({ remote: true }), { id: 31337.5 }).catch((e: unknown) => e);
     const env = toAgentError(thrown, { transport: 'stdio', op: 'open_loops', render: {
       transport: 'stdio', surface: 'full', isCallable: () => true, preapproved: () => false, routing: { brain: 'host', source: 'g1' },
     } });
     expect(env).toMatchObject({ code: 'invalid_params', class: 'caller', contract_version: 1 });
-    expect(env.message).toBe('open_loops: id must be a positive integer loop id.');
-    expect(env.suggestion).toContain('Pass `id` as a number');
+    expect(env.message).toBe('open_loops: id must be a whole number of 1 or more.');
     expect(env.suggestion).toContain('open_loops {"id": 42}');
-    expect(JSON.stringify(env)).not.toContain('987654');
+    expect(JSON.stringify(env)).not.toContain('31337');
   });
 
-  test('remote: an id outside the grant returns exactly what a missing id returns', async () => {
-    const { done } = await seed();
-    const asOf = '2026-04-03T09:00:00.000Z';
-    for (const group_by of ['none', 'counterparty'] as const) {
-      const outOfScope = await openLoopsOp.handler(granted(['g2']), { group_by, id: done, as_of: asOf });
-      const missing = await openLoopsOp.handler(granted(['g2']), { group_by, id: done + 10_000, as_of: asOf });
-      expect(outOfScope).toEqual(missing);
-      expect((outOfScope as { count: number }).count).toBe(0);
+  test('negative control: id absent or null keeps the list read and its open default', async () => {
+    const { closed } = await seedLookup();
+    for (const extra of [{}, { id: null }]) {
+      const res = await flat(ctx(), { limit: 500, ...extra });
+      expect(res.loops.length).toBe(500);
+      expect(res.loops.some((l) => l.id === closed)).toBe(false);
+      expect(res.loops.every((l) => l.status === 'open')).toBe(true);
     }
+  });
+
+  test('grouped: a lookup carries no text digest, while the trusted list keeps it', async () => {
+    const { closed } = await seedLookup();
+    const lookup = (await openLoopsOp.handler(ctx(), { id: closed })) as GroupsResult;
+    expect(lookup.groups.flatMap((g) => g.loops.map((l) => l.id))).toEqual([closed]);
+    expect(lookup.text).toBeUndefined();
+    const missing = (await openLoopsOp.handler(ctx(), { id: closed + 900_000 })) as GroupsResult;
+    expect(missing.count).toBe(0);
+    expect(missing.text).toBeUndefined();
+    const list = (await openLoopsOp.handler(ctx(), {})) as GroupsResult;
+    expect(typeof list.text).toBe('string');
   });
 });
 

@@ -14,8 +14,6 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
-import { localHostId } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
 import { timelineRepair } from '../src/core/repair/timeline.ts';
@@ -74,8 +72,8 @@ async function brain(run: (engine: BrainEngine, sources: string[]) => Promise<vo
   }
 }
 
-async function pageWithHistory(engine: BrainEngine, sourceId: string, slug: string, body = `Body of ${slug}.`) {
-  await submitPageMutation(ctxFor(engine, sourceId), { operation: 'put_page', params: { slug, content: page(body), request_id: randomUUID() } });
+async function pageWithHistory(engine: BrainEngine, sourceId: string, slug: string) {
+  await submitPageMutation(ctxFor(engine, sourceId), { operation: 'put_page', params: { slug, content: page(`Body of ${slug}.`), request_id: randomUUID() } });
   await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(
     `INSERT INTO timeline_entries(page_id,date,source,summary,detail) SELECT id,'2026-07-01','legacy',$3,'' FROM pages WHERE source_id=$1 AND slug=$2`,
     [sourceId, slug, `History of ${slug}`]), TEST_WRITE_ATTRIBUTION));
@@ -102,21 +100,27 @@ describe('gbrain repair timeline', () => {
     });
   }, 120_000);
 
-  test('materializing rows into an eligible page queues no facts extraction (#6042)', async () => {
+  test('#6042: materializing timeline rows into an already-extracted page queues no facts extraction', async () => {
     await brain(async (engine, [source]) => {
-      await pageWithHistory(engine, source, 'notes/a', 'A synthetic newsletter body, long enough that the facts backstop would extract from it.');
-      // The page's own extraction has finished, as it had for the pages #6042 rewrote.
+      const body = 'A synthetic field report with enough substantive text that the facts backstop treats it as eligible for extraction.';
+      await submitPageMutation(ctxFor(engine, source), { operation: 'put_page', params: { slug: 'notes/report', content: page(body), request_id: randomUUID() } });
+      await engine.transaction(tx => withCoordinatedWrite(tx, [source], () => tx.executeRaw(
+        `INSERT INTO timeline_entries(page_id,date,source,summary,detail) SELECT id,'2026-08-02','legacy','A dated event','' FROM pages WHERE source_id=$1 AND slug='notes/report'`,
+        [source]), TEST_WRITE_ATTRIBUTION));
+      // Stand-in for the page's own extraction having run: its outbox entry is settled.
       await disposePersistenceConsumer(engine);
-      for (let pass = 0; pass < 20 && await runPersistenceEffects(engine, { engine: engine.kind, embedding_disabled: true } as never, { hostId: localHostId(), limit: 20 }); pass++);
-      await engine.executeRaw("UPDATE minion_jobs SET status='completed' WHERE name='facts-absorb' AND data->>'sourceId'=$1", [source]);
-      const applied = await runRepair(ctxFor(engine, source), timelineRepair, await resolveRepairScope(engine), { apply: true });
-      expect(applied).toMatchObject({ applied: 1, complete: true });
-      expect(await markedPages(engine, source)).toEqual(['notes/a']);
-      const writes = await engine.executeRaw<{ id: string; outcome: { facts_backstop?: unknown } }>(`SELECT id,outcome FROM persistence_requests
-        WHERE source_id=$1 AND slug='notes/a' AND operation='put_page' AND state='committed' ORDER BY created_at`, [source]);
-      // The page's own write extracts; the repair republishes the same body, so it does not.
-      expect(writes.map(write => write.outcome.facts_backstop)).toEqual([{ queued: true }, { skipped: 'body_unchanged' }]);
-      expect(await engine.executeRaw("SELECT id FROM persistence_effects WHERE request_id=$1::uuid AND kind='facts-backstop'", [writes[1].id])).toEqual([]);
+      await engine.executeRaw(`UPDATE persistence_effects SET state='committed' WHERE kind='facts-backstop' AND source_id=$1`, [source]);
+      const receipts = async () => engine.executeRaw<{ id: string; facts: unknown }>(
+        `SELECT id, outcome->'facts_backstop' AS facts FROM persistence_requests
+          WHERE source_id=$1 AND slug='notes/report' AND operation='put_page' AND state='committed' ORDER BY created_at`, [source]);
+      expect((await receipts()).map(r => r.facts)).toEqual([{ queued: true }]);
+      const scope = await resolveRepairScope(engine);
+      const repaired = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
+      expect(repaired).toMatchObject({ applied: 1, complete: true });
+      expect(await markedPages(engine, source)).toEqual(['notes/report']);
+      const [, repairWrite] = await receipts();
+      expect(repairWrite.facts).toEqual({ skipped: 'body_unchanged' });
+      expect(await engine.executeRaw(`SELECT 1 FROM persistence_effects WHERE request_id=$1::uuid AND kind='facts-backstop'`, [repairWrite.id])).toEqual([]);
     });
   }, 120_000);
 

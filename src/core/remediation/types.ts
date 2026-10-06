@@ -55,7 +55,7 @@ export interface RemediationPlan {
   repair_steps?: RepairPlanStep[];
   /** Present with `repair_steps`: explicit-only kinds, never planned as steps; preview each by name. */
   explicit_repairs?: ExplicitRepairNotice[];
-  /** Present with `repair_steps` when a kind's preview failed: that kind is not planned; its preview command shows the error. */
+  /** Only when an automatic kind's preview threw: that kind is missing from `repair_steps`. */
   repair_preview_failures?: RepairPreviewFailure[];
 }
 
@@ -159,7 +159,7 @@ export interface RemediationResult {
   repairs?: RepairStepResult[];
   /** Repair steps planned but not run because the user's agreement was missing. */
   repairs_skipped?: RepairPlanStep[];
-  /** Repair kinds whose preview failed, so the run neither planned nor ran them (only when one failed). */
+  /** Only when an automatic kind's preview threw: this run neither planned nor applied that kind. */
   repair_preview_failures?: RepairPreviewFailure[];
   /** Cumulative cap and settled spend across the original run and its resumes. */
   budget?: { max_usd: number | null; spent_usd: number; include_repairs: boolean; plan_hash: string };

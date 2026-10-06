@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 207492,
-    "stdoutSha256": "2574542c5e8e7a2fd8e5589a81abfa5e1580c1ac34057ba79368ae90245806a7",
+    "stdoutBytes": 205725,
+    "stdoutSha256": "04098d0530fafd5a3c383de74c002333571950d2be7c6d6e41c792fd71cdecdd",
     "toolNames": [
       "remember",
       "entity",
@@ -40,7 +40,6 @@
       "get_backlinks",
       "list_link_sources",
       "traverse_graph",
-      "wanted_pages",
       "add_timeline_entry",
       "get_timeline",
       "get_stats",
@@ -168,7 +167,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save one fact; provenance required. Set `entity` when the fact has a subject, or entity-scoped recall misses it. Branch on `status` (inserted|duplicate|superseded). write_pending carries a receipt: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -176,12 +175,11 @@
         "parameters": {
           "entity": "string?",
           "expected_revision": "string?",
-          "fact": "string?",
+          "fact": "string",
           "force": "boolean?",
           "infer_entity": "boolean?",
-          "items": "array?",
           "kind": "string?",
-          "provenance": "string?",
+          "provenance": "string",
           "replaces": "string?",
           "request_id": "string?",
           "source_id": "string?",
@@ -192,7 +190,7 @@
         "schema": {
           "properties": {
             "entity": {
-              "description": "Subject (name or slug).",
+              "description": "Who or what it is about (name or slug).",
               "type": "string"
             },
             "expected_revision": {
@@ -211,13 +209,6 @@
               "description": "Default true.",
               "type": "boolean"
             },
-            "items": {
-              "description": "≤20 facts: [{fact, provenance}]",
-              "items": {
-                "type": "object"
-              },
-              "type": "array"
-            },
             "kind": {
               "description": "Default fact.",
               "enum": [
@@ -230,7 +221,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Fact source (max 500 chars).",
+              "description": "Where the fact came from (max 500 chars).",
               "type": "string"
             },
             "replaces": {
@@ -258,7 +249,10 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "fact",
+            "provenance"
+          ],
           "type": "object"
         },
         "scope": "write"
@@ -1111,8 +1105,6 @@
           "detail": "string?",
           "embedding_column": "string?",
           "expand": "boolean?",
-          "explain": "boolean?",
-          "explain_target": "string?",
           "fields": "string?",
           "image": "string?",
           "image_mime": "string?",
@@ -1168,14 +1160,6 @@
             "expand": {
               "description": "Default true; false skips the LLM expansion.",
               "type": "boolean"
-            },
-            "explain": {
-              "description": "Per-row score_details.",
-              "type": "boolean"
-            },
-            "explain_target": {
-              "description": "Expected page (slug or source:slug): why it is missing.",
-              "type": "string"
             },
             "fields": {
               "description": "lean (remote default) or full.",
@@ -1917,43 +1901,6 @@
           "required": [
             "slug"
           ],
-          "type": "object"
-        },
-        "scope": "read"
-      },
-      {
-        "description": "Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. Use to find entities worth a page (enrichment) or typo links to fix. The edge appears on its own once the page is created.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": false,
-        "name": "wanted_pages",
-        "parameters": {
-          "count_only": "boolean?",
-          "limit": "number?",
-          "offset": "number?",
-          "source_id": "string?"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "count_only": {
-              "description": "Return the total with no rows.",
-              "type": "boolean"
-            },
-            "limit": {
-              "description": "Rows per page (default 50, max 100).",
-              "type": "number"
-            },
-            "offset": {
-              "description": "Skip the first N targets.",
-              "type": "number"
-            },
-            "source_id": {
-              "description": "Only targets referenced from this source (must be inside your source grant).",
-              "type": "string"
-            }
-          },
-          "required": [],
           "type": "object"
         },
         "scope": "read"
@@ -3886,7 +3833,6 @@
           "anchor": "string?",
           "model": "string?",
           "question": "string",
-          "reference_date": "string?",
           "rounds": "number?",
           "save": "boolean?",
           "since": "string?",
@@ -3906,10 +3852,6 @@
             },
             "question": {
               "description": "The question to think about",
-              "type": "string"
-            },
-            "reference_date": {
-              "description": "YYYY-MM-DD the question's relative time words resolve against (default: today in brain.timezone).",
               "type": "string"
             },
             "rounds": {
@@ -5486,14 +5428,14 @@
         "scope": "read"
       },
       {
-        "description": "MEMORY VERB (v1): core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "description": "MEMORY VERB (v1): budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "context_pack",
         "parameters": {
           "budget_tokens": "number?",
-          "entities": "string?",
+          "entities": "string",
           "include_private": "boolean?",
           "session_id": "string?",
           "since": "string?"
@@ -5522,7 +5464,9 @@
               "type": "string"
             }
           },
-          "required": [],
+          "required": [
+            "entities"
+          ],
           "type": "object"
         },
         "scope": "read"
@@ -6415,7 +6359,7 @@
               "type": "string"
             },
             "id": {
-              "description": "One loop by id (from a previous open_loops result), at any status unless `status` is given. Stays inside the resolved source scope; returns no text digest.",
+              "description": "Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.",
               "type": "number"
             },
             "include_context": {
@@ -6442,7 +6386,7 @@
               "type": "string"
             },
             "status": {
-              "description": "Default 'open' (no default with `id`).",
+              "description": "Default 'open', except with `id`, where any status matches.",
               "enum": [
                 "open",
                 "done",

@@ -908,18 +908,20 @@ read-only preview command (`stale-atoms: gbrain repair stale-atoms`), and
 "explicit_kind_required"`, `preview_command`, `docs`). Run each by name after
 the user agrees (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 
-When one kind's preview fails (for example a statement timeout on a large
-brain), the rest of the plan still prints. The kind is not a repair step: a
-`Repair previews that failed` block lists it with its error code, its error
-and its preview command (`--json`: `repair_preview_failures[]`, present only
-when a preview failed, each `{kind, code, message, why, fix}`; `code` is
-`timeout` for a statement timeout, which `GBRAIN_STATEMENT_TIMEOUT` controls,
-and `preview_failed` otherwise; `fix` is the read-only preview). The error
-text is redacted and capped at 300 characters. `gbrain doctor --remediate`
-runs the other steps, lists the failed kinds with their errors, and exits 1.
-A plan approved while a preview failed binds the steps it showed, so once
-that preview succeeds the approval no longer matches and the run refuses with
-`preview_changed`: preview the plan again and ask the user.
+A repair kind whose preview errors (on a large brain this is usually a
+statement timeout) does not stop the plan. Every other kind is still
+previewed, and the failed kind is listed under `Repair kinds whose preview
+failed` with its error code, its error and the read-only command that
+repeats the preview. In `--json` it appears in `repair_preview_failures[]`,
+which is present only when a preview failed. Each entry is
+`{kind, code, message, why, fix}`: `code` is `timeout` for a statement
+timeout (raise `GBRAIN_STATEMENT_TIMEOUT`) and `preview_failed` for anything
+else, `message` is redacted and then capped at 300 characters, and `fix` is
+the read-only preview. A failed kind is never a step, so `gbrain doctor
+--remediate` runs the remaining steps, names the kinds it could not run and
+exits 1. An approval covers only the steps the user was shown: once the
+failed preview succeeds, the plan changes and the run refuses with
+`preview_changed`. Preview the plan again and ask the user.
 
 `gbrain doctor --remediate --yes` runs job steps only. Repair steps run only
 when you also pass `--include-repairs`, which records the user's agreement;

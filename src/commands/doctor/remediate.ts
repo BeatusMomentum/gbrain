@@ -12,17 +12,18 @@
  * consent and step manifest live in the local remediation checkpoint.
  *
  * Explicit-only repair kinds are never steps: the plan lists each with its
- * read-only preview command (`explicit_kind_required`). A kind whose preview
- * fails is listed with its error and preview command; the plan and the run go
- * on without it.
+ * read-only preview command (`explicit_kind_required`). An automatic kind
+ * whose preview threw is not a step either: plan and run list it under
+ * `repair_preview_failures` and carry on with every other kind.
  *
  * After a run, every wave check is classified (cleared, pending,
  * consent_required, operator_required, explicit_kind_required, unsupported).
  * Exit status: 0 when no automatically repairable finding remains and no step
  * failed, even if operator-required, explicit-kind or unsupported findings
  * remain (they are listed); 1
- * otherwise, on budget exhaustion and when a repair preview failed; 2 when the
- * target is unreachable and there is no repair step to run, or a resume is refused.
+ * otherwise, on budget exhaustion, and when any repair preview failed (that
+ * kind did not run); 2 when the target is unreachable and there is no repair
+ * step to run, or a resume is refused.
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict, writeJsonDocument } from '../../core/cli-force-exit.ts';
@@ -228,21 +229,27 @@ interface RemediationPlanShape {
   repair_preview_failures?: RepairPreviewFailure[];
 }
 
+/** Human lines for failed repair previews: kind, error code, the redacted error, and the read-only command that repeats it. */
+function failedPreviewLines(failures: readonly RepairPreviewFailure[], indent: string): string[] {
+  return failures.map(f => `${indent}${f.kind} [${f.code}]: ${f.message}; to see it again run: ${f.fix.command}`);
+}
+
 /**
  * Human-render the remediation plan. "Brain is at target" prints only when
- * the score is at target AND no repair step is pending or failed its preview,
- * so an unreachable target never reads as "nothing to do".
+ * the score is at target, no repair step is pending and every repair kind
+ * previewed cleanly, so neither an unreachable target nor an unpreviewed
+ * kind ever reads as "nothing to do".
  */
 export function renderRemediationPlanLines(plan: RemediationPlanShape, targetScore: number, opts: { noEmbed?: boolean; planHash?: string; paidSteps?: ReadonlySet<number> } = {}): string[] {
   const lines: string[] = [];
   const repairs = plan.repair_steps ?? [];
-  const failedPreviews = plan.repair_preview_failures ?? [];
   lines.push(`Brain score: ${plan.brain_score_current}/100 → target ${targetScore}`);
   if (plan.target_unreachable) {
     lines.push(`Target unreachable: max with autonomous remediation is ${plan.max_reachable_score}/100.`);
   }
   if (plan.plan.length === 0) {
-    if (plan.brain_score_current >= targetScore && repairs.length === 0 && failedPreviews.length === 0) {
+    const unpreviewed = plan.repair_preview_failures?.length ?? 0;
+    if (plan.brain_score_current >= targetScore && repairs.length === 0 && unpreviewed === 0) {
       lines.push('No remediations needed. Brain is at target.');
     }
   } else {
@@ -264,9 +271,9 @@ export function renderRemediationPlanLines(plan: RemediationPlanShape, targetSco
       lines.push(`     apply: ${step.command}`);
     }
   }
-  if (failedPreviews.length > 0) {
-    lines.push('\nRepair previews that failed (not planned; preview each by name on this host to retry):');
-    for (const failure of failedPreviews) lines.push(`  ${failure.kind} [${failure.code}]: ${failure.message} (preview: ${failure.fix.command})`);
+  if (plan.repair_preview_failures?.length) {
+    lines.push('\nRepair kinds whose preview failed (left out of this plan; nothing was changed):');
+    lines.push(...failedPreviewLines(plan.repair_preview_failures, '  '));
   }
   if (plan.explicit_repairs?.length) {
     lines.push('\nExplicit-only repairs (never run by --remediate or gbrain repair --all; preview each by name on this host):');
@@ -341,9 +348,7 @@ export function remediationExitStatus(result: RemediationResult, findings: Remed
   const jobFailed = result.submitted.some(s => s.status !== 'completed' && s.status !== 'submitted' && s.status !== 'dry_run');
   // A stopped step (capacity, pending write, unfinished embeddings) left work behind.
   const repairFailed = (result.repairs ?? []).some(r => r.status === 'failed' || r.status === 'stopped');
-  // A repair kind whose preview failed was neither planned nor run.
-  const previewFailed = (result.repair_preview_failures ?? []).length > 0;
-  if (jobFailed || repairFailed || previewFailed) return 1;
+  if (jobFailed || repairFailed || result.repair_preview_failures?.length) return 1;
   if (findings.some(f => f.class === 'pending' || f.class === 'consent_required')) return 1;
   if (result.target_unreachable) return 2;
   return 0;
@@ -467,10 +472,9 @@ export async function runRemediate(engine: BrainEngine, args: string[], complete
       console.log(`${skipped.length} repair step${skipped.length === 1 ? '' : 's'} skipped (user agreement required): re-run with --include-repairs`);
       for (const step of skipped) console.log(`  - ${step.kind}: ${step.affected} item(s); ${step.command}`);
     }
-    const failedPreviews = result.repair_preview_failures ?? [];
-    if (failedPreviews.length) {
-      console.log(`${failedPreviews.length} repair preview${failedPreviews.length === 1 ? '' : 's'} failed, so ${failedPreviews.length === 1 ? 'that kind was' : 'those kinds were'} not run:`);
-      for (const failure of failedPreviews) console.log(`  - ${failure.kind} [${failure.code}]: ${failure.message} (preview: ${failure.fix.command})`);
+    if (result.repair_preview_failures?.length) {
+      console.log(`Not run, because the repair preview failed: ${result.repair_preview_failures.map(f => f.kind).join(', ')}`);
+      for (const line of failedPreviewLines(result.repair_preview_failures, '  - ')) console.log(line);
     }
     for (const f of findings.filter(f => f.class !== 'cleared')) {
       console.log(`[${f.class}] ${f.check_id}: ${f.instruction ?? f.command ?? f.message}`);

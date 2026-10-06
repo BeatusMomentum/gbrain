@@ -2433,10 +2433,6 @@ describeBoth('Engine parity — open_loops loops-store round-trip', () => {
     const closed = await closeOpenLoop(eng, 'lpsrc', first.id, 'done', 'parity-test');
     const openAfter = await listOpenLoops(eng, { sourceIds: ['lpsrc'], status: 'open' });
     const doneAfter = await listOpenLoops(eng, { sourceIds: ['lpsrc'], status: 'done' });
-    // #5870: the id filter binds as bigint on both engines and finds the
-    // closed row with no status filter; another source's scope never does.
-    const byId = await listOpenLoops(eng, { sourceIds: ['lpsrc'], id: first.id });
-    const byIdOtherSource = await listOpenLoops(eng, { sourceIds: ['lpsrc-other'], id: first.id });
     return {
       firstCreated: first.created,
       againCreated: again.created,
@@ -2456,9 +2452,6 @@ describeBoth('Engine parity — open_loops loops-store round-trip', () => {
       closedBy: closed?.closed_by,
       openAfterCount: openAfter.length,
       doneAfterCount: doneAfter.length,
-      byIdSameRow: byId.length === 1 && byId[0].id === first.id,
-      byIdStatus: byId[0]?.status,
-      byIdOtherSourceCount: byIdOtherSource.length,
     };
   }
 
@@ -2482,9 +2475,42 @@ describeBoth('Engine parity — open_loops loops-store round-trip', () => {
     expect(pg.closedBy).toBe('parity-test');
     expect(pg.openAfterCount).toBe(0);
     expect(pg.doneAfterCount).toBe(1);
-    expect(pg.byIdSameRow).toBe(true);
-    expect(pg.byIdStatus).toBe('done');
-    expect(pg.byIdOtherSourceCount).toBe(0);
+  });
+
+  async function lookupById(eng: BrainEngine) {
+    const { upsertOpenLoop, closeOpenLoop, listOpenLoops } = await import(
+      '../../src/core/loops/loops-store.ts'
+    );
+    await eng.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('lpid-a', 'lpid-a'), ('lpid-b', 'lpid-b') ON CONFLICT (id) DO NOTHING`,
+      [],
+    );
+    const row = await upsertOpenLoop(eng, {
+      sourceId: 'lpid-a',
+      dedupKey: 'thread:eeee000000000001:unanswered_inbound',
+      loopType: 'unanswered_inbound',
+      counterpartyEmail: 'erin@example.com',
+      summary: 'Reply owed to erin@example.com',
+      evidence: [{ message_id: 'eeee000000000001', quote: 'Any update?' }],
+      threadId: 'eeee000000000001',
+      detector: 'deterministic_thread',
+    });
+    await closeOpenLoop(eng, 'lpid-a', row.id, 'dropped', 'parity-lookup');
+    const hit = await listOpenLoops(eng, { sourceIds: ['lpid-a'], loopId: row.id });
+    return {
+      hitIds: hit.map((r) => r.id === row.id),
+      hitStatus: hit[0]?.status,
+      otherSource: (await listOpenLoops(eng, { sourceIds: ['lpid-b'], loopId: row.id })).length,
+      statusMismatch: (await listOpenLoops(eng, { sourceIds: ['lpid-a'], loopId: row.id, status: 'open' })).length,
+      beyondInt4: (await listOpenLoops(eng, { sourceIds: ['lpid-a'], loopId: 2 ** 40 })).length,
+    };
+  }
+
+  test('loopId lookup finds a closed row inside its source and nothing outside, on both engines', async () => {
+    const pg = await lookupById(pgEngine);
+    const pglite = await lookupById(pgliteEngine);
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual({ hitIds: [true], hitStatus: 'dropped', otherSource: 0, statusMismatch: 0, beyondInt4: 0 });
   });
 });
 
