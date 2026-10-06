@@ -25,7 +25,8 @@ import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from 
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
-import { invalidParam } from './op-fix.ts';
+import { invalidParam, readFix } from './op-fix.ts';
+import { isDatetimeInputError } from '../utils.ts';
 import { rethrowNamingRevisionSource } from './put-page-revision-source.ts';
 import {
   assertExplicitSourceLive,
@@ -564,6 +565,14 @@ const list_pages: Operation = {
       excludePrivate,
       listColumnsOnly: true,
       ...scope,
+    }).catch((e: unknown) => {
+      // #6103: an updated_after the database cannot parse is the caller's input, not a server fault.
+      if (updatedAfter === undefined || !isDatetimeInputError(e)) throw e;
+      throw invalidParam(ctx, 'list_pages', 'updated_after', 'list_pages: updated_after is not a date or timestamp the database can read.', {
+        def: list_pages.params.updated_after, example: '2026-08-11T00:00:00Z',
+        fix: readFix('Lists pages updated after a well-formed ISO timestamp.', { argv: ['gbrain', 'list', '--updated-after', '2026-08-11T00:00:00Z', '--limit', '1'],
+          mcp: { tool: 'list_pages', arguments: { updated_after: '2026-08-11T00:00:00Z', limit: 1 } } }),
+      });
     });
     const truncated = rows.length > limit;
     const pages = truncated ? rows.slice(0, limit) : rows;
