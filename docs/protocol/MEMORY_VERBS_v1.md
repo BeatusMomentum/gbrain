@@ -397,7 +397,7 @@ output_tokens, usd_estimate}, protocol_version }`.
 
 #### synthesize quote check (additive)
 
-When the brain owner turns it on (`think.quote_verify`, off by default),
+Unless the brain owner turns it off (`think.quote_verify false`; on by default),
 every quoted span in a synthesized `answer` is grounded against the evidence
 the answer was composed from (the same page excerpts, takes and graph lines,
 no refetch). An exact match stays; a normalized or near match is replaced with
@@ -406,6 +406,10 @@ marks and gains `[unverified]`, and the response warns `QUOTE_NOT_IN_EVIDENCE`.
 When the answer contained quotes, the response adds `answer_raw` (as written),
 `quote_check: { grounded, repaired, unverified }` and `unverified_quotes:
 [{ text, reason }]`. Present `answer`, not `answer_raw`, to the user.
+The check is measured not to over-flag: in its held-out run 1.6% of supported
+quotes were wrongly marked (95% upper bound 3.6%). How often it catches a
+made-up quote has not been measured yet, so a quote it leaves in place is
+grounded text it found, not a guarantee against fabrication.
 
 #### synthesize compose status (additive)
 

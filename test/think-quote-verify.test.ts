@@ -4,8 +4,8 @@
  * near matches are repaired to the evidence's words, quotes found nowhere are
  * unquoted and marked [unverified] in the live answer, and a saved synthesis
  * keeps the failing claim out of its body (frontmatter unverified_claims).
- * Numbers are not checked here (answers compute them). Opt-in:
- * think.quote_verify (default off).
+ * Numbers are not checked here (answers compute them). On by default:
+ * think.quote_verify (false turns it off).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -141,12 +141,15 @@ describe('think and saved syntheses', () => {
     expect(claims[0]!.text).toContain('free upgrades for everyone');
   });
 
-  test('off by default: with think.quote_verify unset the answer stays as written', async () => {
+  test('on by default; think.quote_verify false leaves the answer as written', async () => {
     await engine.unsetConfig('think.quote_verify');
     try {
-      const r = await runThink(engine, { question: 'annual billing', client: stub('She said "we will triple prices".') });
-      expect(r.answer).toBe('She said "we will triple prices".');
-      expect(r.quote_check).toBeUndefined();
+      const on = await runThink(engine, { question: 'annual billing', client: stub('She said "we will triple prices".') });
+      expect(on.quote_check).toEqual({ grounded: 0, repaired: 0, unverified: 1 });
+      await engine.setConfig('think.quote_verify', 'false');
+      const off = await runThink(engine, { question: 'annual billing', client: stub('She said "we will triple prices".') });
+      expect(off.answer).toBe('She said "we will triple prices".');
+      expect(off.quote_check).toBeUndefined();
     } finally {
       await engine.setConfig('think.quote_verify', 'true');
     }

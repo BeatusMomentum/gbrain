@@ -2,7 +2,7 @@
 // titles and bodies its prompt carried, before the concept page is written: a
 // claim with a quote no atom contains leaves the narrative for frontmatter
 // unverified_claims; supported quotes and computed counts stay. Opt-in:
-// dream.quote_verify (default off).
+// dream.quote_verify (default on).
 //
 // Hermetic: PGLite + injected `_atoms` and `_chat`.
 
@@ -53,12 +53,21 @@ describe('synthesize_concepts quote grounding', () => {
     expect(claims[0]!.reason).toBe('quote_not_in_source');
   });
 
-  test('off by default, and the synthesis switch does not turn it on', async () => {
+  test('on by default; false turns it off, and the synthesis switch does not turn it back on', async () => {
     await engine.unsetConfig('dream.quote_verify');
-    await engine.setConfig('dream.synthesize.quote_verify', 'true');
     await runPhaseSynthesizeConcepts(engine, { _atoms: atoms(), _chat: chat(NARRATIVE) });
-    const page = await engine.getPage('concepts/compounding');
-    expect(page!.compiled_truth).toContain('luck beats skill');
-    expect(page!.frontmatter.unverified_claims).toBeUndefined();
+    expect((await engine.getPage('concepts/compounding'))!.compiled_truth).not.toContain('luck beats skill');
+    await resetPgliteState(engine);
+    await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
+    await engine.setConfig('dream.quote_verify', 'false');
+    await engine.setConfig('dream.synthesize.quote_verify', 'true');
+    try {
+      await runPhaseSynthesizeConcepts(engine, { _atoms: atoms(), _chat: chat(NARRATIVE) });
+      const page = await engine.getPage('concepts/compounding');
+      expect(page!.compiled_truth).toContain('luck beats skill');
+      expect(page!.frontmatter.unverified_claims).toBeUndefined();
+    } finally {
+      await engine.setConfig('dream.quote_verify', 'true');
+    }
   });
 });

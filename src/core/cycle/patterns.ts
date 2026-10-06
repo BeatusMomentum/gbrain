@@ -663,7 +663,7 @@ async function stampProvenance(engine: BrainEngine, maintenance: MaintenanceAuth
  * its evidence). A failing claim unit leaves the body for frontmatter
  * `unverified_claims`; `quote_verified_at` marks a checked page, so a page a
  * crashed run left behind is verified by the next run. Kill switch:
- * dream.quote_verify (opt-in, default off). Returns null when disabled.
+ * dream.quote_verify (default on). Returns null when disabled.
  */
 export async function groundPatternPages(engine: BrainEngine, maintenance: MaintenanceAuthority | null, refs: Array<{ slug: string; source_id: string }>,
   reflections: ReflectionRef[], outputSlugPrefix: string, sourceId: string, cycleDate: string, signal?: AbortSignal):

@@ -330,7 +330,7 @@ export interface GroundedTranscript {
   /** Speaker-turn anchors, ascending. Absent or empty: no turn structure. */
   turns?: SpeakerTurn[];
   /**
-   * The opt-in quote grounding's tolerance (think, concepts, patterns): link
+   * The newer quote grounding's tolerance (think, concepts, patterns): link
    * syntax reads as its text, and the writer's punctuation or elision at a
    * quote's edges, brackets (`[Name]`, `[T]he`, `decide[s]`) and inner quote
    * style (`'` for the source's `"`) do not change its words. Unset (dream
@@ -924,13 +924,12 @@ function groundAcross(inner: string, sources: GroundedSource[]): { result: Exclu
 
 /**
  * Quote grounding for dream patterns and concept narratives:
- * `dream.quote_verify`, default OFF (opt-in) — the held-out run flagged too
- * many supported quotes to turn it on for everyone. Synthesis keeps its own
- * switch, `dream.synthesize.quote_verify` (default on).
+ * `dream.quote_verify`, on unless set false (its held-out retest passed).
+ * Synthesis keeps its own switch, `dream.synthesize.quote_verify` (default on).
  */
 export async function dreamQuoteVerifyEnabled(engine: { getConfig(key: string): Promise<string | null> }): Promise<boolean> {
   const raw = (await engine.getConfig('dream.quote_verify'))?.trim().toLowerCase();
-  return raw === 'true' || raw === '1' || raw === 'on' || raw === 'yes';
+  return !(raw === 'false' || raw === '0' || raw === 'off' || raw === 'no');
 }
 
 export interface AnswerQuoteCheck {
