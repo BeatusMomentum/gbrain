@@ -26,6 +26,7 @@ import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
+import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
 import type { Check } from '../../doctor.ts';
@@ -109,8 +110,8 @@ export async function checkLinksExtractionLag(
   try {
     const totalRows = await engine.executeRaw<{ count: number }>(
       sourceId
-        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND source_id = $1`
-        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL`,
+        ? `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND ${quarantineFilterFragment('pages')} AND source_id = $1`
+        : `SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND ${quarantineFilterFragment('pages')}`,
       sourceId ? [sourceId] : [],
     );
     const total = Number(totalRows[0]?.count ?? 0);

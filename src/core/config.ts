@@ -1394,6 +1394,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.dream.synthesize',
   'models.dream.extract_atoms',
   'cycle.extract_atoms.budget_usd',
+  // #4907: synthesize_concepts phase budget (finite USD > 0, default 1.5); cycle/phase-config-values.ts.
+  'cycle.synthesize_concepts.budget_usd',
   'cycle.extract_atoms.max_source_chars',
   'cycle.extract_atoms.page_discovery_budget',
   // #4540: per-item extractor caps (defaults 50000 chars / 4096 tokens) plus
@@ -1510,6 +1512,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // inside maxTokens, so the hardcoded defaults truncated every dense page.
   'dream.propose_takes.max_tokens',
   'dream.propose_takes.retry_max_tokens',
+  // #5958: per-call extractor timeout (whole ms 1000..300000; unset scales with the output cap); cycle/phase-config-values.ts.
+  'dream.propose_takes.call_timeout_ms',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the

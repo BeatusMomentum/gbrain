@@ -86,6 +86,7 @@ import { formatMentionSummary, linkPhaseDeadline, mentionJsonFields, previewMent
 import {
   loadOpCheckpoint, recordCompleted, clearOpCheckpoint, mentionsFingerprint,
 } from '../core/op-checkpoint.ts';
+import { isQuarantined, quarantinedSlugs } from '../core/quarantine.ts';
 // v0.41.15.0 (T7, D9): --workers N for the fs-walk inner loops via the
 // shared sliding-pool helper + PGLite-clamp wrapper.
 import { runSlidingPool } from '../core/worker-pool.ts';
@@ -1308,6 +1309,7 @@ async function extractForSlugs(
   // every non-slug filename as a deleted file and skip it without a word.
   const slugToPath = buildSlugPathIndex(allFiles);
   const allSlugs = new Set(slugToPath.keys());
+  const quarantined = await quarantinedSlugs(engine, sourceId ?? 'default');
 
   const doLinks = mode === 'links' || mode === 'all';
   const doTimeline = mode === 'timeline' || mode === 'all';
@@ -1391,7 +1393,7 @@ async function extractForSlugs(
     onItem: async (slug) => {
       // #1972: bail before doing any work for this slug on abort. The trailing
       // flushTimeline still commits accumulated rows — no torn write.
-      if (isAborted(signal)) return;
+      if (isAborted(signal) || quarantined.has(slug)) return;
       const relPath = resolveSlugRelPath(slugToPath, brainDir, slug);
       if (relPath === undefined) return; // deleted file — sync already handled removal
       const fullPath = join(brainDir, relPath);
@@ -1472,6 +1474,7 @@ async function extractLinksFromDir(
   const stdoutQuiet = jsonMode || quiet;
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => pathToSlug(f.relPath)));
+  const quarantined = await quarantinedSlugs(engine, sourceId ?? 'default');
 
   // Issue #972: read once before the walk so the per-file calls don't
   // re-query the DB. globalBasename = true emits one edge per basename
@@ -1502,7 +1505,7 @@ async function extractLinksFromDir(
     failureLabel: (f) => f.relPath,
     onItem: async (file) => {
       // #1972: bail before this file on abort; each page's links are replaced in its own transaction.
-      if (isAborted(signal)) return;
+      if (isAborted(signal) || quarantined.has(pathToSlug(file.relPath))) return;
       try {
         const slug = pathToSlug(file.relPath);
         const snapshot = ownership && (ownership.metadata.get(`${sourceId ?? 'default'}\0${slug}`)?.type === 'meeting' || ownership.origins.has(slug))
@@ -1554,6 +1557,7 @@ async function extractTimelineFromDir(
 ): Promise<{ created: number; pages: number }> {
   const stdoutQuiet = jsonMode || quiet;
   const files = walkMarkdownFiles(brainDir);
+  const quarantined = await quarantinedSlugs(engine, sourceId ?? 'default');
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('extract.timeline_fs', files.length);
@@ -1586,7 +1590,7 @@ async function extractTimelineFromDir(
     failureLabel: (f) => f.relPath,
     onItem: async (file) => {
       // #1972: bail before this file on abort; trailing flush() commits the batch.
-      if (isAborted(signal)) return;
+      if (isAborted(signal) || quarantined.has(pathToSlug(file.relPath))) return;
       try {
         const content = readFileSync(file.path, 'utf-8');
         const slug = pathToSlug(file.relPath);
@@ -1679,6 +1683,7 @@ export async function extractLinksForSlugs(
   // frontmatter knob without per-caller threading — an unattended sync used to
   // skip `related:` edges and then stamp the page fresh, defeating the knob.
   const includeFrontmatter = opts?.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
+  const quarantined = await quarantinedSlugs(engine, sourceId);
   let created = 0;
   // Only a slug whose file was found AND read counts as processed. The
   // caller stamps the watermark for these and no others, so a silent skip
@@ -1687,7 +1692,7 @@ export async function extractLinksForSlugs(
   const errors: Array<{ slug: string; error: string }> = [];
   const reads: Array<{ slug: string; relPath: string; content: string; links: LinkBatchInput[] }> = [];
   for (const slug of slugs) {
-    const relPath = resolveSlugRelPath(slugToPath, repoPath, slug);
+    const relPath = quarantined.has(slug) ? undefined : resolveSlugRelPath(slugToPath, repoPath, slug);
     if (relPath === undefined) continue;
     try {
       // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- relPath comes from the slug→path index built by walkMarkdownFiles(repoPath) (repo-relative entries of that walk) or the validated-slug legacy fallback, never from a caller
@@ -1731,11 +1736,12 @@ export async function extractTimelineForSlugs(
   // across every source containing the slug (the addTimelineEntry's
   // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
   const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
+  const quarantined = await quarantinedSlugs(engine, opts?.sourceId ?? 'default');
   let created = 0;
   const processed: string[] = [];
   const errors: Array<{ slug: string; error: string }> = [];
   for (const slug of slugs) {
-    const relPath = resolveSlugRelPath(slugToPath, repoPath, slug);
+    const relPath = quarantined.has(slug) ? undefined : resolveSlugRelPath(slugToPath, repoPath, slug);
     if (relPath === undefined) continue;
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- relPath comes from the walkMarkdownFiles(repoPath) index or the validated-slug legacy fallback, never from a caller
     const filePath = join(repoPath, relPath);
@@ -1873,7 +1879,7 @@ async function extractLinksFromDB(
 
   for (const { slug, source_id } of walkRefs) {
     const snapshot = await engine.readPageSnapshot(slug, { sourceId: source_id });
-    if (!snapshot) continue;
+    if (!snapshot || isQuarantined(snapshot.page.frontmatter)) continue;
     const page = snapshot.page;
     if (typeFilter && page.type !== typeFilter) continue;
     await loadSourceLinkPacks(engine, [source_id], packs);
@@ -2400,7 +2406,7 @@ async function extractMentionsFromDb(
     // itself a completed decision. (#4304: the --since filter moved to the
     // ref level above — out-of-window pages never reach this loop.)
     const key = `${source_id}::${slug}`;
-    if (!page || (typeFilter && page.type !== typeFilter)) {
+    if (!page || isQuarantined(page.frontmatter) || (typeFilter && page.type !== typeFilter)) {
       pendingForFlush.push(key);
       unpersistedCount++;
       continue;
