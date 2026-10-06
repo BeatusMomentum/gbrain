@@ -10,6 +10,128 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.78.0] - 2026-10-06
+
+**Green master wave: a brain with embedding turned off no longer sends your text to an embedding provider, lint survives a file vanishing mid-scan, embed and reindex-code stop failing when a background rebuild wins a race, and a release only publishes after its tests pass.**
+
+On a brain where embedding was turned off, three fact write paths (single fact writes, `remember`'s preparation and turn extraction) and every query path (search, query, recall, think) still sent text to the embedding provider whenever a key was present in the environment, then threw the vector away. They now check the brain's choice first and never call the embedder; reads run keyword-only and say so. A managed fact write on such a brain was also refused with `embedding_configuration` when an embedding key was set; it now uses the running writer's configuration. `gbrain lint` aborted with ENOENT when a listed file disappeared before its scan read. `gbrain embed` recorded a misleading "unavailable" failure and `gbrain reindex-code` crashed when the resident projection rebuild sealed the same page first.
+
+The rest of the wave makes master stay green: every recurring master and nightly failure from the last week is root-caused (the lint abort and the managed fact refusal above were real bugs; the rest were test, harness or CI-config races), and CI now catches the next one before it merges.
+
+Each fix has a test that fails on the previous release.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| Search, recall or think on a brain with embedding off and a key in the environment | query text sent to the embedding provider | nothing sent; keyword-only, reported as `embedding_disabled` |
+| A fact write on that brain | fact text embedded, vector discarded | no embedding call |
+| A managed fact write on a brain keyless by config, with an embedding key set | refused with `embedding_configuration` | written |
+| A file removed between lint's listing and its scan read | lint aborts with ENOENT | that file reports `file_removed_during_scan` (managed `--fix`: pending `canonical_file_missing`); the rest of the run continues |
+| `gbrain embed` or `reindex-code` racing the resident projection rebuild | "unavailable" failure or a crash | re-reads and retries up to 3 times, then `page_projection_conflict` naming the changed field |
+| A VERSION bump on master whose Test or E2E run fails | release published anyway | no release; the job names the master-red issue |
+
+For contributors and agents working on gbrain:
+
+- **PRs run what master runs.** Both supported Bun versions (1.4.0 and 1.4.2) run on pull requests and the merge queue. Every narrower PR behavior is a named exception pointing at the scheduled run that covers it (`docs/ci-event-parity.md`).
+- **Every test file a PR touches runs 10 times** in the new `stress-changed-tests` check (part of `test-status`), each iteration on a fresh database. Local twin: `bun run test:stress [files…] [--iterations N] [--base <ref>] [--postgres]`. A nightly race hunt runs every Postgres unit arm 10 times.
+- **A red push to master opens a `master-red` issue** naming each failing test, the suspect commit range, the PRs merged in it and a `test:stress` reproduce line, and closes only on complete green evidence. Tests that go green without a fix get a `flake` issue. Runbook: `docs/ci-red-runbook.md`.
+- **`bun run release:restamp`** makes a branch next-to-merge in one command: merges master, sets master + 1 PATCH, renumbers only unpublished migrations, rewrites every version stamp and regenerates derived files. Doctor goldens no longer change when the latest migration number moves.
+- **`bun run verify`** runs the self-timed guard self-test after the worker pool drains instead of beside typecheck, and gives tsc a heap ceiling so it no longer runs out of memory on 8 GB hosts. The macOS 26 runner keeps typecheck under a 240 s per-check cap (tsc alone takes 110-142 s there); every other runner keeps 120 s.
+- Nightly fixes: scheduled E2E runs are no longer cancelled by pushes, cancelled shards report as cancelled instead of red, the offline Docker bootstrap e2e expects the starter MCP surface, and the evidence-delivery parity e2e checks keyless and keyed lanes separately.
+- Test and harness races fixed at the root: the memory-mutations replay count, three managed-lint interceptors, the pack-relation projection fixture, the crash robot's session-drop retries and its model of pending puts, the OAuth loopback test's fixed port, the Windows PowerShell probe's cold start, and the MCP instructions parity test under `DATABASE_URL`.
+
+## To take advantage of v0.60.78.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations. Upgraded brains show a one-time notice listing the behavior changes below; `gbrain doctor --only behavior_changes` shows it again.
+
+1. **Verify:**
+   ```bash
+   gbrain doctor
+   ```
+2. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Behavior changes
+
+- **A brain with embedding turned off stays off for queries and fact writes.** Search, query and recall return keyword results with `embedding_disabled` in the degraded list (recall: `search_degraded: keyword_only_embedding_disabled`), think adds `QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED`, and image search, semantic takes search and `takes embed` refuse with the existing `embedding_disabled` error and its enable command. `gbrain doctor --json` names the command to turn embedding back on.
+- **`gbrain lint` reports a vanished file instead of aborting.** New issue code `file_removed_during_scan`; on a managed brain with `--fix`, a pending `canonical_file_missing`.
+- **New error code `page_projection_conflict`** replaces the generic internal error when a projection install keeps losing to another writer.
+
+## [0.60.77.0] - 2026-10-06
+
+**Saving a memory never waits on an AI model, forgetting a fact also finds the other ways you said it (and asks before removing them), agents can say exactly which fact a new one replaces, and quotes in answers are checked against your notes by default.**
+
+When you save a page or a fact, gbrain now proves it makes no AI model call before the write lands: the page is searchable by keyword the moment the save returns, and fact extraction runs afterwards as background work you can see and switch off. When you tell gbrain to forget something, it still removes exactly that claim, and now also shows other facts that say nearly the same thing, so the agent can ask you about them instead of leaving them behind. With a TypeSafe key, an overnight review goes further and proposes rewordings of what you forgot; nothing is removed until you accept. Agents can now replace one specific fact with a new one, with no guessing by similarity. And when `think` or a dream phase quotes your notes, each quote is checked against the notes it came from: a quote that is not there loses its quotation marks and is marked `[unverified]`.
+
+One thing we tested and did not ship as a default: showing agents a shorter tool list. In a held-out agent benchmark it made agents worse, so every tool stays listed.
+
+### The numbers that matter
+
+| What | Result |
+| --- | --- |
+| AI model calls before a save lands (`put_page`, `remember`, 1,000 pages, fact extraction on and off) | 0 |
+| Cost of 1,000 note pages with background fact extraction on / off | about $9.94 / $0.32 (claude-sonnet-4-6 extraction, text-embedding-3-large) |
+| Overnight forget review, held-out | 124 of 124 test families right, precision lower bound 0.970; finds 97.7% of rewordings; 0 proposals on corrected values |
+| Supported quotes wrongly marked `[unverified]`, held-out | 5 of 321 (1.56%, 95% upper bound 3.59%) |
+| Agent task success with the full tool list / `starter` list / 7 verbs, held-out | 93.2% / 84.7% / 83.3% |
+
+### Things to watch
+
+- **Quote checking is on by default, and it is not a fraud detector yet.** It is measured not to over-flag real quotes. How often it catches a made-up quote has not been measured: in the held-out run it flagged 2 of the 7 unsupported quotes it saw. Treat a quote it leaves alone as text it found in your notes, not as proof nothing was invented. Turn it off with `gbrain config set think.quote_verify false` and `gbrain config set dream.quote_verify false`. The dream synthesis quote check (`dream.synthesize.quote_verify`) is unchanged.
+- **The overnight forget review only proposes.** It runs only where the contradiction slot is on with a TypeSafe key (the key turns that slot on by default), and every proposal waits for your accept. Accepting a withdrawal is permanent, so agents are told to confirm with you first. The text of a forgotten private fact is sent only when `decide.egress.private` is `allow`. Turn the review off with `gbrain config set decide.slots.conflict.review_withdraw false`.
+- **Keep the full tool list.** `mcp.advertised_surface` can now list fewer tools while every tool stays callable, but the held-out benchmark rejected narrowing it: pooled success fell 8.5 points with `starter` and 9.9 with `verbs`, and tasks needing an unlisted tool fell hardest (one model went from 87.5% to 5% under `starter`). The shorter lists saved no tokens. Fresh installs keep listing everything. Use the setting only for a client that cannot hold the full catalog.
+
+## To take advantage of v0.60.77.0
+
+`gbrain upgrade` installs the binary and runs migration v212, which adds two empty tables for the review lane (`decide_review_queue`, `decide_review_proposals`). Upgraded brains show the one-time behavior-changes notice; `gbrain doctor --only behavior_changes` shows it again.
+
+1. **Review forget proposals** (TypeSafe key only):
+   ```bash
+   gbrain decide proposals list
+   gbrain decide proposals accept r12 --yes   # permanent: confirm with the user first
+   gbrain decide proposals reject r12
+   ```
+2. **Record every model call a process makes** when you want to check costs yourself: `GBRAIN_AI_CALL_LOG=/path/calls.jsonl gbrain ...` (one JSON line per call, never prompt text).
+3. **Verify:**
+   ```bash
+   gbrain doctor
+   gbrain decide status
+   ```
+4. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
+
+### Behavior changes
+
+- **`think` answers and saved syntheses check their quotes.** A quote found in no evidence is unquoted and marked `[unverified]`; a near match is replaced with the evidence's words. Responses with quotes add `answer_raw` (what the model wrote), `quote_check` and `unverified_quotes`. A saved synthesis keeps an unverified claim out of its body, in frontmatter `unverified_claims`. Concept narratives and pattern pages get the same check (`dream.quote_verify`).
+- **`forget` responses add `similar_active`:** close active paraphrases it did not withdraw, and whether an overnight review is scheduled. Pass `semantic_review: false` to skip the review for one call.
+- **With a TypeSafe key, forgetting a fact queues an overnight review** that can propose withdrawing rewordings of it (see above).
+
+### Itemized changes
+
+- **Zero-model write path.** Every mutating operation declares its write-inference class (`src/core/ops/write-inference.ts`). `scripts/check-ai-sdk-importers.ts` (in `bun run verify`) refuses runtime imports of a provider SDK outside an allowlist that only shrinks, so every model call goes through `invokeAI`; `src/core/persistence/` may not import the AI gateway (`scripts/check-layering.ts`). `test/write-path-zero-llm.serial.test.ts` and `test/write-path-no-egress.serial.test.ts` pin zero generative calls before commit and zero network connections from keyless CLI writes. `GBRAIN_AI_CALL_LOG` (`src/core/ai/call-log.ts`) logs kind, operation, model, outcome, tokens and attribution (request id, effect, job, phase).
+- **`remember.replaces`.** `remember` takes `replaces: <fact_id>` and supersedes exactly that fact under its row lock, with specific refusal codes (`target_superseded`, `target_expired`, `replaces_entity_mismatch`, `replaces_cross_page`, ...).
+- **Forget review.** `forget` returns `similar_active` (`src/core/facts/similar-active.ts`); withdrawals queue `withdraw` review work in the same transaction (`src/core/facts/withdrawal.ts`). The review lane (`src/core/ai/decide/review-lane.ts`) runs at the end of the `extract_facts` tail, asks the contradiction slot's provider about pairs in the ambiguous similarity band, and writes `r`-id proposals (`decide_review_proposals`, migration v212). Accept is atomic (`pending` to `accepting`) and re-checks that the claim is still withdrawn and the fact unchanged. `decide.slots.conflict.review_withdraw` is on unless set false and ships a held-out reference calibration for TypeSafe `jev-1.13.0`; `review_duplicate_page` and `review_duplicate_entity` are off by default.
+- **Quote grounding.** `think` (and the `synthesize` verb, `think --save`) grounds every quoted span against the evidence blocks the prompt carried and the user's question; concept narratives and pattern pages ground against their sources (`src/core/cycle/synthesize-verify.ts`, `groundSource(..., { tolerant: true })`). The tolerant matcher reads markdown links and other brackets as text (`[Name](target)`, `[Name]`, `[T]he`, `decide[s]`), folds inner `"` to `'`, and sets aside edge punctuation and ellipses. `think.quote_verify` and `dream.quote_verify` default on.
+- **Advertised tool surface.** `mcp.advertised_surface` (`verbs` | `starter` | `full`, dual-plane) narrows only what `tools/list` shows; the callable set is unchanged and `request_tools` reaches unlisted tools. Unset lists everything.
+
+## [0.60.76.0] - 2026-10-06
+
+**The behavior-change notice no longer repeats on every upgrade.**
+
+Since v0.60.68.0 an upgraded brain gets a one-time notice listing the behaviors that release turned on. The notice was keyed to the running gbrain version, so every later release showed the whole list again as "gbrain v<new version> changed N behaviors", including changes from releases the brain had already been told about. Each change now carries the release that introduced it (v0.60.68.0 for the chat fallback chain, autopilot lint repairs, transcript re-ingest and the mention linker; v0.60.74.0 for fix wave 9's six). A brain sees only the changes introduced after the last notice it was shown, or after the brain was created if it was never shown one, once per channel and once per HTTP client.
+
+| After upgrading | Before | Now |
+| --- | --- | --- |
+| A brain that saw the full notice upgrades to a release with no new behavior changes | the whole notice again, under the new version | nothing |
+| A brain that saw the v0.60.68.0 notice upgrades to v0.60.74.0 or later | all changes again, labeled as the new version's | only fix wave 9's six changes, labeled v0.60.74.0, once |
+| A brain older than v0.60.68.0 | every change, labeled with the running version | every change, labeled v0.60.68.0 and v0.60.74.0, once |
+| A brain created on this or a later release | nothing, until its next upgrade showed every change | nothing |
+| `gbrain doctor --only behavior_changes` | every change, labeled with the running version | every change newer than the brain's baseline, labeled by release, whether or not the notice was shown |
+
+## To take advantage of v0.60.76.0
+
+`gbrain upgrade` does this automatically. There is no schema migration; existing notice markers and the HTTP per-client record are read as they are, so nothing already shown is shown again.
+
+1. **Verify:** `gbrain doctor --only behavior_changes --json` lists each change with the release that introduced it, and `details.shown` says whether this brain's CLI and stdio channels have seen the newest notice.
+2. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`.
+
 ## [0.60.75.0] - 2026-10-06
 
 **The scale tier's import-rate gate judges a PGLite import by the CPU time its main thread spends per page, so a busy CI host no longer fails it with no code change (#6118).**
