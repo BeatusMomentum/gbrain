@@ -196,10 +196,10 @@ export type ProposeTakesExtractor = (input: {
   /** #4494: escalated cap for the one truncation retry (default
    *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
   retryMaxTokens?: number;
-  /** #5874: wall-clock bound for every extractor call
-   *  (dream.propose_takes.call_timeout_ms, held to the remaining phase
-   *  time). Unset: scales with the output cap. */
-  callTimeoutMs?: number;
+  /** #5958: operator-set bound (ms) for each extractor call, base and retry
+   *  alike. The phase reads dream.propose_takes.call_timeout_ms and caps it
+   *  by the phase time left. Absent: extractorCallTimeoutMs(maxTokens). */
+  callBoundMs?: number;
   /** #5425: include EXTRACT_TAKES_ATTRIBUTION_RULES (opt-in). */
   attributionRules?: boolean;
 }) => Promise<ProposedTake[]>;
@@ -392,14 +392,8 @@ export const PROPOSE_TAKES_RETRY_MAX_TOKENS = 4096;
  * page was re-billed (base call + aborted retry) forever with no tombstone.
  * 90s per PROPOSE_TAKES_MAX_TOKENS of output, floored at 90s, capped at
  * EXTRACTOR_CALL_TIMEOUT_MAX_MS.
- *
- * #5874: a configured `callTimeoutMs` replaces the scaling for every call.
- * The claude-cli provider ignores maxTokens and never reports a truncation,
- * so the retry never runs and the base call keeps 90s, which a large page on
- * a slow model does not fit. The gateway's own chat timeout still races it.
  */
-function extractorCallTimeoutMs(maxTokens: number, callTimeoutMs?: number): number {
-  if (callTimeoutMs !== undefined) return callTimeoutMs;
+function extractorCallTimeoutMs(maxTokens: number): number {
   const scaled = Math.ceil((EXTRACTOR_CALL_TIMEOUT_MS * maxTokens) / PROPOSE_TAKES_MAX_TOKENS);
   return Math.min(EXTRACTOR_CALL_TIMEOUT_MAX_MS, Math.max(EXTRACTOR_CALL_TIMEOUT_MS, scaled));
 }
@@ -409,9 +403,9 @@ function extractorCallTimeoutMs(maxTokens: number, callTimeoutMs?: number): numb
  * never outlasts the phase deadline (never below the default 90s floor, which
  * the unconfigured path already allows). Unset: no override.
  */
-function phaseBoundedCallTimeout(configuredMs: number | undefined, phaseRemainingMs: number): { callTimeoutMs?: number } {
+function phaseBoundedCallTimeout(configuredMs: number | undefined, phaseRemainingMs: number): { callBoundMs?: number } {
   if (configuredMs === undefined) return {};
-  return { callTimeoutMs: Math.min(configuredMs, Math.max(EXTRACTOR_CALL_TIMEOUT_MS, phaseRemainingMs)) };
+  return { callBoundMs: Math.min(configuredMs, Math.max(EXTRACTOR_CALL_TIMEOUT_MS, phaseRemainingMs)) };
 }
 
 /**
@@ -458,29 +452,31 @@ export async function defaultExtractor(
   // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
   // caller already catches per-page errors, logs a warning, and continues.
   // The bound scales with maxTokens so an escalated or configured larger cap
-  // gets time to generate what it allows, unless
-  // dream.propose_takes.call_timeout_ms replaces it for every call.
-  const call = async (maxTokens: number) => {
-    const timeoutMs = extractorCallTimeoutMs(maxTokens, input.callTimeoutMs);
-    const abortSignal = AbortSignal.timeout(timeoutMs);
-    try {
-      return await gatewayChat({
-        messages: [{ role: 'user', content: prompt }],
-        ...(input.modelHint ? { model: input.modelHint } : {}),
-        maxTokens,
-        abortSignal,
-      });
-    } catch (err) {
-      if (!abortSignal.aborted) throw err;
-      // #5874: a provider abort message names neither the bound nor the key that moves it.
-      const msg = err instanceof Error ? err.message : String(err);
+  // gets time to generate what it allows. An operator bound (callBoundMs)
+  // takes its place for every call: claude-cli never reports a truncation,
+  // so on that route the retry and its longer scaled bound never happen.
+  const call = (maxTokens: number) => {
+    const boundMs = input.callBoundMs ?? extractorCallTimeoutMs(maxTokens);
+    const ownBound = AbortSignal.timeout(boundMs);
+    return gatewayChat({
+      messages: [{ role: 'user', content: prompt }],
+      ...(input.modelHint ? { model: input.modelHint } : {}),
+      maxTokens,
+      abortSignal: ownBound,
+    }).catch((err: unknown) => {
+      // Reword only what our own bound stopped; any other failure, including
+      // the gateway's shorter chat timeout, keeps its error untouched. The
+      // provider's abort text alone names neither the bound nor the key.
+      if (!ownBound.aborted) throw err;
+      const providerText = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `propose_takes extractor: call timed out after ${timeoutMs} ms on ${input.pagePath} (${msg}); ` +
-        `set ${PROPOSE_TAKES_CALL_TIMEOUT_KEY} (${PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS}-${PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS} ms) ` +
-        `to change the bound; no tombstone written, page retries next cycle`,
+        `propose_takes extractor: ${input.pagePath} timed out after ${boundMs} ms, the per-call bound ` +
+        `(${providerText}). To move it, set ${PROPOSE_TAKES_CALL_TIMEOUT_KEY} to whole ms from ` +
+        `${PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS} to ${PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS}. ` +
+        `No tombstone was written; the page is retried next cycle.`,
         { cause: err },
       );
-    }
+    });
   };
   let result = await call(baseMaxTokens);
 
