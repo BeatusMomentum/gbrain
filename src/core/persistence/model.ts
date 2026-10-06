@@ -18,6 +18,8 @@ export interface WriteAuthority {
   slugPrefixes: string[] | null;
   delegatedPrefixes?: string[] | null;
   delegated?: boolean;
+  /** The native job id (positive safe integer) a job-namespace delegated write was accepted under; replay derives the current job prefix from it. */
+  subagentId?: number;
   takesHolders?: string[] | null;
   /** Actual holders touched by a published take mutation; retained after intent compaction. */
   takeHoldersUsed?: string[];
