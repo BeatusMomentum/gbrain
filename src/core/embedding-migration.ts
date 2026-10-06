@@ -22,6 +22,7 @@ import { countStaleFactEmbeddings } from './facts/embedding-identity.ts';
 import { prepareEmbeddingProjections } from './embedding-readiness.ts';
 import { assertRetainedEmbeddingRebuildability } from './embedding-migration-retention.ts';
 import { annIndexValidity, canonicalChunkAnnIndex, mergeDeferredAnnIndexes, parseDeferredAnnIndexes, type DeferredAnnIndex } from './embedding-ann-build.ts';
+import { SMOKE_QUERY_CHUNK_UNITS, SMOKE_QUERY_TITLE_UNITS } from './embedding-migration-worst-case.ts';
 
 export interface EnvOverrideWarning {
   triggered: boolean;
@@ -963,8 +964,8 @@ export async function verifySearchRoundTrip(
             ORDER BY length(cc.chunk_text) DESC, cc.id DESC LIMIT 1`, [row.page_id, signature, queryModel, dims]);
         });
         if (!current.length) continue;
-        const title = current[0].title?.trim().slice(0, 160);
-        const query = `${title ? `${title}\n` : ''}${current[0].chunk_text.slice(0, 512)}`;
+        const title = current[0].title?.trim().slice(0, SMOKE_QUERY_TITLE_UNITS);
+        const query = `${title ? `${title}\n` : ''}${current[0].chunk_text.slice(0, SMOKE_QUERY_CHUNK_UNITS)}`;
         const vec = await embedQuery(query);
         const results = await engine.searchVector(vec, {
           limit: 10,
