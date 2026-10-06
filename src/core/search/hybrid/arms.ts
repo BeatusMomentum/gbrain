@@ -17,12 +17,24 @@ import { markKeywordHits } from '../evidence.ts';
 import { resolveEffectiveRecency, resolveEffectiveSalience } from './effective-modes.ts';
 import { searchSalvageEnabled } from '../token-budget.ts';
 import { isDatetimeInputError, warnOncePerProcess } from '../../utils.ts';
+import { isQueryCanceledError } from '../../brainstorm/error-classify.ts';
+import { SEARCH_STATEMENT_TIMEOUT_KEY, SEARCH_STATEMENT_TIMEOUT_MAX_MS } from '../../postgres-engine/search-settings.ts';
 
 export interface LexicalArms {
   earlyModality: ModalityMode;
   keywordResults: SearchResult[];
   titleResults: SearchResult[];
   exactLookupOpts: ExactLookupOpts;
+}
+
+/** A lexical arm failure: a Postgres statement timeout (SQLSTATE 57014) is a `timeout` and names the key that bounds it. */
+function lexicalArmFailure(err: unknown): { reason: 'timeout' | 'provider_error'; detail: string } {
+  const canceled = isQueryCanceledError(err);
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    reason: canceled || isTimeoutError(err) ? 'timeout' : 'provider_error',
+    detail: canceled ? `${message} (lexical statements stop at ${SEARCH_STATEMENT_TIMEOUT_KEY}; raise it, up to ${SEARCH_STATEMENT_TIMEOUT_MAX_MS} ms, if this brain needs longer: gbrain config set ${SEARCH_STATEMENT_TIMEOUT_KEY} <ms>)` : message,
+  };
 }
 
 /** Keyword + title FTS arms, fetched concurrently (fail-open per arm, rethrow when both hit a dead database). */
@@ -69,23 +81,17 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
           engine.searchKeyword(query, searchOpts).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) keywordAccessError = err;
-            pushDegraded(degraded, 'keyword_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
-            warnOncePerProcess(
-              'search-keyword-arm-failed',
-              `[gbrain] searchKeyword arm failed (fail-open, keyword candidates skipped): ` +
-                `${err instanceof Error ? err.message : String(err)}`,
-            );
+            const failure = lexicalArmFailure(err);
+            pushDegraded(degraded, 'keyword_arm_failed', failure.reason);
+            warnOncePerProcess('search-keyword-arm-failed', `[gbrain] searchKeyword arm failed (fail-open, keyword candidates skipped): ${failure.detail}`);
             return [] as SearchResult[];
           }),
           engine.searchTitles(query, searchOpts).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) titleAccessError = err;
-            pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
-            warnOncePerProcess(
-              'search-titles-arm-failed',
-              `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ` +
-                `${err instanceof Error ? err.message : String(err)}`,
-            );
+            const failure = lexicalArmFailure(err);
+            pushDegraded(degraded, 'title_arm_failed', failure.reason);
+            warnOncePerProcess('search-titles-arm-failed', `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ${failure.detail}`);
             return [] as SearchResult[];
           }),
         ]);

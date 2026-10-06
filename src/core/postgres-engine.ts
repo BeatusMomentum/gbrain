@@ -112,7 +112,7 @@ import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from 
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
-import { withSearchJitOff } from './postgres-engine/search-settings.ts';
+import { SearchStatementTimeout, withSearchSettings } from './postgres-engine/search-settings.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
 import * as takesImpl from './engine-sql/takes.ts';
@@ -331,7 +331,7 @@ export class PostgresEngine implements BrainEngine {
       const previous = this.rlsScopeBindingEnabled
         ? await tx`SELECT current_setting('app.scopes', true) AS scopes` : [];
       if (this.rlsScopeBindingEnabled) await tx`SELECT set_config('app.scopes', ${scopesValue}, true)`;
-      const result = opts?.jitOff ? await withSearchJitOff(tx, this._pageTransaction, () => callback(tx)) : await callback(tx);
+      const result = opts?.jitOff ? await withSearchSettings(tx, this._pageTransaction, () => callback(tx)) : await callback(tx);
       // Successful RELEASE SAVEPOINT retains SET LOCAL; a failed callback
       // rolls it back with the savepoint and must preserve its original error.
       if (this.rlsScopeBindingEnabled) await tx`SELECT set_config('app.scopes', ${previous[0]?.scopes ?? ''}, true)`;
@@ -739,6 +739,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private _pageTransaction = false;
+  // search.statement_timeout_ms, memoized; tx engines (Object.create) share it, and their reads use the tx connection.
+  private readonly searchTimeout = new SearchStatementTimeout();
 
   async putPage(slug: string, page: PageInput, opts?: PageWriteOptions): Promise<Page> {
     slug = validateSlug(slug);
@@ -1078,9 +1080,10 @@ export class PostgresEngine implements BrainEngine {
     // the GUC can never leak onto a pooled connection). Flag off → the
     // wrap is identical to master's; flag on → set_config('app.scopes')
     // shares the same transaction as the timeout.
+    const statementTimeout = await this.searchTimeout.resolve(key => this.getConfig(key));
     const runKeyword = (queryText: string, relaxed = false) =>
       this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SET LOCAL statement_timeout = '8s'`;
+        await tx`SELECT set_config('statement_timeout', ${statementTimeout}, true)`;
         const previous = relaxed ? await tx`SHOW enable_seqscan` : [];
         if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
         const boundParams = [...params];
@@ -1116,14 +1119,15 @@ export class PostgresEngine implements BrainEngine {
    * fix/title-retrieval-arm (D1): page-grain title candidate arm. SQL lives
    * once in engine-sql/titles.ts (exact-title key #5889, index-backed remote
    * predicate). Each attempt (strict, then OR fallback) runs in its own
-   * scoped read transaction with an 8s statement timeout.
+   * scoped read transaction with the search.statement_timeout_ms statement timeout.
    */
   async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
+    const statementTimeout = await this.searchTimeout.resolve(key => this.getConfig(key));
     return titlesImpl.searchTitles(
       (read) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true }),
       query,
       opts,
-      { statementTimeout: '8s', relaxedPrefersIndex: true, staleProbe: false },
+      { statementTimeout, relaxedPrefersIndex: true, staleProbe: false },
     );
   }
 
@@ -1266,8 +1270,9 @@ export class PostgresEngine implements BrainEngine {
     // RLS scope binding + search-only timeout. alwaysTransaction: master
     // already wrapped this in sql.begin() for the SET LOCAL; flag off is
     // identical to that wrap, flag on adds set_config in the same tx.
+    const statementTimeout = await this.searchTimeout.resolve(key => this.getConfig(key));
     const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      await tx`SET LOCAL statement_timeout = '8s'`;
+      await tx`SELECT set_config('statement_timeout', ${statementTimeout}, true)`;
       return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
     }, { alwaysTransaction: true, jitOff: true });
     return rows.map(rowToSearchResult);
@@ -1276,14 +1281,15 @@ export class PostgresEngine implements BrainEngine {
   /**
    * #3986: CJK keyword fallback (parity port of PGLite's v0.32.7 branch).
    * SQL builds in the shared cjk-keyword-sql.ts; execution goes through the
-   * same scoped read transaction (RLS scope binding + 8s statement timeout)
+   * same scoped read transaction (RLS scope binding + search statement timeout)
    * as the FTS keyword paths. See src/core/engine-sql/cjk-search.ts.
    */
   private async _searchKeywordCJK(query: string, ctx: CjkKeywordCtx): Promise<SearchResult[]> {
+    const statementTimeout = await this.searchTimeout.resolve(key => this.getConfig(key));
     return searchKeywordCJKImpl(
       async (read) =>
         await this.withScopedReadTransaction(ctx.opts?.sourceIds, ctx.opts?.sourceId, async (tx) => {
-          await tx`SET LOCAL statement_timeout = '8s'`;
+          await tx`SELECT set_config('statement_timeout', ${statementTimeout}, true)`;
           return await read(scopedRead(postgresExecutor(tx, {
             runUnsafe: (conn, sql, params, opts) => this.runUnsafe(conn, sql, params, opts),
             gauge: this.checkoutGauge,

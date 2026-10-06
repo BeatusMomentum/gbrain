@@ -21,7 +21,7 @@ import {
 
 /** Engine behavior the title arm keeps from each engine's original method. */
 export interface SearchTitlesDialect {
-  /** Per-attempt `statement_timeout` (Postgres: '8s'); unset means none. */
+  /** Per-attempt `statement_timeout` (Postgres: search.statement_timeout_ms, default 8000ms); unset means none. */
   statementTimeout?: string;
   /** Run the relaxed (OR) local re-run with `enable_seqscan` off (Postgres). */
   relaxedPrefersIndex: boolean;

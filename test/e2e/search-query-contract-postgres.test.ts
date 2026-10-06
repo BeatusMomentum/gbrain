@@ -114,4 +114,49 @@ import { withEnv } from '../helpers/with-env.ts';
       });
     });
   });
+
+  const lexicalArms = (e: BrainEngine) => {
+    const opts = { limit: 10, sourceId: 'query-dates' };
+    return {
+      keyword: () => e.searchKeyword('precisiontoken', opts),
+      keywordChunks: () => e.searchKeywordChunks('precisiontoken', opts),
+      cjk: () => e.searchKeyword('東京', opts),
+      titles: () => e.searchTitles('precisiontoken', opts),
+    };
+  };
+
+  async function withTimeoutKey(value: string | null, run: () => Promise<void>) {
+    if (value !== null) await engine.setConfig('search.statement_timeout_ms', value);
+    try { await run(); } finally { await engine.unsetConfig('search.statement_timeout_ms'); }
+  }
+
+  test('lexical arms bound statements by search.statement_timeout_ms and restore the caller value (#5024)', async () => {
+    // A fresh reader per case: the resolver memoizes per engine. Pool size 1
+    // proves the key is read without a second checkout, also inside a transaction.
+    await withTimeoutKey('1234', () => asSettingProbeReader(`current_setting('statement_timeout') = '1234ms'`, async reader => {
+      for (const [arm, run] of Object.entries(lexicalArms(reader))) expect({ arm, hits: (await run()).length }).toEqual({ arm, hits: 7 });
+      await reader.transaction(async tx => {
+        await tx.executeRaw(`SET LOCAL statement_timeout = '7s'`);
+        for (const [arm, run] of Object.entries(lexicalArms(tx))) {
+          expect({ arm, hits: (await run()).length }).toEqual({ arm, hits: 7 });
+          expect(await tx.executeRaw(`SELECT $1::text AS arm, current_setting('statement_timeout') AS timeout`, [arm])).toEqual([{ arm, timeout: '7s' }]);
+        }
+      });
+    }));
+    await withTimeoutKey(null, () => asSettingProbeReader(`current_setting('statement_timeout') = '8s'`, async reader => {
+      for (const [arm, run] of Object.entries(lexicalArms(reader))) expect({ arm, hits: (await run()).length }).toEqual({ arm, hits: 7 });
+    }));
+  });
+
+  test('a stored out-of-range value keeps the 8000 ms default (#5024)', async () => {
+    await withTimeoutKey('60001', () => asSettingProbeReader(`current_setting('statement_timeout') = '8s'`, async reader => {
+      for (const [arm, run] of Object.entries(lexicalArms(reader))) expect({ arm, hits: (await run()).length }).toEqual({ arm, hits: 7 });
+    }));
+  });
+
+  test('a lexical statement past the bound is canceled with SQLSTATE 57014 (#5024)', async () => {
+    await withTimeoutKey('1', () => asSettingProbeReader(`pg_sleep(0.05) IS NOT NULL`, async reader => {
+      await expect(reader.searchKeyword('precisiontoken', { limit: 10, sourceId: 'query-dates' })).rejects.toMatchObject({ code: '57014' });
+    }));
+  });
 });

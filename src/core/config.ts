@@ -1376,6 +1376,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.metadata_boost_gate',
   'search.crag_escalation',
   'search.crag_think',
+  'search.statement_timeout_ms', // Postgres lexical search arms' statement timeout (postgres-engine/search-settings.ts; whole ms 1..60000, default 8000)
   // Evidence delivery (search/evidence-delivery.ts): default unit (auto),
   // window radius, default/auto/remote-max token budgets; think reads its own unit.
   'search.return_unit',
