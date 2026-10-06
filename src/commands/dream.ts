@@ -38,7 +38,6 @@ import { opError, type OperationError } from '../core/ops/contract.ts';
 import { usageError, writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
-import { truncateUtf8 } from '../core/text-safe.ts';
 import { resolve } from 'node:path';
 
 interface DreamArgs {
@@ -542,15 +541,6 @@ function printHuman(report: CycleReport) {
         const { source, concept, error } = f as { source?: string; concept?: string; error?: string };
         console.log(`      ✗ ${source ?? concept ?? '?'}: ${error ?? 'unknown error'}`);
       }
-    }
-    const warnings = Array.isArray(details?.warnings)
-      ? details.warnings.filter((warning): warning is string => typeof warning === 'string')
-      : [];
-    for (const warning of warnings.slice(0, 5)) {
-      console.log(`      ! ${warning.length > 300 ? `${truncateUtf8(warning, 300)}…` : warning}`);
-    }
-    if (warnings.length > 5) {
-      console.log(`      … ${warnings.length - 5} more warning(s); use --json for all details.`);
     }
     if (p.error) {
       const hint = p.error.hint ? ` (${p.error.hint})` : '';
