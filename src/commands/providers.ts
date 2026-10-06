@@ -2,14 +2,17 @@
  * `gbrain providers` CLI — list, test, env, explain.
  *
  * This command operates WITHOUT a brain connection (no engine needed) so
- * users can verify provider setup before `gbrain init`.
+ * users can verify provider setup before `gbrain init`. The one exception:
+ * `providers env` reads DB-plane `provider_base_urls.*` best-effort when a
+ * brain is configured and free, and says so when it could not.
  */
 
 import { listRecipes, getRecipe } from '../core/ai/recipes/index.ts';
-import { configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat } from '../core/ai/gateway.ts';
-import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
+import { applyOpenAICompatConfig, configureGateway, embedOne, isAvailable as gwIsAvailable, chat as gwChat, resolveNativeBaseUrl } from '../core/ai/gateway.ts';
+import { buildGatewayConfig, COMPAT_BASE_URL_ENVS } from '../core/ai/build-gateway-config.ts';
 import { probeOllama, probeLMStudio } from '../core/ai/probes.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
+import { readDbPlaneConfig, type DbPlaneRead } from '../core/ai/db-plane-config-read.ts';
 import { AIConfigError, AITransientError } from '../core/ai/errors.ts';
 import { lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import type { Recipe } from '../core/ai/types.ts';
@@ -51,7 +54,88 @@ export function envReady(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): 
   return required.every(k => !!env[k]);
 }
 
-export function formatEnvOutput(recipe: Recipe, env: NodeJS.ProcessEnv = process.env): string {
+/** Where `providers env` found the base URL a recipe's calls go to (#5302). */
+export interface ProviderEndpoint {
+  /** The URL the gateway resolves; null when it uses the provider SDK's default or none is configured. */
+  url: string | null;
+  source: string;
+  /** Override hint for this recipe. */
+  override: string;
+  /** DB-plane disclosure line. */
+  dbPlane: string;
+}
+
+const NATIVE_BASE_URL_ENVS: Readonly<Record<string, 'anthropic' | 'openai'>> = { anthropic: 'anthropic', openai: 'openai' };
+
+/**
+ * Display form of a configured URL: userinfo, query and fragment can carry
+ * credentials, so they are removed and named; an unparseable value prints a
+ * fixed marker and none of its text.
+ */
+export function redactBaseUrlForDisplay(raw: string): string {
+  try {
+    const u = new URL(raw);
+    const scrubbed: string[] = [];
+    if (u.username || u.password) { u.username = ''; u.password = ''; scrubbed.push('userinfo'); }
+    if (u.search) { u.search = ''; scrubbed.push('query'); }
+    if (u.hash) { u.hash = ''; scrubbed.push('fragment'); }
+    return scrubbed.length ? `${u.toString()} (${scrubbed.join('/')} redacted)` : raw;
+  } catch {
+    return '(invalid URL; value redacted)';
+  }
+}
+
+/**
+ * The base URL a recipe's calls use, computed by the gateway's own
+ * resolution: buildGatewayConfig over the runtime config (file plane, plus
+ * the DB plane when it was read, merged exactly as loadConfigWithEngine
+ * does), then resolveNativeBaseUrl for native providers or
+ * applyOpenAICompatConfig for openai-compatible ones. Only the provenance
+ * label is derived here. Native providers never read DB-plane base URLs
+ * (mount safety); one that exists is reported as not used.
+ */
+export function resolveProviderEndpoint(recipe: Recipe, fileCfg: GBrainConfig | null, db: DbPlaneRead): ProviderEndpoint {
+  const runtimeCfg = db.read ? db.merged : (fileCfg ?? ({} as GBrainConfig));
+  const gw = buildGatewayConfig(runtimeCfg);
+  const key = `provider_base_urls.${recipe.id}`;
+  const fileUrls = fileCfg?.provider_base_urls ?? {};
+  const runtimeUrls = runtimeCfg.provider_base_urls ?? {};
+  const dbOnly = db.read && !(recipe.id in fileUrls) && recipe.id in runtimeUrls ? runtimeUrls[recipe.id] : undefined;
+
+  const native = NATIVE_BASE_URL_ENVS[recipe.id];
+  if (recipe.tier === 'native') {
+    const envKey = native === 'anthropic' ? 'ANTHROPIC_BASE_URL' : native === 'openai' ? 'OPENAI_BASE_URL' : undefined;
+    const url = native ? resolveNativeBaseUrl(native, gw) ?? null : null;
+    const source = !url ? 'provider SDK default'
+      : envKey && process.env[envKey]?.trim() ? `${envKey} env var` : `${key} (file plane)`;
+    return {
+      url, source,
+      override: envKey ? `the ${envKey} env var, or a file-plane \`${key}\` value.` : 'none; this provider uses its SDK endpoint.',
+      dbPlane: dbOnly !== undefined
+        ? `DB-plane ${key} ${redactBaseUrlForDisplay(dbOnly)}: not used (mount safety; native providers read only env and file plane).`
+        : `DB-plane ${key} is never used for this provider (mount safety).`,
+    };
+  }
+
+  const envKey = COMPAT_BASE_URL_ENVS[recipe.id];
+  let url: string | null = null;
+  try { url = applyOpenAICompatConfig(recipe, gw).baseURL; } catch { url = null; }
+  const source = recipe.resolveOpenAICompatConfig ? (url ? 'recipe endpoint settings (env)' : 'not configured')
+    : !url ? 'not configured'
+      : recipe.id in fileUrls ? `${key} (file plane)`
+        : recipe.id in runtimeUrls ? `${key} (db plane)`
+          : envKey && process.env[envKey] ? `${envKey} env var` : 'recipe default';
+  return {
+    url, source,
+    override: recipe.resolveOpenAICompatConfig
+      ? 'set this recipe\'s endpoint env vars (see Setup below).'
+      : `\`gbrain config set ${key} <url>\`${envKey ? `, or the ${envKey} env var` : ''}.`,
+    dbPlane: db.read ? 'DB plane read: provider_base_urls overrides are included.'
+      : `DB plane not read (${db.reason}): a \`gbrain config set ${key} <url>\` value applies when no file-plane value exists; check it with \`gbrain config get ${key}\`.`,
+  };
+}
+
+export function formatEnvOutput(recipe: Recipe, env: NodeJS.ProcessEnv = process.env, endpoint?: ProviderEndpoint): string {
   const lines: string[] = [];
   lines.push(`${recipe.name} (${recipe.id})`);
   lines.push('');
@@ -71,6 +155,12 @@ export function formatEnvOutput(recipe: Recipe, env: NodeJS.ProcessEnv = process
     for (const k of optional) {
       lines.push(`  ${k.padEnd(32)} ${env[k] ? '✓ set' : '✗ not set'}`);
     }
+  }
+  if (endpoint) {
+    lines.push('');
+    lines.push(`Base URL: ${endpoint.url ? redactBaseUrlForDisplay(endpoint.url) : '(none)'}  (${endpoint.source})`);
+    lines.push(`  Override: ${endpoint.override}`);
+    lines.push(`  ${endpoint.dbPlane}`);
   }
   if (recipe.auth_env?.setup_url) {
     lines.push('');
@@ -297,7 +387,7 @@ async function runTest(args: string[]): Promise<void> {
   }
 }
 
-function runEnv(args: string[]): void {
+async function runEnv(args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
     console.error('Usage: gbrain providers env <id>');
@@ -308,7 +398,9 @@ function runEnv(args: string[]): void {
     console.error(`Unknown provider: ${id}. Run \`gbrain providers list\` to see known providers.`);
     process.exit(1);
   }
-  console.log(formatEnvOutput(recipe));
+  let fileCfg: GBrainConfig | null = null;
+  try { fileCfg = loadConfig(); } catch { fileCfg = null; }
+  console.log(formatEnvOutput(recipe, process.env, resolveProviderEndpoint(recipe, fileCfg, await readDbPlaneConfig(fileCfg))));
 }
 
 async function runExplain(args: string[]): Promise<void> {
