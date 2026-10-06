@@ -1599,6 +1599,8 @@
           "responseSchema?: { name: string; description?: string; schema: Record<string, unknown>; } | undefined",
           "system?: string | undefined",
           "temperature?: number | undefined",
+          "thinking?: \"off\" | undefined",
+          "timeoutMs?: number | undefined",
           "tools?: ChatToolDef[] | undefined"
         ],
         "name": "ChatOpts"
@@ -1796,7 +1798,8 @@
           "replayState?: ToolLoopReplayState | undefined",
           "system?: string | undefined",
           "toolHandlers: Map<string, ToolHandler>",
-          "tools: ChatToolDef[]"
+          "tools: ChatToolDef[]",
+          "turnTimeoutMs?: number | undefined"
         ],
         "name": "ToolLoopOpts"
       },
@@ -2956,6 +2959,7 @@
           "judgeModel: string",
           "lr: number",
           "lrSchedule: \"cosine\" | \"linear\" | \"constant\"",
+          "maxCostSource?: \"default\" | \"user\" | undefined",
           "maxCostUsd: number",
           "maxRuntimeMin: number",
           "mode: \"patch\" | \"rewrite\"",
@@ -5487,6 +5491,7 @@
           "blockForConfiguration: (error: LocalConfigurationError) => void",
           "configurationError: LocalConfigurationError | null",
           "configurationReleaseResults: readonly ConfigurationReleaseResult[]",
+          "drainForced: boolean",
           "emit: { (event: \"ready\"): boolean; (event: \"unhealthy\", info: UnhealthyReason): boolean; }",
           "eventNames: () => (string | symbol)[]",
           "getHandler: (name: string) => MinionHandler | undefined",
@@ -5540,6 +5545,7 @@
           "registeredNames: string[]",
           "removeAllListeners: <E extends string | symbol>(eventName?: string | symbol | undefined) => MinionWorker",
           "removeListener: <E extends string | symbol>(eventName: string | symbol, listener: (...args: any[]) => void) => MinionWorker",
+          "requestShutdown: () => void",
           "rssWatchdogTriggered: boolean",
           "setMaxListeners: (n: number) => MinionWorker",
           "start: () => Promise<void>",
@@ -5678,7 +5684,8 @@
           "surface?: string | undefined",
           "surfaceSetBy?: string | undefined",
           "takesHoldersAllowList?: string[] | undefined",
-          "token: string"
+          "token: string",
+          "tokenTtlSeconds?: number | null | undefined"
         ],
         "name": "AuthInfo"
       },
