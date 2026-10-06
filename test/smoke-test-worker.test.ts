@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { spawnSync } from 'child_process';
@@ -8,7 +8,7 @@ const REPO = resolve(import.meta.dir, '..');
 const SCRIPT = join(REPO, 'scripts', 'smoke-test.sh');
 const tempDirs: string[] = [];
 
-function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number; configUrlOnly?: boolean; embeddingStatus?: string }) {
+function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number; configUrlOnly?: boolean; embeddingStatus?: string; forceWatchdog?: boolean; withoutTimeoutBinary?: boolean }) {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-smoke-worker-'));
   tempDirs.push(dir);
   const fakeBun = join(dir, 'bun');
@@ -39,6 +39,7 @@ exit 0
 `);
   chmodSync(fakeBun, 0o755);
   if (opts.legacyPid) writeFileSync(workerPid, `${opts.legacyPid}\n`);
+  const path = opts.withoutTimeoutBinary ? pathWithout(dir, ['timeout', 'gtimeout']) : process.env.PATH;
 
   const result = spawnSync('bash', [SCRIPT], {
     cwd: REPO,
@@ -61,9 +62,41 @@ exit 0
       SMOKE_BUN_CALLS: calls,
       SMOKE_WORKER_STARTED: workerStarted,
       SMOKE_SUPERVISOR_RUNNING: opts.supervisorRunning ? '1' : '0',
+      PATH: path,
+      GBRAIN_TEST_SMOKE_TIMEOUT_BIN: opts.forceWatchdog ? 'none' : '',
     },
   });
   return { ...result, calls, workerStarted, workerPid };
+}
+
+/** A PATH that resolves every current binary except `names`, like a stock macOS host without GNU coreutils. */
+function pathWithout(dir: string, names: string[]): string {
+  const bin = join(dir, 'path-bin');
+  mkdirSync(bin);
+  const seen = new Set(names);
+  for (const entry of (process.env.PATH ?? '').split(':')) {
+    if (!entry || !existsSync(entry)) continue;
+    for (const name of readdirSync(entry)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      symlinkSync(join(entry, name), join(bin, name));
+    }
+  }
+  return bin;
+}
+
+/** The smoke script's own timeout prelude and run_with_timeout, run in bash with the watchdog forced. */
+function runWatchdog(body: string) {
+  const script = readFileSync(SCRIPT, 'utf8');
+  const start = script.indexOf('TIMEOUT_BIN=""');
+  const end = script.indexOf('\n}\n', script.indexOf('run_with_timeout() {')) + 3;
+  const started = Date.now();
+  const result = spawnSync('bash', ['-c', `${script.slice(start, end)}\n${body}`], {
+    encoding: 'utf8',
+    timeout: 20_000,
+    env: { ...process.env, GBRAIN_TEST_SMOKE_TIMEOUT_BIN: 'none' },
+  });
+  return { ...result, elapsedMs: Date.now() - started };
 }
 
 afterEach(() => {
@@ -111,5 +144,35 @@ describe('smoke-test database and embedding sources (#5063)', () => {
     const result = runSmoke({ supervisorRunning: true, embeddingStatus: 'fail' });
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('doctor embedding_provider failed');
+  }, 30_000);
+});
+
+describe('smoke-test bounded checks without GNU timeout (#5248)', () => {
+  test('a host with neither timeout nor gtimeout still runs every bounded check', () => {
+    const result = runSmoke({ supervisorRunning: true, withoutTimeoutBinary: true });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stderr).not.toContain('command not found');
+    expect(result.stdout).toContain('GBrain CLI');
+    expect(result.stdout).toContain('health score: 97/100');
+    expect(result.stdout).toContain('GBrain worker (supervisor-managed)');
+    expect(readFileSync(result.calls, 'utf8')).toContain('jobs supervisor status --json');
+  }, 30_000);
+
+  test('the forced watchdog path passes the same healthy run', () => {
+    const result = runSmoke({ supervisorRunning: true, forceWatchdog: true });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain('GBrain worker (supervisor-managed)');
+  }, 30_000);
+
+  test('the watchdog stops a hanging command at its deadline', () => {
+    const result = runWatchdog('run_with_timeout 1 sleep 30; echo "rc=$?"');
+    expect(result.stdout.trim()).toBe('rc=143');
+    expect(result.elapsedMs).toBeLessThan(6_000);
+  }, 30_000);
+
+  test('the watchdog returns a quick command\'s own exit status without waiting for the deadline', () => {
+    const result = runWatchdog('run_with_timeout 30 sh -c "exit 3"; echo "rc=$?"; run_with_timeout 30 true; echo "rc=$?"');
+    expect(result.stdout.trim().split('\n')).toEqual(['rc=3', 'rc=0']);
+    expect(result.elapsedMs).toBeLessThan(6_000);
   }, 30_000);
 });
