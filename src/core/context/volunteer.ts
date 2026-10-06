@@ -26,7 +26,6 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { resolveHardExcludes } from '../search/source-boost.ts';
 import {
   extractCandidatesFromWindow,
   type WindowTurn,
@@ -135,8 +134,6 @@ export interface GateOpts {
   minConfidence?: number;
   /** Skipped BEFORE gate + cap — see VolunteerOpts.excludeSlugs. */
   excludeSlugs?: ReadonlySet<string>;
-  /** Slug prefixes skipped BEFORE gate + cap: volunteerStage passes search's hard excludes (resolveHardExcludes). */
-  excludeSlugPrefixes?: readonly string[];
   /** Turn count of the extraction window — feeds the rationale template. */
   windowSize: number;
 }
@@ -171,7 +168,6 @@ export function gateVolunteeredPointers(
   const out: VolunteeredPage[] = [];
   for (const p of block.pointers) {
     if (opts.excludeSlugs?.has(p.slug)) continue; // before gate + cap — see VolunteerOpts
-    if (opts.excludeSlugPrefixes?.some((prefix) => p.slug.startsWith(prefix))) continue;
     // matchedNorm is the resolver's provenance join-key (the candidate that
     // resolved the pointer); display-based lookup is the fallback for the
     // rare suffix rows where provenance couldn't be recovered.
@@ -268,9 +264,6 @@ export async function volunteerStage(
     maxPages: opts.maxPages,
     minConfidence: opts.minConfidence,
     excludeSlugs: opts.excludeSlugs,
-    // The same hard-exclude policy search applies (defaults ∪ GBRAIN_SEARCH_EXCLUDE),
-    // before the cap, so an excluded subtree never takes a volunteer slot.
-    excludeSlugPrefixes: resolveHardExcludes(),
     windowSize,
   });
 }
