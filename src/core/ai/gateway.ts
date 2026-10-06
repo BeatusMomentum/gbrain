@@ -2058,8 +2058,6 @@ async function embedMultimodalOpenAICompat(
   // it in the body keeps LiteLLM-style providers that DO accept it correct.
   const inputType = opts.inputType ?? 'document';
 
-  // The recipe's compat fetch (wire-shape translator) applies here as on the text and chat paths.
-  const compatFetch = applyOpenAICompatConfig(recipe, cfg).fetch ?? fetch;
   const allEmbeddings: Float32Array[] = [];
   for (const input of inputs) {
     const body: Record<string, unknown> = {
@@ -2080,7 +2078,7 @@ async function embedMultimodalOpenAICompat(
 
     let res: Response;
     try {
-      res = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, () => compatFetch(`${baseUrl}/embeddings`, {
+      res = await invokeAI({ operation: 'gateway.multimodal', kind: 'multimodal', model: `${recipe.id}:${modelId}` }, () => fetch(`${baseUrl}/embeddings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
