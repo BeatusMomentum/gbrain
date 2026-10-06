@@ -289,15 +289,13 @@ for a file that is laned, has no arm or is gone fails.
 
 `stress-changed-tests` (in `test-status`) runs every test file a PR adds or
 modifies, plus importers of changed `test/helpers/` files, 10 times with a
-fresh database per iteration; a failure must be root-caused in that PR. The
-local twin is `bun run test:stress [files…] [--iterations N] [--base <ref>]
+fresh database per iteration; root-cause a failure in that PR. Local twin: `bun run test:stress [files…] [--iterations N] [--base <ref>]
 [--postgres]`. Profiles, exemptions and replay: [scripts/stress/README.md](../scripts/stress/README.md).
 
 ### Race hunt
 
-The nightly `race-hunt` job (outside `test-status`) runs every file in
-`test/postgres-unit-arms.txt` 10 times against Postgres and fails with one
-`test:stress` reproduce line per failing file ([scripts/stress/README.md](../scripts/stress/README.md#race-hunt)).
+Nightly, outside `test-status`: every listed arm 10x on Postgres, one reproduce
+line per failing file ([details](../scripts/stress/README.md#race-hunt)).
 
 ### Scale tier
 
