@@ -105,10 +105,11 @@ interface FakeGoogle {
   calendarEvents: unknown[];
   calendarDelta: unknown[];
   calendarExpireSyncToken: boolean;
-  /** Windowed (no syncToken) calendar lists answer HTTP 400. */
-  calendarFailWindowed: boolean;
-  /** Called as a windowed (no syncToken) calendar list is served. */
-  onCalendarWindowed?: () => void;
+  /**
+   * Sees every timeMin/timeMax (non-delta) calendar list before it is served;
+   * returning 'fail' answers that list with HTTP 400.
+   */
+  calendarRangeHook?: (query: URLSearchParams) => 'fail' | void;
   /** Counters so each windowed/full re-list mints a DISTINCT sync token. */
   calendarWindowedLists: number;
   contactsFullLists: number;
@@ -131,7 +132,6 @@ function emptyFx(): FakeGoogle {
     calendarEvents: [],
     calendarDelta: [],
     calendarExpireSyncToken: false,
-    calendarFailWindowed: false,
     calendarWindowedLists: 0,
     contactsFullLists: 0,
     calls: [],
@@ -213,8 +213,7 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
         if (fx.calendarExpireSyncToken) return json({ error: { code: 410, message: 'Sync token expired' } }, 410);
         return json({ items: fx.calendarDelta, nextSyncToken: 'cal-sync-delta' });
       }
-      if (fx.calendarFailWindowed) return json({ error: { code: 400, message: 'Bad Request' } }, 400);
-      fx.onCalendarWindowed?.();
+      if (fx.calendarRangeHook?.(u.searchParams) === 'fail') return json({ error: { code: 400, message: 'Bad Request' } }, 400);
       fx.calendarWindowedLists++;
       return json({ items: fx.calendarEvents, nextSyncToken: `cal-sync-w${fx.calendarWindowedLists}` });
     }
@@ -801,7 +800,7 @@ describe('syncToken 410 recovery', () => {
         expect(fxA.calls.filter((c) => c.includes('/calendars/'))[0]).toContain('syncToken=cal-sync-legacy');
         // Legacy state has no calendar horizon either: one bounded [now, now + 60d] coverage list, never the window floor.
         expect(fxA.calendarWindowedLists).toBe(1);
-        const coverageMin = Date.parse(calendarCallParams(fxA)[1].get('timeMin')!);
+        const coverageMin = Date.parse(calendarQueries(fxA)[1].get('timeMin')!);
         expect(Math.abs(coverageMin - Date.now())).toBeLessThan(60_000);
         const stateA = readGoogleState(dirA);
         expect(stateA.calendar_sync_token).toBe('cal-sync-delta');
@@ -925,428 +924,341 @@ describe('syncToken 410 recovery', () => {
   });
 });
 
-// ── Calendar sync window ─────────────────────────────────────────────────────
-// A syncToken request cannot carry timeMin/timeMax, and with singleEvents=true
-// any change to a recurring series returns every expanded instance, years back
-// and forward. The window [now - historyDays, now + 60d] is enforced by the
-// sweep itself on every path.
+// ── Calendar window (#5442) ──────────────────────────────────────────────────
+// The source keeps pages for events from historyDays back to 60 days ahead.
+// Google applies that range only to windowed lists: a syncToken delta has no
+// timeMin/timeMax, and with singleEvents=true a touched recurring series comes
+// back as every expanded instance. These cases pin the sweep's own filter on
+// every path, the catch-up list for instances crossing the leading edge, and
+// the --full reconcile scope.
+//
+// The fake serves fx.calendarEvents for every timeMin/timeMax list and
+// fx.calendarDelta for every delta, without filtering, exactly like the
+// unfiltered delta Google returns.
 
-const CAL_DAY = 86_400_000;
+const DAY = 86_400_000;
 
-function calEvent(id: string, startMs: number, over: { summary?: string; durationMs?: number } = {}) {
+/** A confirmed one-hour meeting `startOffsetDays` from NOW_MS. */
+function meeting(id: string, startOffsetDays: number, opts: { title?: string; lengthMs?: number; status?: string } = {}) {
+  const startMs = NOW_MS + startOffsetDays * DAY;
   return {
     id,
-    status: 'confirmed',
-    summary: over.summary ?? 'Weekly zephyr sync',
+    status: opts.status ?? 'confirmed',
+    summary: opts.title ?? `Zephyr meeting ${id}`,
     start: { dateTime: new Date(startMs).toISOString() },
-    end: { dateTime: new Date(startMs + (over.durationMs ?? 3_600_000)).toISOString() },
+    end: { dateTime: new Date(startMs + (opts.lengthMs ?? 3_600_000)).toISOString() },
     organizer: { email: 'a@example.com' },
     attendees: [{ email: 'a@example.com', self: true, responseStatus: 'accepted' }],
   };
 }
 
-async function calendarSlugs(): Promise<string[]> {
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id = 'gsrc' AND deleted_at IS NULL AND slug LIKE 'calendar/%' ORDER BY slug`,
+/** Live calendar pages keyed by event id (pages without one keyed by slug). */
+async function calendarPages(): Promise<Map<string, { slug: string; title: string }>> {
+  const rows = await engine.executeRaw<{ slug: string; title: string; event_id: string | null }>(
+    `SELECT slug, title, frontmatter->>'event_id' AS event_id FROM pages
+      WHERE source_id = 'gsrc' AND deleted_at IS NULL AND slug LIKE 'calendar/%'`,
   );
-  return rows.map((r) => r.slug);
+  return new Map(rows.map((r) => [r.event_id ?? r.slug, { slug: r.slug, title: r.title }]));
 }
 
-function calendarCallParams(fx: FakeGoogle): URLSearchParams[] {
+/** Query strings of the calendar list calls the sweep made, in order. */
+function calendarQueries(fx: FakeGoogle): URLSearchParams[] {
   return fx.calls.filter((c) => c.includes('/calendars/')).map((c) => new URL(c, 'https://www.googleapis.com').searchParams);
 }
 
-/** Seed a calendar page as an earlier (pre-fix) sweep would have left it. */
-async function seedCalendarPage(slug: string, eventId: string | null, startMs: number, createdAtMs: number): Promise<void> {
+function storeHorizon(dir: string, horizonMs: number | null): void {
+  writeFileSync(googleStateFile(dir), JSON.stringify({ ...readGoogleState(dir), calendar_horizon_ms: horizonMs }), 'utf-8');
+}
+
+const near = (actualMs: number, expectedMs: number, toleranceMs = 120_000): boolean => Math.abs(actualMs - expectedMs) < toleranceMs;
+
+/** A page the sweep would have written for `eventId` (or a hand-made one when null), at slug.md. */
+async function seedMeetingPage(slug: string, eventId: string | null, startOffsetDays: number): Promise<void> {
+  const startMs = NOW_MS + startOffsetDays * DAY;
   await engine.putPage(
     slug,
     {
       type: 'meeting',
-      title: 'Weekly zephyr sync',
-      compiled_truth: 'A seeded meeting.',
+      title: `Seeded ${slug.split('/').pop()}`,
+      compiled_truth: 'Seeded for the calendar window tests.',
       frontmatter: {
-        ...(eventId ? { event_id: eventId } : {}),
+        ...(eventId === null ? {} : { event_id: eventId }),
         start: new Date(startMs).toISOString(),
         end: new Date(startMs + 3_600_000).toISOString(),
       },
     },
     { sourceId: 'gsrc' },
   );
-  await engine.executeRaw(
-    `UPDATE pages SET created_at = $1::timestamptz, source_path = $2 || '.md' WHERE source_id = 'gsrc' AND slug = $2`,
-    [new Date(createdAtMs).toISOString(), slug],
-  );
+  await engine.executeRaw(`UPDATE pages SET source_path = slug || '.md' WHERE source_id = 'gsrc' AND slug = $1`, [slug]);
 }
 
-describe('calendar sync window', () => {
-  test('an incremental delta imports only instances inside [now - historyDays, now + 60d]', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calwin-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    fx.calendarEvents = [calEvent('ser1_w01', NOW_MS + 1 * CAL_DAY)];
-    fx.calendarDelta = [
-      calEvent('ser1_past3y', NOW_MS - 3 * 365 * CAL_DAY),
-      calEvent('ser1_past95d', NOW_MS - 95 * CAL_DAY),
-      // Began before the floor, still running inside it: in window (the API's
-      // timeMin also compares against the END time).
-      calEvent('ser1_straddle', NOW_MS - 100 * CAL_DAY, { durationMs: 20 * CAL_DAY }),
-      calEvent('ser1_in7d', NOW_MS + 7 * CAL_DAY),
-      calEvent('ser1_fut75d', NOW_MS + 75 * CAL_DAY),
-      calEvent('ser1_fut10y', NOW_MS + 10 * 365 * CAL_DAY),
-    ];
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        expect((await sweep(dir, fx, vault, {}, 'calendar')).added).toBe(1);
-        const { result: res2, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'calendar'));
-        expect(res2.status).not.toBe('partial');
-        expect(res2.added).toBe(2);
-        const slugs = await calendarSlugs();
-        expect(slugs).toHaveLength(3);
-        const years = slugs.map((s) => Number(s.split('/')[1]));
-        expect(Math.min(...years)).toBeGreaterThanOrEqual(new Date(NOW_MS - 100 * CAL_DAY).getUTCFullYear());
-        expect(Math.max(...years)).toBeLessThanOrEqual(new Date(NOW_MS + 60 * CAL_DAY).getUTCFullYear());
-        expect(err).toContain('[google] calendar: skipped 4 event(s) outside the sync window');
-        expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-delta');
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+/** Runs `body` against a fresh google source directory with an isolated GBRAIN_HOME. */
+async function withCalendarSource(body: (h: { dir: string; fx: FakeGoogle; vault: FakeVault }) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'gsrc-calwindow-'));
+  try {
+    await insertGoogleSource(dir);
+    await withHome(() => body({ dir, fx: emptyFx(), vault: makeVault() }));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe('calendar window (#5442)', () => {
+  test('a delta full of series instances materializes only those inside the window', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('seed_tomorrow', 1)];
+      await sweep(dir, fx, vault, {}, 'calendar');
+
+      fx.calendarDelta = [
+        meeting('inst_4y_ago', -4 * 365),
+        meeting('inst_ended_before_floor', -91),
+        // Starts before the 90-day floor but ends after it: inside, as Google's timeMin compares the end.
+        meeting('inst_spans_floor', -95, { lengthMs: 10 * DAY }),
+        meeting('inst_next_week', 7),
+        meeting('inst_day_59', 59),
+        meeting('inst_day_61', 61),
+        meeting('inst_8y_ahead', 8 * 365),
+      ];
+      const { result, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'calendar'));
+
+      expect(result.status).not.toBe('partial');
+      expect(result.added).toBe(3);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(['inst_day_59', 'inst_next_week', 'inst_spans_floor', 'seed_tomorrow']);
+      expect(err).toContain('[google] calendar: 4 listed event(s) outside the sync window (90 days back, 60 ahead) were not imported');
+      expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-delta');
+    });
   });
 
-  test('an existing page moved past the horizon is deleted; aged-out history is left untouched', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calmove-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    fx.calendarEvents = [
-      calEvent('evt_old', NOW_MS - 200 * CAL_DAY, { summary: 'Old planning' }),
-      calEvent('evt_gone', NOW_MS - 250 * CAL_DAY, { summary: 'Gone retro' }),
-      calEvent('evt_soon', NOW_MS + 10 * CAL_DAY, { summary: 'Soon review' }),
-    ];
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        // Imported while the source kept 400 days of history.
-        expect((await sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_history_days: 400 } })).added).toBe(3);
-        const before = await calendarSlugs();
-        const oldSlug = before.find((s) => s.includes('old-planning'))!;
-        const soonSlug = before.find((s) => s.includes('soon-review'))!;
-
-        fx.calendarDelta = [
-          calEvent('evt_old', NOW_MS - 200 * CAL_DAY, { summary: 'Old planning renamed' }),
-          calEvent('evt_soon', NOW_MS + 200 * CAL_DAY, { summary: 'Soon review' }),
-          // A cancelled series instance keeps its start; the cancellation still
-          // deletes its page wherever the event sits in time.
-          { ...calEvent('evt_gone', NOW_MS - 250 * CAL_DAY, { summary: 'Gone retro' }), status: 'cancelled' },
-        ];
-        const res2 = await sweep(dir, fx, vault, {}, 'calendar');
-        expect(res2.deleted).toBe(2);
-        expect(res2.added).toBe(0);
-        expect(await calendarSlugs()).toEqual([oldSlug]);
-        expect(existsSync(join(dir, `${soonSlug}.md`))).toBe(false);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test('negative control: a delta with only in-window changes logs no skips and imports them all', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      await sweep(dir, fx, vault, {}, 'calendar');
+      fx.calendarDelta = [meeting('only_soon', 2), meeting('only_recent', -2)];
+      const { result, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'calendar'));
+      expect(result.added).toBe(2);
+      expect(err).not.toContain('outside the sync window');
+    });
   });
 
-  test('instances that enter the horizon are listed once per advance; the top-up never replaces the sync token', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-caltop-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        await sweep(dir, fx, vault, {}, 'calendar');
-        const horizon1 = readGoogleState(dir).calendar_horizon_ms!;
-        expect(Math.abs(horizon1 - (Date.now() + 60 * CAL_DAY))).toBeLessThan(60_000);
+  test('a move past the horizon removes the page; a change to aged-out history leaves its page as it was; a cancellation always removes', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('old_offsite', -150, { title: 'Old offsite' }), meeting('old_cancelled', -160), meeting('next_review', 12)];
+      expect((await sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_history_days: 365 } })).added).toBe(3);
+      const before = await calendarPages();
 
-        // Ten days pass: the stored horizon lags now + 60d.
-        const lagged = NOW_MS + 50 * CAL_DAY;
-        writeFileSync(
-          googleStateFile(dir),
-          JSON.stringify({ ...readGoogleState(dir), calendar_horizon_ms: lagged }),
-          'utf-8',
-        );
-        fx.calls = [];
-        fx.calendarEvents = [calEvent('ser2_fut55d', NOW_MS + 55 * CAL_DAY, { summary: 'Entering sync' })];
-        const res2 = await sweep(dir, fx, vault, {}, 'calendar');
-        expect(res2.added).toBe(1);
-        const params = calendarCallParams(fx);
-        expect(params).toHaveLength(2);
-        expect(params[0].get('syncToken')).toBe('cal-sync-w1');
-        expect(params[1].get('syncToken')).toBeNull();
-        expect(params[1].get('timeMin')).toBe(new Date(lagged).toISOString());
-        const state = readGoogleState(dir);
-        expect(state.calendar_sync_token).toBe('cal-sync-delta');
-        expect(state.calendar_horizon_ms!).toBeGreaterThan(lagged);
+      fx.calendarDelta = [
+        meeting('old_offsite', -150, { title: 'Old offsite (renamed)' }),
+        meeting('old_cancelled', -160, { status: 'cancelled' }),
+        meeting('next_review', 120),
+      ];
+      const result = await sweep(dir, fx, vault, {}, 'calendar');
 
-        // A sweep right after: the horizon has not moved a day, no top-up.
-        fx.calls = [];
-        await sweep(dir, fx, vault, {}, 'calendar');
-        expect(calendarCallParams(fx)).toHaveLength(1);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+      expect(result.added).toBe(0);
+      expect(result.deleted).toBe(2);
+      const after = await calendarPages();
+      expect([...after.keys()]).toEqual(['old_offsite']);
+      expect(after.get('old_offsite')).toEqual(before.get('old_offsite')!);
+      expect(existsSync(join(dir, `${before.get('next_review')!.slug}.md`))).toBe(false);
+    });
   });
 
-  test('a failed horizon top-up marks the sweep partial, keeps the horizon, and retries next sweep', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-caltopfail-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        await sweep(dir, fx, vault, {}, 'calendar');
-        const lagged = NOW_MS + 50 * CAL_DAY;
-        writeFileSync(
-          googleStateFile(dir),
-          JSON.stringify({ ...readGoogleState(dir), calendar_horizon_ms: lagged }),
-          'utf-8',
-        );
-        fx.calendarEvents = [calEvent('ser3_fut55d', NOW_MS + 55 * CAL_DAY, { summary: 'Retried entry' })];
-        fx.calendarFailWindowed = true;
-        const res2 = await sweep(dir, fx, vault, {}, 'calendar');
-        expect(res2.status).toBe('partial');
-        expect(readGoogleState(dir).calendar_horizon_ms).toBe(lagged);
-        expect(await calendarSlugs()).toHaveLength(0);
-
-        fx.calendarFailWindowed = false;
-        const res3 = await sweep(dir, fx, vault, {}, 'calendar');
-        expect(res3.status).not.toBe('partial');
-        expect(res3.added).toBe(1);
-        expect(readGoogleState(dir).calendar_horizon_ms!).toBeGreaterThan(lagged);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test('a cancelled skeleton (id and status only) removes its own page and nothing else', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('keep_me', 3), meeting('drop_me', 4)];
+      await sweep(dir, fx, vault, {}, 'calendar');
+      fx.calendarDelta = [{ id: 'drop_me', status: 'cancelled' }];
+      const result = await sweep(dir, fx, vault, {}, 'calendar');
+      expect(result.deleted).toBe(1);
+      expect([...(await calendarPages()).keys()]).toEqual(['keep_me']);
+    });
   });
 
-  test('a sweep aborted during the horizon top-up keeps the horizon for the next sweep', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-caltopabort-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        await sweep(dir, fx, vault, {}, 'calendar');
-        const lagged = NOW_MS + 50 * CAL_DAY;
-        writeFileSync(
-          googleStateFile(dir),
-          JSON.stringify({ ...readGoogleState(dir), calendar_horizon_ms: lagged }),
-          'utf-8',
-        );
-        fx.calendarEvents = [calEvent('ser4_fut55d', NOW_MS + 55 * CAL_DAY, { summary: 'Aborted entry' })];
-        const controller = new AbortController();
-        fx.onCalendarWindowed = () => controller.abort();
-        const res = await sweep(dir, fx, vault, { signal: controller.signal }, 'calendar');
-        expect(res.status).toBe('partial');
-        expect(readGoogleState(dir).calendar_horizon_ms).toBe(lagged);
-        expect(await calendarSlugs()).toHaveLength(0);
+  test('a lagging horizon gets one catch-up list from the horizon to the ceiling; the delta token stays the cursor', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      await sweep(dir, fx, vault, {}, 'calendar');
+      expect(calendarQueries(fx)).toHaveLength(1);
+      expect(near(readGoogleState(dir).calendar_horizon_ms!, Date.now() + 60 * DAY)).toBe(true);
 
-        // An aborted --full skips the window reconcile too.
-        await seedCalendarPage('calendar/2026/10/unlisted-kept', 'evt_unlisted_abort', NOW_MS + 5 * CAL_DAY, NOW_MS);
-        const fullCtl = new AbortController();
-        fx.onCalendarWindowed = () => fullCtl.abort();
-        const resFull = await sweep(dir, fx, vault, { full: true, signal: fullCtl.signal }, 'calendar');
-        expect(resFull.status).toBe('partial');
-        expect(await calendarSlugs()).toEqual(['calendar/2026/10/unlisted-kept']);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+      const lagging = NOW_MS + 48 * DAY;
+      storeHorizon(dir, lagging);
+      fx.calls = [];
+      fx.calendarEvents = [meeting('crossed_edge', 52, { title: 'Crossed the edge' })];
+      const result = await sweep(dir, fx, vault, {}, 'calendar');
+
+      expect(result.added).toBe(1);
+      const [delta, catchUp, ...rest] = calendarQueries(fx);
+      expect(rest).toHaveLength(0);
+      expect(delta.get('syncToken')).toBe('cal-sync-w1');
+      expect(catchUp.get('syncToken')).toBeNull();
+      expect(catchUp.get('timeMin')).toBe(new Date(lagging).toISOString());
+      expect(near(Date.parse(catchUp.get('timeMax')!), Date.now() + 60 * DAY)).toBe(true);
+      const state = readGoogleState(dir);
+      expect(state.calendar_sync_token).toBe('cal-sync-delta');
+      expect(near(state.calendar_horizon_ms!, Date.now() + 60 * DAY)).toBe(true);
+    });
   });
 
-  test('a 410 re-list covers the whole window: no top-up on top of it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-cal410h-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        await sweep(dir, fx, vault, {}, 'calendar');
-        const lagged = NOW_MS + 50 * CAL_DAY;
-        writeFileSync(
-          googleStateFile(dir),
-          JSON.stringify({ ...readGoogleState(dir), calendar_horizon_ms: lagged }),
-          'utf-8',
-        );
-        fx.calls = [];
-        fx.calendarExpireSyncToken = true;
-        await sweep(dir, fx, vault, {}, 'calendar');
-        expect(calendarCallParams(fx)).toHaveLength(2); // expired delta + windowed re-list
-        expect(readGoogleState(dir).calendar_horizon_ms!).toBeGreaterThan(lagged);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test('a horizon less than a day behind is neither listed nor advanced, so short gaps add up to a catch-up list', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      await sweep(dir, fx, vault, {}, 'calendar');
+      const ceiling = NOW_MS + 60 * DAY;
+
+      const hoursBehind = ceiling - 20 * 3_600_000;
+      storeHorizon(dir, hoursBehind);
+      fx.calls = [];
+      await sweep(dir, fx, vault, {}, 'calendar');
+      expect(calendarQueries(fx)).toHaveLength(1);
+      expect(readGoogleState(dir).calendar_horizon_ms).toBe(hoursBehind);
+
+      const dayBehind = ceiling - 26 * 3_600_000;
+      storeHorizon(dir, dayBehind);
+      fx.calls = [];
+      await sweep(dir, fx, vault, {}, 'calendar');
+      const queries = calendarQueries(fx);
+      expect(queries).toHaveLength(2);
+      expect(queries[1].get('timeMin')).toBe(new Date(dayBehind).toISOString());
+      expect(readGoogleState(dir).calendar_horizon_ms!).toBeGreaterThan(ceiling - 60_000);
+    });
   });
 
-  test('the horizon top-up lists the SECONDARY calendar the source is bound to', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-caltopsec-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    const secondary = 'family0123456789@group.calendar.google.com';
-    const cfg = { g_calendar_id: secondary };
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        await sweep(dir, fx, vault, {}, 'calendar', { cfg });
-        writeFileSync(
-          googleStateFile(dir),
-          JSON.stringify({ ...readGoogleState(dir), calendar_horizon_ms: NOW_MS + 50 * CAL_DAY }),
-          'utf-8',
-        );
-        fx.calls = [];
-        await sweep(dir, fx, vault, {}, 'calendar', { cfg });
-        const calendarCalls = fx.calls.filter((c) => c.includes('/calendars/'));
-        expect(calendarCalls).toHaveLength(2);
-        for (const c of calendarCalls) {
-          expect(c).toContain(`/calendars/${encodeURIComponent(secondary)}/events`);
-        }
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test('a failed catch-up list marks the sweep partial and keeps the horizon; the next sweep catches up', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      await sweep(dir, fx, vault, {}, 'calendar');
+      const lagging = NOW_MS + 45 * DAY;
+      storeHorizon(dir, lagging);
+      fx.calendarEvents = [meeting('late_arrival', 50)];
+      fx.calendarRangeHook = () => 'fail';
+
+      const failed = await sweep(dir, fx, vault, {}, 'calendar');
+      expect(failed.status).toBe('partial');
+      expect(readGoogleState(dir).calendar_horizon_ms).toBe(lagging);
+      expect((await calendarPages()).size).toBe(0);
+
+      fx.calendarRangeHook = undefined;
+      const retried = await sweep(dir, fx, vault, {}, 'calendar');
+      expect(retried.status).not.toBe('partial');
+      expect([...(await calendarPages()).keys()]).toEqual(['late_arrival']);
+      expect(readGoogleState(dir).calendar_horizon_ms!).toBeGreaterThan(lagging);
+    });
   });
 
-  test('legacy state without a horizon does one bounded [now, ceil] coverage list before advancing it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-callegh-'));
-    try {
-      await insertGoogleSource(dir);
+  test('an abort during the catch-up list keeps the horizon, and an aborted --full deletes nothing', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      await sweep(dir, fx, vault, {}, 'calendar');
+      const lagging = NOW_MS + 45 * DAY;
+      storeHorizon(dir, lagging);
+      fx.calendarEvents = [meeting('never_lands', 50)];
+      const stop = new AbortController();
+      fx.calendarRangeHook = () => { stop.abort(); };
+
+      const aborted = await sweep(dir, fx, vault, { signal: stop.signal }, 'calendar');
+      expect(aborted.status).toBe('partial');
+      expect(readGoogleState(dir).calendar_horizon_ms).toBe(lagging);
+      expect((await calendarPages()).size).toBe(0);
+
+      await seedMeetingPage('calendar/seeded/unlisted-but-aborted', 'unlisted_evt', 6);
+      const stopFull = new AbortController();
+      fx.calendarRangeHook = () => { stopFull.abort(); };
+      const abortedFull = await sweep(dir, fx, vault, { full: true, signal: stopFull.signal }, 'calendar');
+      expect(abortedFull.status).toBe('partial');
+      expect([...(await calendarPages()).keys()]).toEqual(['unlisted_evt']);
+    });
+  });
+
+  test('an expired token re-lists the whole window, which counts as caught up', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      await sweep(dir, fx, vault, {}, 'calendar');
+      const lagging = NOW_MS + 30 * DAY;
+      storeHorizon(dir, lagging);
+      fx.calls = [];
+      fx.calendarExpireSyncToken = true;
+      await sweep(dir, fx, vault, {}, 'calendar');
+      const [expired, relist, ...rest] = calendarQueries(fx);
+      expect(rest).toHaveLength(0);
+      expect(expired.get('syncToken')).toBe('cal-sync-w1');
+      expect(near(Date.parse(relist.get('timeMin')!), Date.now() - 90 * DAY)).toBe(true);
+      expect(readGoogleState(dir).calendar_horizon_ms!).toBeGreaterThan(lagging);
+    });
+  });
+
+  test('the catch-up list reads the secondary calendar the source is bound to', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      const team = 'team5511example@group.calendar.google.com';
+      await sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_calendar_id: team } });
+      storeHorizon(dir, NOW_MS + 40 * DAY);
+      fx.calls = [];
+      await sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_calendar_id: team } });
+      const paths = fx.calls.filter((c) => c.includes('/calendars/')).map((c) => new URL(c, 'https://www.googleapis.com').pathname);
+      expect(paths).toEqual([0, 1].map(() => `/calendar/v3/calendars/${encodeURIComponent(team)}/events`));
+    });
+  });
+
+  test('state saved before horizons existed lists [now, ceiling] once; a failed list leaves it unset for a retry', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
       writeFileSync(
         googleStateFile(dir),
         JSON.stringify({ ...readGoogleState(dir), calendar_sync_token: 'cal-sync-legacy', calendar_id: 'primary' }),
         'utf-8',
       );
-      await withHome(async () => {
-        const fx = emptyFx();
-        // Unchanged since the legacy list, entered the horizon since: only a coverage list can bring it.
-        fx.calendarEvents = [calEvent('legacy_fut40d', NOW_MS + 40 * CAL_DAY, { summary: 'Entered horizon' })];
-        const res = await sweep(dir, fx, makeVault(), {}, 'calendar');
-        expect(res.added).toBe(1);
-        const params = calendarCallParams(fx);
-        expect(params).toHaveLength(2);
-        expect(params[0].get('syncToken')).toBe('cal-sync-legacy');
-        expect(params[1].get('syncToken')).toBeNull();
-        expect(Math.abs(Date.parse(params[1].get('timeMin')!) - Date.now())).toBeLessThan(60_000);
-        expect(Math.abs(Date.parse(params[1].get('timeMax')!) - (Date.now() + 60 * CAL_DAY))).toBeLessThan(60_000);
-        const state = readGoogleState(dir);
-        expect(state.calendar_sync_token).toBe('cal-sync-delta');
-        expect(Math.abs(state.calendar_horizon_ms! - (Date.now() + 60 * CAL_DAY))).toBeLessThan(60_000);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+      fx.calendarEvents = [meeting('unchanged_since_legacy', 35)];
+      fx.calendarRangeHook = () => 'fail';
+      expect((await sweep(dir, fx, vault, {}, 'calendar')).status).toBe('partial');
+      expect(readGoogleState(dir).calendar_horizon_ms ?? null).toBeNull();
+
+      fx.calendarRangeHook = undefined;
+      fx.calls = [];
+      const result = await sweep(dir, fx, vault, {}, 'calendar');
+      expect(result.added).toBe(1);
+      const [, coverage] = calendarQueries(fx);
+      expect(near(Date.parse(coverage.get('timeMin')!), Date.now())).toBe(true);
+      expect(near(Date.parse(coverage.get('timeMax')!), Date.now() + 60 * DAY)).toBe(true);
+      expect(near(readGoogleState(dir).calendar_horizon_ms!, Date.now() + 60 * DAY)).toBe(true);
+    });
   });
 
-  test('a failed legacy coverage list leaves the horizon unset, so the next sweep lists again', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-callegfail-'));
-    try {
-      await insertGoogleSource(dir);
-      writeFileSync(
-        googleStateFile(dir),
-        JSON.stringify({ ...readGoogleState(dir), calendar_sync_token: 'cal-sync-legacy', calendar_id: 'primary' }),
-        'utf-8',
+  test('--full deletes in-window pages the list no longer names and keeps every page outside that scope', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('still_listed', 2)];
+      await seedMeetingPage('calendar/seeded/upcoming-cancelled', 'gone_upcoming', 8);
+      await seedMeetingPage('calendar/seeded/recent-deleted', 'gone_recent', -20);
+      await seedMeetingPage('calendar/seeded/before-floor', 'history_evt', -180);
+      await seedMeetingPage('calendar/seeded/beyond-horizon', 'far_evt', 9 * 365);
+      await seedMeetingPage('calendar/seeded/hand-written', null, 5);
+
+      const result = await sweep(dir, fx, vault, { full: true }, 'calendar');
+
+      expect(result.status).not.toBe('partial');
+      expect(result.deleted).toBe(2);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(
+        ['calendar/seeded/hand-written', 'far_evt', 'history_evt', 'still_listed'].sort(),
       );
-      await withHome(async () => {
-        const fx = emptyFx();
-        fx.calendarFailWindowed = true;
-        expect((await sweep(dir, fx, makeVault(), {}, 'calendar')).status).toBe('partial');
-        expect(readGoogleState(dir).calendar_horizon_ms ?? null).toBeNull();
-        fx.calendarFailWindowed = false;
-        fx.calls = [];
-        await sweep(dir, fx, makeVault(), {}, 'calendar');
-        expect(calendarCallParams(fx)).toHaveLength(2);
-        expect(typeof readGoogleState(dir).calendar_horizon_ms).toBe('number');
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    });
   });
 
-  test('--full reconcile removes only in-window pages the window list no longer names', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calrec-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    fx.calendarEvents = [calEvent('evt_live', NOW_MS + 3 * CAL_DAY, { summary: 'Live sync' })];
-    try {
-      await insertGoogleSource(dir);
-      // Cancelled (or deleted) since the last list: inside the window, no longer listed.
-      await seedCalendarPage('calendar/2026/10/dropped-review', 'evt_dropped', NOW_MS + 5 * CAL_DAY, NOW_MS);
-      await seedCalendarPage('calendar/2026/09/dropped-retro', 'evt_dropped_past', NOW_MS - 10 * CAL_DAY, NOW_MS - 11 * CAL_DAY);
-      // Outside the listed window: never reconciled, whatever their age or origin.
-      await seedCalendarPage('calendar/2026/03/aged-history', 'evt_hist', NOW_MS - 200 * CAL_DAY, NOW_MS - 199 * CAL_DAY);
-      await seedCalendarPage('calendar/2036/09/overflow-future', 'ser_fut', NOW_MS + 10 * 365 * CAL_DAY, NOW_MS);
-      // Hand-authored (no event_id): not the sweep's page.
-      await seedCalendarPage('calendar/2026/10/manual-note', null, NOW_MS + 4 * CAL_DAY, NOW_MS);
-      await withHome(async () => {
-        const res = await sweep(dir, fx, vault, { full: true }, 'calendar');
-        expect(res.status).not.toBe('partial');
-        expect(res.deleted).toBe(2);
-        const slugs = await calendarSlugs();
-        expect(slugs).not.toContain('calendar/2026/10/dropped-review');
-        expect(slugs).not.toContain('calendar/2026/09/dropped-retro');
-        expect(slugs).toContain('calendar/2026/03/aged-history');
-        expect(slugs).toContain('calendar/2036/09/overflow-future');
-        expect(slugs).toContain('calendar/2026/10/manual-note');
-        expect(slugs.some((s) => s.includes('live-sync'))).toBe(true);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  test('--full after historyDays shrinks keeps pages from the old, wider window', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('wide_window_only', -250), meeting('both_windows', -40)];
+      expect((await sweep(dir, fx, vault, { full: true }, 'calendar', { cfg: { g_history_days: 365 } })).added).toBe(2);
+      fx.calendarEvents = [meeting('both_windows', -40)];
+      const result = await sweep(dir, fx, vault, { full: true }, 'calendar');
+      expect(result.deleted).toBe(0);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(['both_windows', 'wide_window_only']);
+    });
   });
 
-  test('shrinking historyDays deletes nothing before the old floor on --full', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calshrink-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    fx.calendarEvents = [
-      calEvent('evt_200d', NOW_MS - 200 * CAL_DAY, { summary: 'Old offsite' }),
-      calEvent('evt_30d', NOW_MS - 30 * CAL_DAY, { summary: 'Recent review' }),
-    ];
-    try {
-      await insertGoogleSource(dir);
-      await withHome(async () => {
-        expect((await sweep(dir, fx, vault, { full: true }, 'calendar', { cfg: { g_history_days: 400 } })).added).toBe(2);
-        // The source now keeps 90 days; the -200d event is no longer in any list.
-        fx.calendarEvents = [calEvent('evt_30d', NOW_MS - 30 * CAL_DAY, { summary: 'Recent review' })];
-        const res = await sweep(dir, fx, vault, { full: true }, 'calendar');
-        expect(res.deleted).toBe(0);
-        const slugs = await calendarSlugs();
-        expect(slugs.some((s) => s.includes('old-offsite'))).toBe(true);
-        expect(slugs.some((s) => s.includes('recent-review'))).toBe(true);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  test('--full refuses more than 200 calendar deletions without GBRAIN_ALLOW_MASS_RECONCILE and reports partial', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      for (let i = 0; i < 205; i++) await seedMeetingPage(`calendar/seeded/bulk-${i}`, `bulk_${i}`, 1 + (i % 40));
 
-  test('--full calendar reconcile honours the mass-delete guard', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calmass-'));
-    const fx = emptyFx();
-    const vault = makeVault();
-    try {
-      await insertGoogleSource(dir);
-      for (let i = 0; i < 201; i++) {
-        await seedCalendarPage(`calendar/2026/bulk/instance-${String(i).padStart(3, '0')}`, `ser_bulk_${i}`, NOW_MS + (1 + (i % 50)) * CAL_DAY, NOW_MS);
-      }
-      await withHome(async () => {
-        const { result: res1, err } = await capturedStderr(() => sweep(dir, fx, vault, { full: true }, 'calendar'));
-        expect(res1.deleted).toBe(0);
-        expect(err).toContain('mass-delete guard refused 201 deletes');
-        expect(res1.status).toBe('partial');
-        expect(await calendarSlugs()).toHaveLength(201);
+      const { result: refused, err } = await capturedStderr(() => sweep(dir, fx, vault, { full: true }, 'calendar'));
+      expect(refused.status).toBe('partial');
+      expect(refused.deleted).toBe(0);
+      expect(err).toContain('mass-delete guard refused 205 deletes for source gsrc');
+      expect((await calendarPages()).size).toBe(205);
 
-        await withEnv({ GBRAIN_ALLOW_MASS_RECONCILE: '1' }, async () => {
-          expect((await sweep(dir, fx, vault, { full: true }, 'calendar')).deleted).toBe(201);
-        });
-        expect(await calendarSlugs()).toHaveLength(0);
-      });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+      const allowed = await withEnv({ GBRAIN_ALLOW_MASS_RECONCILE: '1' }, () => sweep(dir, fx, vault, { full: true }, 'calendar'));
+      expect(allowed.deleted).toBe(205);
+      expect((await calendarPages()).size).toBe(0);
+    });
   });
 });
 
