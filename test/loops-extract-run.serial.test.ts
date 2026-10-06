@@ -394,6 +394,63 @@ describe('runLoopsExtract', () => {
     expect(await countLoops()).toBe(0); // none of the failure paths wrote anything
   });
 
+  test('truncation escalates maxTokens once (2048 → 8192) and the escalated answer lands', async () => {
+    // A retry at the same cap truncates identically, so without the
+    // escalation a dense thread is dead after max_attempts with the revision
+    // never extracted.
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return caps.length === 1
+        ? { text: 'partial…', stopReason: 'length' }
+        : { text: '{"commitments":[],"decisions_pending":[]}', stopReason: 'end' };
+    };
+
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+
+    expect(caps).toEqual([2048, 8192]);
+    expect(r.status).toBe('extracted');
+    expect(await countLoops()).toBe(0);
+  });
+
+  test('still truncated at the 8192 ceiling → THROWS naming the ceiling, after exactly two calls', async () => {
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return { text: 'partial…', stopReason: 'length' };
+    };
+
+    const err = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { reason?: string }).reason).toBe('truncated');
+    expect((err as Error).message).toContain('at the 8192-token ceiling after one escalation from 2048');
+    expect(caps).toEqual([2048, 8192]);
+    expect(await countLoops()).toBe(0);
+  });
+
+  test('a non-length provider error is not escalated: one call, error propagates', async () => {
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      throw new Error('synthetic provider 500');
+    };
+
+    await expect(runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC })).rejects.toThrow(
+      'synthetic provider 500',
+    );
+    expect(caps).toEqual([2048]);
+
+    caps.length = 0;
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return { text: '', stopReason: 'refusal' };
+    };
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+    expect(r.reason).toBe('refused');
+    expect(caps).toEqual([2048]);
+  });
+
   test('parse failure (garbage response) THROWS the all-or-nothing barrier, ZERO open_loops rows', async () => {
     chatImpl = async () => ({
       text: 'I found some commitments but here they are in prose, not JSON.',
