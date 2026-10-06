@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204538,
-    "stdoutSha256": "14baa283cc6c3428ec4ab5205ee7a23660cb9c516c8bea96dbb84f8e421d5f3c",
+    "stdoutBytes": 204774,
+    "stdoutSha256": "604bc3babd6d521ed848e4dc37dac37064a7e058c7cded48e6f4c1706d39a8bc",
     "toolNames": [
       "remember",
       "entity",
@@ -3044,19 +3044,24 @@
         "scope": "read"
       },
       {
-        "description": "Return a page's indexed content chunks (the units search ranks). Use when debugging why search did or did not match a page. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
+        "description": "Return a page's indexed content chunks (the units search ranks). Each chunk names its source_id and slug. Use when debugging why search did or did not match a page. Needs read scope. On page_not_found: resolve the slug with resolve_slugs.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_chunks",
         "parameters": {
-          "slug": "string"
+          "slug": "string",
+          "source_id": "string?"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
             "slug": {
               "description": "Slug of the page whose content chunks to return.",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "One source, or '__all__'. Unset: every source in scope that holds the slug.",
               "type": "string"
             }
           },
