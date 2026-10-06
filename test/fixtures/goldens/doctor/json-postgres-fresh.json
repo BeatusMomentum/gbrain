@@ -497,7 +497,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 119/119 public tables",
+          "message": "RLS enabled on 120/120 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -509,7 +509,7 @@
         },
         {
           "category": "meta",
-          "message": "976 column(s) verified against live schema",
+          "message": "986 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },

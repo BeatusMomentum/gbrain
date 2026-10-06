@@ -2865,8 +2865,8 @@
         "idempotent": true,
         "name": "f1_write_attribution",
         "sql": {
-          "length": 14327,
-          "sha256": "b33d4cab4dd9f1bed8e7847e800b632c7c6b1ac800c19ddf12d176f83b8b0cd0"
+          "length": 14289,
+          "sha256": "7ea729556506f9d73682f50fb7c26950a61cc3b60ab82d3d2fcbd4252956fb9f"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -3169,10 +3169,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "facts_attributed_to",
+        "name": "wanted_links",
         "sql": {
-          "length": 9118,
-          "sha256": "2e772deed199aba5dc05c6b9f88b70c57a6b50dc724d60b0e9eca684c66f63ba"
+          "length": 1422,
+          "sha256": "9f86606532990d1946206c23c7dcb0134bfbde881c5a63653b442d355d6042d8"
         },
         "sqlFor": "absent",
         "transaction": "absent",
