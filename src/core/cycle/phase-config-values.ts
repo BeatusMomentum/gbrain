@@ -11,6 +11,11 @@ import { opError, type OperationError } from '../ops/contract.ts';
 export const SYNTHESIZE_CONCEPTS_BUDGET_KEY = 'cycle.synthesize_concepts.budget_usd';
 export const SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD = 1.5;
 
+export const PROPOSE_TAKES_CALL_TIMEOUT_KEY = 'dream.propose_takes.call_timeout_ms';
+export const PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS = 1_000;
+/** The gateway's default chat timeout; the gateway still races its own (shorter wins). */
+export const PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS = 300_000;
+
 interface PhaseConfigSpec {
   /** Human range, used in the refusal and the stored-value warnings. */
   expected: string;
@@ -33,6 +38,20 @@ const SPECS: Record<string, PhaseConfigSpec> = {
     expected: 'a finite number of US dollars above 0',
     defaultText: String(SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD),
     parse: finitePositive,
+  },
+  [PROPOSE_TAKES_CALL_TIMEOUT_KEY]: {
+    expected: `a whole number of milliseconds from ${PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS} to ${PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS}`,
+    defaultText: 'scaled with the output cap, 90000 to 300000 ms',
+    parse(raw) {
+      if (!/^\d+$/.test(raw.trim())) return null;
+      const n = Number(raw.trim());
+      return n >= PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS && n <= PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS ? n : null;
+    },
+    clamp(raw) {
+      const n = finitePositive(raw);
+      if (n === null) return null;
+      return Math.min(PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS, Math.max(PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS, Math.floor(n)));
+    },
   },
 };
 

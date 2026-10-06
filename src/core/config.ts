@@ -1512,6 +1512,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // inside maxTokens, so the hardcoded defaults truncated every dense page.
   'dream.propose_takes.max_tokens',
   'dream.propose_takes.retry_max_tokens',
+  // #5958: per-call extractor timeout (whole ms 1000..300000; unset scales with the output cap); cycle/phase-config-values.ts.
+  'dream.propose_takes.call_timeout_ms',
   'dream.patterns.lookback_days',
   'dream.patterns.min_evidence',
   // #2782-family: patterns-phase subagent timeouts (mirror of the

@@ -25,6 +25,9 @@ import {
   PROPOSE_TAKES_RETRY_MAX_TOKENS,
   type ProposeTakesExtractor,
 } from '../src/core/cycle/propose-takes.ts';
+import { parsePhaseConfigValue } from '../src/core/cycle/phase-config-values.ts';
+import { renderCliError } from '../src/core/agent-output.ts';
+import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -195,3 +198,98 @@ describe('runPhaseProposeTakes threads dream.propose_takes.* config (#4494)', ()
     expect(seen[0].retryMaxTokens).toBe(PROPOSE_TAKES_RETRY_MAX_TOKENS);
   });
 });
+
+// #5958 / #5874: dream.propose_takes.call_timeout_ms. A stored value the phase
+// cannot use warns with the key named (never the value); an out-of-range number
+// is held to 1000..300000; the configured bound never outlasts the remaining
+// phase deadline beyond the default 90s floor.
+describe('runPhaseProposeTakes threads dream.propose_takes.call_timeout_ms (#5958)', () => {
+  const KEY = 'dream.propose_takes.call_timeout_ms';
+  test.each([
+    ['an in-range value threads through', '240000', 240_000, false],
+    ['unset keeps the output-cap scaling', undefined, undefined, false],
+    ['blank reads as unset', '  ', undefined, false],
+    ['a non-number keeps the scaling with a warning', 'banana', undefined, true],
+    ['zero keeps the scaling with a warning', '0', undefined, true],
+    ['a negative value keeps the scaling with a warning', '-7', undefined, true],
+    ['a fractional value floors with a warning', '1500.7', 1_500, true],
+    ['below 1000 is held to 1000 with a warning', '20', 1_000, true],
+    ['above 300000 is held to 300000 with a warning', '300001', 300_000, true],
+    ['a value AbortSignal.timeout would reject is held to 300000', '1e16', 300_000, true],
+  ] as const)('call_timeout_ms: %s', async (_name, raw, expectedMs, warns) => {
+    const engine = buildMockEngine(raw === undefined ? {} : { [KEY]: raw });
+    const seen: Array<number | undefined> = [];
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seen.push(input.callTimeoutMs);
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(seen).toEqual([expectedMs]);
+    const warnings = (result.details as { warnings: string[] }).warnings;
+    const named = warnings.filter((w) => w.includes(KEY));
+    expect(named.length > 0).toBe(warns);
+    for (const w of named) {
+      expect(w).toContain(`gbrain config set ${KEY}`);
+      expect(w).toContain(`gbrain config get ${KEY}`);
+      if (raw !== undefined && raw.trim().length > 2) expect(w).not.toContain(raw);
+    }
+    if (warns) expect(result.status).toBe('warn');
+  });
+
+  test('a failed config read keeps the scaling and does not stop the phase', async () => {
+    const engine = buildMockEngine({});
+    const getConfig = engine.getConfig.bind(engine);
+    engine.getConfig = async (key: string) => {
+      if (key === KEY) throw new Error('config plane down');
+      return getConfig(key);
+    };
+    const seen: Array<number | undefined> = [];
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seen.push(input.callTimeoutMs);
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(seen).toEqual([undefined]);
+    expect(result.status).not.toBe('fail');
+  });
+
+  test('the configured bound is held to the remaining phase deadline, never below the 90s default', async () => {
+    const seen: Array<number | undefined> = [];
+    const extractor: ProposeTakesExtractor = async (input) => {
+      seen.push(input.callTimeoutMs);
+      return [];
+    };
+    await runPhaseProposeTakes(buildCtx(buildMockEngine({ [KEY]: '240000' })), { extractor, deadlineMs: 150_000 });
+    expect(seen[0]).toBeGreaterThan(149_000);
+    expect(seen[0]).toBeLessThanOrEqual(150_000);
+    await runPhaseProposeTakes(buildCtx(buildMockEngine({ [KEY]: '240000' })), { extractor, deadlineMs: 10_000 });
+    expect(seen[1]).toBe(90_000);
+  });
+});
+
+describe('config set validation for dream.propose_takes.call_timeout_ms (#5958)', () => {
+  const KEY = 'dream.propose_takes.call_timeout_ms';
+  test('the key is registered and an in-range whole number is accepted', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain(KEY);
+    expect(parsePhaseConfigValue(KEY, '1000')).toBe(1_000);
+    expect(parsePhaseConfigValue(KEY, '300000')).toBe(300_000);
+  });
+
+  for (const bad of ['999', '300001', '1500.5', 'banana', '0']) {
+    test(`${JSON.stringify(bad)} is refused with the rendered contract and never echoed`, () => {
+      let err: unknown;
+      try { parsePhaseConfigValue(KEY, bad); } catch (e) { err = e; }
+      const rendered = renderCliError(err, { json: true, command: 'config', tty: false });
+      expect(rendered.exitCode).toBe(2);
+      const env = JSON.parse(rendered.stdout!);
+      expect(env).toMatchObject({
+        code: 'invalid_params',
+        fix: { argv: ['gbrain', 'config', 'set', KEY, '<VALUE>'], verify: { argv: ['gbrain', 'config', 'get', KEY] } },
+      });
+      expect(env.message).toContain('1000 to 300000');
+      expect(env.why).toContain('Nothing was written');
+      if (bad.length > 1) expect(rendered.stdout).not.toContain(bad);
+    });
+  }
+});
+
