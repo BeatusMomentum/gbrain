@@ -59,7 +59,7 @@
 // which made the NOT EXISTS guard ineffective on federated brains.
 
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
-import { stripReasoningBlocks } from '../llm-json.ts';
+import { findJsonCloseIndex, stripReasoningBlocks } from '../llm-json.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -1516,9 +1516,9 @@ export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
 const MAX_ARRAY_ANCHOR_CANDIDATES = 64;
 
 /**
- * Parse the JSON array anchored at ONE `[` offset, reproducing the historical
- * two-step exactly: whole-slice parse, then a trim-back to the last `]` to
- * recover from trailing prose. Split out of parseAtomsOutcomeInner so the
+ * Parse the JSON array anchored at ONE `[` offset: whole-slice parse, then a
+ * trim-back to the array's own closing `]` so trailing prose cannot hijack it
+ * (the first complete array wins). Split out of parseAtomsOutcomeInner so the
  * anchor scan can try successive offsets without duplicating the reason
  * strings — those are asserted by tests and ride the drain's `last_error`.
  */
@@ -1531,8 +1531,8 @@ function parseArrayAtOffset(
   try {
     parsed = JSON.parse(slice);
   } catch {
-    // Try trimming back from the end to recover from trailing prose.
-    const arrayEnd = slice.lastIndexOf(']');
+    // Trim back to the array's own closing bracket to drop trailing prose.
+    const arrayEnd = findJsonCloseIndex(slice);
     if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
     try {
       parsed = JSON.parse(slice.slice(0, arrayEnd + 1));
