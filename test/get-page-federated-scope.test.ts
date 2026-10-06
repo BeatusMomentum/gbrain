@@ -29,7 +29,6 @@ import { operations, OperationError, type OperationContext } from '../src/core/o
 import { importFromContent } from '../src/core/import-file.ts';
 import { serializeMarkdown } from '../src/core/markdown.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
-import { toAgentError } from '../src/core/agent-output.ts';
 
 let engine: PGLiteEngine;
 const get_page = operations.find(o => o.name === 'get_page')!;
@@ -639,83 +638,6 @@ describe('#2555 get_chunks federated scope', () => {
         expect(line, `${enginePath} getChunks must gate the vector select behind includeEmbedding`).toMatch(/includeEmbedding \?/);
       }
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// get_chunks on a slug held by several sources (#4329 class, get_page parity).
-// Contract: every row names the source it was read from, a per-call source_id
-// narrows the read (grant-checked), and without one the read spans the scope
-// exactly as before. Regression: rows carried no source, so a multi-source
-// read mixed pages indistinguishably, and a passed source_id was dropped. The
-// #2555 cases above only seed the slug in one granted source.
-// ---------------------------------------------------------------------------
-describe('get_chunks: same slug in several sources', () => {
-  beforeEach(async () => {
-    await importPage('secret/beta-doc', 'beta', 'Beta secret', 'beta chunk zero', 'beta chunk one');
-    await importPage('secret/beta-doc', 'default', 'Default decoy', 'default decoy chunk');
-  });
-
-  type Row = { chunk_text: string; source_id: string; slug: string };
-  const bySource = (rows: Row[]) => {
-    const out: Record<string, string[]> = {};
-    for (const r of rows) (out[r.source_id] ??= []).push(r.chunk_text);
-    for (const k of Object.keys(out)) out[k].sort();
-    return out;
-  };
-  const both = { beta: ['beta chunk one', 'beta chunk zero'], default: ['default decoy chunk'] };
-
-  test('a grant spanning both sources reads both, and every row names its source and slug', async () => {
-    const chunks = await get_chunks.handler(remoteCtx(['beta', 'default']), { slug: 'secret/beta-doc' }) as Row[];
-    expect(bySource(chunks)).toEqual(both);
-    expect(chunks.every(c => c.slug === 'secret/beta-doc')).toBe(true);
-  });
-
-  test('source_id narrows the read to that source and the rows name it', async () => {
-    const chunks = await get_chunks.handler(remoteCtx(['beta', 'default']), {
-      slug: 'secret/beta-doc', source_id: 'default',
-    }) as Row[];
-    expect(chunks.map(c => [c.source_id, c.chunk_text])).toEqual([['default', 'default decoy chunk']]);
-  });
-
-  test('source_id outside the grant is refused, not ignored', async () => {
-    await expect(get_chunks.handler(remoteCtx(['beta']), { slug: 'secret/beta-doc', source_id: 'default' }))
-      .rejects.toMatchObject({ code: 'permission_denied' });
-  });
-
-  test('refusals render the agent contract: out-of-grant permission_denied, archived unknown_source', async () => {
-    const render = { transport: 'stdio' as const, isCallable: () => true, preapproved: () => false };
-    const envelopeOf = async (call: Promise<unknown>) => {
-      const err = await call.then(() => undefined, (e: unknown) => e);
-      expect(err).toBeInstanceOf(OperationError);
-      return toAgentError(err, { transport: 'stdio', op: 'get_chunks', render });
-    };
-    const denied = await envelopeOf(get_chunks.handler(remoteCtx(['beta']), { slug: 'secret/beta-doc', source_id: 'default' }));
-    expect(denied.code).toBe('permission_denied');
-    expect(denied.fix).toMatchObject({ next: 'tell_user_to_run', argv: ['gbrain', 'auth', 'list'] });
-    expect(denied.fix?.why).toBeTruthy();
-    expect(JSON.stringify(denied)).not.toContain('default decoy chunk');
-
-    await engine.executeRaw(`UPDATE sources SET archived = true WHERE id = 'alpha'`);
-    const gone = await envelopeOf(get_chunks.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc', source_id: 'alpha' }));
-    expect(gone.code).toBe('unknown_source');
-    expect(gone.fix).toMatchObject({ next: 'run', mcp: { tool: 'sources_list' } });
-    expect(gone.fix?.why).toBeTruthy();
-  });
-
-  test('an explicit source_id never surfaces a private page\'s chunks to a remote caller', async () => {
-    await engine.putPage('secret/beta-doc', {
-      type: 'note', title: 'Beta secret', compiled_truth: 'now private', frontmatter: { visibility: 'private' },
-    }, { sourceId: 'beta' });
-    const chunks = await get_chunks.handler(remoteCtx(['beta', 'default']), { slug: 'secret/beta-doc', source_id: 'beta' }) as Row[];
-    expect(chunks).toEqual([]);
-  });
-
-  test("trusted local '__all__' spans every source, each row naming its source", async () => {
-    const chunks = await get_chunks.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {
-      slug: 'secret/beta-doc', source_id: '__all__',
-    }) as Row[];
-    expect(bySource(chunks)).toEqual(both);
   });
 });
 

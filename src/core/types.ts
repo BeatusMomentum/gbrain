@@ -684,8 +684,6 @@ export interface Chunk {
    * (getChunks).
    */
   embedding_is_null?: boolean;
-  /** Source of the chunk's page (one slug can live in several sources); set by getChunks only. */
-  source_id?: string;
 }
 
 /**
