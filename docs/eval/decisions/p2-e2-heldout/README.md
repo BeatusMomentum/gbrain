@@ -56,4 +56,27 @@ The fixtures, outputs, judgments and the script that produced them are in gbrain
 `docs/benchmarks/p2-e2-consumers/` (branch `capy/p2-preregistration`). `per-consumer-report.json` here is the summary.
 The budget ledger did not meter this spend, because the calls went to providers directly; the preregistered estimate was $12.
 
+## External development check (report-only)
+
+This check does not change the default. The default follows the preregistered sealed verdict above: correctness was the
+primary gate and passed, and QA non-inferiority held on sealed LoCoMo.
+
+GBRA-52 ran date grounding on and off in its BEAM development lane (100k, 500k and 1M; 158 sessions, all dated). The lane
+combines retrieval with a 600-token facts block inside 8k tokens of delivered context, with a gemini reader and judge.
+
+| Measure | Grounding on | Grounding off | Paired (W / L / T) |
+|---|---|---|---|
+| Pooled rubric | 0.653 | 0.663 | 35 / 51 / 274, mean −0.010; losses concentrated at 1M |
+| Temporal | 0.438 | 0.493 | 0 / 3 / 33 |
+| Event ordering | — | — | 6 / 10 |
+
+With grounding on, 4.9–8.4% of facts carry a `valid_from` that differs from the session date, a median of 3–4 days earlier.
+
+GBRA-52's reading: in this lane the dates rarely reach the reader. Recall returns the newest 100 facts, of which only 3–6%
+are dated, and the block holds 600 tokens. So the result says little about correctness, and it shows no QA gain at that
+budget. Receipts: gbrain-evals branch `capy/mpw-harness` at 8ec0330,
+`docs/benchmarks/2026-10-05-memory-proof-wave-dev/facts-lanes-fix2-date-grounding.md`.
+
+Follow-up: measure date-grounding QA on fixed BEAM with a facts budget large enough for the dates to reach the reader.
+
 Development record: `../p2-date-grounding-dev/`.
