@@ -1919,6 +1919,7 @@ const CLI_DISPATCH_CONTEXT: CliDispatchContext = {
   dbMarkerBrainId,
   SELECTED_CONFIG_BY_ENGINE,
   cliModuleUrl: import.meta.url,
+  makeContext,
 };
 
 /**
