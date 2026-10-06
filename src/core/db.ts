@@ -29,10 +29,6 @@ export const POOL_END_TIMEOUT_SECONDS = 2;
  * rejects is worse than one that races past a stuck socket. The race timer is
  * the real guarantee; `{ timeout }` just lets a healthy drain return in ms.
  *
- * The guard timer stays referenced: an unref'd guard is not serviced under
- * `bun test` on Windows, which disarms the bound. The finally clearTimeout keeps
- * the fast path from holding the event loop.
- *
  * Note callers that close MULTIPLE pools should `Promise.all` them rather than
  * awaiting sequentially, so the per-pool bounds run concurrently instead of
  * stacking.
@@ -43,6 +39,7 @@ export async function endPoolBounded(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const guard = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, POOL_END_TIMEOUT_SECONDS * 1000 + 500);
+    timer.unref?.();
   });
   try {
     await Promise.race([
