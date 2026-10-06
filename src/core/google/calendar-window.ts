@@ -57,7 +57,7 @@ export interface CalendarApplyIo<R extends { relPath: string }> {
   render: (ev: CalendarEventData) => R | null;
   existingPath: (eventId: string) => Promise<string | null>;
   fallbackPath: (ev: CalendarEventData) => string;
-  deletePage: (relPath: string) => Promise<void>;
+  dropPage: (relPath: string) => Promise<void>;
   importPage: (rendered: R) => Promise<void>;
 }
 
@@ -77,13 +77,13 @@ export async function applyCalendarEvents<R extends { relPath: string }>(events:
     // Identity is the immutable event id, not the date-derived path: reschedules move and
     // cancelled skeletons (id + status only) still find their page.
     const existingPath = await io.existingPath(ev.id);
-    if (!rendered) { await io.deletePage(existingPath ?? io.fallbackPath(ev)); continue; }
+    if (!rendered) { await io.dropPage(existingPath ?? io.fallbackPath(ev)); continue; }
     if (placement === 'future') {
       outside++;
-      if (existingPath) await io.deletePage(existingPath);
+      if (existingPath) await io.dropPage(existingPath);
       continue;
     }
-    if (existingPath && existingPath !== rendered.relPath) await io.deletePage(existingPath);
+    if (existingPath && existingPath !== rendered.relPath) await io.dropPage(existingPath);
     await io.importPage(rendered);
   }
   return outside;

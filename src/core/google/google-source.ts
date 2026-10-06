@@ -498,7 +498,7 @@ async function sweepCalendar(
     render: renderCalendarEventPage,
     existingPath: eventId => calendarPageRelPathByEventId(deps, eventId),
     fallbackPath: calendarRelPath,
-    deletePage: relPath => deletePageByRelPath(deps, relPath, summary),
+    dropPage: relPath => deletePageByRelPath(deps, relPath, summary),
     importPage: async rendered => { await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs); },
   };
   let outside = await applyCalendarEvents(result.events, window, io);
