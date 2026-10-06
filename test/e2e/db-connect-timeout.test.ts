@@ -17,7 +17,7 @@ const withTimeout = (seconds: number) => {
   url.searchParams.set('connect_timeout', String(seconds));
   return url.toString();
 };
-const connectTimeoutOf = (pool: unknown) => (pool as { options: { connect_timeout: unknown } }).options.connect_timeout;
+const timerOf = (pool: unknown) => (pool as { options: { connect_timeout: unknown } }).options.connect_timeout;
 
 describe.skipIf(!hasDatabase())('connect_timeout from database_url (Postgres)', () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -27,13 +27,13 @@ describe.skipIf(!hasDatabase())('connect_timeout from database_url (Postgres)', 
     assertSafeE2eDatabaseUrl(base);
     await db.connect({ database_url: withTimeout(17) });
     const singleton = db.getConnection();
-    expect(connectTimeoutOf(singleton)).toBe(17);
+    expect(timerOf(singleton)).toBe(17);
     expect((await singleton`SELECT 1 AS ok`)[0].ok).toBe(1);
 
     const engine = new PostgresEngine();
     cleanups.push(() => engine.disconnect());
     await engine.connect({ database_url: withTimeout(23), poolSize: 2 });
-    expect(connectTimeoutOf(engine.sql)).toBe(23);
+    expect(timerOf(engine.sql)).toBe(23);
     expect((await engine.executeRaw<{ ok: number }>('SELECT 1 AS ok'))[0].ok).toBe(1);
   }, 60_000);
 
@@ -42,12 +42,12 @@ describe.skipIf(!hasDatabase())('connect_timeout from database_url (Postgres)', 
     cleanups.push(() => cm.disconnect());
     const read = await cm.getReadPool();
     const ddl = await cm.ddl();
-    expect(connectTimeoutOf(read)).toBe(19);
-    expect(connectTimeoutOf(ddl)).toBe(29);
+    expect(timerOf(read)).toBe(19);
+    expect(timerOf(ddl)).toBe(29);
     expect((await ddl`SELECT 1 AS ok`)[0].ok).toBe(1);
 
     const plain = new ConnectionManager({ url: base });
     cleanups.push(() => plain.disconnect());
-    expect(connectTimeoutOf(await plain.getReadPool())).toBe(10);
+    expect(timerOf(await plain.getReadPool())).toBe(10);
   }, 60_000);
 });

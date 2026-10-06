@@ -278,15 +278,15 @@ export function rollbackWritesLostError(opts: { losses: readonly { relation: str
         user_message: `Going back to PGLite would lose what changed on Postgres since the move: ${listed}. Should I go back anyway? If not, nothing changes and Postgres stays in use.` } });
 }
 
-/** `not_found`: after cutover, the retained PGLite copy a rollback would restore is gone. */
+/** `not_found`: a post-cutover rollback has no retained PGLite datastore left to restore. */
 export function retainedCopyMissingError(opts: { runId: string; retainedPath: string }): OperationError {
   const docs = `${GRADUATION_GUIDE}#check-resume-or-roll-back`;
-  const why = `A rollback makes the PGLite brain kept by graduation run ${opts.runId} authoritative again, and that copy is no longer at ${opts.retainedPath}. Nothing was changed: the Postgres brain stays authoritative and this machine stays routed to it.`;
-  return opError('not_found', `Rollback refused: the retained PGLite copy of graduation run ${opts.runId} is gone, so there is nothing to roll back to.`,
-    'Keep using the Postgres brain; nothing changed.',
+  const why = `Rolling back means restoring the local PGLite datastore that graduation run ${opts.runId} set aside at ${opts.retainedPath}, and no datastore is there any more. The rollback stopped before changing anything: Postgres is still the authoritative brain and this machine still routes to it.`;
+  return opError('not_found', `Cannot roll back graduation run ${opts.runId}: its retained PGLite datastore (${opts.retainedPath}) no longer exists.`,
+    'Nothing changed; carry on with the Postgres brain.',
     { why, docs,
       fix: { consent: [], actor: 'agent', requires_exclusive: false, docs, verify: STATUS_VERIFY, why,
-        user_message: 'Your brain cannot go back to PGLite: the local copy a rollback would restore was deleted. It keeps working on Postgres.' } });
+        user_message: 'Going back to the local PGLite brain is no longer possible because its saved copy was deleted. Your brain stays on Postgres and keeps working.' } });
 }
 
 /** `graduation_target_auth_failed`: the recorded target URL no longer authenticates. */

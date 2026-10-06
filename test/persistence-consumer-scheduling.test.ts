@@ -7,6 +7,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { admitWrite, getWriteRequestById, WRITE_PROGRESS_SQL } from '../src/core/persistence/journal.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
+import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { acquireWorktree } from '../src/core/persistence/ownership.ts';
 import { admission, assertCommittedSnapshot, assertConservation, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -534,91 +535,128 @@ test('a retryable root becomes eligible again after its backoff expires', async 
   }
 }), 15_000);
 
-test('a hung claim renewal abandons pending preparation and frees the consumer slot', async () => withEnv(env, async () => {
+// #5373: claim loss during preparation. The renewal statement is the one renewWriteClaim sends.
+const RENEWAL_SQL_MARK = 'claim_expires_at=now()+';
+function interceptRenewals(onRenewal: (id: string, token: string) => Promise<unknown> | undefined): () => void {
+  const direct = engine.executeRawDirect.bind(engine);
+  (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = (sql: string, params?: unknown[]) =>
+    (sql.includes(RENEWAL_SQL_MARK) ? onRenewal(String(params?.[0]), String(params?.[1])) : undefined) ?? direct(sql, params);
+  return () => { (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = direct; };
+}
+const pageBody = async (slug: string, sourceId: string) => (await engine.readPageSnapshot(slug, { sourceId }))?.page.compiled_truth ?? null;
+
+test('a renewal stuck past its deadline frees the slot, keeps the root until the abandoned preparation ends, then retries cleanly', async () => withEnv(env, async () => {
   const sources = await fixtures(engine, config);
-  const first = await admitWrite(engine, admission(config, sources[0], 'renew-hang-first', 'first body'));
-  const second = await admitWrite(engine, admission(config, sources[1], 'renew-hang-second', 'second body'));
-  const preparation = Promise.withResolvers<ReturnType<typeof prepared>>();
-  const renewal = Promise.withResolvers<Record<string, never>[]>();
-  const started: string[] = [];
-  const errors: unknown[] = [];
-  const originalDirect = engine.executeRawDirect.bind(engine);
-  (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = (sql: string, params?: unknown[]) => {
-    if (sql.includes('claim_expires_at=now()+') && params?.[0] === first.id) return renewal.promise;
-    return originalDirect(sql, params);
-  };
+  const stuck = await admitWrite(engine, admission(config, sources[0], 'claim-lease/stuck', 'fresh body'));
+  const elsewhere = await admitWrite(engine, admission(config, sources[1], 'claim-lease/elsewhere', 'elsewhere body'));
+  const firstAttempt = Promise.withResolvers<ReturnType<typeof prepared>>();
+  const hungRenewal = Promise.withResolvers<never[]>();
+  const attempts: string[] = [];
+  let firstToken: string | undefined;
+  const restore = interceptRenewals((_id, token) => token === firstToken ? hungRenewal.promise : undefined);
   const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_engine, row) => {
-    started.push(row.id);
-    if (row.id === first.id) return preparation.promise;
-    return prepared(row, sources);
-  }, { hostId: config.hostId, concurrency: 1, pollMs: 60_000, renewalIntervalMs: 5,
-    phaseMs: 30, onError: error => errors.push(error) });
+    attempts.push(row.id);
+    if (row.id !== stuck.id) return prepared(row, sources);
+    if (firstToken) return prepared(row, sources);
+    firstToken = row.execution_token!;
+    return firstAttempt.promise;
+  }, { hostId: config.hostId, concurrency: 1, pollMs: 20, renewalIntervalMs: 5, phaseMs: 40, onError: () => {} });
   try {
     consumer.start();
-    await waitFor(() => started[0] === first.id, { timeoutMs: 5_000 });
-    await waitFor(async () => (await getWriteRequestById(engine, first.id))?.state === 'queued',
-      { timeoutMs: 5_000, label: 'timed-out renewal should release the pending request' });
-    await waitFor(() => consumer.status().active_preparations === 0, { timeoutMs: 5_000 });
-    expect(consumer.status().active_preparations).toBe(0);
-    expect((await getWriteRequestById(engine, first.id))?.state).toBe('queued');
-    // The abandoned preparation still runs, so its root stays busy: the next
-    // request on that worktree must not start preparing alongside it.
-    expect((consumer as unknown as { activeRoots: Set<string> }).activeRoots.has(first.worktree_id!)).toBe(true);
-    // Keep the released root in its retry backoff while advancing the consumer
-    // once to prove the other root can use the freed slot.
-    (consumer as unknown as { rootRetryAfter: Map<string, number> }).rootRetryAfter.set(first.worktree_id!, Date.now() + 60_000);
-    await consumer.tick();
-    await waitFor(async () => (await getWriteRequestById(engine, second.id))?.state === 'committed',
-      { timeoutMs: 5_000, label: 'the next independent root should use the freed slot' });
-    expect(started).toEqual([first.id, second.id]);
-    // stop() is the engine-close barrier: it must still drain the abandoned
-    // preparation and the hung renewal query before resolving.
+    await waitFor(() => firstToken !== undefined, { timeoutMs: 5_000 });
+    await waitFor(async () => (await getWriteRequestById(engine, stuck.id))?.state === 'queued',
+      { timeoutMs: 5_000, label: 'the stuck renewal loses the claim and the request goes back to the queue' });
+    expect((await getWriteRequestById(engine, stuck.id))?.blocked_reason).toBe('claim_lost');
+    expect(consumer.holds(stuck.id)).toBe(false);
+    await waitFor(async () => (await getWriteRequestById(engine, elsewhere.id))?.state === 'committed',
+      { timeoutMs: 5_000, label: 'the freed slot serves another root' });
+    await Bun.sleep(200);
+    expect(attempts.filter(id => id === stuck.id)).toHaveLength(1);
+    expect((await getWriteRequestById(engine, stuck.id))?.state).toBe('queued');
+
+    firstAttempt.resolve(prepared({ ...stuck, intent: { ...stuck.intent, content: 'stale body' } }, sources));
+    await waitFor(async () => (await getWriteRequestById(engine, stuck.id))?.state === 'committed',
+      { timeoutMs: 5_000, label: 'the root is released and the request is retried' });
+    expect(attempts.filter(id => id === stuck.id)).toHaveLength(2);
+    expect(await pageBody('claim-lease/stuck', sources[0].id)).toBe('fresh body');
+
     let stopped = false;
     const stopping = consumer.stop().then(() => { stopped = true; });
-    await Bun.sleep(50);
+    await Bun.sleep(60);
     expect(stopped).toBe(false);
-    preparation.resolve(prepared(first, sources));
-    renewal.resolve([]);
+    hungRenewal.resolve([]);
     await stopping;
-    expect(stopped).toBe(true);
-    expect((await getWriteRequestById(engine, first.id))?.state).toBe('queued');
-    await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, second.id))!);
+    await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, stuck.id))!);
+    await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, elsewhere.id))!);
     await assertConservation(engine);
-    expect(errors).toEqual([]);
   } finally {
-    preparation.resolve(prepared(first, sources));
-    renewal.resolve([]);
+    firstAttempt.resolve(prepared(stuck, sources));
+    hungRenewal.resolve([]);
     await consumer.stop();
-    (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = originalDirect;
-    for (const row of [first, second]) await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+    restore();
+    for (const row of [stuck, elsewhere]) await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id).catch(() => {});
   }
-}), 15_000);
+}), 20_000);
 
-test('ordinary claims still renew and commit while preparation continues', async () => withEnv(env, async () => {
+test('a claim another consumer took over is left alone, and the abandoned preparation never publishes', async () => withEnv(env, async () => {
   const sources = await fixtures(engine, config);
-  const row = await admitWrite(engine, admission(config, sources[0], 'renew-healthy', 'body'));
-  const originalDirect = engine.executeRawDirect.bind(engine);
-  let renewals = 0;
-  (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = (sql: string, params?: unknown[]) => {
-    if (sql.includes('claim_expires_at=now()+')) renewals++;
-    return originalDirect(sql, params);
-  };
+  const row = await admitWrite(engine, admission(config, sources[0], 'claim-lease/taken', 'our body'));
+  const ours = Promise.withResolvers<ReturnType<typeof prepared>>();
+  let preparing = false;
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async () => { preparing = true; return ours.promise; },
+    { hostId: config.hostId, concurrency: 1, pollMs: 60_000, renewalIntervalMs: 5, phaseMs: 1_000, onError: () => {} });
+  const takeover = randomUUID();
+  try {
+    consumer.start();
+    await waitFor(() => preparing, { timeoutMs: 5_000 });
+    await engine.executeRaw(`UPDATE persistence_requests SET execution_token=$2::uuid WHERE id=$1::uuid`, [row.id, takeover]);
+    await waitFor(() => !consumer.holds(row.id) && consumer.status().active_preparations === 0,
+      { timeoutMs: 5_000, label: 'the renewal sees the takeover and the consumer lets go' });
+    const after = await getWriteRequestById(engine, row.id);
+    expect([after?.state, after?.execution_token]).toEqual(['running', takeover]);
+
+    ours.resolve(prepared(row, sources));
+    await Bun.sleep(100);
+    expect(await pageBody('claim-lease/taken', sources[0].id)).toBeNull();
+    const theirs = await publishMutation(engine, after!, prepared({ ...after!, intent: { ...after!.intent, content: 'their body' } }, sources), config.hostId);
+    expect(theirs.state).toBe('committed');
+    await consumer.stop();
+    expect(await pageBody('claim-lease/taken', sources[0].id)).toBe('their body');
+  } finally {
+    ours.resolve(prepared(row, sources));
+    await consumer.stop();
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id).catch(() => {});
+  }
+}), 20_000);
+
+test('healthy renewals during a long preparation keep the claim: one attempt, committed, no claim loss', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'claim-lease/healthy', 'healthy body'));
+  const renewed: string[] = [];
+  const restore = interceptRenewals(id => { renewed.push(id); return undefined; });
+  let attempts = 0;
+  const errors: unknown[] = [];
   const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_engine, current) => {
-    await Bun.sleep(30);
+    attempts++;
+    await Bun.sleep(120);
     return prepared(current, sources);
-  }, { hostId: config.hostId, pollMs: 60_000, renewalIntervalMs: 5, phaseMs: 500 });
+  }, { hostId: config.hostId, pollMs: 60_000, renewalIntervalMs: 10, phaseMs: 2_000, onError: error => errors.push(error) });
   try {
     consumer.start();
     await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'committed', { timeoutMs: 5_000 });
-    expect(renewals).toBeGreaterThan(0);
+    expect(attempts).toBe(1);
+    expect(renewed.filter(id => id === row.id).length).toBeGreaterThanOrEqual(3);
+    expect((await getWriteRequestById(engine, row.id))?.blocked_reason ?? null).not.toBe('claim_lost');
     await assertCommittedSnapshot(engine, (await getWriteRequestById(engine, row.id))!);
     await assertConservation(engine);
+    expect(errors).toEqual([]);
   } finally {
     await consumer.stop();
-    (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = originalDirect;
-    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id);
+    restore();
+    await cancelWriteRequest(engine, { kind: 'local_cli', id: config.principalIds[0] }, row.request_id).catch(() => {});
   }
-}), 15_000);
+}), 20_000);
+
 test('a local waiter wakes an idle owner for a claim-only tick instead of waiting for the next poll', async () => withEnv(env, async () => {
   const ticks: boolean[] = [];
   const consumer = startPersistenceConsumer(engine, { engine: 'pglite' });

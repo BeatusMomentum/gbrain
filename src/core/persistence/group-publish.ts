@@ -36,6 +36,7 @@ import { cancelRows, windowPredecessor } from './sync-window.ts';
 import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markRecovering, prepareRecoveries,
   publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
+import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
 import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -312,8 +313,13 @@ export interface GroupExecution {
   settled(row: WriteRequest): void;
   hostId: string;
   hooks?: GroupHooks;
-  /** #5373: renewal cadence and per-renewal deadline, and where a preparation left running after a claim loss is tracked. */
-  claim?: { intervalMs?: number; phaseMs?: number; abandon?: (work: Promise<unknown>, holdRoot?: boolean) => void };
+  /** #5373: renewal timing for the group's claims (default DEFAULT_CLAIM_LEASE_TIMING). */
+  lease?: ClaimLeaseTiming;
+  /**
+   * #5373: receives work still running when the group lets go of its claims: the
+   * renewal in flight, or (`blocksRoot`) the preparation abandoned after a lost claim.
+   */
+  leftRunning?(work: Promise<unknown>, blocksRoot: boolean): void;
 }
 
 /**
@@ -322,42 +328,30 @@ export interface GroupExecution {
  * members one at a time in order. After a member ends in failure the later
  * members are cancelled, and after one is released back to the queue the
  * later ones are released too, so nothing overtakes it. Claims are renewed
- * for the whole group while it runs; a renewal that loses a member's claim,
- * fails or outlives its deadline during preparation abandons the group: the
- * still-held claims are released unpublished and the preparation is handed to
- * `claim.abandon`, never published. Returns whether any member settled.
+ * for the whole group while it runs (claim-lease.ts). If the group stops
+ * holding every member's claim while it is still preparing, it lets go: each
+ * member is released unpublished with `claim_lost` (token-fenced, so a member
+ * another consumer took over keeps its new claim) and the unfinished
+ * preparation goes to `leftRunning`, never to publication. Returns whether
+ * any member settled.
  */
 export async function executeClaimedGroup(engine: BrainEngine, rows: WriteRequest[], run: GroupExecution): Promise<boolean> {
-  let renewing: Promise<void> | undefined;
-  let preparing = true;
-  const claimLost = Promise.withResolvers<'claim_lost'>();
-  const loseClaim = () => { if (preparing) claimLost.resolve('claim_lost'); };
-  const interval = setInterval(() => {
-    if (renewing) return;
-    const renewalAbort = new AbortController();
-    const deadline = setTimeout(() => { loseClaim(); renewalAbort.abort(); }, run.claim?.phaseMs ?? 5000);
-    const task: Promise<void> = renewGroupClaims(engine, rows, 30_000, renewalAbort.signal).then(held => { if (held.size < rows.length) loseClaim(); })
-      .catch(loseClaim).finally(() => { clearTimeout(deadline); if (renewing === task) renewing = undefined; });
-    renewing = task;
-  }, run.claim?.intervalMs ?? 10_000);
-  interval.unref?.();
+  const lease = startClaimLease(async signal => (await renewGroupClaims(engine, rows, 30_000, signal)).size === rows.length,
+    run.lease ?? DEFAULT_CLAIM_LEASE_TIMING);
   if (run.lane) laneClaimed(run.lane, rows);
   try {
     const prepared: Array<{ ok: PreparedMutation } | { error: unknown }> = new Array(rows.length);
     // A put_pages group prepares all of its (at most PAGE_BATCH_GROUP_MAX) pages at once.
     const width = publicationGroupKey(rows[0]!)?.startsWith('batch:') ? PAGE_BATCH_GROUP_MAX : 4;
-    const preparation = (async () => {
+    const preparing = (async () => {
       for (let start = 0; start < rows.length; start += width) {
         await Promise.all(rows.slice(start, start + width).map(async (row, offset) => {
           try { prepared[start + offset] = { ok: await run.prepare(row) }; } catch (error) { prepared[start + offset] = { error }; }
         }));
       }
-      return 'prepared' as const;
     })();
-    const outcome = await Promise.race([preparation, claimLost.promise]);
-    preparing = false;
-    if (outcome === 'claim_lost') {
-      run.claim?.abandon?.(preparation, true);
+    if (await lease.whileHeld(preparing) === CLAIM_LOST) {
+      run.leftRunning?.(preparing, true);
       for (const row of rows) await releaseUnpublishedClaim(engine, row, 'claim_lost');
       return false;
     }
@@ -402,7 +396,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
     return progressed;
   } finally {
     if (run.lane) laneFinished(run.lane, rows);
-    clearInterval(interval);
-    if (renewing) run.claim?.abandon?.(renewing);
+    const renewal = lease.end();
+    if (renewal) run.leftRunning?.(renewal, false);
   }
 }
