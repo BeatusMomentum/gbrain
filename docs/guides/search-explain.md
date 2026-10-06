@@ -34,7 +34,7 @@ Each row's `score_details`:
 | `rrf` | `raw` (summed votes), `normalized` (divided by the best row), `compiled_truth_boost`. `state: "not_run"` on single-arm paths. |
 | `blend` | The cosine blend: `0.7 × norm_rrf + 0.3 × cosine`. `not_run` without a query embedding. |
 | `base_score` | The score entering the post-fusion boosts. |
-| `boosts` | Every factor that changed this row, by stage: `backlink` (with `inbound` links and `hub_weight` when hub dampening reduced it), `salience`, `recency`, `chronicle`, `title`, `adjacency`, `cross_source`, `session_demote`, `alias_resolved`, `supersede`, `exact_match`. |
+| `boosts` | Every factor that changed this row, by stage: `backlink` (with its `inbound` links), `salience`, `recency`, `chronicle`, `title`, `adjacency`, `cross_source`, `session_demote`, `alias_resolved`, `supersede`, `exact_match`. |
 | `rerank` | Cross-encoder score and rank delta, or `not_run`. |
 | `final` | The row's score. |
 
@@ -73,13 +73,3 @@ re-sent to the model on each turn. A starter-surface session calls
 `request_tools {"surface": "full"}` first. Agents on the default seven-verb
 memory surface do not have `query`; ask the brain host to run
 `gbrain search "<question>" --explain --json`, or enable the full tool surface.
-
-## Hub dampening
-
-`search.hub_dampening` (`off`, or a number H) shrinks the backlink and graph
-adjacency lifts of very highly linked pages: a page with H+1 inbound links
-keeps half of its lift, 3H+1 keeps a tenth. It is `off` in every mode until a
-held-out evaluation sets a default. `gbrain doctor` (`hub_degree_shape`)
-reports the brain's inbound-link distribution and how many pages a setting
-would affect; `score_details.boosts.backlink.hub_weight` shows the effect on
-each row.

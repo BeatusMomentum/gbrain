@@ -43,7 +43,6 @@ import type { AdjacencyRow } from '../types.ts';
 import type { BrainEngine } from '../engine.ts';
 import { hasReadPolicy } from './read-policy-sql.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
-import { dampenBoost, hubWeight, type HubDampening } from './hub-dampening.ts';
 
 // ===========================================================================
 // Constants (D14=B halved magnitudes; the score-distribution probe feeds the
@@ -121,16 +120,6 @@ export interface GraphSignalsOpts extends PageReadPolicy {
   onMeta?: (meta: GraphSignalsMeta) => void;
   /** Observability sink — called once per invocation with score stats. */
   onScoreDistribution?: (dist: ScoreDistribution) => void;
-  /**
-   * Hub dampening (hub-dampening.ts): half degree H. When set together with
-   * `degrees`, each boost's excess over 1.0 is scaled by
-   * hubWeight(caller-visible inbound degree, H). Undefined → undampened.
-   */
-  hubHalfDegree?: HubDampening;
-  /** Caller-scoped inbound degree per page id (readBacklinkCounts). */
-  degrees?: Map<number, number>;
-  /** Called once with the number of results whose graph boost was reduced. */
-  onHubDampened?: (count: number) => void;
 }
 
 // ===========================================================================
@@ -362,8 +351,6 @@ export async function applyGraphSignals(
   }
 
   const floorThreshold = opts.floorThreshold;
-  const halfDegree = opts.degrees ? opts.hubHalfDegree : undefined;
-  let hubDampened = 0;
 
   for (const r of topK) {
     // Floor-gate: D1=A inheritance. Below-floor results don't accumulate
@@ -373,29 +360,19 @@ export async function applyGraphSignals(
     if (floorThreshold !== undefined && !(r.score >= floorThreshold)) continue;
     const row = adjacency.get(r.page_id);
     if (!row) continue;
-    const fires = row.hits >= ADJACENCY_MIN_HITS || row.cross_source_hits >= CROSS_SOURCE_MIN_HITS;
-    const degree = opts.degrees?.get(r.page_id) ?? 0;
-    const weight = fires ? hubWeight(degree, halfDegree) : 1;
     if (row.hits >= ADJACENCY_MIN_HITS) {
-      const factor = dampenBoost(ADJACENCY_BOOST, degree, halfDegree);
-      r.score *= factor;
+      r.score *= ADJACENCY_BOOST;
       r.graph_adjacency_hits = row.hits;
-      r.graph_adjacency_boost = factor;
+      r.graph_adjacency_boost = ADJACENCY_BOOST;
       meta.adjacency_fires++;
     }
     if (row.cross_source_hits >= CROSS_SOURCE_MIN_HITS) {
-      const factor = dampenBoost(CROSS_SOURCE_BOOST, degree, halfDegree);
-      r.score *= factor;
+      r.score *= CROSS_SOURCE_BOOST;
       r.graph_cross_source_hits = row.cross_source_hits;
-      r.graph_cross_source_boost = factor;
+      r.graph_cross_source_boost = CROSS_SOURCE_BOOST;
       meta.cross_source_fires++;
     }
-    if (weight < 1) {
-      r.graph_hub_weight = weight;
-      hubDampened++;
-    }
   }
-  opts.onHubDampened?.(hubDampened);
 
   // ---- Session diversification (D9 single-pass Map, D11=B DEMOTE) ----
   // Only fires when sessionPrefix detects a session-like pattern

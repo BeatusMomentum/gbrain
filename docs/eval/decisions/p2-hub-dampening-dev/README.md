@@ -49,6 +49,8 @@ Development predicts that hub dampening fails the held-out gate. Under the prere
 and the search-side mechanism is removed. The `hubWeight` helper stays either way, because the multi-hop chain executor
 on master (`relational-chain.ts`) imports it.
 
+The sealed held-out run confirmed it: FAIL (`../p2-e1-heldout/`).
+
 The controls show something separate: on a hub-heavy brain the backlink boost costs concept recall (+6.5 pts without it)
 but carries one-hop and hub-as-answer recall. No change to it is proposed here.
 

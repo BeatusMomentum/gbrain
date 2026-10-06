@@ -2,8 +2,8 @@
  * Ranking and extraction settings, end to end on one keyless brain.
  *
  * Protects: on a populated brain with every new setting turned on
- * (search.hub_dampening, extraction.date_grounding, facts.attribution),
- * re-running schema setup, the two doctor checks and an explained search
+ * (extraction.date_grounding, facts.attribution),
+ * re-running schema setup, the doctor check and an explained search
  * makes zero model calls; explain returns score_details whose final equals
  * the row score; explain_target diagnoses a page the source filter removed
  * without returning it.
@@ -16,7 +16,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
-import { extractionDateGroundingEntry, hubDegreeShapeEntry } from '../src/commands/doctor/checks/ranking-extraction.ts';
+import { extractionDateGroundingEntry } from '../src/commands/doctor/checks/ranking-extraction.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -47,7 +47,7 @@ beforeAll(async () => {
   await engine.addLinksBatch(links);
   await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('team', 'team') ON CONFLICT DO NOTHING`);
   await importFromContent(engine, 'notes/quokka-team', '# Team quokka\nQuokka tracker notes for the team.', { noEmbed: true, sourceId: 'team' });
-  for (const [k, v] of [['search.hub_dampening', '4'], ['extraction.date_grounding', 'true'], ['facts.attribution', 'true']]) await engine.setConfig(k, v);
+  for (const [k, v] of [['extraction.date_grounding', 'true'], ['facts.attribution', 'true']]) await engine.setConfig(k, v);
 }, 120_000);
 
 afterAll(async () => {
@@ -57,17 +57,16 @@ afterAll(async () => {
 });
 
 describe('ranking and extraction settings on a populated keyless brain', () => {
-  test('schema setup again and both doctor checks make no model calls and stay informational', async () => {
+  test('schema setup again and the date-grounding doctor check make no model calls and stay informational', async () => {
     await engine.initSchema();
     const dctx = { engine, args: [], progress: { heartbeat() {} } } as unknown as DoctorContext;
-    const checks = [...(await hubDegreeShapeEntry.run(dctx)) as Check[], ...(await extractionDateGroundingEntry.run(dctx)) as Check[]];
-    expect(checks.map(c => c.status)).toEqual(['ok', 'ok']);
-    expect(checks[0].message).toContain('max 8');
-    expect(checks[1].message).toMatch(/on/i);
+    const checks = (await extractionDateGroundingEntry.run(dctx)) as Check[];
+    expect(checks.map(c => c.status)).toEqual(['ok']);
+    expect(checks[0].message).toMatch(/on/i);
     expect(modelCalls).toBe(0);
   });
 
-  test('explain: score_details final equals the row score, with hub dampening on', async () => {
+  test('explain: score_details final equals the row score', async () => {
     const rows = await operationsByName.query.handler(ctx(), { query: 'quokka tracker', expand: false, explain: true }) as Array<Record<string, unknown>>;
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) expect((r.score_details as { final: number }).final).toBe(r.score as number);

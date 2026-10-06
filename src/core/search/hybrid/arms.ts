@@ -155,8 +155,6 @@ export function buildPostFusionOpts(req: HybridRequest): PostFusionOpts {
     // The raw query drives the matcher; default factor when the knob is unset.
     query,
     titleBoost: resolvedMode.title_boost,
-    // Hub dampening (hub-dampening.ts) threaded from the resolved mode.
-    hubDampening: resolvedMode.hub_dampening,
   };
   return postFusionOpts;
 }

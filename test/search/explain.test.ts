@@ -65,7 +65,7 @@ describe('RRF arm attribution', () => {
 
 describe('buildScoreDetails', () => {
   test('unobserved stages are not_run, applied boosts carry their factors, ranks are 1-based', () => {
-    const r = { ...row('notes/a', 1), score: 1.2, base_score: 1, backlink_boost: 1.1, backlink_count: 40, backlink_hub_weight: 0.25,
+    const r = { ...row('notes/a', 1), score: 1.2, base_score: 1, backlink_boost: 1.1, backlink_count: 40,
       rrf: { raw: 0.03, normalized: 1, compiled_truth_boost: 1, arms: [{ arm: 'keyword', rank: 0, k: 60, weight: 1, contribution: 1 / 60, vote: 'page' as const, chunk_id: 1 }] } };
     const d = buildScoreDetails(r);
     expect(d.final).toBe(1.2);
@@ -73,7 +73,7 @@ describe('buildScoreDetails', () => {
     expect(d.rrf).toMatchObject({ state: 'applied', raw: 0.03 });
     expect(d.blend).toEqual({ state: 'not_run', reason: 'no_query_embedding' });
     expect(d.rerank.state).toBe('not_run');
-    expect(d.boosts.backlink).toEqual({ factor: 1.1, inbound: 40, hub_weight: 0.25 });
+    expect(d.boosts.backlink).toEqual({ factor: 1.1, inbound: 40 });
     expect(Object.keys(d.boosts)).toEqual(['backlink']);
   });
 

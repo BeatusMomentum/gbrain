@@ -65,7 +65,7 @@ export function formatResultExplain(
 
   if (result.backlink_boost !== undefined && result.backlink_boost !== 1.0) {
     anyBoost = true;
-    const inbound = result.backlink_count !== undefined ? ` (${result.backlink_count} inbound${result.backlink_hub_weight !== undefined ? `, hub weight ${fmt(result.backlink_hub_weight)}` : ''})` : '';
+    const inbound = result.backlink_count !== undefined ? ` (${result.backlink_count} inbound)` : '';
     lines.push(`   + backlink ×${fmt(result.backlink_boost)}${inbound}`);
   }
   if (result.salience_boost !== undefined && result.salience_boost !== 1.0) {
@@ -236,13 +236,13 @@ export function buildScoreDetails(result: SearchResult): ScoreDetails {
     const clean = Object.fromEntries(Object.entries(detail).filter(([, v]) => v !== undefined));
     boosts[name] = { factor, ...clean };
   };
-  add('backlink', result.backlink_boost, { inbound: result.backlink_count, hub_weight: result.backlink_hub_weight });
+  add('backlink', result.backlink_boost, { inbound: result.backlink_count });
   add('salience', result.salience_boost);
   add('recency', result.recency_boost);
   add('chronicle', result.chronicle_boost);
   add('title', result.title_match_boost);
-  add('adjacency', result.graph_adjacency_boost, { hits: result.graph_adjacency_hits, hub_weight: result.graph_hub_weight });
-  add('cross_source', result.graph_cross_source_boost, { other_sources: result.graph_cross_source_hits, hub_weight: result.graph_hub_weight });
+  add('adjacency', result.graph_adjacency_boost, { hits: result.graph_adjacency_hits });
+  add('cross_source', result.graph_cross_source_boost, { other_sources: result.graph_cross_source_hits });
   add('session_demote', result.session_demote_factor, { prefix: result.graph_session_prefix });
   add('alias_resolved', result.alias_resolved_boost);
   add('supersede', result.supersede_penalty, { superseded_by: result.superseded_by });

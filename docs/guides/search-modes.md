@@ -37,7 +37,6 @@ and maintenance commands remain available.
 | `relational_rerank_pin`       | 3              | 3          | 3              |
 | `keyword_arm_confidence_floor` | `null` (off)  | `null` (off) | `null` (off)  |
 | `metadata_boost_gate`         | `lexical`      | `lexical`  | `lexical`      |
-| `hub_dampening`               | `off`          | `off`      | `off`          |
 | `searchLimit` default         | 10             | 25         | 50             |
 | `reranker` (cross-encoder)    | off            | `voyage:rerank-2.5` | `voyage:rerank-2.5` |
 | `autocut` (rerank-cliff cut)  | off            | off        | off            |

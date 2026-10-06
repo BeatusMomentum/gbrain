@@ -62,7 +62,7 @@ import {
   staleMentionsEntry,
   timelineHistoryEntry,
 } from './checks/graph-health.ts';
-import { extractionDateGroundingEntry, hubDegreeShapeEntry } from './checks/ranking-extraction.ts';
+import { extractionDateGroundingEntry } from './checks/ranking-extraction.ts';
 import {
   integrityEntry,
   jsonbIntegrityEntry,
@@ -140,7 +140,6 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   orphanRatioEntry,
   staleMentionsEntry,
   timelineHistoryEntry,
-  hubDegreeShapeEntry,
   extractionDateGroundingEntry,
   integrityEntry,
   jsonbIntegrityEntry,
