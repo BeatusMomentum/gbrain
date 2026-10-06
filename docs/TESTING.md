@@ -302,7 +302,9 @@ O-CEO-9) in the Foundations 1 plan; `scripts/scale/gates.ts` and
 `.github/workflows/scale-tier.yml` implement it. This section says how to run it.
 
 How to run it, what it measures, exit codes, the watchdog and the large-brain
-ceilings: [scripts/scale/README.md](../scripts/scale/README.md).
+ceilings: [scripts/scale/README.md](../scripts/scale/README.md). The import-rate
+gate times PGLite by the import process's CPU time and Postgres by wall time;
+the README says why.
 
 ### Authoring gate
 
