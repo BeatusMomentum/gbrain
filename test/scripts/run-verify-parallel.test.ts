@@ -386,56 +386,24 @@ exit 0
     }
   }, 60_000);
 
-  it("GBRAIN_VERIFY_TYPECHECK_COVERED_BY skips typecheck on macOS only, as a skip naming the covering job (#6056)", () => {
-    const { root, env } = makeFallbackHarness();
-    const unameDir = join(root, "uname-bin");
-    mkdirSync(unameDir);
-    const run = (os: string, extra: Record<string, string>) => {
-      writeFileSync(join(unameDir, "uname"), `#!/usr/bin/env bash\necho ${os}\n`, { mode: 0o755 });
-      return spawnSync("bash", [join(root, "scripts", "run-verify-parallel.sh")], {
-        encoding: "utf8",
-        env: { ...env, PATH: `${unameDir}:${env.PATH}`, ...extra },
-      });
-    };
-    const covered = { GBRAIN_VERIFY_TYPECHECK_COVERED_BY: "test.yml verify job (Linux, every PR and push)" };
-    try {
-      const summary = join(root, "summary.md");
-      const mac = run("Darwin", { ...covered, GITHUB_STEP_SUMMARY: summary });
-      expect(mac.status, mac.stderr).toBe(0);
-      expect(mac.stderr).toMatch(/fail=0 skip=1\b/);
-      const outcomes = readFileSync(join(root, "logs", "outcomes.tsv"), "utf8");
-      expect(outcomes).toMatch(/^typecheck\tskip\t0\ttypecheck covered by test\.yml verify job \(Linux, every PR and push\)/m);
-      expect(readFileSync(join(root, "logs", "typecheck.log"), "utf8")).not.toContain("stub check OK");
-      expect(readFileSync(summary, "utf8")).toContain("- typecheck: typecheck covered by test.yml verify job");
-      for (const os of ["Linux", "MINGW64_NT-10.0", "FreeBSD"]) {
-        const other = run(os, covered);
-        expect(other.status).toBe(2);
-        expect(other.stderr).toContain("honored on macOS only");
-        expect(other.stderr).toContain("Next: unset GBRAIN_VERIFY_TYPECHECK_COVERED_BY");
-      }
-      const plain = run("Darwin", {});
-      expect(plain.status).toBe(0);
-      expect(readFileSync(join(root, "logs", "outcomes.tsv"), "utf8")).toMatch(/^typecheck\tpass\t0\t/m);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  }, 60_000);
-
-  it("only the macOS 26 workflow sets the typecheck skip, and test.yml's verify job still runs typecheck", () => {
+  it("typecheck runs on every platform: only the macOS 26 workflow raises the per-check cap, Linux keeps 120 s (#6056)", () => {
     const workflows = readdirSync(".github/workflows").filter((f) => /\.ya?ml$/.test(f));
-    const setters = workflows.filter((f) => readFileSync(join(".github/workflows", f), "utf8").includes("GBRAIN_VERIFY_TYPECHECK_COVERED_BY"));
-    expect(setters).toEqual(["macos-validation.yml"]);
-    const mac = readFileSync(".github/workflows/macos-validation.yml", "utf8");
+    const read = (f: string) => readFileSync(join(".github/workflows", f), "utf8");
+    expect(workflows.filter((f) => read(f).includes("GBRAIN_VERIFY_TIMEOUT"))).toEqual(["macos-validation.yml"]);
+    const mac = read("macos-validation.yml");
     expect(mac).toMatch(/^\s+runs-on: macos-26$/m);
-    expect(mac).toContain("GBRAIN_VERIFY_TYPECHECK_COVERED_BY: test.yml verify job (Linux, every PR and push)");
-    const testYml = readFileSync(".github/workflows/test.yml", "utf8");
+    expect(mac).toMatch(/^\s+GBRAIN_VERIFY_TIMEOUT: '240'$/m);
+    for (const f of workflows) expect(read(f)).not.toContain("TYPECHECK_COVERED_BY");
+    expect(readFileSync(SCRIPT, "utf8")).not.toContain("TYPECHECK_COVERED_BY");
+    expect(readFileSync(SCRIPT, "utf8")).toContain('TIMEOUT="${GBRAIN_VERIFY_TIMEOUT:-120}"');
+    const testYml = read("test.yml");
     const verifyJob = testYml.slice(testYml.indexOf("\n  verify:\n"), testYml.indexOf("\n  verify:\n") + 4000);
     expect(verifyJob).toContain("- run: bun run verify");
     expect(verifyJob).toMatch(/runs-on: ubicloud-standard-\d+-ubuntu/);
     const dry = spawnSync("bash", [SCRIPT, "--dry-list"], { encoding: "utf8" }).stdout.split("\n");
     expect(dry).toContain("typecheck");
     const pkgScripts = (JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> }).scripts;
-    for (const [name, cmd] of Object.entries(pkgScripts)) expect(`${name}: ${cmd}`).not.toContain("GBRAIN_VERIFY_TYPECHECK_COVERED_BY");
+    for (const [name, cmd] of Object.entries(pkgScripts)) expect(`${name}: ${cmd}`).not.toContain("GBRAIN_VERIFY_TIMEOUT");
   });
 
   it("one check failing → exit 1, sentinel records the check's own rc (7), not 143", () => {

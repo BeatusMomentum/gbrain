@@ -36,19 +36,18 @@ about 3.7 GB with ceilings of 3,800, 4,096 or 6,144 MB, and wall time is the
 same. If tsc reaches the ceiling, find what grew the program (the
 `Files`/`Memory used` lines of `--extendedDiagnostics`) before raising it.
 
-## macOS typecheck skip
+## macOS typecheck cap
 
-The macOS 26 validation job (`macos-validation.yml`) runs `bun run verify`
-with `GBRAIN_VERIFY_TYPECHECK_COVERED_BY` naming `test.yml`'s Linux verify
-job, so `typecheck` is recorded as a skip with that reason in
-`outcomes.tsv`, the receipt and the step summary. tsc output does not depend
-on the OS, the Linux verify job gates it on every PR and push, and a cold tsc
+The macOS 26 validation job (`macos-validation.yml`) runs every verify
+check, typecheck included, with `GBRAIN_VERIFY_TIMEOUT: '240'`. A cold tsc
 takes 110-142 s alone on the 3-core arm64 runner (no swap, memory 57-76%
-free), past the 120 s per-check cap. A day-old incremental cache does not
-help: one edit to a widely imported file costs a 124 s recheck. The runner
-refuses the variable on any other OS (exit 2 with the next step), and
-`test/scripts/run-verify-parallel.test.ts` pins that only this workflow sets
-it.
+free) and 121-167 s inside verify, past the 120 s per-check cap that every
+other runner keeps. 240 s is about 1.4x the slowest measured run. A day-old
+incremental cache does not help: one edit to a widely imported file costs a
+124 s recheck. `test/scripts/run-verify-parallel.test.ts` pins that only this
+workflow sets `GBRAIN_VERIFY_TIMEOUT` and that `test.yml`'s Linux verify job
+keeps the 120 s default. If a check passes 240 s here, find what grew before
+raising it again.
 
 ## Full-corpus report states
 

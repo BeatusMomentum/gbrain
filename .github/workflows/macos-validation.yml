@@ -17,7 +17,7 @@ name: macOS 26 validation
 #          --strict and --version against the release tag.
 #   #5810  every tracked *.sh parses under /bin/bash (GNU bash 3.2), and
 #          `bun run verify` passes with `bash` resolving to /bin/bash
-#          (typecheck recorded as a skip, covered by test.yml's verify job).
+#          (typecheck included, under a 240 s per-check cap on this runner).
 
 on:
   schedule:
@@ -94,10 +94,11 @@ jobs:
           GBRAIN_BASH32: /bin/bash
           GBRAIN_TEST_BASH32_REQUIRE: '1'
           # #6056: a cold tsc takes 110-142 s alone on this 3-core arm64
-          # runner, past verify's 120 s cap; its output is OS-independent and
-          # test.yml's verify job gates it on every PR and push. Recorded as a
-          # skip in the step summary; refused on any other OS.
-          GBRAIN_VERIFY_TYPECHECK_COVERED_BY: test.yml verify job (Linux, every PR and push)
+          # runner (121-167 s inside verify), past the 120 s per-check cap that
+          # Linux keeps. Typecheck runs here too, so this runner's cap is 240 s
+          # (about 1.4x the slowest measured run); test.yml's Linux verify job
+          # keeps the default 120 s.
+          GBRAIN_VERIFY_TIMEOUT: '240'
         # tsc peaks near 3.5 GB of heap; the typecheck script sets its own
         # --max-old-space-size, so no NODE_OPTIONS here (it reached every node
         # process verify spawns).
