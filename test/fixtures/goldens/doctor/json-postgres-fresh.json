@@ -497,7 +497,7 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 118/118 public tables",
+          "message": "RLS enabled on 119/119 public tables",
           "name": "rls",
           "status": "ok"
         },
@@ -509,7 +509,7 @@
         },
         {
           "category": "meta",
-          "message": "966 column(s) verified against live schema",
+          "message": "976 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1686,6 +1686,21 @@
           },
           "message": "Every page has its revision; the page revision backfill is complete.",
           "name": "revision_backfill",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "bad_config": [],
+            "chars_limit": 4000,
+            "chars_used": 0,
+            "compiled": [],
+            "docs": "docs/guides/core-memory.md",
+            "enabled": false,
+            "pages": 0
+          },
+          "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.",
+          "name": "core_memory",
           "status": "ok"
         },
         {
