@@ -19,7 +19,7 @@ import {
 import type { RemediationStep } from '../remediation-step.ts';
 import { loadRecommendationContext } from './context.ts';
 import { computeRemediationPlan } from './plan.ts';
-import { planRepairSteps, runRepairSteps, type RepairPlanStep, type RepairPreviewFailure, type RepairStepResult } from './repairs.ts';
+import { planRepairStepsReport, previewFailureField, runRepairSteps, type RepairPlanStep, type RepairPreviewFailure, type RepairStepResult } from './repairs.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { RemediationCheckpoint } from '../remediation-checkpoint.ts';
 import type {
@@ -96,11 +96,6 @@ async function runJobInline(
   }
 }
 
-/** A repair kind whose preview failed is reported in the result and left out; the run goes on with the rest (#6000). */
-function previewFailureFields(failures: RepairPreviewFailure[]): Partial<RemediationResult> {
-  return failures.length ? { repair_preview_failures: failures } : {};
-}
-
 export async function runRemediation(
   engine: BrainEngine,
   opts: RemediationOpts = {},
@@ -136,10 +131,10 @@ export async function runRemediation(
   const ctx = await loadRecommendationContext(engine);
   const extraRemediations = opts.extraRemediations ?? [];
   const brainId = repairs ? (await (await import('../repair/core.ts')).resolveRepairScope(engine)).brain_id : undefined;
-  const repairPreviewFailures: RepairPreviewFailure[] = [];
+  let previewFailures: RepairPreviewFailure[] = [];
   const synthetic = (score: number, extra: Partial<RemediationResult> = {}): RemediationResult => ({
     doctor_run_id: crypto.randomUUID(), brain_score_initial: score, brain_score_final: score, brain_score_target: targetScore,
-    target_reached: false, submitted: [], aborted_count: 0, ...previewFailureFields(repairPreviewFailures), ...extra,
+    target_reached: false, submitted: [], aborted_count: 0, ...previewFailureField(previewFailures), ...extra,
   });
 
   // Resume loads its checkpoint first: a checkpoint that records a manifest
@@ -170,10 +165,9 @@ export async function runRemediation(
   // Pre-flight ceiling check via the shared plan computation. The score target
   // governs job steps only; repair steps are planned independently of it.
   const initialPlan = await computeRemediationPlan(engine, { targetScore, extraRemediations });
-  let repairSteps: RepairPlanStep[] = repairs
-    ? await planRepairSteps(engine, { noEmbed: repairs.noEmbed, kinds: manifest ? manifest.repair_kinds as RepairPlanStep['kind'][] : undefined,
-      onPreviewError: (failure) => repairPreviewFailures.push(failure) })
-    : [];
+  const repairReport = repairs ? await planRepairStepsReport(engine, { noEmbed: repairs.noEmbed, kinds: manifest ? manifest.repair_kinds as RepairPlanStep['kind'][] : undefined }) : { steps: [], previewFailures: [] };
+  let repairSteps: RepairPlanStep[] = repairReport.steps;
+  previewFailures = repairReport.previewFailures;
   // Embeddings a budget stop left behind after re-sealing; the re-sealed pages no longer show up in a repair plan.
   let pendingEmbedSources = includeRepairs && manifest ? [...(cp?.pending_embed_sources ?? [])] : [];
   const initialHealth = await engine.getHealth();
@@ -522,10 +516,10 @@ export async function runRemediation(
     aborted_count: abortedIds.size,
     budget_exhausted: budgetAbort,
     ...(jobStepsSkipped ? { job_steps_skipped: jobStepsSkipped } : {}),
-    ...previewFailureFields(repairPreviewFailures),
     ...(repairs ? {
       repairs: repairResults, repairs_skipped: skippedRepairs,
       budget: { max_usd: maxUsd ?? null, spent_usd: settledUsd(), include_repairs: includeRepairs, plan_hash: planHash },
     } : {}),
+    ...previewFailureField(previewFailures),
   };
 }
