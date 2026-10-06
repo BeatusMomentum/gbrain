@@ -70,7 +70,8 @@ about 40 seconds to 18. It is opt-in until image boots prove as reliable as
 stock ones: on its first full gate five of eight VMs sat in `waiting for
 capacity`. Stock VMs hit the same wait later (six of ten in one burst), so
 `eu-central-h1` capacity, not just the quota, can shrink a fleet; the run
-then continues on the VMs that did start. Rebuild the image when the package
+then continues on the VMs that did start, and it ends once every item has a
+result rather than waiting for a VM that never came up. Rebuild the image when the package
 list or images change; setup still pulls the floating image tags, so a stale
 image costs time, not correctness.
 

@@ -352,8 +352,12 @@ async function main() {
     return vm.heavy > Math.min(...peers.map((v) => v.heavy));
   };
 
+  // Every item has a result: VMs still waiting for capacity have nothing left to do, and teardown reaps them.
+  let allRecorded = () => {};
+  const recorded = new Promise<void>((done) => (allRecorded = done));
   const record = (vm: Vm, slot: number, result: ItemResult) => {
     results.set(weightKey(result.lane as Lane, result.file), { ...result, vm: vm.name, slot });
+    if (results.size === totalItems) allRecorded();
     if (result.rc !== 0) {
       const path = join(runDir, "failures", `${result.lane}__${result.file.replace(/[\\/]/g, "__")}.log`);
       writeFileSync(path, result.output + "\n");
@@ -475,7 +479,7 @@ async function main() {
 
   let exitCode = 0;
   try {
-    await Promise.all(vms.map((vm, i) => vmLifecycle(vm, i)));
+    await Promise.race([Promise.all(vms.map((vm, i) => vmLifecycle(vm, i))), recorded]);
     if (control.length && !controlDone) throw new Error("no VM became ready to run gitleaks/verify/exclusive items");
     if (queue.length) throw new Error(`${queue.length} items never ran: every VM failed`);
   } catch (error) {
