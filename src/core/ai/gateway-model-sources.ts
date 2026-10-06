@@ -10,6 +10,7 @@
  */
 
 import { describeResolveOrigin, type EffectiveModelSource, type ResolvedModel, type ResolveSource } from '../model-config.ts';
+import { AIConfigError } from './errors.ts';
 
 export type GatewayModelSourceKind = ResolveSource | 'file_config';
 
@@ -60,6 +61,45 @@ export function setGatewayModelSource(touchpoint: GatewayTouchpoint, model: stri
 export function getGatewayModelSource(touchpoint: GatewayTouchpoint, model: string): GatewayModelSource | undefined {
   const r = records.get(touchpoint);
   return r && r.model === model ? { source: r.source, origin: r.origin } : undefined;
+}
+
+/**
+ * `why` for a provider 404 (`model_not_found`) on `model`: the setting that
+ * selected it, computed from this record at the throw site. Names keys and
+ * env-variable names only, never their values (the model id is already in the
+ * error message). A model the record does not describe came from
+ * chat_fallback_chain or was named by the call itself.
+ */
+export function modelNotFoundWhy(touchpoint: GatewayTouchpoint, model: string, fallbackChain: readonly string[] = []): string {
+  const r = RESOLUTION[touchpoint];
+  const override = `gbrain config set ${r.configKey} <provider>:<model> overrides every other setting`;
+  const src = getGatewayModelSource(touchpoint, model);
+  if (!src) {
+    return fallbackChain.includes(model)
+      ? 'The model came from chat_fallback_chain; replace that entry with a model the provider serves.'
+      : `The call named this model itself; it was not selected by configuration, so no config key changes it (\`gbrain models\` shows the configured ${touchpoint} model).`;
+  }
+  switch (src.source) {
+    case 'config_key':
+    case 'deprecated_key':
+    case 'tier_config':
+    case 'models_default':
+      return `The model was selected by the DB-plane key ${src.origin}; gbrain config set ${src.origin} <provider>:<model> replaces it.`;
+    case 'file_config':
+      return `The model was selected by the ${r.pinKey} pin in ~/.gbrain/config.json; edit or remove that pin, or ${override} (gbrain config set ${r.pinKey} writes the DB plane, which does not replace the pin).`;
+    case 'env':
+      return `The model was selected by the ${src.origin} environment variable; change or unset it, or ${override}.`;
+    case 'cli_flag':
+      return `The model was selected by the ${src.origin} flag on this command.`;
+    default:
+      return `The model is the built-in ${r.tier}-tier default; ${override}.`;
+  }
+}
+
+/** Sets `why` on a provider 404 (an AIConfigError with status 404); any other error passes through unchanged. */
+export function withModelNotFoundWhy<E>(err: E, touchpoint: GatewayTouchpoint, model: string, fallbackChain?: readonly string[]): E {
+  if (err instanceof AIConfigError && (err.apiErrorStatus ?? err.status) === 404) err.why = modelNotFoundWhy(touchpoint, model, fallbackChain);
+  return err;
 }
 
 export function clearGatewayModelSources(): void {

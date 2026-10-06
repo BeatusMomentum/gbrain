@@ -29,6 +29,9 @@ export class AIServiceError extends Error {
 }
 
 export class AIConfigError extends AIServiceError {
+  /** Why the failure happened, beyond the message (a provider 404 names the setting that selected the model). */
+  why?: string;
+
   constructor(
     message: string,
     public readonly fix?: string,
