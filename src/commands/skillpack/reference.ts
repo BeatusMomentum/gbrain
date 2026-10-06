@@ -25,14 +25,7 @@ export async function cmdReference(args: string[]): Promise<void> {
   }
   if (args.includes('--help') || args.includes('-h')) {
     console.log(
-      'gbrain skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]\n' +
-        'gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n\n' +
-        '  --apply-clean-hunks Aligns every clean hunk in ONE skill to gbrain,\n' +
-        '                      including intentional local edits; preview with\n' +
-        '                      --dry-run. Not available with --all (it would do that\n' +
-        '                      to every skill at once): sweep with --all, then apply\n' +
-        '                      per skill.\n' +
-        '  --dry-run           With --apply-clean-hunks, report outcomes, write nothing.\n' +
+      'gbrain skillpack reference <name> | --all [--workspace PATH] [--apply-clean-hunks] [--since <version>] [--dry-run] [--json]\n\n' +
         '  --since <version>   With --all, restrict the sweep to skills whose source\n' +
         '                      changed in gbrain between <version> and HEAD. Useful\n' +
         '                      after `gbrain upgrade` to see only what moved.',
@@ -66,25 +59,18 @@ export async function cmdReference(args: string[]): Promise<void> {
     console.error('Error: pass a skill name or --all.');
     process.exit(2);
   }
-  if (all && apply) {
-    const { exitCliError, usageError } = await import('../../cli/cli-error.ts');
-    exitCliError(usageError(
-      '--apply-clean-hunks works on one skill at a time, not with --all.',
-      'List which skills differ with `gbrain skillpack reference --all`, inspect one with `gbrain skillpack reference <slug>`, '
-        + 'then apply it with `gbrain skillpack reference <slug> --apply-clean-hunks` (add --dry-run to preview; keep any --workspace you passed).',
-      {
-        why: 'The apply aligns every clean hunk to gbrain, including intentional local edits; with --all it would do that to every skill at once.',
-        fix: { argv: ['gbrain', 'skillpack', 'reference', '--all'], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Lists which skills differ, read-only, so one skill can be applied at a time.' },
-      },
-    ), 'skillpack', { json });
-  }
 
   const gbrainRoot = findGbrainOrDie();
   const targetWorkspace = resolveWorkspace({ workspace });
 
   try {
     if (apply) {
+      if (all) {
+        console.error(
+          'Error: --apply-clean-hunks is intentionally NOT supported with --all. Apply one skill at a time.',
+        );
+        process.exit(2);
+      }
       // Two-way merge warning fires BEFORE the apply. Goes to stderr so
       // it survives stdout redirection. Suppressed in --json mode so
       // machine consumers (CI, agent scripts) get a clean envelope; the
