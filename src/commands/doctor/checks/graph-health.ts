@@ -87,7 +87,14 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
         message: `Only code/test fixture entity pages found (${entityCount}); graph_coverage not applicable`,
       });
     } else if (eligibleEntityCount < MIN_ENTITY_PAGES_FOR_COVERAGE) {
-      checks.push({ name: 'graph_coverage', status: 'ok', message: `Only ${eligibleEntityCount} eligible entity page${eligibleEntityCount === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale` });
+      // Same small-N floor BrainHealth grades from: a 1-4 page ratio is noise,
+      // and warning on it leaves a WARN that `extract all` cannot clear.
+      const pages = eligibleEntityCount === 1 ? 'page' : 'pages';
+      checks.push({
+        name: 'graph_coverage',
+        status: 'ok',
+        message: `Only ${eligibleEntityCount} eligible entity ${pages} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
+      });
     } else if (linkCoverage >= 0.7 && timelineCoverage >= 0.5) {
       checks.push({ name: 'graph_coverage', status: 'ok', message: `Entity connected coverage (in/out) ${linkPct}%, entity timeline coverage ${timelinePct}%` });
     } else {

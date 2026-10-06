@@ -1373,21 +1373,21 @@ async function embedAll(
     }
   }
 
-  // Sliding worker pool (src/core/worker-pool.ts). #3037: a throw that escapes
-  // embedOnePage (its snapshot read runs before the try) lands in failures[]
-  // under the default 'continue' policy; count it so the run can't exit 0.
-  const pool = await runSlidingPool({
+  // Sliding worker pool (src/core/worker-pool.ts). #3037: embedOnePage reads the snapshot before its own
+  // try, so a failed read lands here as a page that never embedded; count it unless the run is aborting.
+  await runSlidingPool({
     items: pages,
     workers: CONCURRENCY,
     ...(signal && { signal }), // #1737: pool stops claiming pages once aborted
     onItem: (page) => embedOnePage(page),
     failureLabel: (page) => page.slug,
+    onError: (e, page) => {
+      if (isAborted(signal)) return 'continue';
+      recordFailure(result, 1, page.slug, e);
+      serr(`\n  Error embedding ${page.slug}: ${e instanceof Error ? e.message : e}`);
+      return 'continue';
+    },
   });
-  for (const { label, error } of pool.failures) {
-    if (isAborted(signal)) break; // shutdown, not a failure
-    recordFailure(result, 1, label, error);
-    serr(`\n  Error embedding ${label}: ${error instanceof Error ? error.message : error}`);
-  }
 
   // Stdout summary preserved for scripts/tests that grep for counts.
   if (!staleOpts?.quiet) {

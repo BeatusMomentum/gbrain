@@ -17,14 +17,15 @@ import { mockEmbedProjectionEngine as mockEngine, embeddingUpdates } from './hel
  *   2. Cost bounding: a 429 (rate limit) does NOT fan out into N
  *      single-chunk calls, and neither does an AITransientError (outage) —
  *      isolation only fires for permanent request-shaped failures.
- *   3. --all: a page whose snapshot read throws is counted on
- *      result.failures instead of vanishing into the worker pool.
+ *   3. --all: a page whose snapshot read throws (before embedOnePage's own
+ *      try) is a counted, reported failure; one that throws because the run
+ *      is aborting is shutdown. Fails if embedAll drops worker-pool errors.
  *
  * Serial: uses mock.module (leaks across files sharing a bun process).
  * The CLI exit-code half of #3037 is pinned by
  * test/embed-exit-code-3037.serial.test.ts (real spawned CLI).
  */
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { AITransientError } from '../src/core/ai/errors.ts';
 
@@ -134,46 +135,76 @@ describe('#3037 — one bad chunk no longer darkens its page', () => {
     expect(stamps).toHaveLength(0);
   });
 
-  test('--all: a page whose snapshot read throws is counted; the other pages still embed', async () => {
-    // The guarded snapshot read runs before embedOnePage's try, so its throw
-    // (here a lock wait cancelled by statement_timeout) reaches the worker
-    // pool, which swallowed it: failures 0, exit 0, page left unembedded.
-    const engine = mockEngine({
-      listPages: async () => [
-        { slug: 'locked-page', source_id: 'default' },
-        { slug: 'healthy-page', source_id: 'default' },
-      ],
-      getPage: async (slug: string) => {
-        if (slug === 'locked-page') throw new Error('canceling statement due to statement timeout');
-        return { slug, compiled_truth: 'Fixture body', timeline: '' };
-      },
-      getChunks: async () => THREE_CHUNKS,
-      upsertChunks: async () => { throw new Error("Embedding must not replace canonical chunks"); },
+  describe('--all: a page snapshot read that throws reaches the worker pool', () => {
+    const readFailure = (message: string) => Object.assign(new Error(message), { code: '57014' });
+
+    async function embedAllCapturingStderr(engine: BrainEngine, signal?: AbortSignal) {
+      const lines: string[] = [];
+      const errorLog = spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.join(' ')); });
+      try {
+        return { result: await runEmbedCore(engine, { all: true, ...(signal ? { signal } : {}) }), lines };
+      } finally {
+        errorLog.mockRestore();
+      }
+    }
+
+    test('each failed read is one counted, reported page; readable pages still embed', async () => {
+      const engine = mockEngine({
+        listPages: async () => ['contended-a', 'readable', 'contended-b'].map((slug) => ({ slug, source_id: 'default' })),
+        getPage: async (slug: string) => {
+          if (slug !== 'readable') throw readFailure(`lock wait on ${slug} cancelled`);
+          return { slug, compiled_truth: 'Fixture body', timeline: '' };
+        },
+        getChunks: async () => THREE_CHUNKS,
+      });
+
+      const { result, lines } = await embedAllCapturingStderr(engine);
+
+      expect(result.failures).toBe(2);
+      expect([...result.failure_samples].sort()).toEqual([
+        'contended-a: lock wait on contended-a cancelled',
+        'contended-b: lock wait on contended-b cancelled',
+      ]);
+      expect(result.embedded).toBe(3);
+      expect(result.pages_processed).toBe(1);
+      expect(lines.filter((line) => line.includes('Error embedding contended-'))).toHaveLength(2);
     });
 
-    const result = await runEmbedCore(engine, { all: true });
+    test('control: a read that throws because the run is aborting is not a failure', async () => {
+      const controller = new AbortController();
+      const engine = mockEngine({
+        listPages: async () => [{ slug: 'shutting-down', source_id: 'default' }],
+        getPage: async () => {
+          controller.abort();
+          throw readFailure('canceling statement due to user request');
+        },
+        getChunks: async () => THREE_CHUNKS,
+      });
 
-    expect(embeddingUpdates(engine).map((call: any) => call.args[1][5])).toEqual(['good-a', 'BAD', 'good-b']);
-    expect(result.embedded).toBe(3);
-    expect(result.failures).toBe(1);
-    expect(result.failure_samples).toEqual(['locked-page: canceling statement due to statement timeout']);
-  });
+      const { result, lines } = await embedAllCapturingStderr(engine, controller.signal);
 
-  test('--all: a snapshot read that throws because the run was aborted is shutdown, not a failure', async () => {
-    const controller = new AbortController();
-    const engine = mockEngine({
-      listPages: async () => [{ slug: 'aborted-page', source_id: 'default' }],
-      getPage: async () => {
-        controller.abort();
-        throw new Error('canceling statement due to user request');
-      },
-      getChunks: async () => THREE_CHUNKS,
+      expect(result.failures).toBe(0);
+      expect(result.failure_samples).toEqual([]);
+      expect(lines.some((line) => line.includes('Error embedding'))).toBe(false);
     });
 
-    const result = await runEmbedCore(engine, { all: true, signal: controller.signal });
+    test('a read that failed before the run was aborted is still counted', async () => {
+      // GBRAIN_EMBED_CONCURRENCY=1 (beforeEach): first-failed is read first.
+      const controller = new AbortController();
+      const engine = mockEngine({
+        listPages: async () => ['first-failed', 'then-aborted'].map((slug) => ({ slug, source_id: 'default' })),
+        getPage: async (slug: string) => {
+          if (slug === 'then-aborted') controller.abort();
+          throw readFailure(`read of ${slug} failed`);
+        },
+        getChunks: async () => THREE_CHUNKS,
+      });
 
-    expect(result.failures).toBe(0);
-    expect(result.failure_samples ?? []).toEqual([]);
+      const { result } = await embedAllCapturingStderr(engine, controller.signal);
+
+      expect(result.failures).toBe(1);
+      expect(result.failure_samples).toEqual(['first-failed: read of first-failed failed']);
+    });
   });
 
   test('--stale x #3507: fan-out retries the WRAPPED texts and a partially-failed page is not restamped', async () => {

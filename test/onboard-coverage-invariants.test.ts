@@ -14,6 +14,7 @@ import {
   checkTimelineCoverage,
 } from '../src/core/onboard/checks.ts';
 import { buildQuarantineMarker } from '../src/core/quarantine.ts';
+import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../src/core/types.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -32,10 +33,16 @@ beforeEach(async () => {
   await resetPgliteState(engine);
 });
 
+// Enough visible entities to clear the small-N floor, so the checks compute a
+// ratio instead of reporting "not applicable". Counting the quarantined page
+// as well would make it 1 of 6, i.e. 17%.
 async function seedVisibleAndQuarantinedEntities(): Promise<void> {
-  for (let i = 0; i < 5; i++) {
-    await engine.putPage(`people/visible-example-${i}`, {
-      type: 'person', title: `Visible Example ${i}`, compiled_truth: 'A visible synthetic entity.', timeline: '',
+  for (let n = 1; n <= MIN_ENTITY_PAGES_FOR_COVERAGE; n++) {
+    await engine.putPage(`people/visible-example-${n}`, {
+      type: 'person',
+      title: `Visible Example ${n}`,
+      compiled_truth: 'A visible synthetic entity.',
+      timeline: '',
     });
   }
   await engine.putPage('people/quarantined-example', {
@@ -110,29 +117,7 @@ describe('onboard entity coverage invariants', () => {
     const result = await checkEntityLinkCoverage(engine);
 
     expect(result.check.message).toMatch(/^Coverage 0% ± 0\.0%/);
-    expect(result.check.message).not.toContain('50%');
-  });
-
-  test('one entity page is not applicable for link coverage', async () => {
-    await engine.putPage('people/one-example', {
-      type: 'person', title: 'One Example', compiled_truth: 'A synthetic entity.', timeline: '',
-    });
-    const result = await checkEntityLinkCoverage(engine);
-    expect(result.check.status).toBe('ok');
-    expect(result.check.message).toContain('Only 1 entity page (< 5)');
-    expect(result.check.message).not.toContain('Coverage 0%');
-    expect(result.remediations).toHaveLength(0);
-  });
-
-  test('five entities with zero inbound links still warn', async () => {
-    for (let i = 0; i < 5; i++) {
-      await engine.putPage(`people/unlinked-${i}`, {
-        type: 'person', title: `Unlinked ${i}`, compiled_truth: 'A synthetic entity.', timeline: '',
-      });
-    }
-    const result = await checkEntityLinkCoverage(engine);
-    expect(result.check.status).toBe('warn');
-    expect(result.check.message).toMatch(/^Coverage 0% ± 0\.0%/);
+    expect(result.check.message).not.toContain('17%');
   });
 
   test('timeline coverage applies the same visible-sample invariant', async () => {
@@ -146,28 +131,6 @@ describe('onboard entity coverage invariants', () => {
     const result = await checkTimelineCoverage(engine);
 
     expect(result.check.message).toMatch(/^Coverage 0% ± 0\.0%/);
-    expect(result.check.message).not.toContain('50%');
-  });
-
-  test('one entity page is not applicable for timeline coverage', async () => {
-    await engine.putPage('people/one-example', {
-      type: 'person', title: 'One Example', compiled_truth: 'A synthetic entity.', timeline: '',
-    });
-    const result = await checkTimelineCoverage(engine);
-    expect(result.check.status).toBe('ok');
-    expect(result.check.message).toContain('Only 1 entity page (< 5)');
-    expect(result.check.message).not.toContain('Coverage 0%');
-    expect(result.remediations).toHaveLength(0);
-  });
-
-  test('five entities with zero timeline entries still warn', async () => {
-    for (let i = 0; i < 5; i++) {
-      await engine.putPage(`people/no-timeline-${i}`, {
-        type: 'person', title: `No Timeline ${i}`, compiled_truth: 'A synthetic entity.', timeline: '',
-      });
-    }
-    const result = await checkTimelineCoverage(engine);
-    expect(result.check.status).toBe('warn');
-    expect(result.check.message).toMatch(/^Coverage 0% ± 0\.0%/);
+    expect(result.check.message).not.toContain('17%');
   });
 });

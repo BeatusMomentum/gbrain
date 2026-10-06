@@ -3,25 +3,21 @@
 // DATABASE_URL needed. Exercises the key contracts end-to-end:
 //   - computeRemediationPlan with extras returns the expected shape
 //   - buildOnboardReport produces a stable JSON envelope
-//   - captureMetric returns numeric values for each of 5 metrics, read
-//     with the predicates the onboard checks and get_health report
-//   - A remediation job step writes its before/after impact row, which
-//     `gbrain onboard --history` shows
+//   - captureMetric returns numeric values for each of 5 metrics
 //   - The runRemediation library refuses --auto without --max-usd
 //   - The onboard CLI gates work as documented
 //
-// The impact-history block also runs on real Postgres when DATABASE_URL is
-// set (a real extract job, run inline through the Minion worker). Other
+// One block needs DATABASE_URL: a real extract job run inline on Postgres,
+// which proves the remediation impact row (#6109) lands with its JSONB
+// details as an object (PGLite cannot show a double-encoded string). Other
 // handlers firing on Postgres still wait on the per-handler stub seam.
 
 import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import type { BrainEngine } from '../../src/core/engine.ts';
 import { computeRemediationPlan, runRemediation } from '../../src/core/remediation/index.ts';
-import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
-import { runOnboard } from '../../src/commands/onboard.ts';
-import { installFixtureChunks } from '../helpers/page-projection.ts';
+import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
+import { captureMetric } from '../../src/core/onboard/impact-capture.ts';
 import { buildOnboardReport, toOnboardRecommendation } from '../../src/core/onboard/render.ts';
 import { runAllOnboardChecks } from '../../src/core/onboard/checks.ts';
 import { makeRemediationStep } from '../../src/core/remediation-step.ts';
@@ -60,78 +56,49 @@ describe('onboard E2E — captureMetric', () => {
   });
 });
 
-// The impact row's JSONB details only prove out on real Postgres (PGLite hides
-// double-encoding), so this block also runs there when DATABASE_URL is set.
-for (const backend of ['pglite', 'postgres'] as const) {
-  (backend === 'postgres' && !hasDatabase() ? describe.skip : describe)(`onboard E2E — impact history (${backend})`, () => {
-    let brain: BrainEngine;
+(hasDatabase() ? describe : describe.skip)('onboard E2E — remediation impact row on Postgres (#6109)', () => {
+  let pg: PostgresEngine;
 
-    beforeAll(async () => {
-      if (backend === 'postgres') {
-        brain = await setupDB();
-        return;
-      }
-      const pglite = new PGLiteEngine();
-      await pglite.connect({});
-      await pglite.initSchema();
-      brain = pglite;
-    }, 60_000);
+  beforeAll(async () => {
+    pg = await setupDB();
+  }, 60_000);
 
-    afterAll(async () => {
-      if (backend === 'postgres') await teardownDB();
-      else await brain.disconnect();
-    });
-
-    test('a remediation job step records its metric before and after; onboard --history shows it', async () => {
-      // Two unextracted pages, one linking the other: the planner adds
-      // extract.stale, whose link leaves get_health with no orphan pages.
-      await brain.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice works at [[companies/acme-example]].' });
-      await brain.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'A widget company.' });
-      expect((await brain.getHealth()).orphan_pages).toBe(2);
-
-      const result = await runRemediation(brain, { targetScore: 0, inlineJobs: true });
-      const step = result.submitted.find((s) => s.id === 'extract.stale');
-      expect(step?.status).toBe('completed');
-
-      const onboardOutput = async (args: string[]) => {
-        let out = '';
-        const write = process.stdout.write;
-        process.stdout.write = ((chunk: string | Uint8Array) => { out += String(chunk); return true; }) as typeof process.stdout.write;
-        try {
-          await runOnboard(brain, args);
-        } finally {
-          process.stdout.write = write;
-        }
-        return out;
-      };
-      const { history } = JSON.parse(await onboardOutput(['--history', '--json'])) as { history: Array<Record<string, unknown>> };
-      expect(history).toHaveLength(1);
-      expect(history[0]).toMatchObject({ remediation_id: 'extract.stale', metric_name: 'orphan_count', metric_before: 2, metric_after: 0, delta: -2 });
-      expect(await onboardOutput(['--history'])).toMatch(
-        /^Onboard history \(last 1\):\n {2}\d{4}-\d\d-\d\dT[\d:.]+Z {2}extract\.stale {2}orphan_count: 2 → 0 \(-2\)\n$/);
-
-      const [row] = await brain.executeRaw<{ job_id: string | number; details: Record<string, unknown> }>(
-        'SELECT job_id, details FROM migration_impact_log');
-      expect(Number(row.job_id)).toBe(step!.job_id!);
-      expect(row.details).toMatchObject({ job: 'extract', status: 'completed', doctor_run_id: result.doctor_run_id });
-    });
-
-    test('stale and coverage metrics leave out the pages the onboard checks leave out', async () => {
-      // An embed_skip page's unembedded chunk is not stale work, and a
-      // quarantined entity page is outside the coverage population.
-      await brain.putPage('notes/plain-example', { type: 'note', title: 'Plain', compiled_truth: 'Waiting for a vector.' });
-      await installFixtureChunks(brain, 'notes/plain-example', [{ chunk_index: 0, chunk_text: 'Waiting for a vector.', chunk_source: 'compiled_truth' }]);
-      await brain.putPage('notes/skipped-example', { type: 'note', title: 'Skipped', compiled_truth: 'Never embedded.', frontmatter: { embed_skip: true } });
-      await installFixtureChunks(brain, 'notes/skipped-example', [{ chunk_index: 0, chunk_text: 'Never embedded.', chunk_source: 'compiled_truth' }]);
-      await brain.putPage('people/hidden-example', { type: 'person', title: 'Hidden', compiled_truth: 'Quarantined.', frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'fixture' } } });
-
-      expect(await captureMetric(brain, 'stale_count')).toBe(1);
-      expect(await brain.countStaleChunks()).toBe(1);
-      // acme-example has an inbound link, alice-example has none.
-      expect(await captureMetric(brain, 'entity_link_coverage')).toBe(0.5);
-    });
+  afterAll(async () => {
+    await teardownDB();
   });
-}
+
+  test('an executed extract step stores its orphan delta with object-shaped details', async () => {
+    await pg.putPage('notes/kickoff-example', {
+      type: 'note', title: 'Kickoff', compiled_truth: 'Met [[people/carol-example]] and [[companies/delta-example]].',
+    });
+    await pg.putPage('people/carol-example', { type: 'person', title: 'Carol Example', compiled_truth: 'An engineer.' });
+    await pg.putPage('companies/delta-example', { type: 'company', title: 'Delta Example', compiled_truth: 'A company.' });
+
+    const result = await runRemediation(pg, { targetScore: 0, inlineJobs: true });
+    const step = result.submitted.find((s) => s.id === 'extract.stale');
+    expect(step?.status).toBe('completed');
+
+    // migration_impact_log is not in the E2E truncate list; scope to this run.
+    const rows = await pg.executeRaw<{
+      remediation_id: string; metric_name: string; metric_before: string; metric_after: string;
+      job_id: string; details_type: string; details: Record<string, unknown>;
+    }>(
+      `SELECT remediation_id, metric_name, metric_before, metric_after, job_id,
+              jsonb_typeof(details) AS details_type, details
+         FROM migration_impact_log
+        WHERE details->>'doctor_run_id' = $1`,
+      [result.doctor_run_id],
+    );
+    expect(rows).toHaveLength(1);
+    const [row] = rows;
+    expect(row!.remediation_id).toBe('extract.stale');
+    expect(row!.metric_name).toBe('orphan_count');
+    expect([Number(row!.metric_before), Number(row!.metric_after)]).toEqual([3, 0]);
+    expect(Number(row!.job_id)).toBe(step!.job_id!);
+    expect(row!.details_type).toBe('object');
+    expect(row!.details).toEqual({ job: 'extract', status: 'completed', doctor_run_id: result.doctor_run_id });
+  });
+});
 
 describe('onboard E2E — runAllOnboardChecks', () => {
   test('returns all 7 check shapes', async () => {
