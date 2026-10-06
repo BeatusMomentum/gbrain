@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 204774,
-    "stdoutSha256": "604bc3babd6d521ed848e4dc37dac37064a7e058c7cded48e6f4c1706d39a8bc",
+    "stdoutBytes": 205288,
+    "stdoutSha256": "395ac331e90598fe83ef06b0144a6910c70381162fad370f67e410af45661a04",
     "toolNames": [
       "remember",
       "entity",
@@ -2041,17 +2041,27 @@
         "scope": "admin"
       },
       {
-        "description": "Page version history. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it).",
+        "description": "Page version history, newest snapshot first. Trusted local and admin callers also get written_by and archived_by (who wrote each snapshot and whose write archived it). `limit` returns only the newest N; `include_body: false` returns metadata only.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
         "name": "get_versions",
         "parameters": {
+          "include_body": "boolean?",
+          "limit": "number?",
           "slug": "string"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
+            "include_body": {
+              "description": "false omits compiled_truth and timeline from every version (metadata only). Default true.",
+              "type": "boolean"
+            },
+            "limit": {
+              "description": "Return only the newest N versions (a positive integer). Omit for the full history.",
+              "type": "number"
+            },
             "slug": {
               "description": "Slug of the page whose version history to list.",
               "type": "string"
