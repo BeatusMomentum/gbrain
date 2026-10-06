@@ -479,9 +479,8 @@ export class PostgresEngine implements BrainEngine {
     // is in dual-pool mode. The pooler's 2-min statement_timeout truncates
     // SCHEMA_SQL replays + migrations on Supabase; the direct pool gets
     // 30min. Lane B replaces the lock primitive with a TTL+heartbeat table
-    // lock; Lane A does the routing and keeps pg_advisory_lock(42) on the
-    // SAME connection so the lock is correct.
-    const conn = this.connectionManager
+    // lock; Lane A does the routing.
+    const pool = this.connectionManager
       ? await this.connectionManager.ddl()
       : this.sql;
 
@@ -509,67 +508,74 @@ export class PostgresEngine implements BrainEngine {
     // Advisory lock prevents concurrent initSchema() calls from deadlocking
     // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock).
     //
-    // v0.30.1 honest limitation: pg_advisory_lock(42) is session-scoped to
-    // `conn`. When dual-pool routing is active, conn is a direct-pool reserved
-    // backend, so the lock is held for the duration of initSchema. Lane B
-    // replaces this with a TTL+heartbeat table lock that survives pooler-side
-    // session resets.
-    const t0 = Date.now();
-    logConnectionEvent({
-      pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
-      op: 'acquire',
-      caller: 'PostgresEngine.initSchema',
-    });
-    // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — initSchema DDL mutates the whole database; a per-source key would let two initSchema calls deadlock on shared DDL.
-    // #2898: deadlined pg_try_advisory_lock loop + stderr heartbeat instead of
-    // an unbounded pg_advisory_lock — a leaked pooler session holding key 42
-    // hung every gbrain invocation forever with no output. On timeout the
-    // error names the holder pid with pg_terminate_backend recovery guidance.
-    await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
+    // pg_advisory_lock(42) is session-scoped but ddl() returns a POOL, so on a
+    // pool of more than one backend the acquire, DDL and unlock are pinned to
+    // one reserved backend (no long-hold permit: migrations reserve their own,
+    // and a pool of one is already a single backend).
+    const pinned = pool.options.max > 1;
+    if (pinned) this.checkoutGauge.acquire('reserved');
+    const conn: postgres.Sql = pinned ? await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; }) : pool;
+    if (pinned) this.checkoutGauge.checkedOut();
     try {
-      // Pre-schema bootstrap: add forward-referenced state the embedded schema
-      // blob requires but that older brains don't have yet (issues #366/#375/
-      // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
-      // Threads the DDL connection (same one holding the advisory lock above)
-      // so bootstrap probes run on the locked connection — without this, the
-      // probes ran through `this.sql` (the pooler/instance pool) outside the
-      // lock, opening a concurrent-bootstrap race for Supabase users on the
-      // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
-      await this.applyForwardReferenceBootstrap(conn);
-
-      await conn.unsafe(sqlText);
-
-      // Run any pending migrations automatically
-      const { applied } = await runMigrations(this);
-      if (applied > 0) {
-        process.stderr.write(`  ${applied} migration(s) applied\n`);
-      }
-
-      // Post-migration schema verification: catches columns that migrations
-      // defined but PgBouncer transaction-mode silently failed to create.
-      // Self-heals missing columns via ALTER TABLE ADD COLUMN IF NOT EXISTS.
-      const verify = await verifySchema(this);
-      if (verify.healed.length > 0) {
-        process.stderr.write(`  Schema verify: self-healed ${verify.healed.length} missing column(s)\n`);
-      }
-
-      // v0.30.1 (Fix 5): sweep zombie HNSW indexes (indisvalid=false) from
-      // crashed CREATE INDEX CONCURRENTLY calls. Best-effort; errors logged
-      // to stderr but never block engine.connect.
-      try {
-        const result = await dropZombieIndexes(this);
-        if (result.dropped.length > 0) {
-          process.stderr.write(`  HNSW sweep: dropped ${result.dropped.length} zombie index(es)\n`);
-        }
-      } catch { /* best-effort */ }
-    } finally {
-      await conn`SELECT pg_advisory_unlock(42)`;
+      const t0 = Date.now();
       logConnectionEvent({
         pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
-        op: 'release',
+        op: 'acquire',
         caller: 'PostgresEngine.initSchema',
-        duration_ms: Date.now() - t0,
       });
+      // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — initSchema DDL mutates the whole database; a per-source key would let two initSchema calls deadlock on shared DDL.
+      // #2898: deadlined pg_try_advisory_lock loop + stderr heartbeat instead of
+      // an unbounded pg_advisory_lock — a leaked pooler session holding key 42
+      // hung every gbrain invocation forever with no output. On timeout the
+      // error names the holder pid with pg_terminate_backend recovery guidance.
+      await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
+      try {
+        // Pre-schema bootstrap: add forward-referenced state the embedded schema
+        // blob requires but that older brains don't have yet (issues #366/#375/
+        // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
+        // Threads the DDL connection (same one holding the advisory lock above)
+        // so bootstrap probes run on the locked connection — without this, the
+        // probes ran through `this.sql` (the pooler/instance pool) outside the
+        // lock, opening a concurrent-bootstrap race for Supabase users on the
+        // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
+        await this.applyForwardReferenceBootstrap(conn);
+
+        await conn.unsafe(sqlText);
+
+        // Run any pending migrations automatically
+        const { applied } = await runMigrations(this);
+        if (applied > 0) {
+          process.stderr.write(`  ${applied} migration(s) applied\n`);
+        }
+
+        // Post-migration schema verification: catches columns that migrations
+        // defined but PgBouncer transaction-mode silently failed to create.
+        // Self-heals missing columns via ALTER TABLE ADD COLUMN IF NOT EXISTS.
+        const verify = await verifySchema(this);
+        if (verify.healed.length > 0) {
+          process.stderr.write(`  Schema verify: self-healed ${verify.healed.length} missing column(s)\n`);
+        }
+
+        // v0.30.1 (Fix 5): sweep zombie HNSW indexes (indisvalid=false) from
+        // crashed CREATE INDEX CONCURRENTLY calls. Best-effort; errors logged
+        // to stderr but never block engine.connect.
+        try {
+          const result = await dropZombieIndexes(this);
+          if (result.dropped.length > 0) {
+            process.stderr.write(`  HNSW sweep: dropped ${result.dropped.length} zombie index(es)\n`);
+          }
+        } catch { /* best-effort */ }
+      } finally {
+        await conn`SELECT pg_advisory_unlock(42)`;
+        logConnectionEvent({
+          pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
+          op: 'release',
+          caller: 'PostgresEngine.initSchema',
+          duration_ms: Date.now() - t0,
+        });
+      }
+    } finally {
+      if (pinned) { (conn as postgres.ReservedSql).release(); this.checkoutGauge.release('reserved'); }
     }
   }
 
