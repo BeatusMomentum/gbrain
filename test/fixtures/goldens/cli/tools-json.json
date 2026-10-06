@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 205668,
-    "stdoutSha256": "96a9c3f7a58c78971bff5f692cbb7ea529c99fbb7c890f63c63b689c8d0c0f76",
+    "stdoutBytes": 205725,
+    "stdoutSha256": "04098d0530fafd5a3c383de74c002333571950d2be7c6d6e41c792fd71cdecdd",
     "toolNames": [
       "remember",
       "entity",
@@ -6359,7 +6359,7 @@
               "type": "string"
             },
             "id": {
-              "description": "One loop by id (from a previous open_loops result), at any status unless `status` is given. Stays inside the resolved source scope; returns no text digest.",
+              "description": "Fetch the single loop with this id (ids come from earlier open_loops results). Matches any status unless `status` is passed; the source scope still applies, and the grouped view omits `text`.",
               "type": "number"
             },
             "include_context": {
@@ -6386,7 +6386,7 @@
               "type": "string"
             },
             "status": {
-              "description": "Default 'open' (no default with `id`).",
+              "description": "Default 'open', except with `id`, where any status matches.",
               "enum": [
                 "open",
                 "done",

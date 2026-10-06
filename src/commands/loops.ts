@@ -140,6 +140,52 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
   }
 }
 
+/**
+ * `loops show <id>`: asks open_loops for that one id rather than scanning a
+ * listed page, so the loop is found at any status and any recency rank.
+ * `--status` / `--type` still narrow, and the source span is the same one
+ * `loops list` reads.
+ */
+async function showLoop(
+  engine: BrainEngine,
+  rest: string[],
+  narrowing: Record<string, unknown>,
+  readScope: { sourceId: string },
+  json: boolean,
+): Promise<void> {
+  const token = rest.find((a) => /^\d+$/.test(a));
+  const loopId = token === undefined ? NaN : Number(token);
+  if (!Number.isSafeInteger(loopId) || loopId < 1) {
+    exitCliError(usageError('gbrain loops show needs a loop id of 1 or more.',
+      'Usage: gbrain loops show <id> [--json]. Example: gbrain loops show 42 (`gbrain loops list` prints ids).'), 'loops', { json });
+  }
+  const { loops } = (await handleToolCall(
+    engine,
+    'open_loops',
+    { group_by: 'none', id: loopId, ...narrowing },
+    readScope,
+  )) as { loops: Array<Record<string, unknown>> };
+  const loop = loops[0];
+  if (loop === undefined) {
+    setCliExitVerdict(writeCliError(opError('not_found', `No loop ${loopId} in the sources this command reads.`,
+      'Run `gbrain loops list` to see loop ids.', {
+        why: 'A loop in a source this command does not read, or one excluded by --status or --type, is reported the same way as an id that does not exist.',
+        fix: { argv: ['gbrain', 'loops', 'list'], consent: [], actor: 'agent', why: 'Prints the loops this command can read, with their ids.', requires_exclusive: false },
+      }), 'loops', { json }));
+    return;
+  }
+  if (json) {
+    process.stdout.write(JSON.stringify({ ok: true, status: 'ok', loop }, null, 2) + '\n');
+    return;
+  }
+  const due = loop.due_at ? `  due ${String(loop.due_at).slice(0, 10)}` : '';
+  process.stdout.write(`#${String(loop.id)} [${String(loop.loop_type)}] ${String(loop.status)}${due}\n${String(loop.summary)}\n`);
+  const quote = (loop as { quote?: string }).quote;
+  if (quote) process.stdout.write(`> "${quote}"\n`);
+  const link = (loop as { deep_link?: string }).deep_link;
+  if (link) process.stdout.write(`${link}\n`);
+}
+
 export async function runLoops(engine: BrainEngine, args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   const json = rest.includes('--json') || args.includes('--json');
@@ -164,47 +210,21 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
   if (sub === 'list' || sub === 'show') {
     const statusIdx = rest.indexOf('--status');
     const typeIdx = rest.indexOf('--type');
-    const id = sub === 'show' ? Number(rest.find((a) => /^\d+$/.test(a))) : undefined;
-    if (id !== undefined && !(Number.isSafeInteger(id) && id > 0)) {
-      exitCliError(usageError('gbrain loops show needs a positive loop id.',
-        'Usage: gbrain loops show <id> [--json]. Example: gbrain loops show 42 (`gbrain loops list` shows ids).'), 'loops', { json });
+    const narrowing = {
+      ...(statusIdx !== -1 ? { status: rest[statusIdx + 1] } : {}),
+      ...(typeIdx !== -1 ? { loop_type: rest[typeIdx + 1] } : {}),
+    };
+    const readScope = { sourceId: sourceFlag(rest) ?? ALL_SOURCES };
+    if (sub === 'show') {
+      await showLoop(engine, rest, narrowing, readScope, json);
+      return;
     }
-    // show looks the id up in the op (any status, any rank), never in the
-    // listed page: a page holds only the most recent loops of one status.
     const result = (await handleToolCall(
       engine,
       'open_loops',
-      {
-        group_by: 'none',
-        limit: 200,
-        ...(id !== undefined ? { id } : {}),
-        ...(statusIdx !== -1 ? { status: rest[statusIdx + 1] } : {}),
-        ...(typeIdx !== -1 ? { loop_type: rest[typeIdx + 1] } : {}),
-      },
-      { sourceId: sourceFlag(rest) ?? ALL_SOURCES },
+      { group_by: 'none', limit: 200, ...narrowing },
+      readScope,
     )) as { loops: Array<Record<string, unknown>>; count: number };
-    if (sub === 'show') {
-      const loop = result.loops.find((l) => l.id === id);
-      if (!loop) {
-        setCliExitVerdict(writeCliError(opError('not_found', `No loop ${id} in the sources this command reads.`,
-          'Run `gbrain loops list` to see loop ids.', {
-            why: 'A loop outside the sources this command reads, or outside an explicit --status or --type, looks the same as a missing loop.',
-            fix: { argv: ['gbrain', 'loops', 'list'], consent: [], actor: 'agent', why: 'Lists the loops this command can read, with their ids.', requires_exclusive: false },
-          }), 'loops', { json }));
-        return;
-      }
-      if (json) {
-        process.stdout.write(JSON.stringify({ ok: true, status: 'ok', loop }, null, 2) + '\n');
-        return;
-      }
-      const due = loop.due_at ? `  due ${String(loop.due_at).slice(0, 10)}` : '';
-      process.stdout.write(`#${String(loop.id)} [${String(loop.loop_type)}] ${String(loop.status)}${due}\n${String(loop.summary)}\n`);
-      const quote = (loop as { quote?: string }).quote;
-      if (quote) process.stdout.write(`> "${quote}"\n`);
-      const link = (loop as { deep_link?: string }).deep_link;
-      if (link) process.stdout.write(`${link}\n`);
-      return;
-    }
     if (json) {
       process.stdout.write(JSON.stringify({ ok: true, status: 'ok', ...result }, null, 2) + '\n');
       return;
