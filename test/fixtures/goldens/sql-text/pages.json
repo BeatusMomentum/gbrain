@@ -10,8 +10,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
-            "textSha256": "be4f84c6281e3977a29eab4c2d35b5cab52a54f87936fb84eed35ac55b5a3bf3"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
+            "textSha256": "8dee8759d1d3fa1291deaa8744fbb18f2f0f3b2c97680df152ddac71046aa077"
           }
         ],
         "attendance-exclude": [
@@ -20,16 +20,16 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
-            "textSha256": "ac18ba62c816b3be4564d5a24bdc69304c45d24022c7ade0de8a81d0b36e3123"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
+            "textSha256": "54f7d9f57c21651a059808468d5c235760e080580b4ce3ed3355811769e86a7b"
           }
         ],
         "default": [
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)",
-            "textSha256": "3f9c86c575246f3a4f112b931aa51361c5e7b4c165330c026843dcb614072c94"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)",
+            "textSha256": "8d9eac67843892ab0e9ccfcd25a1d5f5c3c2afd51b72dcedce29e718dc58b6c8"
           }
         ],
         "versionTs+sourceId": [
@@ -39,8 +39,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2",
-            "textSha256": "fb4400e83c4a8ed0cf977fad5a1bd11c8336d3be942ba26f6e15486c2561dc3a"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2",
+            "textSha256": "247383a2d6f313bcad17403d6f4b6a403f284ea652647ebf1ceb7c56cc64d4e5"
           }
         ]
       },
@@ -638,8 +638,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
-            "textSha256": "02f69476257e0b3f3c2b8526ef5d8c92b84039ab79fe2a86c69cc9670b4603a8"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
+            "textSha256": "98da3d9f516c23cc4815949dd95ea5641349ff9b2951ccb366d031397eb0a149"
           }
         ],
         "default": [
@@ -648,8 +648,8 @@
             "params": [
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND (links_extracted_at IS NULL OR updated_at > links_extracted_at) ORDER BY id LIMIT $1",
-            "textSha256": "5caf4d2f7968dbdcb18b553c3d4c7e05bb474dbb338ed171071ccaadce8b0188"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at) ORDER BY id LIMIT $1",
+            "textSha256": "d63c641db0d71de13ec2d3e5b67cd2301e8317048dc447fa18c9f9c62dd44a40"
           }
         ]
       },
