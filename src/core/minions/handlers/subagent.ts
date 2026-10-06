@@ -24,7 +24,7 @@
  * as P2 items in the plan file.
  */
 
-import { retainToolWriteRequestId, runToolWrite, isPendingToolWrite } from '../tool-write-identity.ts';
+import { retainToolWriteRequestId, awaitCommittedToolWrite, isPendingToolWrite } from '../tool-write-identity.ts';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import { UnrecoverableError } from '../types.ts';
@@ -706,9 +706,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           retainToolWriteRequestId(use.input, ctx.id, last.message_idx, useOrdinal, use.id, use.name);
           await persistToolExecPending(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input);
           try {
-            const output = await runToolWrite(() => toolDef.execute(use.input, {
+            const output = await awaitCommittedToolWrite(ctx, use.name, () => toolDef.execute(use.input, {
               engine, jobId: ctx.id, remote: true, signal: ctx.signal,
-            }), use.name, ctx);
+            }));
             await persistToolExecComplete(engine, ctx.id, last.message_idx, useOrdinal, use.id, output);
             synthesizedResults.push({
               type: 'tool_result', tool_use_id: use.id,
@@ -1053,12 +1053,12 @@ export function makeSubagentHandler(deps: SubagentDeps) {
 
         const toolStart = Date.now();
         try {
-          const output = await runToolWrite(() => toolDef.execute(use.input, {
+          const output = await awaitCommittedToolWrite(ctx, toolName, () => toolDef.execute(use.input, {
             engine,
             jobId: ctx.id,
             remote: true,
             signal: ctx.signal,
-          }), toolName, ctx);
+          }));
           await persistToolExecComplete(engine, ctx.id, assistantIdx, useOrdinal, use.id, output);
           logSubagentHeartbeat({
             job_id: ctx.id,
@@ -1201,8 +1201,8 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       idempotent: t.idempotent === true,
       async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
         try {
-          return await runToolWrite(() => t.execute(input, { engine, jobId: ctx.id, remote: true, signal }), t.name,
-            { deadlineAtMs: ctx.deadlineAtMs, signal });
+          return await awaitCommittedToolWrite({ deadlineAtMs: ctx.deadlineAtMs, signal }, t.name,
+            () => t.execute(input, { engine, jobId: ctx.id, remote: true, signal }));
         } catch (error) {
           if (isPendingToolWrite(error)) pendingToolWrite = error;
           throw error;
@@ -1250,7 +1250,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       priorTools: priorToolsV1,
       toolDefs,
       signal: ctx.signal,
-      deadlineAtMs: ctx.deadlineAtMs,
+      jobDeadlineAtMs: ctx.deadlineAtMs,
     });
 
   // Terminal early-return (#1151 parity): the prior run already reached
@@ -1516,8 +1516,8 @@ interface ReconcileArgs {
   priorTools: PersistedToolExec[];
   toolDefs: ToolDef[];
   signal: AbortSignal;
-  /** The job deadline that bounds a re-dispatched tool write's wait (#5474). */
-  deadlineAtMs: number | null;
+  /** Bounds how long a re-dispatched pending tool write keeps replaying (#5474). */
+  jobDeadlineAtMs: number | null;
 }
 
 interface ReconcileResult {
@@ -1551,7 +1551,7 @@ interface ReconcileResult {
  * resume stays balanced.
  */
 async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileResult> {
-  const { engine, jobId, priorMessages, priorTools, toolDefs, signal, deadlineAtMs } = args;
+  const { engine, jobId, priorMessages, priorTools, toolDefs, signal } = args;
 
   const work = priorMessages.map(m => {
     const adapted = adaptContentBlocksToChatBlocks(m.content_blocks);
@@ -1654,8 +1654,8 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
       retainToolWriteRequestId(call.input, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName);
       await persistToolExecPending(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input);
       try {
-        const output = await runToolWrite(() => toolDef.execute(call.input, { engine, jobId, remote: true, signal }), call.toolName,
-          { deadlineAtMs, signal });
+        const output = await awaitCommittedToolWrite({ deadlineAtMs: args.jobDeadlineAtMs, signal }, call.toolName,
+          () => toolDef.execute(call.input, { engine, jobId, remote: true, signal }));
         await persistToolExecComplete(engine, jobId, msg.message_idx, callIdx, call.toolCallId, output);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output });
       } catch (e) {
