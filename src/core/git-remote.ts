@@ -268,26 +268,40 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
  * self-hosted local-filesystem remotes could clone but never pull. Default
  * stays `never`; the origin was already validated at clone time.
  *
- * The pull runs off the event loop and stops at `timeoutMs` or when `signal`
- * aborts (sync passes its --timeout / job signal), so a remote that never
- * answers cannot wedge the caller. A stopped pull rejects with a
- * GitOperationError whose `.cause.code` is ETIMEDOUT or ABORT_ERR.
+ * Runs asynchronously so the caller's event loop stays live while git waits
+ * on the remote: --timeout timers, signal handlers and job-lease renewals keep
+ * firing. The child is stopped when `opts.signal` aborts or after
+ * `opts.timeoutMs` (default 5 min); `isStoppedGitPull` recognizes the error
+ * that produces, so callers can tell "we stopped it" from "git failed".
  */
 export async function pullRepo(repoPath: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
   assertManagedFilesystemWrite(repoPath);
-  const args: string[] = ['-C', repoPath, ...durableSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
-  const { error, stderr } = await execFileBounded('git', args, {
+  const argv = ['-C', repoPath, ...durableSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
+  const run = await execFileBounded('git', argv, {
     timeout: opts.timeoutMs ?? 300_000,
-    signal: opts.signal,
     env: { ...process.env, ...GIT_ENV },
+    signal: opts.signal,
   });
-  if (error) {
-    throw new GitOperationError(
-      'pull',
-      `git pull failed in ${repoPath}: ${gitErrorDetail(Object.assign(error, { stderr }))}`,
-      error,
-    );
-  }
+  if (!run.error) return;
+  // execFile hands stderr back beside the error rather than on it, so lead
+  // with it here to keep the #1315 stderr-first message.
+  const reason = run.stderr.trim() || run.error.message;
+  throw new GitOperationError('pull', `git pull failed in ${repoPath}: ${reason}`, run.error);
+}
+
+/**
+ * Whether a `pullRepo` rejection means the pull was stopped (its deadline
+ * passed, its signal aborted, or something outside sent git SIGTERM) rather
+ * than git reporting a failure. GitOperationError keeps the subprocess error
+ * as `cause`, so the stop markers are read there: `code` ETIMEDOUT/ABORT_ERR
+ * or `signal` SIGTERM.
+ */
+export function isStoppedGitPull(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause === null || typeof cause !== 'object') return false;
+  const { code, signal } = cause as { code?: unknown; signal?: unknown };
+  return code === 'ETIMEDOUT' || code === 'ABORT_ERR' || signal === 'SIGTERM';
 }
 
 /**

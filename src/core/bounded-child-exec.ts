@@ -1,9 +1,9 @@
 /**
- * Bounded child-process execution: `execFileBounded` settles at its deadline
- * or on abort from its own timer, whatever the runtime delivers. A leaf module
- * (no gbrain imports), so modules that `brain-repo-durability.ts` imports,
- * such as `git-remote.ts`, can use it without an import cycle;
- * `brain-repo-durability.ts` re-exports it for its existing callers.
+ * `execFileBounded`: run a child process that always settles by its deadline
+ * or on abort, using our own timer rather than trusting the runtime's exit
+ * events. It lives in this dependency-free module so that `git-remote.ts`,
+ * which `brain-repo-durability.ts` itself imports, can use it too;
+ * `brain-repo-durability.ts` re-exports it for its older callers.
  */
 import { readFileSync } from 'fs';
 import { execFile, type ChildProcess, type ExecFileException } from 'child_process';

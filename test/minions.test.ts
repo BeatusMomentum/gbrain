@@ -3456,12 +3456,17 @@ describe('MinionQueue: per-job lock lease (#4145)', () => {
     expect(horizon).toBeLessThan(360_000);
   });
 
-  test('sync claims the 300s lease, so a slow pull or parse stretch cannot lapse a 30s one', async () => {
-    await queue.add('sync', {});
-    const before = Date.now();
-    const claimed = await queue.claim('tok-sync-lease', 30_000, 'default', ['sync']);
-    expect(claimed!.lock_duration_ms).toBe(300_000);
-    expect(claimed!.lock_until!.getTime() - before).toBeGreaterThan(250_000);
+  test('a sync job gets the 5-minute default lease while an unmapped job claimed the same way keeps 30s', async () => {
+    await queue.add('sync', { sourceId: 'default' });
+    await queue.add('lease-control', {});
+    const syncJob = await queue.claim('tok-sync', 30_000, 'default', ['sync']);
+    const control = await queue.claim('tok-control', 30_000, 'default', ['lease-control']);
+    expect(syncJob!.lock_duration_ms).toBe(5 * 60_000);
+    expect(control!.lock_duration_ms).toBeNull();
+    const syncHorizon = syncJob!.lock_until!.getTime() - syncJob!.started_at!.getTime();
+    const controlHorizon = control!.lock_until!.getTime() - control!.started_at!.getTime();
+    expect(syncHorizon).toBeGreaterThan(4 * 60_000);
+    expect(controlHorizon).toBeLessThan(60_000);
   });
 
   test('an unmapped handler keeps NULL lease → worker default horizon (legacy behavior)', async () => {
