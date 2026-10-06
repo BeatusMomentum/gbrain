@@ -497,19 +497,19 @@
         },
         {
           "category": "ops",
-          "message": "RLS enabled on 118/118 public tables",
+          "message": "RLS enabled on 119/119 public tables",
           "name": "rls",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "Version 212 (latest: 212)",
+          "message": "Version 213 (latest: 213)",
           "name": "schema_version",
           "status": "ok"
         },
         {
           "category": "meta",
-          "message": "966 column(s) verified against live schema",
+          "message": "976 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1686,6 +1686,21 @@
           },
           "message": "Every page has its revision; the page revision backfill is complete.",
           "name": "revision_backfill",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "bad_config": [],
+            "chars_limit": 4000,
+            "chars_used": 0,
+            "compiled": [],
+            "docs": "docs/guides/core-memory.md",
+            "enabled": true,
+            "pages": 0
+          },
+          "message": "No core pages. Start one with gbrain core init, then fill it in with the user.",
+          "name": "core_memory",
           "status": "ok"
         },
         {
