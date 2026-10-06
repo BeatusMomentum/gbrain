@@ -6,6 +6,9 @@ import { basename, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseSynthesize } from '../src/core/cycle/synthesize.ts';
+import { retryWriteAdmission } from '../src/core/persistence/admission-retry.ts';
+import * as journal from '../src/core/persistence/journal.ts';
+import { OperationError } from '../src/core/ops/contract.ts';
 import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -182,6 +185,42 @@ async function interruptAfterChild(engine: BrainEngine, sourceId: string, opts: 
   expect(result.status).toBe('fail');
   await disposePersistenceConsumer(engine);
   await engine.executeRaw('DELETE FROM dream_verdicts');
+}
+
+/** An ordinary (corpus) cycle whose child committed before postprocessing ran; the cooldown is unstamped. */
+async function childCommittedOrdinaryCycle({ engine, sourceId, root, opts, calls }: Parameters<Parameters<typeof fixture>[0]>[0]) {
+  const corpus = join(root, '..', 'corpus');
+  mkdirSync(corpus);
+  writeFileSync(join(corpus, basename(opts.inputFile)), readFileSync(opts.inputFile));
+  await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+  const ordinary = { brainDir: root, sourceId, dryRun: false };
+  await interruptAfterChild(engine, sourceId, ordinary);
+  const slug = await outputSlug(engine, sourceId);
+  await engine.executeRaw("DELETE FROM config WHERE key='dream.synthesize.last_completion_ts'");
+  return { ordinary, slug, jobsBefore: await engine.executeRaw('SELECT id FROM minion_jobs ORDER BY id'), spent: calls() };
+}
+
+/**
+ * #6051: deterministic contention injection. Each maintenance admission for
+ * which `contended(slug)` holds fails with the exact error real admission
+ * raises once its retry budget is spent (retryWriteAdmission on a 55P03 lock
+ * timeout with no budget left), without waiting out that budget. Records stderr.
+ */
+function contendAdmissions(contended: (slug: string) => boolean) {
+  let injected = 0, stderr = '';
+  const write = spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+    stderr += String(chunk);
+    return true;
+  }) as never);
+  const admitWrite = journal.admitWrite;
+  const spy = spyOn(journal, 'admitWrite').mockImplementation(async (engine, input, ...rest) => {
+    if (!contended(input.slug)) return admitWrite(engine, input, ...rest);
+    injected++;
+    return retryWriteAdmission(input.requestId ?? 'contended', async () => {
+      throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+    }, 0);
+  });
+  return { injected: () => injected, stderr: () => stderr, restore: () => { spy.mockRestore(); write.mockRestore(); } };
 }
 
 test('finalized synthesis never rewrites a later user quotation on same-transcript replay', async () => {
@@ -454,5 +493,85 @@ test('#5854: a postprocess publish still pending after its wait is deferred, the
     expect(snapshot.page.frontmatter.dream_generated).toBe(true);
     expect(snapshot.page.compiled_truth).not.toContain('"an entirely invented');
     expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+  });
+}, 120_000);
+
+test('#6051: a contended output admission is deferred like a pending publish, then finished by the next cycle without new spend', async () => {
+  await fixture(async f => {
+    const { engine, sourceId, calls } = f;
+    const { ordinary, slug, jobsBefore, spent } = await childCommittedOrdinaryCycle(f);
+    const before = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const outputRequests = () => engine.executeRaw<{ state: string }>(
+      "SELECT state FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug]);
+    const contention = contendAdmissions((target) => target === slug);
+    let deferred: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { deferred = await runPhaseSynthesize(engine, ordinary); }
+    finally { contention.restore(); }
+    expect(contention.injected()).toBe(1);
+    expect(deferred.status).toBe('warn');
+    expect(deferred.details.publish_pending).toBe(1);
+    expect(deferred.details.publish_deferred).toBe('publish deferred (writer busy); finishes next cycle, no action needed');
+    expect(deferred.details.pages_written).toBe(0);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    expect(await outputRequests()).toEqual([]);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(before.revision);
+    expect(contention.stderr()).toMatch(new RegExp(`${slug} \\(request [0-9a-f-]+\\) deferred, write admission blocked by database contention`));
+    await disposePersistenceConsumer(engine);
+    const next = await runPhaseSynthesize(engine, ordinary);
+    expect(next.status).toBe('ok');
+    expect(next.details.publish_pending).toBeUndefined();
+    expect(next.details.written_slugs).toEqual([slug]);
+    expect(calls()).toBe(spent);
+    expect(await engine.executeRaw('SELECT id FROM minion_jobs ORDER BY id')).toEqual(jobsBefore);
+    expect(await outputRequests()).toEqual([{ state: 'committed' }]);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.frontmatter.dream_generated).toBe(true);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+  });
+}, 120_000);
+
+test('#6051: a contended summary admission defers the summary, and the next cycle writes it', async () => {
+  await fixture(async f => {
+    const { engine, sourceId, root, calls } = f;
+    const { ordinary, slug, spent } = await childCommittedOrdinaryCycle(f);
+    // The output publish admits; every later admission (the summary) is contended.
+    const contention = contendAdmissions((target) => target !== slug);
+    let deferred: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { deferred = await runPhaseSynthesize(engine, ordinary); }
+    finally { contention.restore(); }
+    expect(contention.injected()).toBeGreaterThan(0);
+    expect(deferred.status).toBe('warn');
+    expect(deferred.details.publish_pending).toBe(1);
+    expect(deferred.details.written_slugs).toEqual([slug]);
+    const summarySlug = String(deferred.details.summary_slug);
+    expect(await engine.readPageSnapshot(summarySlug, { sourceId })).toBeNull();
+    expect(contention.stderr()).toContain(`${summarySlug} deferred, write admission blocked by database contention`);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    await disposePersistenceConsumer(engine);
+    const next = await runPhaseSynthesize(engine, ordinary);
+    expect(next.status).toBe('ok');
+    expect(calls()).toBe(spent);
+    expect((await engine.readPageSnapshot(summarySlug, { sourceId }))!.page.compiled_truth).toContain(`[[${slug}]]`);
+    expect(readFileSync(join(root, `${summarySlug}.md`), 'utf8')).toContain(`[[${slug}]]`);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).not.toBeNull();
+  });
+}, 120_000);
+
+test('#6051: a storage error that is not admission contention still fails the phase and stays retryable', async () => {
+  await fixture(async f => {
+    const { engine, sourceId } = f;
+    const { ordinary, slug } = await childCommittedOrdinaryCycle(f);
+    const admitWrite = journal.admitWrite;
+    const spy = spyOn(journal, 'admitWrite').mockImplementation(async (eng, input, ...rest) => {
+      if (input.slug !== slug) return admitWrite(eng, input, ...rest);
+      throw Object.assign(new OperationError('storage_error', 'Synthetic storage failure.', 'Synthetic hint.'), { detail: 'disk_full' });
+    });
+    let failed: Awaited<ReturnType<typeof runPhaseSynthesize>>;
+    try { failed = await runPhaseSynthesize(engine, ordinary); }
+    finally { spy.mockRestore(); }
+    expect(failed.status).toBe('fail');
+    expect(failed.details.publish_pending).toBeUndefined();
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeNull();
+    expect(await engine.executeRaw(
+      "SELECT 1 FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_maintenance_page'", [sourceId, slug])).toEqual([]);
   });
 }, 120_000);
