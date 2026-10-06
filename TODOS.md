@@ -1,5 +1,9 @@
 # TODOS
 
+## Fix wave 10 lane H follow-ups (filed 2026-10-06, GBRA-51)
+
+- [ ] **P2 — `gbrain jobs smoke --sigkill-rescue` and `--wedge-rescue` always throw.** **What:** both cases forge a claimed job with a raw `UPDATE minion_jobs SET status='active', lock_token=…`, which the `enforce_minion_queue_protocol` trigger refuses ("Minion queue protocol 1 required: old workers cannot claim upgraded queue jobs"), so neither regression check (#219 stall rescue, wall-clock eviction) runs at all; the command exits through the thrown error. `test/jobs-smoke-cleanup.test.ts` pins the refusal and that no smoke job is left behind. **Fix:** put the forged job into `active` through the queue's own claim path (claim it with a short-lived lock token, then age `lock_until`/`started_at`), or a test-only protocol-conformant transition, so both cases reach their assertions again; then flip the cleanup test's sigkill case to assert the rescue verdict. **Effort:** S. **Priority:** P2.
+
 ## Fix wave 9 follow-ups (filed 2026-10-05, follow-up from v0.60.74.0)
 
 - [ ] **P2 — Receipted publication for managed conversation facts.** **What:** `extract-conversation-facts` replaces a page's derived fact batch through `replaceDerivedFactsForPage` (`src/core/persistence/derived-facts.ts`), a coordinated transaction with no persistence request. On a managed brain a multi-message email thread is therefore skipped without writing and retried every run (`src/core/facts/conversation-skip.ts`), as are the single-email and prose outcomes; `test/helpers/managed-connector-job-contract.ts` case `extract_conversation_facts_thread` pins it. **Fix:** admit a persistence request for the derived batch (delete-by-prefix plus insert, page revision as the CAS) in the same transaction, so the write carries a receipt; then drop the managed gate and record the single-email/prose outcomes durably there too. **Effort:** M. **Priority:** P2.
