@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.83.0] - 2026-10-06
+
+**The Postgres embedding-recovery parity suite runs in about 25 seconds instead of 200 to 260, so it no longer hits the 180-second per-file E2E cap.**
+
+Its per-test reset ran `TRUNCATE ... CASCADE` on `pages` and `facts`. That reaches 26 tables and 126 indexes, and Postgres gives every one of them new storage even when they are already empty, so each reset cost about 0.8 seconds. With more than 200 resets across 157 tests, resets were most of the file's runtime, and slower or loaded machines pushed it past the cap. A new test helper empties the same tables by deleting their rows instead, which takes about 4 milliseconds. It falls back to `TRUNCATE` whenever a delete could behave differently. Every test and assertion is unchanged. gbrain itself does not change.
+
+### For contributors
+
+- `truncateCascade(engine, tables)` in `test/helpers/reset-pglite.ts` leaves the same end state as `TRUNCATE <tables> CASCADE` on either engine: it empties the named tables and every table that references them through a foreign key, and sequences keep counting. Small closures are deleted under `session_replication_role = replica`. It uses `TRUNCATE` instead when a closure has TRUNCATE triggers, always- or replica-enabled triggers or rules, inheritance, more than 8 MiB of storage, or no superuser to switch roles. `resetPgliteState` now uses the same fallback rules.
+- `test/embedding-recovery.serial.test.ts` uses the helper for all nine of its resets. On a local pgvector container the direct-Postgres file took 206, 251 and 243 seconds before the change, and 24, 25 and 24 seconds after. With four busy CPU cores it took 243 and 262 seconds before and 26 to 28 seconds after. The PgBouncer pass now takes about 42 seconds.
+- `scripts/e2e-backend-matrix.txt` drops the file's `pooled-timeout=600` override, so the PgBouncer pass is held to the standard 180-second cap again.
+
 ## [0.60.82.0] - 2026-10-06
 
 **Sync lanes that start at the same moment share the worktree lock instead of all but one reporting it busy, so a clean catch-up no longer falls back to slower paths mid-run (#5984).**
