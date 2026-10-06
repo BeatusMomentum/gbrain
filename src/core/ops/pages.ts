@@ -1,4 +1,5 @@
 import { pageMutationSource, submitPageMutation } from '../persistence/page-mutations.ts';
+import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
@@ -316,6 +317,7 @@ const put_page: Operation = {
         validatePageSlug(p.slug);
         enforceClientSlugFence(ctx, p.slug, 'put_page');
         enforceSubagentSlugFence(ctx, p.slug, 'put_page');
+        await suffixedSlugDryRun(ctx, sourceId, p.slug);
       }
       return { dry_run: true, action: 'put_page', slug: p.slug };
     }

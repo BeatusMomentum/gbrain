@@ -41,6 +41,24 @@ export function foldNativeBaseUrlsFromFilePlane(
   return out;
 }
 
+/**
+ * Openai-compatible recipes whose `*_BASE_URL` env var buildGatewayConfig
+ * threads into `base_urls` (config values win). v0.32 codex finding #4+#5:
+ * without this, `LLAMA_SERVER_BASE_URL=http://localhost:9000` let the probe
+ * reach :9000 while embed calls still went to the recipe default. The
+ * reranker sibling has its own var because llama-server's --reranking and
+ * --embeddings modes run as separate processes. `providers env` reads the
+ * same table to name the env var it reports.
+ */
+export const COMPAT_BASE_URL_ENVS: Readonly<Record<string, string>> = {
+  'llama-server': 'LLAMA_SERVER_BASE_URL',
+  'llama-server-reranker': 'LLAMA_SERVER_RERANKER_BASE_URL',
+  ollama: 'OLLAMA_BASE_URL',
+  lmstudio: 'LMSTUDIO_BASE_URL',
+  litellm: 'LITELLM_BASE_URL',
+  openrouter: 'OPENROUTER_BASE_URL',
+};
+
 export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // The file-plane key fold + env merge live in mergedProviderEnv
   // (src/core/ai/provider-env.ts) — the single canonical mapping shared with
@@ -48,23 +66,13 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // fallback for daemons / launchd-spawned subprocesses that don't propagate
   // ~/.zshrc-sourced keys; process env wins for keys carrying a real value.
 
-  // v0.32 codex finding #4+#5 fix: thread local-server _BASE_URL env vars
-  // into base_urls so the gateway hits the user's configured port. Without
-  // this, `LLAMA_SERVER_BASE_URL=http://localhost:9000` would let the probe
-  // succeed against :9000 but the actual embed call would still go to the
-  // recipe's base_url_default (localhost:8080). Same fix applies to
-  // OLLAMA_BASE_URL. Caller-provided cfg.provider_base_urls wins.
+  // Local-server *_BASE_URL env vars (COMPAT_BASE_URL_ENVS) feed base_urls;
+  // caller-provided cfg.provider_base_urls wins.
   const envBaseUrls: Record<string, string> = {};
-  if (process.env.LLAMA_SERVER_BASE_URL) envBaseUrls['llama-server'] = process.env.LLAMA_SERVER_BASE_URL;
-  // v0.40.6.1: sibling recipe for llama-server in reranking mode. Separate
-  // env var because --reranking and --embeddings are mutually exclusive at
-  // server launch — users running both will have two llama-server processes
-  // on different ports.
-  if (process.env.LLAMA_SERVER_RERANKER_BASE_URL) envBaseUrls['llama-server-reranker'] = process.env.LLAMA_SERVER_RERANKER_BASE_URL;
-  if (process.env.OLLAMA_BASE_URL) envBaseUrls['ollama'] = process.env.OLLAMA_BASE_URL;
-  if (process.env.LMSTUDIO_BASE_URL) envBaseUrls['lmstudio'] = process.env.LMSTUDIO_BASE_URL;
-  if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
-  if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
+  for (const [recipeId, envKey] of Object.entries(COMPAT_BASE_URL_ENVS)) {
+    const value = process.env[envKey];
+    if (value) envBaseUrls[recipeId] = value;
+  }
 
   // #3350: native base-URL fold — MUST read the file plane directly, not `c`
   // (callers can pass a DB-merged config; see foldNativeBaseUrlsFromFilePlane's
