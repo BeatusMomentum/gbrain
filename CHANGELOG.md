@@ -10,6 +10,33 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.95.0] - 2026-10-06
+
+**The full Ubicloud test gate finishes in about five and a half minutes instead of ten to fifteen, and the embedding-migration bad-flag test stops timing out.**
+
+No user-facing behavior changes. `bun run ci:ubicloud`, the full pre-ship gate for contributors and agents, now borrows more machines when the shared quota is free, gets each machine ready faster, and no longer waits on one nine-minute test file at the end. Every test still runs with the same assertions.
+
+| Full gate | Machines | Wall | Machine setup | End of the run |
+|---|---|---|---|---|
+| Before | 4 | 942 s | 80-85 s | one file still running (graduation-cli, 543 s) |
+| After | 8 | 359 s | 61-80 s | every slot busy to the end |
+| After | 10 | 326 s | 66-71 s | the last items of about 100 s finishing |
+
+### Itemized changes
+
+- **Burst sizing.** With no `--vms`, `ci:ubicloud` reads `scripts/ubicloud/ubi-runner.sh usage` and provisions as many `standard-16` VMs as fit under 448 of the project's 512 vCPUs, between the default 4 and a burst maximum of 10, and never more than the queued work can use. It logs the decision (`fleet: project VMs hold 192 vCPUs, ceiling 448: 10 VM(s) × 16 vCPUs (burst maximum 10)`) and falls back to 4 when the quota is busy or usage can't be read. `--vms N` still overrides. Ubicloud location capacity can still leave VMs `waiting for capacity`; the run continues on the VMs that started.
+- **Long-pole files split.** The files that ran past two and a half minutes are now files of about two minutes, with every test body unchanged and shared steps in helpers: `graduation-cli` (agent flow, topologies, the 1k-page history round trip, and zero-mutation polling split three ways by custody boundary), `graduation-crash-run-{1,2,3}` and `graduation-crash-rollback-{1,2}`, `graduation-clients` and `graduation-clients-serve`, `reconcile-crash-{unactivated,activated}-{1,2}.slow`, and `write-attribution-timeline-10k-postgres` (backend matrix). The GitHub Tier 1 graduation step, the selected-E2E exclusions, the per-file timeouts, persistence-validation, the nightly slow coverage lane, `test-shard.sh`, the stress plan and both weight maps name the new files.
+- **Faster VM setup.** The checkout is packed while VMs boot, and setup is streamed over SSH while the checkout uploads, so apt, the Bun and gitleaks downloads and the image pulls overlap it. apt skips fsync, man-db, needrestart and the translation, AppStream and command-not-found indexes, and installs `gcc` and `libc6-dev` (the native fault test compiles a shim) instead of `build-essential`. The tarball carries a `.git` with only what `HEAD` and `origin/master` reach: about 80 MB instead of 250 MB from a checkout that fetched every branch. Downloads retry, and database containers start only after apt, because a systemd reload during `docker run` failed containers.
+- **Prebaked image (opt-in).** `scripts/ubicloud/build-ci-image.sh` builds the `gbrain-ci` machine image with the apt packages and database images baked in; `--image gbrain-ci@latest` or `UBI_CI_IMAGE` boots it and cuts the setup script to about 18 s.
+- **Scheduler.** The VM running gitleaks, verify and the machine-exclusive serial files no longer counts toward heavy-item spreading or total slots. While it ran, it held every other VM to one item of a minute or more, so items of 100-120 s started two minutes late.
+- **Slots per VM stay at 8.** On eight VMs, 12 slots raised test compute 27% and finished in 353 s, against 359 s at 8 slots. 16 slots raised compute 52% and took 444 s. Neither caused a failure.
+- **`test/migrate-embeddings-recovery-cli.serial.test.ts`** never had a hung child. Its matrix test ran 126 cold CLI starts and 126 in-process PGLite reopens, one after another, inside a single 180-second budget. That took 69 s on an idle 4-core machine and more than 180 s on a shared CI runner, where the runner killed whichever child was running at the deadline ("killed 1 dangling process"). Every control is still checked on both routes, now in-process through the same `parseGlobalFlags` and `migrationCliArgumentError` call the CLI entry makes. One real CLI process runs for each distinct rejection (14 per route), and the test takes 27 s instead of 69 s. Pinned to one core beside three other serial files, the old test hit its 180 s timeout and the new one passed in 135 s.
+- **The test is stronger.** After each rejected run, it now requires the brain directory to be untouched (same size, mtime and ctime for every file), and it still compares the row snapshot once per route. It also runs a bad flag while the test itself holds the brain open. A mutation that opens the engine before validating the flags passed the old test, but it fails the new one on both checks.
+
+## To take advantage of v0.60.95.0
+
+Nothing to do: this release changes tests and CI tooling only. Agents running `bun run ci:ubicloud` get burst sizing automatically; pass `--vms 4` to keep the old fleet.
+
 ## [0.60.94.0] - 2026-10-06
 
 **Saved facts keep their real dates and remember who said them, and search can explain its own ranking.**
@@ -46,33 +73,6 @@ Dampening the ranking boost of very heavily linked pages was built and tested on
 - **Search explain.** `query` with `explain: true` returns `score_details` per row (arms and ranks, RRF attribution, blend, every boost, rerank, final); `explain_target` diagnoses a missing page (`src/core/search/explain-target.ts`); both params are on the full MCP surface only. CLI `gbrain search --explain --json`. Guide: `docs/guides/search-explain.md`.
 - **Doctor.** `extraction_date_grounding` reports which prompts resolve relative dates.
 - **Hub dampening.** Held-out FAIL (`docs/eval/decisions/p2-e1-heldout/`); nothing ships. The `hubWeight` helper the multi-hop chain executor uses is unchanged.
-
-## [0.60.93.0] - 2026-10-06
-
-**The full Ubicloud test gate finishes in about five and a half minutes instead of ten to fifteen, and the embedding-migration bad-flag test stops timing out.**
-
-No user-facing behavior changes. `bun run ci:ubicloud`, the full pre-ship gate for contributors and agents, now borrows more machines when the shared quota is free, gets each machine ready faster, and no longer waits on one nine-minute test file at the end. Every test still runs with the same assertions.
-
-| Full gate | Machines | Wall | Machine setup | End of the run |
-|---|---|---|---|---|
-| Before | 4 | 942 s | 80-85 s | one file still running (graduation-cli, 543 s) |
-| After | 8 | 359 s | 61-80 s | every slot busy to the end |
-| After | 10 | 326 s | 66-71 s | the last items of about 100 s finishing |
-
-### Itemized changes
-
-- **Burst sizing.** With no `--vms`, `ci:ubicloud` reads `scripts/ubicloud/ubi-runner.sh usage` and provisions as many `standard-16` VMs as fit under 448 of the project's 512 vCPUs, between the default 4 and a burst maximum of 10, and never more than the queued work can use. It logs the decision (`fleet: project VMs hold 192 vCPUs, ceiling 448: 10 VM(s) × 16 vCPUs (burst maximum 10)`) and falls back to 4 when the quota is busy or usage can't be read. `--vms N` still overrides. Ubicloud location capacity can still leave VMs `waiting for capacity`; the run continues on the VMs that started.
-- **Long-pole files split.** The files that ran past two and a half minutes are now files of about two minutes, with every test body unchanged and shared steps in helpers: `graduation-cli` (agent flow, topologies, the 1k-page history round trip, and zero-mutation polling split three ways by custody boundary), `graduation-crash-run-{1,2,3}` and `graduation-crash-rollback-{1,2}`, `graduation-clients` and `graduation-clients-serve`, `reconcile-crash-{unactivated,activated}-{1,2}.slow`, and `write-attribution-timeline-10k-postgres` (backend matrix). The GitHub Tier 1 graduation step, the selected-E2E exclusions, the per-file timeouts, persistence-validation, the nightly slow coverage lane, `test-shard.sh`, the stress plan and both weight maps name the new files.
-- **Faster VM setup.** The checkout is packed while VMs boot, and setup is streamed over SSH while the checkout uploads, so apt, the Bun and gitleaks downloads and the image pulls overlap it. apt skips fsync, man-db, needrestart and the translation, AppStream and command-not-found indexes, and installs `gcc` and `libc6-dev` (the native fault test compiles a shim) instead of `build-essential`. The tarball carries a `.git` with only what `HEAD` and `origin/master` reach: about 80 MB instead of 250 MB from a checkout that fetched every branch. Downloads retry, and database containers start only after apt, because a systemd reload during `docker run` failed containers.
-- **Prebaked image (opt-in).** `scripts/ubicloud/build-ci-image.sh` builds the `gbrain-ci` machine image with the apt packages and database images baked in; `--image gbrain-ci@latest` or `UBI_CI_IMAGE` boots it and cuts the setup script to about 18 s.
-- **Scheduler.** The VM running gitleaks, verify and the machine-exclusive serial files no longer counts toward heavy-item spreading or total slots. While it ran, it held every other VM to one item of a minute or more, so items of 100-120 s started two minutes late.
-- **Slots per VM stay at 8.** On eight VMs, 12 slots raised test compute 27% and finished in 353 s, against 359 s at 8 slots. 16 slots raised compute 52% and took 444 s. Neither caused a failure.
-- **`test/migrate-embeddings-recovery-cli.serial.test.ts`** never had a hung child. Its matrix test ran 126 cold CLI starts and 126 in-process PGLite reopens, one after another, inside a single 180-second budget. That took 69 s on an idle 4-core machine and more than 180 s on a shared CI runner, where the runner killed whichever child was running at the deadline ("killed 1 dangling process"). Every control is still checked on both routes, now in-process through the same `parseGlobalFlags` and `migrationCliArgumentError` call the CLI entry makes. One real CLI process runs for each distinct rejection (14 per route), and the test takes 27 s instead of 69 s. Pinned to one core beside three other serial files, the old test hit its 180 s timeout and the new one passed in 135 s.
-- **The test is stronger.** After each rejected run, it now requires the brain directory to be untouched (same size, mtime and ctime for every file), and it still compares the row snapshot once per route. It also runs a bad flag while the test itself holds the brain open. A mutation that opens the engine before validating the flags passed the old test, but it fails the new one on both checks.
-
-## To take advantage of v0.60.93.0
-
-Nothing to do: this release changes tests and CI tooling only. Agents running `bun run ci:ubicloud` get burst sizing automatically; pass `--vms 4` to keep the old fleet.
 
 ## [0.60.93.0] - 2026-10-06
 
