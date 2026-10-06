@@ -2,10 +2,11 @@
 import { assertSourceFilesystemActive } from '../../core/minions/source-filesystem.ts';
 import { currentJobSignal } from '../../core/minions/submission-authority.ts';
 import { currentCompanyBrainSync, softDeleteSyncPages } from '../../core/company-brain/profile.ts';
-import { relative } from 'path';
+import { join, relative } from 'path';
 import type { BrainEngine } from '../../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../../core/engine-constants.ts';
-import { collectSyncableFiles } from '../import.ts';
+import { collectSyncableFilesAsync } from '../import.ts';
+import { reusableWalk, walkOptions, type CollectedWalk } from '../../core/sync-walk.ts';
 import {
   isSyncable,
   isPoisonedPath,
@@ -101,6 +102,7 @@ export async function performFullSync(
   opts.onProgress?.({ phase: 'full_import' });
   await moveHeldRenames(engine, holds, holdRoot);
   let result: import('../import.ts').RunImportResult;
+  let importWalk: CollectedWalk | undefined;
   try {
     result = await runImport(engine, importArgs, {
       signal: opts.signal,
@@ -121,6 +123,7 @@ export async function performFullSync(
         noteScreenedImport(holds, path, fileResult);
         return await holdRefusedImport(engine, holds, path, filePath, fileResult) ? 'held' : undefined;
       },
+      onCollected: (walk) => { importWalk = walk; },
     });
     if (opts.signal?.aborted) throw new ImportAbortError('interrupted', 1, result);
   } catch (error) {
@@ -147,8 +150,7 @@ export async function performFullSync(
   const fullSourceId = opts.sourceId ?? DEFAULT_SOURCE_ID;
   const fullFailureSet = new Set(result.failures.map(f => f.path));
   if (holds?.existing.size || holds?.retryPaths.size) {
-    const walked = new Set(collectSyncableFiles(syncScopeRoot, { strategy: opts.strategy ?? 'markdown', includeGitignored: opts.includeGitignored,
-      includeHidden: opts.includeHidden }).map(abs => relative(holdRoot, abs)));
+    const walked = new Set((await fullSyncScopeFiles(syncScopeRoot, opts, importWalk)).files.map(abs => relative(holdRoot, abs)));
     await settleFullSyncHolds(engine, holds, { root: holdRoot, walked, failed: fullFailureSet });
   }
   const fullSucceeded = loadSyncFailures()
@@ -190,7 +192,7 @@ export async function performFullSync(
     );
   }
 
-  const reconciledDeletes = await reconcileFullSyncDeletes(engine, opts, { company, gitContextRoot, syncScopeRoot, slugRoot });
+  const reconciledDeletes = await reconcileFullSyncDeletes(engine, opts, { company, gitContextRoot, syncScopeRoot, slugRoot, importWalk });
 
   // #3479 blocker 2 — the post-gate sweep above ran BEFORE this reconcile,
   // so a `<rename:…>` sentinel whose stale row the reconcile just removed
@@ -242,7 +244,7 @@ export async function performFullSync(
 async function fullSyncDryRun(engine: BrainEngine, syncScopeRoot: string, headCommit: string, opts: SyncOpts,
   hold: { holds: LegacyHolds | null; holdRoot: string }): Promise<SyncResult> {
   const dryRunMalformed: string[] = [];
-  let allFiles = collectSyncableFiles(syncScopeRoot, {
+  let allFiles = await collectSyncableFilesAsync(syncScopeRoot, {
     strategy: opts.strategy ?? 'markdown',
     includeGitignored: opts.includeGitignored,
     onExcluded: (rel) => { dryRunMalformed.push(rel); },
@@ -346,15 +348,27 @@ async function reportBlockedFullSync(
 }
 
 /**
+ * The scope's syncable files as absolute paths. runImport's walk stands in for
+ * a fresh one only when it completed for this root with identical options
+ * (`reused`); otherwise the tree is walked again with the same options.
+ */
+async function fullSyncScopeFiles(syncScopeRoot: string, opts: SyncOpts, walk: CollectedWalk | undefined): Promise<{ files: string[]; reused: boolean }> {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- rel is the walker's own output under syncScopeRoot; the join rebuilds the in-memory path string the callers compare, no fs operation
+  if (reusableWalk(walk, syncScopeRoot, walkOptions(opts))) return { files: walk.files.map(rel => join(syncScopeRoot, rel)), reused: true };
+  return { files: await collectSyncableFilesAsync(syncScopeRoot, { strategy: opts.strategy ?? 'markdown', includeGitignored: opts.includeGitignored,
+    includeHidden: opts.includeHidden }), reused: false };
+}
+
+/**
  * Soft-delete file-backed pages whose source file is gone (advancing full
  * syncs only). Returns the number of pages that transitioned.
  */
 async function reconcileFullSyncDeletes(
   engine: BrainEngine,
   opts: SyncOpts,
-  input: { company: ReturnType<typeof currentCompanyBrainSync>; gitContextRoot: string; syncScopeRoot: string; slugRoot: string | undefined },
+  input: { company: ReturnType<typeof currentCompanyBrainSync>; gitContextRoot: string; syncScopeRoot: string; slugRoot: string | undefined; importWalk?: CollectedWalk },
 ): Promise<number> {
-  const { company, gitContextRoot, syncScopeRoot, slugRoot } = input;
+  const { company, gitContextRoot, syncScopeRoot, slugRoot, importWalk } = input;
   // #1970 (F-A): runImport is import-only — it never purges pages whose backing
   // file was deleted since the last sync. A full re-import is authoritative for
   // the whole tree, so reconcile deletes here too (this is what makes the
@@ -395,12 +409,9 @@ async function reconcileFullSyncDeletes(
     // --include-hidden full sync just imported would look "gone" on the
     // very next reconcile pass (its file was never in this collection) and
     // the mass-delete valve would remove it.
-    const currentFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => entry.path) : collectSyncableFiles(syncScopeRoot, {
-      strategy: opts.strategy ?? 'markdown',
-      includeGitignored: opts.includeGitignored,
-      includeHidden: opts.includeHidden,
-    })
-      .map(abs => relative(slugRoot ?? syncScopeRoot, abs));
+    const scope = company ? null : await fullSyncScopeFiles(syncScopeRoot, opts, importWalk);
+    const currentFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => entry.path)
+      : scope!.files.map(abs => relative(slugRoot ?? syncScopeRoot, abs));
     // #5988 (E13): the old page of a held rename keeps its origin until the
     // renamed file imports; its file being gone does not make it stale.
     const heldOrigins = await heldRenameOrigins(engine, sid);
@@ -426,11 +437,14 @@ async function reconcileFullSyncDeletes(
       // from pre-gate releases survive reconcile (their file still exists —
       // deleting the row would be silent data loss; cross-model finding).
       (unsyncableReason(p, reconcileSyncOpts) === 'malformed-path' && isPoisonedPath(p));
-    const plan = planReconcileDeletes(
-      rows,
-      currentFiles,
-      p => (scopePrefix === '' || p.startsWith(scopePrefix)) && reconcileEligible(p),
-    );
+    const inScope = (p: string) => (scopePrefix === '' || p.startsWith(scopePrefix)) && reconcileEligible(p);
+    let plan = planReconcileDeletes(rows, currentFiles, inScope);
+    // #5947: the reused walk predates the import, so a file restored or created since then
+    // is missing from it. It may prove nothing is stale; a deletion is decided on a fresh walk.
+    if (scope?.reused && plan.staleSlugs.length > 0) {
+      const fresh = await fullSyncScopeFiles(syncScopeRoot, opts, undefined);
+      plan = planReconcileDeletes(rows, fresh.files.map(abs => relative(slugRoot ?? syncScopeRoot, abs)), inScope);
+    }
     if (plan.staleSlugs.length > 0 && plan.massDelete && !massReconcileAllowed()) {
       // #2828 mass-delete safety valve: a reconcile that would sweep more than
       // half of the pages this strategy manages, on a source with a non-trivial

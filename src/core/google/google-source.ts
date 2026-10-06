@@ -33,6 +33,7 @@ import { chmodSync, closeSync, existsSync, fchmodSync, lstatSync, openSync, read
 import { dirname, join, relative } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
+import { applyCalendarEvents, calendarCoverageRange, calendarWindowAt, unlistedInWindow, type CalendarApplyIo, type CalendarWindow } from './calendar-window.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { CredentialError, isCredentialError } from '../creds/errors.ts';
 import { GOOGLE_PROVIDER, GoogleTokenProvider, fetchSendAsAliases } from '../creds/providers/google.ts';
@@ -96,6 +97,7 @@ function emptyState(): GoogleSourceState {
     gmail_newest_ms: null,
     calendar_sync_token: null,
     calendar_id: null,
+    calendar_horizon_ms: null,
     contacts_sync_token: null,
     last_full_at: null,
   };
@@ -458,11 +460,10 @@ async function sweepCalendar(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
 ): Promise<void> {
-  const now = Date.now();
-  const windowOpts = {
-    timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
-    timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
-  };
+  const nowMs = Date.now();
+  const window = calendarWindowAt(nowMs, deps.cfg.historyDays);
+  const windowOpts = { timeMinIso: new Date(window.floorMs).toISOString(), timeMaxIso: new Date(window.ceilMs).toISOString() };
+  const signalOpts = deps.opts.signal ? { signal: deps.opts.signal } : {};
   // The stored token is bound to the calendar it was minted for (legacy state
   // without calendar_id predates secondary calendars, so it was primary's).
   // A re-pointed source starts a fresh window; pairing the NEW calendar with
@@ -474,48 +475,73 @@ async function sweepCalendar(
     );
     state.calendar_sync_token = null;
   }
+  let listedWindow = deps.opts.full || !state.calendar_sync_token;
   let result;
   try {
     result = await calendar.listEvents(deps.cfg.account, {
       calendarId: deps.cfg.calendarId,
-      ...(deps.opts.full || !state.calendar_sync_token ? windowOpts : { syncToken: state.calendar_sync_token }),
-      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+      ...(listedWindow ? windowOpts : { syncToken: state.calendar_sync_token }),
+      ...signalOpts,
     });
   } catch (e) {
     if (e instanceof GoogleCursorExpiredError) {
       deps.log('[google] calendar syncToken expired; windowed re-list');
       state.calendar_sync_token = null;
-      result = await calendar.listEvents(deps.cfg.account, {
-        calendarId: deps.cfg.calendarId,
-        ...windowOpts,
-        ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
-      });
+      listedWindow = true;
+      result = await calendar.listEvents(deps.cfg.account, { calendarId: deps.cfg.calendarId, ...windowOpts, ...signalOpts });
     } else {
       throw e;
     }
   }
-  for (const ev of result.events) {
-    if (deps.opts.signal?.aborted) return;
-    // The page path derives from MUTABLE fields (start date, summary) while
-    // identity is the immutable event id — look up the existing page by
-    // frontmatter event_id so reschedules move (old page deleted) and
-    // cancelled skeletons (id + status only, per the Calendar API) still
-    // find their page instead of computing a 1970 ghost path.
-    const existingPath = await calendarPageRelPathByEventId(deps, ev.id);
-    const rendered = renderCalendarEventPage(ev);
-    if (!rendered) {
-      await deletePageByRelPath(deps, existingPath ?? calendarRelPath(ev), summary);
-      continue;
-    }
-    if (existingPath && existingPath !== rendered.relPath) {
-      await deletePageByRelPath(deps, existingPath, summary); // rescheduled → moved
-    }
-    await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
-  }
+  const io: CalendarApplyIo<NonNullable<ReturnType<typeof renderCalendarEventPage>>> = {
+    signal: deps.opts.signal,
+    render: renderCalendarEventPage,
+    existingPath: eventId => calendarPageRelPathByEventId(deps, eventId),
+    fallbackPath: calendarRelPath,
+    dropPage: relPath => deletePageByRelPath(deps, relPath, summary),
+    importPage: async rendered => { await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs); },
+  };
+  let outside = await applyCalendarEvents(result.events, window, io);
+  if (deps.opts.signal?.aborted) return;
   if (result.nextSyncToken) {
     state.calendar_sync_token = result.nextSyncToken;
     state.calendar_id = deps.cfg.calendarId;
   }
+  // The coverage list's own sync token is never the cursor; the horizon advances only after it applied.
+  const coverage = calendarCoverageRange(state.calendar_horizon_ms, listedWindow, window, nowMs);
+  if (coverage) {
+    const listed = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId, timeMinIso: new Date(coverage.fromMs).toISOString(), timeMaxIso: windowOpts.timeMaxIso, ...signalOpts,
+    });
+    outside += await applyCalendarEvents(listed.events, window, io);
+    if (deps.opts.signal?.aborted) return;
+  }
+  state.calendar_horizon_ms = window.ceilMs;
+  if (outside > 0) deps.log(`[google] calendar: skipped ${outside} event(s) outside the sync window`);
+  if (deps.opts.full) await reconcileCalendarWindow(deps, new Set(result.events.map(ev => ev.id)), window, summary);
+}
+
+/**
+ * `--full`: remove calendar pages the complete window list no longer names,
+ * limited to events starting inside the listed window (calendar-window.ts),
+ * through the mass-delete guard and the sweep's own delete primitive.
+ */
+async function reconcileCalendarWindow(deps: GoogleSyncDeps, listedIds: ReadonlySet<string>, window: CalendarWindow,
+  summary: GoogleSyncSummary): Promise<void> {
+  const rows = await deps.engine.executeRaw<{ slug: string; source_path: string | null; event_id: string | null; start_iso: string | null }>(
+    `SELECT slug, source_path, frontmatter->>'event_id' AS event_id, frontmatter->>'start' AS start_iso FROM pages
+      WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'calendar/%' AND frontmatter->>'event_id' IS NOT NULL`,
+    [deps.sourceId],
+  );
+  const stale = unlistedInWindow(rows, listedIds, window).filter(row => row.source_path !== null);
+  if (stale.length === 0) return;
+  const { massReconcileAllowed } = await import('../../commands/sync.ts');
+  if (stale.length > 200 && !massReconcileAllowed()) {
+    deps.log(`[google] mass-delete guard refused ${stale.length} deletes for source ${deps.sourceId}`);
+    summary.status = 'partial';
+    return;
+  }
+  for (const page of stale) await deletePageByRelPath(deps, page.source_path!, summary);
 }
 
 // ── Gmail sweep ──────────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@
  * Synthetic data only — every person/email/company below is a placeholder.
  */
 
-import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, mock, spyOn } from 'bun:test';
 
 // ── Gateway mock (must precede every import that can reach ai/gateway.ts) ──
 interface ChatReq {
@@ -394,6 +394,63 @@ describe('runLoopsExtract', () => {
     expect(await countLoops()).toBe(0); // none of the failure paths wrote anything
   });
 
+  test('truncation escalates maxTokens once (2048 → 8192) and the escalated answer lands', async () => {
+    // A retry at the same cap truncates identically, so without the
+    // escalation a dense thread is dead after max_attempts with the revision
+    // never extracted.
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return caps.length === 1
+        ? { text: 'partial…', stopReason: 'length' }
+        : { text: '{"commitments":[],"decisions_pending":[]}', stopReason: 'end' };
+    };
+
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+
+    expect(caps).toEqual([2048, 8192]);
+    expect(r.status).toBe('extracted');
+    expect(await countLoops()).toBe(0);
+  });
+
+  test('still truncated at the 8192 ceiling → THROWS naming the ceiling, after exactly two calls', async () => {
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return { text: 'partial…', stopReason: 'length' };
+    };
+
+    const err = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { reason?: string }).reason).toBe('truncated');
+    expect((err as Error).message).toContain('at the 8192-token ceiling after one escalation from 2048');
+    expect(caps).toEqual([2048, 8192]);
+    expect(await countLoops()).toBe(0);
+  });
+
+  test('a non-length provider error is not escalated: one call, error propagates', async () => {
+    const caps: number[] = [];
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      throw new Error('synthetic provider 500');
+    };
+
+    await expect(runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC })).rejects.toThrow(
+      'synthetic provider 500',
+    );
+    expect(caps).toEqual([2048]);
+
+    caps.length = 0;
+    chatImpl = async () => {
+      caps.push(lastChatReq?.maxTokens ?? -1);
+      return { text: '', stopReason: 'refusal' };
+    };
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+    expect(r.reason).toBe('refused');
+    expect(caps).toEqual([2048]);
+  });
+
   test('parse failure (garbage response) THROWS the all-or-nothing barrier, ZERO open_loops rows', async () => {
     chatImpl = async () => ({
       text: 'I found some commitments but here they are in prose, not JSON.',
@@ -663,5 +720,43 @@ describe('runLoopsExtract', () => {
     expect(byType['awaiting_reply_from']).toBe('I will share the pilot metrics by Wednesday.');
     expect(byType['owes_to']).toBe('Send Alice the compliance checklist');
     for (const e of edges) expect(e.context).not.toContain('compliance checklist by Tuesday');
+  });
+});
+
+describe('#5586: fact projection failure', () => {
+  test('a failed facts write is logged with slug, source and error only; the loop row still lands', async () => {
+    const slug = 'emails/2026/08/2026-08-23-projection-thread-5586aaaa';
+    await engine.putPage(slug, {
+      type: 'email', title: 'Re: acme-example renewal',
+      compiled_truth: 'Me: I will send the acme-example renewal terms by Monday.\n',
+      frontmatter: { thread_id: 'thread-5586aaaa', date: '2026-08-23T10:00:00Z' },
+      effective_date: new Date('2026-08-23T10:00:00Z'),
+    }, { sourceId: SRC });
+    chatImpl = async () => ({ text: JSON.stringify({
+      commitments: [{ direction: 'owed_by_me', text: 'Send the acme-example renewal terms', counterparty_name: 'Alice Example',
+        counterparty_email: 'alice@example.com', due_iso: '2026-08-31', quote: 'I will send the acme-example renewal terms by Monday.' }],
+      decisions_pending: [],
+    }), stopReason: 'end' });
+    await engine.executeRaw(`CREATE OR REPLACE FUNCTION test_5586_refuse_fact() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic facts write failure'; END $$`);
+    await engine.executeRaw('CREATE TRIGGER test_5586_refuse_fact BEFORE INSERT ON facts FOR EACH ROW EXECUTE FUNCTION test_5586_refuse_fact()');
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const r = await runLoopsExtract(engine, { slug, sourceId: SRC });
+      expect(r.status).toBe('extracted');
+      const [loop] = await engine.executeRaw<{ fact_id: number | null }>(
+        'SELECT fact_id FROM open_loops WHERE source_id = $1 AND page_slug = $2', [SRC, slug]);
+      expect(loop).toBeDefined();
+      expect(loop!.fact_id).toBeNull();
+      const lines = warn.mock.calls.map((call) => String(call[0])).filter((line) => line.startsWith('[loops_extract] fact projection failed'));
+      expect(lines.length).toBe(1);
+      expect(lines[0]).toContain(`slug=${slug} source=${SRC}`);
+      expect(lines[0]).toContain('synthetic facts write failure');
+      expect(lines[0]).not.toContain('renewal terms');
+    } finally {
+      warn.mockRestore();
+      await engine.executeRaw('DROP TRIGGER test_5586_refuse_fact ON facts');
+      await engine.executeRaw('DROP FUNCTION test_5586_refuse_fact()');
+    }
   });
 });
