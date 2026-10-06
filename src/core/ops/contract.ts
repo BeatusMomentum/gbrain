@@ -6,6 +6,7 @@
  * this entire surface, so existing importers are unchanged.
  */
 
+import type { WriteInference } from './write-inference.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
@@ -452,6 +453,12 @@ export interface OperationContext {
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
   /**
+   * Set by transports that can widen a session's listed tools (stdio): when
+   * `request_tools` returns schemas, the named tools join this session's
+   * tools/list and the client is notified (tools/list_changed).
+   */
+  revealTools?: (names: string[]) => void;
+  /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
    * agent policy (e.g. put_page namespace rule).
@@ -659,6 +666,11 @@ export interface Operation {
   handler: (ctx: OperationContext, params: Record<string, unknown>) => Promise<unknown>;
   outputRedaction: OutputRedactionPolicy;
   mutating?: boolean;
+  /**
+   * What model work this write may do and when (`src/core/ops/write-inference.ts`).
+   * Unset resolves through OP_WRITE_INFERENCE, then to `'none'`.
+   */
+  writeInference?: WriteInference;
   /**
    * Agent contract v1 (A2): repeating the call with the same arguments (and,
    * for journaled writes, the same request identity) has the same effect as

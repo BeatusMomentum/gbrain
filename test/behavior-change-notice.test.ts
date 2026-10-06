@@ -22,18 +22,35 @@ import { tmpdir } from 'node:os';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
+  BEHAVIOR_CHANGES,
   BEHAVIOR_NOTICE_ID,
   BEHAVIOR_NOTICE_SINCE,
   HTTP_SHOWN_CAP,
   HTTP_SHOWN_KEY,
   __resetBehaviorNoticeForTests,
   behaviorBrainKey,
+  behaviorChangesNotice,
+  compareReleases,
   recordHttpShown,
   takeHttpBehaviorNotice,
   takeLocalBehaviorNotice,
 } from '../src/core/behavior-change-notice.ts';
+import { VERSION } from '../src/version.ts';
 import { checkBehaviorChanges } from '../src/commands/doctor/checks/behavior-changes.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+
+// Expectations derive from the BEHAVIOR_CHANGES table, so adding a release's
+// rows does not require re-pinning every count; each release's own content is
+// still asserted by text below.
+const NEWEST = BEHAVIOR_NOTICE_SINCE;
+const NEXT_PATCH = NEWEST.replace(/^(\d+\.\d+\.)(\d+)(.*)$/, (_m, a: string, b: string, c: string) => `${a}${Number(b) + 1}${c}`);
+const NEWEST_TEXT = (BEHAVIOR_CHANGES.find(c => c.since === NEWEST && typeof c.text === 'string')!.text as string).slice(0, 48);
+function noticeHeader(after: string, withChain = false): string {
+  const rows = BEHAVIOR_CHANGES.filter(c => compareReleases(c.since, after) > 0 && (withChain || typeof c.text === 'string'));
+  const releases = [...new Set(rows.map(c => `v${c.since}`))];
+  const list = releases.length > 1 ? `${releases.slice(0, -1).join(', ')} and ${releases.at(-1)}` : releases[0];
+  return `gbrain ${list} changed ${rows.length} behavior${rows.length === 1 ? '' : 's'}`;
+}
 import { NoticeLedger, __resetProcessNoticeLedgerForTests } from '../src/core/notice-ledger.ts';
 import { _resetDbPlaneMergeMemoForTests } from '../src/core/config-db-merge.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
@@ -87,7 +104,7 @@ for (const backend of testBackends()) {
       const home = freshHome();
       await withEnv({ GBRAIN_HOME: home, ...NO_CHAIN }, async () => {
         expect(await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'fresh' })).toBeNull();
-        expect(readFileSync(join(noticeDir(home), 'fresh.baseline'), 'utf8').trim()).toBe(BEHAVIOR_NOTICE_SINCE);
+        expect(readFileSync(join(noticeDir(home), 'fresh.baseline'), 'utf8').trim()).toBe(VERSION);
         await setCreated(engine, 2 * DAY);
         __resetBehaviorNoticeForTests();
         expect(await takeLocalBehaviorNotice(engine, 'stdio', { cfg: null, brainKey: 'fresh' })).toBeNull();
@@ -150,6 +167,9 @@ for (const backend of testBackends()) {
         expect(plain.why).toContain('local_process_ingress');
         expect(plain.why).toContain('exits 0 after a SIGTERM drain (was 143) and 17');
         expect(plain.why).toContain('gbrain sweep --once --budget-ms 600000');
+        expect(plain.why).toContain('think.quote_verify false');
+        expect(plain.why).toContain('decide.slots.conflict.review_withdraw false');
+        expect(plain.why).toContain('no longer send text to an embedding provider');
         expect(plain.why).toContain('not a request for consent');
         expect(plain.fix?.argv).toEqual(['gbrain', 'doctor', '--only', 'behavior_changes', '--json']);
       });
@@ -223,7 +243,9 @@ for (const backend of testBackends()) {
         expect(c.details).toMatchObject({ shown: { cli: false, stdio: false } });
         expect(existsSync(noticeDir(home))).toBe(false);
         expect(await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'doctor' })).not.toBeNull();
-        expect((await checkBehaviorChanges(engine, { cfg: null, brainKey: 'doctor' })).details).toMatchObject({ shown: { cli: true, stdio: false } });
+        const again = await checkBehaviorChanges(engine, { cfg: null, brainKey: 'doctor' });
+        expect(again.details).toMatchObject({ shown: { cli: true, stdio: false } });
+        expect(again.message).toContain(noticeHeader('0'));
       });
     });
 
@@ -264,7 +286,7 @@ for (const backend of testBackends()) {
 }
 
 describe('HTTP per-client store', () => {
-  test('keeps the newest HTTP_SHOWN_CAP clients and resets for a new notice id', () => {
+  test('keeps the newest HTTP_SHOWN_CAP clients', () => {
     let raw: string | null = JSON.stringify({ id: 'behavior_changes@0.0.1', clients: { stale: '2020-01-01T00:00:00.000Z' } });
     for (let i = 0; i < HTTP_SHOWN_CAP + 25; i++) raw = recordHttpShown(raw, `client-${i}`, new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString());
     const stored = JSON.parse(raw!) as { id: string; clients: Record<string, string> };
@@ -273,6 +295,29 @@ describe('HTTP per-client store', () => {
     expect(stored.clients.stale).toBeUndefined();
     expect(stored.clients['client-0']).toBeUndefined();
     expect(stored.clients[`client-${HTTP_SHOWN_CAP + 24}`]).toBeDefined();
+  });
+});
+
+describe('per-release content', () => {
+  test('a client from an older build\'s row keeps the release it was shown', () => {
+    const raw = recordHttpShown(JSON.stringify({ id: 'behavior_changes@0.60.68.0', clients: { old: '2026-10-05T00:00:00.000Z' } }), 'new', '2026-10-06T00:00:00.000Z');
+    const stored = JSON.parse(raw) as { id: string; clients: Record<string, { since: string; at: string }> };
+    expect(stored.id).toBe(BEHAVIOR_NOTICE_ID);
+    expect(stored.clients.old).toEqual({ since: '0.60.68.0', at: '2026-10-05T00:00:00.000Z' });
+    expect(stored.clients.new).toEqual({ since: BEHAVIOR_NOTICE_SINCE, at: '2026-10-06T00:00:00.000Z' });
+  });
+
+  test('the notice id is the newest change\'s release, and only newer changes are listed', () => {
+    expect(BEHAVIOR_NOTICE_SINCE).toBe(BEHAVIOR_CHANGES.map(c => c.since).sort(compareReleases).at(-1)!);
+    expect(BEHAVIOR_NOTICE_ID).toBe(`behavior_changes@${BEHAVIOR_NOTICE_SINCE}`);
+    expect(behaviorChangesNotice(null, { after: BEHAVIOR_NOTICE_SINCE })).toBeNull();
+    const chain = { plane: 'env' as const, entries: ['openai:gpt-5.6-luna'], providers: ['openai'], onRefusal: true, filePath: '' };
+    const later = behaviorChangesNotice(chain, { after: '0.60.68.0' })!;
+    expect(later.why).not.toContain('chat_fallback_chain is live');
+    expect(later.fix?.argv).toEqual(['gbrain', 'doctor', '--only', 'behavior_changes', '--json']);
+    const all = behaviorChangesNotice(chain)!;
+    expect(all.why).toContain(noticeHeader('0', true));
+    expect(all.fix?.argv).toEqual(['unset', 'GBRAIN_CHAT_FALLBACK_CHAIN']);
   });
 });
 
@@ -294,5 +339,93 @@ describe('concurrent initializations', () => {
     const delivered = outs.map(o => JSON.parse(o.trim().split('\n').pop()!).delivered as boolean);
     expect(delivered.filter(Boolean)).toHaveLength(1);
     expect(readFileSync(join(noticeDir(home), 'race.baseline'), 'utf8').trim()).toBe('0');
+  }, 60_000);
+});
+
+describe('upgrades across releases (each step a new process pinned to a gbrain VERSION)', () => {
+  const modulePath = join(import.meta.dir, '..', 'src', 'core', 'behavior-change-notice.ts');
+  const WAVE9 = '`setsid`';
+  const OPT_OUT = 'no longer send text to an embedding provider';
+  const V68 = 'cycle.lint_fix false';
+
+  /** One gbrain process at `version`: takes the notice on `channel` (`http:<client>` for an HTTP client) for brain `key`. */
+  async function runAt(home: string, version: string, key: string, channel: string, opts: { createdAgoMs?: number } = {}): Promise<string | null> {
+    const script = join(home, `step-${++seq}.ts`);
+    writeFileSync(script, `
+      Bun.plugin({ setup(b) { b.onLoad({ filter: /[\\\\/]src[\\\\/]version\\.ts$/ }, () => ({ contents: ${JSON.stringify(`export const VERSION = '${version}';`)}, loader: 'ts' })); } });
+      const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
+      const { takeLocalBehaviorNotice, takeHttpBehaviorNotice } = await import(${JSON.stringify(modulePath)});
+      const storePath = ${JSON.stringify(join(home, 'brain-config.json'))};
+      const store = existsSync(storePath) ? JSON.parse(readFileSync(storePath, 'utf8')) : {};
+      const created = new Date(Date.now() - ${opts.createdAgoMs ?? 3 * DAY}).toISOString();
+      const engine = {
+        executeRaw: async () => [{ at: created }],
+        getConfig: async (k) => store[k] ?? null,
+        setConfig: async (k, v) => { store[k] = v; writeFileSync(storePath, JSON.stringify(store)); },
+      };
+      const channel = ${JSON.stringify(channel)};
+      const n = channel.startsWith('http:')
+        ? await takeHttpBehaviorNotice(engine, channel.slice(5), { cfg: null, brainKey: ${JSON.stringify(key)} })
+        : await takeLocalBehaviorNotice(engine, channel, { cfg: null, brainKey: ${JSON.stringify(key)} });
+      console.log(JSON.stringify({ why: n?.why ?? null }));
+    `);
+    const env = { ...process.env, GBRAIN_HOME: home, GBRAIN_CHAT_FALLBACK_CHAIN: '' } as Record<string, string>;
+    const p = Bun.spawn(['bun', script], { env, stdout: 'pipe', stderr: 'pipe' });
+    const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    const last = out.trim().split('\n').pop();
+    if (!last) throw new Error(`step at ${version} printed nothing: ${err}`);
+    return JSON.parse(last).why as string | null;
+  }
+
+  test('a brain that saw the notice gets nothing from a later release that adds no behavior changes', async () => {
+    const home = freshHome();
+    for (const channel of ['cli', 'http:client-a']) {
+      expect(await runAt(home, NEWEST, 'seen', channel)).toContain(NEWEST_TEXT);
+      expect(await runAt(home, NEWEST, 'seen', channel)).toBeNull();
+      expect(await runAt(home, '0.60.99.0', 'seen', channel)).toBeNull();
+    }
+  }, 60_000);
+
+  test('a brain at baseline 0.60.68 that saw the 0.60.68 notice sees only the later items, once', async () => {
+    const home = freshHome();
+    mkdirSync(noticeDir(home), { recursive: true });
+    writeFileSync(join(noticeDir(home), 'b68.baseline'), '0.60.68.0\n');
+    writeFileSync(join(noticeDir(home), 'behavior_changes_0.60.68.0.b68.cli.shown'), '2026-10-05T00:00:00.000Z\n');
+    writeFileSync(join(home, 'brain-config.json'), JSON.stringify({ [HTTP_SHOWN_KEY]: JSON.stringify({ id: 'behavior_changes@0.60.68.0', clients: { 'client-a': '2026-10-05T00:00:00.000Z' } }) }));
+    for (const channel of ['cli', 'http:client-a']) {
+      const why = await runAt(home, NEWEST, 'b68', channel);
+      expect(why).toContain(noticeHeader('0.60.68.0'));
+      expect(why).toContain(WAVE9);
+      expect(why).toContain(OPT_OUT);
+      expect(why).not.toContain(V68);
+      expect(why).not.toContain('v0.60.68.0');
+      expect(await runAt(home, NEWEST, 'b68', channel)).toBeNull();
+      expect(await runAt(home, NEXT_PATCH, 'b68', channel)).toBeNull();
+    }
+  }, 60_000);
+
+  test('a brain older than 0.60.68 sees every item, labeled with its release, once', async () => {
+    const home = freshHome();
+    for (const channel of ['cli', 'stdio', 'http:client-a']) {
+      const why = await runAt(home, NEWEST, 'old', channel);
+      expect(why).toContain(noticeHeader('0'));
+      expect(why).toContain(`v0.60.68.0: (1) On a managed brain`);
+      expect(why).toContain(`v0.60.74.0: (4) A shell job`);
+      expect(why).toContain(`v0.60.77.0: (10) think answers`);
+      expect(why).toContain(`v0.60.78.0: (12) On a brain with embedding turned off`);
+      expect(why).toContain(`v0.60.79.0: (13) Frontmatter is parsed as YAML 1.2`);
+      expect(await runAt(home, NEWEST, 'old', channel)).toBeNull();
+      expect(await runAt(home, '0.60.99.0', 'old', channel)).toBeNull();
+    }
+    expect(readFileSync(join(noticeDir(home), 'old.baseline'), 'utf8').trim()).toBe('0');
+  }, 60_000);
+
+  test('a fresh brain sees nothing, then or after later upgrades', async () => {
+    const home = freshHome();
+    for (const channel of ['cli', 'http:client-a']) {
+      expect(await runAt(home, NEWEST, 'new', channel, { createdAgoMs: 0 })).toBeNull();
+      expect(await runAt(home, '0.60.99.0', 'new', channel, { createdAgoMs: 2 * DAY })).toBeNull();
+    }
+    expect(readFileSync(join(noticeDir(home), 'new.baseline'), 'utf8').trim()).toBe(NEWEST);
   }, 60_000);
 });
