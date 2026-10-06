@@ -7,7 +7,7 @@ import { prepareFactsBackstop } from './effect-facts.ts';
 import { lineGrammarOptions, parseLineGrammar } from '../line-grammar.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
-import { findSimilarPages, isSimilarPagesEnabled } from '../similar-pages.ts';
+import { findSimilarPages } from '../similar-pages.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { readFix } from '../ops/op-fix.ts';
 
@@ -20,8 +20,7 @@ const LINE_GRAMMAR_FINDINGS_MAX = 5;
  */
 async function similarPagesAdvisory(engine: BrainEngine, row: WriteRequest, page: ParsedPage): Promise<Record<string, unknown> | undefined> {
   if (!['put_page', 'capture'].includes(row.operation) || row.page_id != null || row.slug.startsWith('wiki/agents/')
-    || page.frontmatter?.dream_generated === true || (page.type as string) === 'extract_receipt' || isQuarantined(page.frontmatter)
-    || !(await isSimilarPagesEnabled(engine))) return undefined;
+    || page.frontmatter?.dream_generated === true || (page.type as string) === 'extract_receipt' || isQuarantined(page.frontmatter)) return undefined;
   const found = await findSimilarPages(engine, { sourceId: row.source_id, slug: row.slug, title: page.title ?? '',
     excludePrivate: row.authority.excludePrivate ?? row.authority.remote });
   if (!found?.candidates.length) return undefined;

@@ -23,16 +23,11 @@ const CHECKS = ['exact_title', 'alias', 'same_name_other_directory', 'similar_ti
 const TITLE_SIMILARITY_FLOOR = 0.55;
 const MAX_CANDIDATES = 3;
 
-/** `put_page.similar_pages` (default on). */
-export async function isSimilarPagesEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
-  const value = await engine.getConfig('put_page.similar_pages').catch(() => null);
-  return value == null || !['false', '0', 'no', 'off'].includes(value.trim().toLowerCase());
-}
-
 /**
  * Existing pages in `sourceId` that a newly created `slug` probably
  * duplicates. `excludePrivate` keeps private pages out for callers that may
- * not read them. Returns null when `slug` already existed (not a create).
+ * not read them. Returns null when `slug` already existed (not a create) or
+ * when `put_page.similar_pages` is off.
  */
 export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, input: {
   sourceId: string; slug: string; title: string; excludePrivate: boolean;
@@ -47,6 +42,9 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
     WITH hits AS (
       SELECT NULL::text AS slug, 'page_exists' AS evidence, 0 AS tier, 0::real AS sim FROM pages p
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
+      UNION ALL
+      SELECT NULL::text, 'disabled', 0, 0::real FROM config c
+        WHERE c.key = 'put_page.similar_pages' AND lower(trim(c.value)) IN ('false', '0', 'no', 'off')
       UNION ALL
       SELECT p.slug, 'exact_title' AS evidence, 1 AS tier, 1.0::real AS sim FROM pages p
         WHERE p.source_id = $1 AND p.slug <> $2 AND p.deleted_at IS NULL AND $3 <> '' AND p.title ILIKE $7 ESCAPE '\\'${privacy}
@@ -64,7 +62,8 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
     SELECT DISTINCT ON (slug) slug, evidence, tier, sim FROM hits ORDER BY slug, tier, sim DESC`,
   [input.sourceId, input.slug, title, normalizeAlias(title), basename, dir, title.replace(/[\\%_]/g, ch => `\\${ch}`)]);
   // The page already exists (a create raced another writer, or this is an update): not a create, no advisory.
-  if ((rows as Array<{ evidence: string }>).some(row => row.evidence === 'page_exists')) return null;
+  // `put_page.similar_pages` false (default on) turns the advisory off; read in the same statement.
+  if ((rows as Array<{ evidence: string }>).some(row => row.evidence === 'page_exists' || row.evidence === 'disabled')) return null;
   const ranked = (rows as Array<{ slug: string; evidence: SimilarPageEvidence; tier: number; sim: number }>)
     .sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.slug.localeCompare(b.slug)).slice(0, MAX_CANDIDATES);
   return { candidates: ranked.map(row => ({ slug: row.slug, source_id: input.sourceId, evidence: row.evidence })), checks_ran: CHECKS };
