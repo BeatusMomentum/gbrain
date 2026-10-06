@@ -12,6 +12,7 @@
  * `sources webhook rotate`, must print the NEW secret exactly once.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -24,7 +25,6 @@ import { runSources } from '../src/commands/sources.ts';
 import { runCall } from '../src/commands/call.ts';
 import { runDoctor } from '../src/commands/doctor.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
-import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
@@ -47,8 +47,6 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  // runDoctor records a process-wide CLI exit verdict; later files in the same process must start clean.
-  _resetCliExitVerdictForTests();
   await disposePersistenceConsumer(engine);
   await engine.disconnect();
 });
@@ -109,6 +107,8 @@ async function captureCli(fn: () => Promise<unknown>): Promise<string> {
   } finally {
     console.log = saved.log; console.error = saved.error; console.warn = saved.warn; console.info = saved.info;
     (process as { exit: unknown }).exit = saved.exit;
+    _resetCliExitVerdictForTests();
+    process.exitCode = 0;
   }
   return lines.join('\n');
 }
