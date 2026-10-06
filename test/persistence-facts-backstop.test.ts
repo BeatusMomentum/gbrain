@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
+import { BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES } from '../src/core/persistence/effect-facts.ts';
 import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
@@ -211,12 +212,17 @@ test('#6042: rewriting a soft-deleted page with its old body queues extraction a
   expect(await rewrite(content)).toEqual({ status: { queued: true }, effectQueued: true });
 }));
 
-test('#6042 accepted tradeoff: a never-extracted eligible page is not extracted by a body-preserving rewrite', () => fixture(async () => {
+test('#6071 switch: a body-preserving rewrite of a never-extracted eligible page follows BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES', () => fixture(async () => {
   await engine.setConfig('facts.extraction_enabled', 'false');
   expect((await publish()).outcome?.facts_backstop).toEqual({ skipped: 'extraction_disabled' });
   await engine.setConfig('facts.extraction_enabled', 'true');
-  expect(await rewrite(retitled('Renamed after enabling'))).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
-  expect(await jobs()).toHaveLength(0);
+  const result = await rewrite(retitled('Renamed after enabling'));
+  if (BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES) {
+    expect(result).toEqual({ status: { queued: true }, effectQueued: true });
+  } else {
+    expect(result).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
+    expect(await jobs()).toHaveLength(0);
+  }
 }));
 
 test('a slug-bound writer\'s backstop refusal says the page was written and who widens the grant', async () => {

@@ -57,6 +57,23 @@ async function extractionPendingForPage(engine: BrainEngine, pageId: number): Pr
 }
 
 /**
+ * #6071 product switch, pending a maintainer decision. false: a body-preserving
+ * write skips extraction even for a page no extraction was ever offered for
+ * (`gbrain extract-conversation-facts` remains the explicit path). true: such a
+ * write still queues extraction for a page with no facts-backstop or
+ * facts-absorb record.
+ */
+export const BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES = false;
+
+async function extractionEverOffered(engine: BrainEngine, pageId: number): Promise<boolean> {
+  const [row] = await engine.executeRaw<{ offered: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM persistence_effects WHERE kind = 'facts-backstop' AND data->>'page_id' = $1)
+         OR EXISTS (SELECT 1 FROM minion_jobs WHERE name = 'facts-absorb' AND data->>'page_id' = $1) AS offered`,
+    [String(pageId)]);
+  return row?.offered === true;
+}
+
+/**
  * #6042: the extractor reads compiled_truth only. When the page was live and
  * already eligible before this write and the write keeps its compiled_truth
  * (a title, tag, frontmatter or timeline change, such as `repair timeline`
@@ -68,6 +85,7 @@ async function bodyAlreadyOffered(engine: BrainEngine, slug: string, page: Parse
   const live = before && !before.page.deleted_at ? before.page : null;
   if (!live || live.compiled_truth !== page.compiled_truth) return false;
   if (!isFactsBackstopEligible(slug, live).ok) return false;
+  if (BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES && !(await extractionEverOffered(engine, live.id))) return false;
   return !(await extractionPendingForPage(engine, live.id));
 }
 
