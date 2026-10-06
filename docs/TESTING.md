@@ -285,15 +285,11 @@ and on a bad list row. An arm deliberately left out is an `ALLOWLIST` row in
 for a file that is laned, has no arm or is gone fails.
 ### Stress gate
 
-`stress-changed-tests` (in `test-status`) runs every test file a PR adds or
-modifies, plus importers of changed `test/helpers/` files, 10 times with a
-fresh database per iteration; root-cause a failure in that PR. Local twin: `bun run test:stress [files…] [--iterations N] [--base <ref>]
-[--postgres]`. Profiles, exemptions and replay: [scripts/stress/README.md](../scripts/stress/README.md).
+`stress-changed-tests` (in `test-status`) runs each touched test file 10x on fresh databases; local twin `bun run test:stress`. Details: [scripts/stress/README.md](../scripts/stress/README.md).
 
 ### Race hunt
 
-Nightly, outside `test-status`: every listed arm 10x on Postgres, one reproduce
-line per failing file ([details](../scripts/stress/README.md#race-hunt)).
+Nightly: every listed Postgres arm 10x ([details](../scripts/stress/README.md#race-hunt)).
 
 ### Scale tier
 
