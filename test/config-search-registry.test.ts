@@ -35,7 +35,6 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.vector_legacy_guard',              // search/vector-legacy-guard.ts via loadConfigWithEngine
   'search.crag_escalation',                  // ops/search.ts
   'search.crag_think',                       // ops/search.ts
-  'search.statement_timeout_ms',             // postgres-engine/search-settings.ts
   'search.return_unit',                      // search/evidence-delivery.ts
   'search.return_window',
   'search.return_budget_default',
