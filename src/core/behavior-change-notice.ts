@@ -232,6 +232,7 @@ export function behaviorChangesNotice(chain: ChainDisclosure | null, opts: { rem
   items.push('`gbrain sources writer status --json` renamed `ingress` to `local_process_ingress`; it describes only the process that answered.');
   items.push('`gbrain jobs work` exits 0 after a SIGTERM drain (was 143) and 17 when running claims had to be handed back.');
   items.push('Captured session files nothing has extracted are kept up to 3x dream.synthesize.corpus_retention_days (90 days by default, was 30), so the corpus directory can use more disk; `gbrain sweep --once --budget-ms 600000` clears that backlog.');
+  items.push('On a brain with embedding turned off, search, query, recall, think and fact writes no longer send text to an embedding provider: reads run keyword-only and say so, and `gbrain doctor --json` names the enable command if the user wants semantic search back.');
   const why = `gbrain v${BEHAVIOR_NOTICE_SINCE} changed ${items.length} behaviors on this brain. All stay on; this is a one-time disclosure, not a request for consent. ` +
     items.map((t, i) => `(${i + 1}) ${t}`).join(' ') +
     ' gbrain doctor --only behavior_changes shows this again.';
