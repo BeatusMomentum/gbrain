@@ -63,6 +63,21 @@ export const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organi
   AND p.deleted_at IS NULL
   AND ${QUARANTINE_FILTER_FRAGMENT}`;
 
+/**
+ * Coverage is a ratio over the visible entity population, and below
+ * MIN_ENTITY_PAGES_FOR_COVERAGE that ratio is noise: BrainHealth reports
+ * null there, so a warn from these checks would contradict it and could never
+ * be cleared by extraction. Returns the not-applicable `ok` result for an
+ * ungraded population, or null when the caller should compute coverage.
+ */
+function ungradedCoverageResult(name: string, entityPages: number): OnboardCheckResult | null {
+  if (entityPages >= MIN_ENTITY_PAGES_FOR_COVERAGE) return null;
+  const message = entityPages === 0
+    ? 'No entity pages — coverage check vacuous'
+    : `Only ${entityPages} entity ${entityPages === 1 ? 'page' : 'pages'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`;
+  return { check: { name, status: 'ok', message }, remediations: [] };
+}
+
 type CoverageFeature =
   | { table: 'links'; pageIdColumn: 'to_page_id' }
   | { table: 'timeline_entries'; pageIdColumn: 'page_id' };
@@ -269,22 +284,8 @@ export async function checkEntityLinkCoverage(
        WHERE ${VISIBLE_ENTITY_PREDICATE}`,
   );
 
-  if (totalEntities === 0) {
-    return {
-      check: { name: 'entity_link_coverage', status: 'ok', message: 'No entity pages — coverage check vacuous' },
-      remediations: [],
-    };
-  }
-  if (totalEntities < MIN_ENTITY_PAGES_FOR_COVERAGE) {
-    return {
-      check: {
-        name: 'entity_link_coverage',
-        status: 'ok',
-        message: `Only ${totalEntities} entity page${totalEntities === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
-      },
-      remediations: [],
-    };
-  }
+  const ungraded = ungradedCoverageResult('entity_link_coverage', totalEntities);
+  if (ungraded) return ungraded;
 
   // Decide TABLESAMPLE policy (PG only, when >50K entities)
   const useSample = engine.kind === 'postgres' && totalEntities > 50_000;
@@ -366,22 +367,8 @@ export async function checkTimelineCoverage(
        WHERE ${VISIBLE_ENTITY_PREDICATE}`,
   );
 
-  if (totalEntities === 0) {
-    return {
-      check: { name: 'timeline_coverage', status: 'ok', message: 'No entity pages — coverage check vacuous' },
-      remediations: [],
-    };
-  }
-  if (totalEntities < MIN_ENTITY_PAGES_FOR_COVERAGE) {
-    return {
-      check: {
-        name: 'timeline_coverage',
-        status: 'ok',
-        message: `Only ${totalEntities} entity page${totalEntities === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
-      },
-      remediations: [],
-    };
-  }
+  const ungraded = ungradedCoverageResult('timeline_coverage', totalEntities);
+  if (ungraded) return ungraded;
 
   const useSample = engine.kind === 'postgres' && totalEntities > 50_000;
   const samplePct = useSample
