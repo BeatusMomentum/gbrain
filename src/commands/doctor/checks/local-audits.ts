@@ -536,7 +536,7 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
         engine!,
         nonDefaultWithPath.map(s => ({ id: s.id, local_path: s.local_path as string })),
       );
-      checks.push(multiSourceDriftCheck(result, nonDefaultWithPath.length, 'local'));
+      checks.push(multiSourceDriftCheck(result, nonDefaultWithPath.length, 'local', await managedPersistenceEnabled(engine!).catch(() => false)));
     }
   } catch (e) {
     // A broken sources table must not stop doctor, but the check still

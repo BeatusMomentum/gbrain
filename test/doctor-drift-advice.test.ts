@@ -53,4 +53,27 @@ describe('#1123 — multiSourceDriftAdvice references only real surfaces', () =>
     expect(flagIdx).toBeGreaterThan(-1);
     expect(deleteIdx).toBeGreaterThan(flagIdx);
   });
+
+  // #5477: managed sync refuses a git pull and --include-gitignored, so the
+  // managed advice names `--no-pull` and drops the ignored-file walk, while
+  // the unmanaged advice stays byte-identical.
+  test('managed advice names --no-pull and no --include-gitignored', () => {
+    const managed = multiSourceDriftAdvice(45, 'foo (intended=wiki)', true);
+    expect(managed).toContain("'gbrain sync --source <id> --no-pull --full'");
+    expect(managed).not.toContain('--include-gitignored');
+    expect(managed).toContain("'GBRAIN_SOURCE=default gbrain delete <slug> --force'");
+  });
+
+  test('unmanaged advice is byte-identical to the default', () => {
+    expect(multiSourceDriftAdvice(45, 'foo (intended=wiki)', false)).toBe(advice);
+    expect(advice).toBe(
+      "45 page slug(s) appear at 'default' but NOT at the intended source (e.g., foo (intended=wiki)). " +
+      'Three possible causes: (1) pre-v0.30.3 putPage misroutes; (2) the intended source never completed initial sync and the default page is unrelated; ' +
+      '(3) the file behind the slug is not git-tracked in the source repo — the sync walker reads through git objects, so a re-sync imports nothing for it. ' +
+      "Verify with 'gbrain sources status', then re-sync with 'gbrain sync --source <id> --full' (reconciles drift without deleting data); " +
+      "for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' (full filesystem walk that also picks up ignored/untracked syncable files). " +
+      "Only if a misrouted default-source row remains after that, remove it with 'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, " +
+      "so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete naming neither --force nor --expected-revision is refused with revision_conflict).",
+    );
+  });
 });

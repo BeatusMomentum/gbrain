@@ -186,11 +186,13 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<C
  * targets the ACTIVE source — following it literally on a multi-source
  * brain deletes the correctly-routed row).
  */
-export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
+export function multiSourceDriftAdvice(count: number, sampleStr: string, managed = false): string {
   // #4490: cause (3) + the --include-gitignored pointer must precede the
   // delete step — an operator whose file is simply not git-tracked would
   // otherwise re-sync (which imports nothing for that file) and then delete
-  // a row nothing will recreate.
+  // a row nothing will recreate. A managed brain's sync refuses a git pull
+  // and --include-gitignored, so its advice names `--no-pull` and drops the
+  // ignored-file walk.
   return (
     `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
     `(e.g., ${sampleStr}). Three possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
@@ -198,9 +200,11 @@ export function multiSourceDriftAdvice(count: number, sampleStr: string): string
     `(3) the file behind the slug is not git-tracked in the source repo — the sync walker ` +
     `reads through git objects, so a re-sync imports nothing for it. ` +
     `Verify with 'gbrain sources status', then re-sync with ` +
-    `'gbrain sync --source <id> --full' (reconciles drift without deleting data); ` +
-    `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
-    `(full filesystem walk that also picks up ignored/untracked syncable files). ` +
+    `'gbrain sync --source <id>${managed ? ' --no-pull' : ''} --full' (reconciles drift without deleting data); ` +
+    (managed
+      ? `for cause (3), commit the file (managed sync imports only committed files). `
+      : `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
+        `(full filesystem walk that also picks up ignored/untracked syncable files). `) +
     `Only if a misrouted default-source row remains after that, remove it with ` +
     `'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, ` +
     `so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete ` +
@@ -236,6 +240,7 @@ export function multiSourceDriftCheck(
   result: MisroutedResult,
   candidateSources: number,
   host: 'local' | 'remote',
+  managed = false,
 ): Check {
   const details = {
     walk_truncated: result.walk_truncated,
@@ -267,10 +272,10 @@ export function multiSourceDriftCheck(
   if (result.count > 0) {
     const sampleStr = result.sample.map((s) => `${s.slug} (intended=${s.intended_source})`).join(', ');
     const advice = host === 'local'
-      ? multiSourceDriftAdvice(result.count, sampleStr)
+      ? multiSourceDriftAdvice(result.count, sampleStr, managed)
       : `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
         `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
-        `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.`;
+        `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id>${managed ? ' --no-pull' : ''} --full\`.`;
     return { name: 'multi_source_drift', status: 'warn', message: advice + skipNote + unreadableNote, details: { ...details, code: 'drift_detected' } };
   }
   if (unreadable.length > 0) {
