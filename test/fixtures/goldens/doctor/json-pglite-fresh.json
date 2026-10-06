@@ -650,7 +650,7 @@
         },
         {
           "category": "meta",
-          "message": "Nothing to disclose: this brain is a fresh install at v<version> or later, so the one-time behavior-change notice does not apply.",
+          "message": "Nothing to disclose: this brain is a fresh install at v<version>, after every disclosed behavior change, so the one-time behavior-change notice does not apply.",
           "name": "behavior_changes",
           "status": "ok"
         },
