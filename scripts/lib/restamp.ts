@@ -73,7 +73,9 @@ export function versionOfHeader(header: string): string | null {
 }
 
 function replaceVersionToken(text: string, oldVersion: string, newVersion: string): string {
-  const esc = oldVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!/^\d+(?:\.\d+){2,3}(?:-[A-Za-z0-9]+)?$/.test(oldVersion)) throw new Error(`restamp: refusing to rewrite a non-numeric version token '${oldVersion}'`);
+  const esc = oldVersion.replace(/\./g, '\\.');
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- oldVersion is validated above as dotted digits (optional alphanumeric suffix) and its dots escaped, so the pattern is a fixed literal with bounded lookarounds (no ReDoS)
   return text.replace(new RegExp(`(?<![\\d.])${esc}(?![\\d.]*\\d)`, 'g'), newVersion);
 }
 
@@ -243,9 +245,12 @@ export function isGenerated(path: string): boolean {
 
 /** Migration-reference shapes restamp lists (never rewrites): `v209`, `v209-name`, `migration 209`, `schema_version ... 209`, `version: 209`. */
 export function referencePatterns(oldVersion: number): RegExp[] {
+  if (!Number.isSafeInteger(oldVersion) || oldVersion < 0) throw new Error(`restamp: migration number must be a non-negative integer, got ${oldVersion}`);
   const n = String(oldVersion);
   return [
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- n is a validated non-negative integer (digits only), so the pattern is fixed
     new RegExp(`\\bv0*${n}\\b`),
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- same: digits only, bounded {0,12} gap
     new RegExp(`\\b(?:migrations?|schema[_ ]version|LATEST_VERSION|version)\\b[^0-9\\n]{0,12}\\b${n}\\b`, 'i'),
   ];
 }
