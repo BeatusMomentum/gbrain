@@ -99,6 +99,13 @@ export interface GoogleSourceState {
    * calendars and was therefore always primary's.
    */
   calendar_id?: string | null;
+  /**
+   * Epoch ms the calendar has been listed through (calendar-window.ts). A
+   * syncToken delta reports changed events only, so the sweep lists the
+   * stretch past it once the window's ceiling moves a day; state without it
+   * gets one bounded coverage list first.
+   */
+  calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;
   last_full_at: string | null;
   gmail_attachment_backfill?: {
