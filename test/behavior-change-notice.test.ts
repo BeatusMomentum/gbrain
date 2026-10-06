@@ -154,6 +154,8 @@ for (const backend of testBackends()) {
         expect(plain.why).toContain('local_process_ingress');
         expect(plain.why).toContain('exits 0 after a SIGTERM drain (was 143) and 17');
         expect(plain.why).toContain('gbrain sweep --once --budget-ms 600000');
+        expect(plain.why).toContain('think.quote_verify false');
+        expect(plain.why).toContain('decide.slots.conflict.review_withdraw false');
         expect(plain.why).toContain('no longer send text to an embedding provider');
         expect(plain.why).toContain('not a request for consent');
         expect(plain.fix?.argv).toEqual(['gbrain', 'doctor', '--only', 'behavior_changes', '--json']);
@@ -230,7 +232,7 @@ for (const backend of testBackends()) {
         expect(await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'doctor' })).not.toBeNull();
         const again = await checkBehaviorChanges(engine, { cfg: null, brainKey: 'doctor' });
         expect(again.details).toMatchObject({ shown: { cli: true, stdio: false } });
-        expect(again.message).toContain('gbrain v0.60.68.0, v0.60.74.0 and v0.60.77.0 changed 10 behaviors');
+        expect(again.message).toContain('gbrain v0.60.68.0, v0.60.74.0 and v0.60.77.0 changed 11 behaviors');
       });
     });
 
@@ -301,7 +303,7 @@ describe('per-release content', () => {
     expect(later.why).not.toContain('chat_fallback_chain is live');
     expect(later.fix?.argv).toEqual(['gbrain', 'doctor', '--only', 'behavior_changes', '--json']);
     const all = behaviorChangesNotice(chain)!;
-    expect(all.why).toContain('gbrain v0.60.68.0, v0.60.74.0 and v0.60.77.0 changed 11 behaviors');
+    expect(all.why).toContain('gbrain v0.60.68.0, v0.60.74.0 and v0.60.77.0 changed 12 behaviors');
     expect(all.fix?.argv).toEqual(['unset', 'GBRAIN_CHAT_FALLBACK_CHAIN']);
   });
 });
@@ -371,7 +373,7 @@ describe('upgrades across releases (each step a new process pinned to a gbrain V
     }
   }, 60_000);
 
-  test('a brain at baseline 0.60.68 that saw the 0.60.68 notice sees only the 0.60.74 items, once', async () => {
+  test('a brain at baseline 0.60.68 that saw the 0.60.68 notice sees only the later items, once', async () => {
     const home = freshHome();
     mkdirSync(noticeDir(home), { recursive: true });
     writeFileSync(join(noticeDir(home), 'b68.baseline'), '0.60.68.0\n');
@@ -379,7 +381,7 @@ describe('upgrades across releases (each step a new process pinned to a gbrain V
     writeFileSync(join(home, 'brain-config.json'), JSON.stringify({ [HTTP_SHOWN_KEY]: JSON.stringify({ id: 'behavior_changes@0.60.68.0', clients: { 'client-a': '2026-10-05T00:00:00.000Z' } }) }));
     for (const channel of ['cli', 'http:client-a']) {
       const why = await runAt(home, '0.60.77.0', 'b68', channel);
-      expect(why).toContain('gbrain v0.60.74.0 and v0.60.77.0 changed 7 behaviors');
+      expect(why).toContain('gbrain v0.60.74.0 and v0.60.77.0 changed 8 behaviors');
       expect(why).toContain(WAVE9);
       expect(why).toContain(OPT_OUT);
       expect(why).not.toContain(V68);
@@ -393,10 +395,10 @@ describe('upgrades across releases (each step a new process pinned to a gbrain V
     const home = freshHome();
     for (const channel of ['cli', 'stdio', 'http:client-a']) {
       const why = await runAt(home, '0.60.77.0', 'old', channel);
-      expect(why).toContain('gbrain v0.60.68.0, v0.60.74.0 and v0.60.77.0 changed 10 behaviors');
+      expect(why).toContain('gbrain v0.60.68.0, v0.60.74.0 and v0.60.77.0 changed 11 behaviors');
       expect(why).toContain(`v0.60.68.0: (1) On a managed brain`);
       expect(why).toContain(`v0.60.74.0: (4) A shell job`);
-      expect(why).toContain(`v0.60.77.0: (10) On a brain with embedding turned off`);
+      expect(why).toContain(`v0.60.77.0: (10) think answers`);
       expect(await runAt(home, '0.60.77.0', 'old', channel)).toBeNull();
       expect(await runAt(home, '0.60.99.0', 'old', channel)).toBeNull();
     }

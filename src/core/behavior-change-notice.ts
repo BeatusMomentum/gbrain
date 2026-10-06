@@ -16,6 +16,9 @@
  *              access-token cap, the writer-status `local_process_ingress`
  *              rename, `jobs work` exit codes, the longer retention of
  *              unextracted corpus files.
+ *   0.60.77.0  quote grounding on by default (think, syntheses, concepts,
+ *              patterns); forget's `similar_active` and the TypeSafe-gated
+ *              overnight withdrawal review.
  * A release that changes behavior appends its rows; a shipped row's release
  * never changes.
  *
@@ -235,7 +238,9 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.60.74.0', text: '`gbrain sources writer status --json` renamed `ingress` to `local_process_ingress`; it describes only the process that answered.' },
   { since: '0.60.74.0', text: '`gbrain jobs work` exits 0 after a SIGTERM drain (was 143) and 17 when running claims had to be handed back.' },
   { since: '0.60.74.0', text: 'Captured session files nothing has extracted are kept up to 3x dream.synthesize.corpus_retention_days (90 days by default, was 30), so the corpus directory can use more disk; `gbrain sweep --once --budget-ms 600000` clears that backlog.' },
-  { since: '0.60.77.0', text: 'On a brain with embedding turned off, search, query, recall, think and fact writes no longer send text to an embedding provider: reads run keyword-only and say so, and `gbrain doctor --json` names the enable command if the user wants semantic search back.' },
+  { since: '0.60.77.0', text: 'think answers, saved syntheses, concept narratives and pattern pages check their quotes against their sources: a quote found nowhere loses its quotation marks and is marked [unverified]. It is not yet measured as a catch for made-up quotes. `gbrain config set think.quote_verify false` and `gbrain config set dream.quote_verify false` turn it off.' },
+  { since: '0.60.77.0', text: 'forget responses list close active facts it did not withdraw (`similar_active`); with a TypeSafe key, forgetting also queues an overnight review that only proposes withdrawing rewordings (`gbrain decide proposals list`; `gbrain config set decide.slots.conflict.review_withdraw false` turns it off).' },
+  { since: '0.60.78.0', text: 'On a brain with embedding turned off, search, query, recall, think and fact writes no longer send text to an embedding provider: reads run keyword-only and say so, and `gbrain doctor --json` names the enable command if the user wants semantic search back.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */
