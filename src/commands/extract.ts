@@ -1393,7 +1393,8 @@ async function extractForSlugs(
     onItem: async (slug) => {
       // #1972: bail before doing any work for this slug on abort. The trailing
       // flushTimeline still commits accumulated rows — no torn write.
-      if (isAborted(signal) || quarantined.has(slug)) return;
+      if (isAborted(signal)) return;
+      if (quarantined.has(slug)) return;
       const relPath = resolveSlugRelPath(slugToPath, brainDir, slug);
       if (relPath === undefined) return; // deleted file — sync already handled removal
       const fullPath = join(brainDir, relPath);
@@ -1505,7 +1506,8 @@ async function extractLinksFromDir(
     failureLabel: (f) => f.relPath,
     onItem: async (file) => {
       // #1972: bail before this file on abort; each page's links are replaced in its own transaction.
-      if (isAborted(signal) || quarantined.has(pathToSlug(file.relPath))) return;
+      if (isAborted(signal)) return;
+      if (quarantined.has(pathToSlug(file.relPath))) return;
       try {
         const slug = pathToSlug(file.relPath);
         const snapshot = ownership && (ownership.metadata.get(`${sourceId ?? 'default'}\0${slug}`)?.type === 'meeting' || ownership.origins.has(slug))
@@ -1590,7 +1592,8 @@ async function extractTimelineFromDir(
     failureLabel: (f) => f.relPath,
     onItem: async (file) => {
       // #1972: bail before this file on abort; trailing flush() commits the batch.
-      if (isAborted(signal) || quarantined.has(pathToSlug(file.relPath))) return;
+      if (isAborted(signal)) return;
+      if (quarantined.has(pathToSlug(file.relPath))) return;
       try {
         const content = readFileSync(file.path, 'utf-8');
         const slug = pathToSlug(file.relPath);
