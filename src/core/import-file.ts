@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
@@ -1252,6 +1253,8 @@ export async function importFromFile(
     }
   }
 
+  const suffixHold = usedFrontmatterFallback ? await suffixedFrontmatterSlugHold(engine, opts.sourceId, relativePath, resolvedSlug) : null;
+  if (suffixHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: suffixHold.message, refusal: suffixHold, skip_reason: suffixHold.code };
   // Emit the dual-channel audit entry AFTER we know we're not going to
   // short-circuit, so we don't log noise for failed imports.
   if (usedFrontmatterFallback) {
