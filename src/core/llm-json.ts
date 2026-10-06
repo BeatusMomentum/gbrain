@@ -7,9 +7,10 @@
  *   1. Strip ```json...``` fences if present, then JSON.parse.
  *   2. Direct JSON.parse.
  *   3. Find the first {...} substring (or [...] when array=true) and parse.
- *   4. When a fence was found and 1-3 failed on its extract, retry 2-3 from
- *      the opening fence (or on the whole text): a ``` inside a JSON string
- *      value ends the non-greedy fence extract early.
+ *   4. When a fence was found and 1-3 failed on its extract, locate the JSON
+ *      value with the string-aware bracket scan instead (see
+ *      recoverFromQuotedFence): a ``` inside a JSON string value ends the
+ *      non-greedy fence extract early.
  *   5. Retry 1-4 with reasoning blocks stripped (see stripReasoningBlocks).
  *   6. Return null.
  *
@@ -98,20 +99,7 @@ export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T 
 function parseLlmJsonInner<T>(raw: string, opts: { array?: boolean } = {}): T | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/i);
-  if (fenceMatch) {
-    const fenced = parseJsonCandidate<T>(fenceMatch[1].trim(), opts);
-    if (fenced !== null) return fenced;
-    // Only after the extract failed (so every payload that parsed before parses
-    // the same way): retry from the opening fence when it starts a line, else
-    // on the whole text, because the ``` sat inside a JSON string.
-    const at = fenceMatch.index ?? 0;
-    const startsLine = raw.slice(raw.lastIndexOf('\n', at - 1) + 1, at).trim() === '';
-    return parseJsonCandidate<T>((startsLine ? raw.slice(at) : raw).trim(), opts);
-  }
-  return parseJsonCandidate<T>(raw.trim(), opts);
-}
-
-function parseJsonCandidate<T>(cleaned: string, opts: { array?: boolean }): T | null {
+  const cleaned = (fenceMatch ? fenceMatch[1] : raw).trim();
   try {
     const direct = JSON.parse(cleaned);
     if (opts.array && Array.isArray(direct)) return direct as T;
@@ -130,5 +118,53 @@ function parseJsonCandidate<T>(cleaned: string, opts: { array?: boolean }): T | 
       // fall through
     }
   }
-  return null;
+  return fenceMatch ? recoverFromQuotedFence<T>(raw, fenceMatch, opts) : null;
+}
+
+/**
+ * Second chance for a fenced reply whose extract did not parse (#6069). The
+ * fence regex is non-greedy, so it ends at the first ``` after the opener,
+ * and a verbatim quote of a code block puts exactly that inside a JSON string.
+ * The matched ``` is then one of two things, and the string-aware bracket scan
+ * (findJsonCloseIndex) tells them apart without trusting any later ```:
+ *
+ *   - a quote inside an unfenced reply: the first JSON value in the text
+ *     opens before the match and closes after it, so that value is the answer;
+ *   - the real opening fence: the answer is the JSON value the fenced body
+ *     starts with. Text before the fence (prose braces, a reasoning draft) is
+ *     never a candidate, so a cut-off answer stays null, and a ``` quoted
+ *     mid-string (followed by more string text) never passes for an opener,
+ *     so a nested fragment after it is not mistaken for the answer.
+ *
+ * Either way the chosen value must itself be the wanted shape; a nested array
+ * inside an object reply is not an array answer. Runs only after the extract
+ * failed, so replies that parsed before are untouched. A value that never
+ * closes, or does not parse, gives null.
+ */
+function recoverFromQuotedFence<T>(raw: string, fence: RegExpMatchArray, opts: { array?: boolean }): T | null {
+  const fenceAt = fence.index ?? 0;
+  const firstValueFrom = (from: number): { start: number; text: string } | null => {
+    const offset = raw.slice(from).search(/[[{]/);
+    if (offset < 0) return null;
+    const start = from + offset;
+    const close = findJsonCloseIndex(raw.slice(start));
+    return close < 0 ? null : { start, text: raw.slice(start, start + close + 1) };
+  };
+
+  const leading = firstValueFrom(0);
+  const quotesFence = leading !== null && leading.start < fenceAt && leading.start + leading.text.length > fenceAt;
+  const bodyAt = fenceAt + fence[0].length - fence[1].length - 3;
+  const opensBody = /^\s*[[{]/.test(raw.slice(bodyAt));
+  const answer = quotesFence ? leading : opensBody ? firstValueFrom(bodyAt) : null;
+  return answer === null ? null : decodeShape<T>(answer.text, opts);
+}
+
+function decodeShape<T>(text: string, opts: { array?: boolean }): T | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    if (opts.array) return Array.isArray(value) ? (value as T) : null;
+    return value !== null && typeof value === 'object' ? (value as T) : null;
+  } catch {
+    return null;
+  }
 }

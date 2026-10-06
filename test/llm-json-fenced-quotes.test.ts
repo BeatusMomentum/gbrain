@@ -1,81 +1,132 @@
 /**
- * #6069: a ``` inside a JSON string value (a verbatim quote of a code block,
- * common in conversation transcripts) must not cut the payload short.
+ * #6069: LLM replies that quote a code block verbatim carry ``` inside a JSON
+ * string. The fence regex in parseLlmJson is non-greedy, so before the fix it
+ * ended the extract at that inner ``` and the reply came back null, which the
+ * significance judge recorded as an unparseable (and uncached) verdict.
  *
- * 1. Protects: parseLlmJson returns the model's object or array when a string
- *    value holds ``` (a pair or a single one), fenced or not, for the object
- *    shape (significance judge, gateway expansion, subagent oneshot) and the
- *    array shape (conversation-parser LLM fallback).
- * 2. Fails when: the fenced extract is again the only candidate, so the
- *    non-greedy fence regex ends the payload at the first inner ```.
- * 3. Not covered before: the reasoning-ladder tests never put ``` inside a
- *    string value.
- * 4. No new seam: every assertion goes through the public entry points that
- *    exist before the fix (importing a new helper here would turn a
- *    reverted-source run into a module-load failure).
+ * Every assertion goes through parseLlmJson or a real caller, both of which
+ * exist before the fix, so a run with the source reverted fails on the
+ * assertions rather than on a missing import. The "control" cases pass on
+ * both sides: the recovery runs only after the fenced extract fails, and it
+ * never reaches back before a real fence.
  */
 import { describe, expect, test } from 'bun:test';
 import { parseLlmJson } from '../src/core/llm-json.ts';
 import { judgeSignificance, type JudgeClient } from '../src/core/cycle/synthesize.ts';
 import type { DiscoveredTranscript } from '../src/core/cycle/transcript-discovery.ts';
 
-const F = '```';
-const verdict = (quote: string) => ({
-  score: 0.8, content_type: 'technical', segments: [{ quote, note: 'why' }], entities: [], reasons: ['a', 'b'],
+const TICKS = '```';
+const fence = (body: string, tag = 'json') => `${TICKS}${tag}\n${body}\n${TICKS}`;
+const quotedRun = `paste ${TICKS}sh\ngbrain sync --source wiki\n${TICKS} into the terminal`;
+const inlineRun = `run ${TICKS}gbrain doctor --json${TICKS} before filing`;
+const clippedQuote = `the snippet opened with ${TICKS}python and was cut`;
+const judged = (quote: string) => ({
+  score: 0.71,
+  content_type: 'technical',
+  segments: [{ quote, note: 'operator workflow' }],
+  entities: ['widget-co'],
+  reasons: ['durable how-to', 'names a command'],
 });
-const pretty = (v: unknown) => JSON.stringify(v, null, 2);
-const pair = `run ${F}bash gbrain doctor${F} first`;
-const single = `the fix starts with ${F}ts`;
+const asText = (v: unknown, indent = 2) => JSON.stringify(v, null, indent);
 
-describe('parseLlmJson: ``` inside a JSON string value (#6069)', () => {
-  test.each([
-    ['fenced object, quote holds a ``` pair', `${F}json\n${pretty(verdict(pair))}\n${F}`, verdict(pair)],
-    ['fenced object, quote holds one ``` (a clipped code block)', `${F}json\n${pretty(verdict(single))}\n${F}`, verdict(single)],
-    ['unfenced object, quote holds a ``` pair', pretty(verdict(pair)), verdict(pair)],
-    ['fenced object with prose around it', `Here is the verdict:\n${F}json\n${pretty(verdict(pair))}\n${F}\nDone.`, verdict(pair)],
-    ['reasoning block before a fenced object with a ``` pair', `<think>draft {"score": 0.1}</think>\n${F}json\n${pretty(verdict(pair))}\n${F}`, verdict(pair)],
-    ['a brace in prose before a fenced object with a ``` pair', `Note {see below}:\n${F}json\n${pretty(verdict(pair))}\n${F}`, verdict(pair)],
-  ])('%s', (_name, raw, expected) => {
-    expect(parseLlmJson<unknown>(raw)).toEqual(expected);
+describe('parseLlmJson recovers replies whose strings quote ``` (#6069)', () => {
+  test('a fenced object whose quote holds a whole code block', () => {
+    expect(parseLlmJson(fence(asText(judged(quotedRun))))).toEqual(judged(quotedRun));
   });
 
-  test('array shape (conversation-parser fallback): fenced array whose strings hold ```', () => {
-    const turns = [{ role: 'user', text: `try ${F}ls -la${F}` }, { role: 'assistant', text: `${F}py` }];
-    expect(parseLlmJson<unknown>(`${F}json\n${pretty(turns)}\n${F}`, { array: true })).toEqual(turns);
+  test('a fenced object whose quote holds one stray ```', () => {
+    expect(parseLlmJson(fence(asText(judged(clippedQuote))))).toEqual(judged(clippedQuote));
   });
 
-  test.each([
-    // Both pass before and after the fix: the retry runs only after the fenced extract failed.
-    ['a plain fenced object', `${F}json\n{"score": 0.5}\n${F}`, { score: 0.5 }],
-    ['a fenced object followed by prose holding another object', `${F}json\n{"score": 0.5}\n${F}\nSee {"note": 1}.`, { score: 0.5 }],
-  ])('unchanged success path: %s', (_name, raw, expected) => {
-    expect(parseLlmJson<unknown>(raw)).toEqual(expected);
+  test('a bare fence (no json tag) behaves the same', () => {
+    expect(parseLlmJson(fence(asText(judged(quotedRun)), ''))).toEqual(judged(quotedRun));
   });
 
-  test.each([
-    ['a fenced object truncated inside a quote', `${F}json\n{"score": 0.8, "segments": [{"quote": "run ${F}bash`],
-    // The retry starts at the fence, so a draft in the reasoning block cannot stand in for the cut answer.
-    ['a reasoning draft before a truncated fenced answer', `<think>draft {"score": 0.1}</think>\n${F}json\n{"score": 0.8, "segments": [{"quote": "run ${F}bash`],
-  ])('still null: %s', (_name, raw) => {
-    expect(parseLlmJson(raw)).toBeNull();
+  test('an unfenced object whose quote holds ```', () => {
+    expect(parseLlmJson(asText(judged(quotedRun)))).toEqual(judged(quotedRun));
+  });
+
+  test('an unfenced one-line object after a lead-in sentence', () => {
+    const reply = `Verdict follows. ${asText(judged(quotedRun), 0)}`;
+    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+  });
+
+  test('prose with its own braces before and after a fenced answer', () => {
+    const reply = `Scoring {draft 2}:\n${fence(asText(judged(quotedRun)))}\nThat is all {end}.`;
+    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+  });
+
+  test('a reasoning block that drafts an object before the fenced answer', () => {
+    const reply = `<think>first try: {"score": 0.2}</think>\n${fence(asText(judged(quotedRun)))}`;
+    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
+  });
+
+  test('an array reply (conversation-parser fallback) whose turns quote ```', () => {
+    const turns = [
+      { role: 'user', text: `why does ${TICKS}make${TICKS} fail?` },
+      { role: 'assistant', text: `run ${TICKS}sh\nmake -j1\n${TICKS} and read the first error` },
+    ];
+    expect(parseLlmJson(fence(asText(turns)), { array: true })).toEqual(turns);
+  });
+
+  test('a fenced answer with a ``` quote followed by a note holding another object', () => {
+    const reply = `${fence(asText(judged(quotedRun)))}\nNote: the schema was {"version": 2}.`;
+    expect(parseLlmJson(reply)).toEqual(judged(quotedRun));
   });
 });
 
-describe('judgeSignificance: a quoted code block no longer makes the verdict unparseable (#6069)', () => {
-  test('a fenced verdict whose quote holds a ``` pair is a scored, reliable verdict', async () => {
-    const judge: JudgeClient = {
+describe('controls: what parsed or failed before still does (#6069)', () => {
+  test('a clean fenced object parses from its extract', () => {
+    expect(parseLlmJson(fence('{"score": 0.4}'))).toEqual({ score: 0.4 });
+  });
+
+  test('a clean fenced object wins over a later object in prose', () => {
+    expect(parseLlmJson(`${fence('{"score": 0.4}')}\nCompare {"score": 0.9}.`)).toEqual({ score: 0.4 });
+  });
+
+  test('a fenced answer cut off inside a quote stays null', () => {
+    expect(parseLlmJson(`${TICKS}json\n{"score": 0.71, "segments": [{"quote": "paste ${TICKS}sh`)).toBeNull();
+  });
+
+  test('a reasoning draft never stands in for a cut-off fenced answer', () => {
+    const reply = `<think>first try: {"score": 0.2}</think>\n${TICKS}json\n{"score": 0.71, "segments": [{"quote": "paste ${TICKS}sh`;
+    expect(parseLlmJson(reply)).toBeNull();
+  });
+
+  test('a prose object before a fence that holds no JSON is not picked up', () => {
+    expect(parseLlmJson(`Earlier {"score": 0.3} was wrong.\n${fence('no verdict today', '')}`)).toBeNull();
+  });
+
+  test('a ``` quoted mid-string never yields a nested fragment as the answer', () => {
+    // The leading prose brace hides the enclosing object; guessing from the
+    // inner ``` would return the second segment instead of the reply.
+    const reply = `Note {x}: {"segments": [{"quote": "${TICKS}sh${TICKS} first"}, {"quote": "second"}]}`;
+    expect(parseLlmJson(reply)).toBeNull();
+  });
+
+  test('array mode still refuses an object-only reply that quotes ```', () => {
+    expect(parseLlmJson(fence(asText(judged(quotedRun))), { array: true })).toBeNull();
+  });
+});
+
+describe('judgeSignificance keeps a verdict whose quote holds a code block (#6069)', () => {
+  test('the fenced verdict is scored and reliable', async () => {
+    const client: JudgeClient = {
       create: async () => ({
-        content: [{ type: 'text', text: `${F}json\n${pretty(verdict(pair))}\n${F}` }],
+        content: [{ type: 'text', text: fence(asText(judged(inlineRun))) }],
         stop_reason: 'end_turn',
-      } as never),
+      }) as never,
     };
-    const t: DiscoveredTranscript = {
-      filePath: '/corpus/fenced.txt', contentHash: 'hash-fenced'.padEnd(20, '0'),
-      content: `user: ${pair}\n`.repeat(20), basename: 'fenced', inferredDate: null,
+    const transcript: DiscoveredTranscript = {
+      filePath: '/fixtures/chat-widget-co.txt',
+      contentHash: 'c0ffee'.repeat(8),
+      content: `assistant: ${inlineRun}\n`.repeat(30),
+      basename: 'chat-widget-co',
+      inferredDate: null,
     };
-    const r = await judgeSignificance(judge, t, 'anthropic:claude-haiku-4-5-20251001');
-    expect(r.unreliable).toBeUndefined();
-    expect(r.score).toBe(0.8);
-    expect(r.segments).toEqual([{ quote: pair, note: 'why' }]);
+    const verdict = await judgeSignificance(client, transcript, 'anthropic:claude-haiku-4-5-20251001');
+    expect(verdict.unreliable).toBeUndefined();
+    expect(verdict.score).toBe(0.71);
+    expect(verdict.segments).toEqual([{ quote: inlineRun, note: 'operator workflow' }]);
   });
 });
