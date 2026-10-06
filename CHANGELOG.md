@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.93.0] - 2026-10-06
+
+**The embedding-migration bad-flag test stops timing out in serial shard 3, and it now actually catches a CLI that opens the brain before rejecting a flag.**
+
+No user-facing behavior changes. A bad flag on `gbrain migrate embeddings` or `gbrain retrieval-upgrade` already exits 2 with an `unknown_flag` envelope before touching the brain, and it still does when another process holds the brain lock. For contributors and agents working on gbrain:
+
+- **`test/migrate-embeddings-recovery-cli.serial.test.ts`** never had a hung child. Its matrix test ran 126 cold CLI starts and 126 in-process PGLite reopens, one after another, inside a single 180-second budget. That took 69 s on an idle 4-core machine and more than 180 s on a shared CI runner, where the runner killed whichever child was running at the deadline ("killed 1 dangling process"). Every control is still checked on both routes, now in-process through the same `parseGlobalFlags` and `migrationCliArgumentError` call the CLI entry makes. One real CLI process runs for each distinct rejection (14 per route), and the test takes 27 s instead of 69 s. Pinned to one core beside three other serial files, the old test hit its 180 s timeout and the new one passed in 135 s.
+- **The test is stronger.** After each rejected run, it now requires the brain directory to be untouched (same size, mtime and ctime for every file), and it still compares the row snapshot once per route. It also runs a bad flag while the test itself holds the brain open. A mutation that opens the engine before validating the flags passed the old test, but it fails the new one on both checks.
+
+## To take advantage of v0.60.93.0
+
+Nothing to do: this release changes a test only.
+
 ## [0.60.90.0] - 2026-10-06
 
 **The keyed tool-routing E2E stops failing at random: it now reads the model's most likely tool choice instead of one random sample.**
