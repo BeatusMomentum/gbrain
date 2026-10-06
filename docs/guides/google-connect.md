@@ -129,14 +129,15 @@ the brain until you remove them — they are not reconciled automatically.
 
 ## Calendar window
 
-The calendar keeps pages for events from `--history-days` back to 60 days
-ahead. Every sweep enforces that window itself, including incremental syncs:
-a change to a recurring series makes Google return every instance of it,
-years in both directions, and only the ones inside the window become pages.
-As days pass, the sweep lists the newly reached stretch of the 60-day
-horizon, so upcoming instances of an unchanged series still arrive. A
-meeting rescheduled past the horizon loses its page until it comes back in
-range; meetings that aged out of the window keep their pages.
+Calendar pages cover events from `--history-days` ago up to 60 days from
+now, and each sweep applies that range on its own. That matters for
+incremental syncs: after any edit to a recurring series, Google sends back
+the series' instances for years before and after, and only those inside the
+range are kept. Because the 60-day edge moves forward daily, the sweep also
+lists the days it has newly reached, so future instances of a series nobody
+touched still appear. If a meeting moves beyond 60 days out, its page goes
+away until the meeting is back within range. Meetings that have aged out of
+the range keep their pages.
 
 `gbrain sync --source <id> --full` re-lists the whole window and removes the
 pages of events that start inside it but are no longer listed (cancelled or

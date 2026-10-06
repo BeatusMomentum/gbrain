@@ -13,7 +13,7 @@ import { currentCompanyBrainSync } from '../../core/company-brain/profile.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { loadOpCheckpoint, clearOpCheckpoint } from '../../core/op-checkpoint.ts';
-import { registerCleanup } from '../../core/process-cleanup.ts';
+import { abortOnCleanupPass } from '../../core/process-cleanup.ts';
 import {
   readSyncAnchor,
   resolveSlugRootMode,
@@ -599,41 +599,26 @@ async function pullAndResolveHead(
     const _t0 = Date.now();
     serr(`[gbrain phase] sync.git_pull start`);
     opts.onProgress?.({ phase: 'git_pull' });
-    // SIGTERM/SIGHUP (the --timeout hard-deadline watchdog, a service stop)
-    // end the process through the cleanup pass, not opts.signal. Stop the
-    // pull there too, so an orphaned `git pull` cannot fast-forward the
-    // working tree after gbrain has exited.
-    const stopPull = new AbortController();
-    const deregisterStopPull = registerCleanup('sync-git-pull', async () => stopPull.abort());
+    // Two things can stop this sync while git waits on the remote: opts.signal
+    // (--timeout, SIGINT, a job's timeout or cancel, lost lock) and the
+    // process cleanup pass (the hard-deadline watchdog's SIGTERM, a service
+    // stop). Both stop the pull: a `git pull` still running after this
+    // process exits could fast-forward the tree behind a released lock.
+    const { pullRepo, isStoppedGitPull } = await import('../../core/git-remote.ts');
+    const shutdown = abortOnCleanupPass('sync-git-pull');
     try {
-      const { pullRepo } = await import('../../core/git-remote.ts');
-      // v0.41.13.0 (T3 / D-V4-mech-7): the operator's --timeout bounds the
-      // pull. opts.signal carries it (plus SIGINT, the job's timeout/cancel
-      // and lock loss), and pullRepo stops the subprocess when it aborts;
-      // pullRepo's own 300s deadline caps a run with no --timeout. The
-      // catch below distinguishes a stopped pull from ordinary pull
-      // failure. Pull applies to the whole git repo (gitContextRoot), not
-      // just the sync scope — git has no per-subdir pull.
-      await pullRepo(gitContextRoot, { signal: composeAbortSignals(opts.signal, stopPull.signal) });
+      // v0.41.13.0 (T3 / D-V4-mech-7): the pull is bounded by the operator's
+      // --timeout through opts.signal, and by pullRepo's own 300s default
+      // when no --timeout is set. Pull applies to the whole git repo
+      // (gitContextRoot), not just the sync scope — git has no per-subdir pull.
+      await pullRepo(gitContextRoot, { signal: composeAbortSignals(opts.signal, shutdown.signal) });
       serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       serr(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 200)})`);
-      // v0.41.13.0 (T3 / D-V4-mech-7): pullRepo wraps the subprocess error
-      // in GitOperationError, so a stopped pull's `code` (ETIMEDOUT at its
-      // deadline, ABORT_ERR on abort) and `signal === 'SIGTERM'` live on
-      // `.cause`, NOT on the top-level error. Inspect `.cause` to tell a
-      // stopped pull (return partial reason='pull_timeout') from ordinary
-      // failure (keep the existing warn-and-continue R2 invariant).
-      const cause: unknown = e instanceof Error && 'cause' in e ? (e as { cause?: unknown }).cause : undefined;
-      const causeCode = (cause && typeof cause === 'object' && 'code' in cause)
-        ? (cause as { code?: unknown }).code
-        : undefined;
-      const causeSignal = (cause && typeof cause === 'object' && 'signal' in cause)
-        ? (cause as { signal?: unknown }).signal
-        : undefined;
-      const isTimeout = causeCode === 'ETIMEDOUT' || causeCode === 'ABORT_ERR' || causeSignal === 'SIGTERM';
-      if (isTimeout) {
+      // A stopped pull returns partial reason='pull_timeout' with the anchor
+      // untouched; any other pull failure keeps the R2 warn-and-continue path.
+      if (isStoppedGitPull(e)) {
         return { done: buildPartialResult({
           fromCommit: lastCommit,
           toCommit: lastCommit ?? '',
@@ -651,7 +636,7 @@ async function pullAndResolveHead(
         serr(`Warning: git pull failed: ${msg.slice(0, 200)}`); // #1315 stderr-first
       }
     } finally {
-      deregisterStopPull();
+      shutdown.release();
     }
   }
 

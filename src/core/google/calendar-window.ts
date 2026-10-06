@@ -1,100 +1,118 @@
 /**
- * The calendar sync window: every calendar path materializes only events in
- * `[now - historyDays, now + CALENDAR_HORIZON_DAYS]`.
+ * Which calendar events a google source keeps pages for (#5442).
  *
- * A syncToken delta cannot carry timeMin/timeMax, and with singleEvents=true
- * one change to a recurring series returns every expanded instance, years
- * back and forward. So the window is enforced here on every list (initial,
- * incremental, token-expired and full), with the Calendar API's own
- * semantics: the floor compares an event's END, the ceiling its START.
+ * The source mirrors one rolling range: from `historyDays` back to
+ * `CALENDAR_HORIZON_DAYS` ahead. Google can only apply that range to a
+ * windowed list; a syncToken delta carries no timeMin/timeMax, and with
+ * singleEvents=true a single edit to a recurring series brings back every
+ * expanded instance of it, years in both directions. So the sweep checks each
+ * listed event against the range itself, on every kind of list.
  *
- * A delta reports changed events only, so an unchanged instance that has
- * entered the horizon since the last list would never arrive. The state's
- * `calendar_horizon_ms` records how far the calendar has been listed, and
- * `calendarCoverageRange` names the bounded stretch to list next. A `--full`
- * reconcile deletes only pages whose event starts inside the listed window and
- * that the complete window list no longer names; nothing before the floor is
- * ever deleted, so shrinking historyDays never removes history.
+ * `CalendarSyncWindow` is computed once per sweep and answers three questions:
+ * - which side of the range an event falls on (`side`), matching Google's own
+ *   rule: timeMin is compared with an event's end, timeMax with its start;
+ * - what a delta cannot tell us: the range's leading edge moves forward every
+ *   day, and an unchanged instance that crosses it never appears in a delta.
+ *   `GoogleSourceState.calendar_horizon_ms` records how far ahead the calendar
+ *   was last listed, and `coverageStartMs` says where the next catch-up list
+ *   must begin;
+ * - which existing pages a complete `--full` list has dropped
+ *   (`unlistedCalendarPages`). Only events starting inside the listed range
+ *   qualify, so pages older than the floor (for example after historyDays
+ *   shrinks) are never removed by a reconcile.
+ *
+ * `planCalendarPage` turns one listed event into a page change; google-source
+ * performs it with its own write and delete primitives.
  */
 import type { CalendarEventData } from './types.ts';
 
-/** Days ahead of now the calendar keeps pages for (the windowed list's timeMax). */
+/** How far ahead of now calendar pages are kept, in days. */
 export const CALENDAR_HORIZON_DAYS = 60;
-const DAY_MS = 86_400_000;
 
-export interface CalendarWindow { floorMs: number; ceilMs: number }
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function calendarWindowAt(nowMs: number, historyDays: number): CalendarWindow {
-  return { floorMs: nowMs - historyDays * DAY_MS, ceilMs: nowMs + CALENDAR_HORIZON_DAYS * DAY_MS };
-}
+export type CalendarWindowSide = 'before' | 'inside' | 'after';
 
-/** An event's place against the window; an unparseable start (a cancelled skeleton) counts as in-window. */
-export function calendarWindowPlacement(startIso: string, endIso: string, window: CalendarWindow): 'past' | 'in' | 'future' {
-  const startMs = Date.parse(startIso);
-  if (Number.isFinite(startMs) && startMs >= window.ceilMs) return 'future';
-  const endMs = Date.parse(endIso);
-  const lastMs = Number.isFinite(endMs) ? endMs : startMs;
-  if (Number.isFinite(lastMs) && lastMs <= window.floorMs) return 'past';
-  return 'in';
-}
+export class CalendarSyncWindow {
+  readonly floorMs: number;
+  readonly ceilMs: number;
 
-/**
- * The stretch still to list after the cursor's own list, or null when none is
- * owed. A windowed list already covered through the ceiling. State that never
- * recorded a horizon (written before it existed) gets one bounded `[now, ceil]`
- * coverage list before the horizon is set; otherwise the stretch past the
- * recorded horizon is listed once the ceiling has moved a day.
- */
-export function calendarCoverageRange(horizonMs: number | null | undefined, listedWindow: boolean, window: CalendarWindow,
-  nowMs: number): { fromMs: number } | null {
-  if (listedWindow) return null;
-  if (typeof horizonMs !== 'number') return { fromMs: nowMs };
-  return window.ceilMs - horizonMs >= DAY_MS ? { fromMs: horizonMs } : null;
-}
-
-export interface CalendarApplyIo<R extends { relPath: string }> {
-  signal?: AbortSignal;
-  render: (ev: CalendarEventData) => R | null;
-  existingPath: (eventId: string) => Promise<string | null>;
-  fallbackPath: (ev: CalendarEventData) => string;
-  dropPage: (relPath: string) => Promise<void>;
-  importPage: (rendered: R) => Promise<void>;
-}
-
-/**
- * Materialize listed events inside the window; returns how many were outside
- * it. A past event leaves its page as imported (aged-out history is kept). A
- * cancellation deletes its page wherever the event sits. An event rescheduled
- * past the horizon loses its page; the coverage list brings it back in range.
- */
-export async function applyCalendarEvents<R extends { relPath: string }>(events: CalendarEventData[], window: CalendarWindow, io: CalendarApplyIo<R>): Promise<number> {
-  let outside = 0;
-  for (const ev of events) {
-    if (io.signal?.aborted) return outside;
-    const rendered = io.render(ev);
-    const placement = rendered ? calendarWindowPlacement(ev.startIso, ev.endIso, window) : 'in';
-    if (placement === 'past') { outside++; continue; }
-    // Identity is the immutable event id, not the date-derived path: reschedules move and
-    // cancelled skeletons (id + status only) still find their page.
-    const existingPath = await io.existingPath(ev.id);
-    if (!rendered) { await io.dropPage(existingPath ?? io.fallbackPath(ev)); continue; }
-    if (placement === 'future') {
-      outside++;
-      if (existingPath) await io.dropPage(existingPath);
-      continue;
-    }
-    if (existingPath && existingPath !== rendered.relPath) await io.dropPage(existingPath);
-    await io.importPage(rendered);
+  constructor(readonly nowMs: number, historyDays: number) {
+    this.floorMs = nowMs - historyDays * DAY_MS;
+    this.ceilMs = nowMs + CALENDAR_HORIZON_DAYS * DAY_MS;
   }
-  return outside;
+
+  /** timeMin/timeMax for a windowed list that starts at `fromMs` (the floor unless given). */
+  listBounds(fromMs: number = this.floorMs): { timeMinIso: string; timeMaxIso: string } {
+    return { timeMinIso: new Date(fromMs).toISOString(), timeMaxIso: new Date(this.ceilMs).toISOString() };
+  }
+
+  /**
+   * An event is `after` the range when it starts at or past the ceiling and
+   * `before` it when it ends at or before the floor (its start stands in for an
+   * end that does not parse). A date that does not parse never moves an event
+   * out of the range, so a cancelled skeleton with no dates stays `inside`.
+   */
+  side(startIso: string, endIso: string): CalendarWindowSide {
+    const start = Date.parse(startIso);
+    if (start >= this.ceilMs) return 'after';
+    const end = Date.parse(endIso);
+    const finish = Number.isNaN(end) ? start : end;
+    return finish <= this.floorMs ? 'before' : 'inside';
+  }
+
+  /**
+   * Where the catch-up list for unchanged instances should start, or null when
+   * none is due. A sweep that listed the whole window already saw them. State
+   * with no recorded horizon (saved before it existed) is listed from now, as
+   * its last full list is of unknown age; a recorded horizon is listed from
+   * once the ceiling has moved at least a day past it.
+   */
+  coverageStartMs(horizonMs: number | null | undefined, listedWholeWindow: boolean): number | null {
+    if (listedWholeWindow) return null;
+    if (typeof horizonMs !== 'number') return this.nowMs;
+    return this.ceilMs - horizonMs >= DAY_MS ? horizonMs : null;
+  }
+
+  /** Whether an event starting at `startIso` begins inside [floor, ceiling). */
+  startsInside(startIso: string | null): boolean {
+    const start = Date.parse(startIso ?? '');
+    return start >= this.floorMs && start < this.ceilMs;
+  }
 }
 
-/** Calendar pages a complete `--full` list of `window` no longer names, limited to events starting inside it. */
-export function unlistedInWindow<T extends { event_id: string | null; start_iso: string | null }>(rows: T[], listedIds: ReadonlySet<string>,
-  window: CalendarWindow): T[] {
-  return rows.filter(row => {
-    const startMs = Date.parse(row.start_iso ?? '');
-    return row.event_id !== null && !listedIds.has(row.event_id)
-      && Number.isFinite(startMs) && startMs >= window.floorMs && startMs < window.ceilMs;
-  });
+/** The page change one listed event calls for. */
+export type CalendarPageChange =
+  | { kind: 'write'; removeFirst: string | null }
+  | { kind: 'remove'; relPath: string }
+  | { kind: 'ignore' };
+
+/**
+ * Decide the page change for one listed event.
+ *
+ * `targetPath` is where the event renders, or null for a cancellation.
+ * `currentPath` is the page already holding this event id, if any. Ids are
+ * stable while paths derive from the date and title. A cancellation removes
+ * the event's page wherever the event sits in time. An event that ended
+ * before the floor is ignored, so history imported while it was in range is
+ * kept as it is. One that now starts past the ceiling loses its page; the
+ * catch-up list brings it back once it is in range. Anything else is
+ * written, after removing a copy at an older path.
+ */
+export function planCalendarPage(side: CalendarWindowSide, targetPath: string | null, currentPath: string | null,
+  fallbackPath: string): CalendarPageChange {
+  if (targetPath === null) return { kind: 'remove', relPath: currentPath ?? fallbackPath };
+  if (side === 'before') return { kind: 'ignore' };
+  if (side === 'after') return currentPath ? { kind: 'remove', relPath: currentPath } : { kind: 'ignore' };
+  return { kind: 'write', removeFirst: currentPath !== null && currentPath !== targetPath ? currentPath : null };
+}
+
+/**
+ * Pages written by the sweep (they carry an event id) whose event starts
+ * inside `window` but which a complete `--full` list of that window did not
+ * name: deleted or cancelled upstream since the last list.
+ */
+export function unlistedCalendarPages<T extends { event_id: string | null; start_iso: string | null }>(pages: T[],
+  listedIds: ReadonlySet<string>, window: CalendarSyncWindow): T[] {
+  return pages.filter(page => page.event_id !== null && !listedIds.has(page.event_id) && window.startsInside(page.start_iso));
 }

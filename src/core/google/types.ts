@@ -100,10 +100,10 @@ export interface GoogleSourceState {
    */
   calendar_id?: string | null;
   /**
-   * Epoch ms the calendar has been listed through (calendar-window.ts). A
-   * syncToken delta reports changed events only, so the sweep lists the
-   * stretch past it once the window's ceiling moves a day; state without it
-   * gets one bounded coverage list first.
+   * Ceiling (epoch ms) of the last calendar list that reached the window's
+   * leading edge. Deltas omit unchanged events, so once the edge is a day
+   * past this value the sweep lists the gap (calendar-window.ts). Missing on
+   * state saved before it existed, which is listed from now instead.
    */
   calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;

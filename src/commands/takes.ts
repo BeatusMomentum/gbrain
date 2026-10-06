@@ -678,9 +678,10 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
   }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
-    (dryRun ? ' (dry-run)' : '') + '\n' +
-    (result.next_before ? `next: --before '${result.next_before}'\n` : ''),
+    (dryRun ? ' (dry-run)' : '') + '\n',
   );
+  // Quoted: the cursor's timestamp contains a space.
+  if (result.next_before) process.stdout.write(`next: --before '${result.next_before}'\n`);
 }
 
 const BEFORE_CURSOR_RE = /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)?),([1-9]\d{0,15})$/;
