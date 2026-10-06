@@ -10,29 +10,35 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.80.0] - 2026-10-06
+## [0.60.79.0] - 2026-10-06
 
-**A Postgres brain set to one database connection (`GBRAIN_POOL_SIZE=1`) can be created and migrated again: `gbrain init --db-only`, `gbrain apply-migrations`, `gbrain repair request-indexes` and `gbrain backfill` no longer stop with "No pool capacity is available for long-running writes".**
+**js-yaml 4: no more vulnerable YAML command-line dependency, and frontmatter reads clock times and leading-zero numbers the way YAML 1.2 does.**
 
-Schema migrations that cannot run inside a transaction (concurrent index builds and similar DDL) run on a reserved connection. gbrain keeps one connection free for reads and control work whenever something holds a connection for a long time, so a pool of one refused every such migration and a fresh `gbrain init` failed at migration 48. Migration DDL, concurrent index builds and backfill batches use nothing but their own connection, like a transaction, so they may now take a single connection. Holds that keep other work running alongside them (write publication, the writer's idle probe, embedding index builds that report progress) still leave a connection free, and the only direct session at `GBRAIN_DIRECT_POOL_SIZE=1` is still never lent.
+gbrain parsed YAML with js-yaml 3, whose command-line tool pulls in `argparse@1` and `sprintf-js`, which has an unpatched denial-of-service advisory (GHSA-hp3w-g68c-fv3c). gbrain never loaded that tool, but the dependency audit blocked every push to master. gbrain now uses js-yaml 4: `bun audit` and the OSV scan are both clean, with no ignore entries. The YAML parser also moves from YAML 1.1 to YAML 1.2 number rules, which changes a few frontmatter values.
 
-| With `GBRAIN_POOL_SIZE=1` on Postgres | Before | After |
+| Frontmatter value | Before | After |
 | --- | --- | --- |
-| `gbrain init --db-only` on a fresh database | fails at migration 48 with `writer_pool_capacity` | succeeds |
-| `gbrain apply-migrations`, or any command that auto-applies pending schema migrations | fails at the first `transaction: false` migration | succeeds |
-| `gbrain repair request-indexes --apply`, `gbrain backfill <kind>` | `internal_error`: no pool capacity | succeeds |
+| `start: 10:30` | `630` (read as base-60) | `"10:30"` |
+| `id: 010` | `8` (octal) | `10` |
+| `mode: 0o755` | `"0o755"` | `493` |
+| `count: 1_000` | `1000` | `"1_000"` |
+| Dates, `yes`/`no`, duplicate keys, merge keys | unchanged | unchanged |
 
-### Things to watch
+Written frontmatter quotes fewer strings (for example `${{ github.token }}` and URLs are written without quotes); every string still reads back as the same string.
 
-- **Managed writes still need two connections.** With one connection, a managed write stays queued with `writer_pool_capacity`, so `gbrain init` without `--db-only` creates the schema and then stops at its packaged-skill install with `write_pending`. Rerun with `GBRAIN_POOL_SIZE=2`; init resumes the same request. Long-running processes still need 6 ([pool sizing](docs/ENGINES.md#pool-sizing)).
+## To take advantage of v0.60.79.0
 
-For contributors and agents working on gbrain:
+`gbrain upgrade` installs the binary. There are no schema migrations. Upgraded brains show a one-time notice listing the behavior change below; `gbrain doctor --only behavior_changes` shows it again.
 
-- `withReservedConnection(fn, { selfContained: true })` declares that `fn` uses only the reserved connection and never waits on the pool while holding it. Only such holders may take the only connection of a one-connection ordinary pool. Tests: `test/pool-budget.test.ts`, `test/postgres-engine-reserved-routing.test.ts`, `test/e2e/pool-size-one-migrations.test.ts`.
+1. **Verify:**
+   ```bash
+   gbrain doctor
+   ```
+2. **If any step fails,** file an issue at https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor` and `~/.gbrain/upgrade-errors.jsonl` if it exists.
 
-## To take advantage of v0.60.80.0
+### Behavior changes
 
-`gbrain upgrade`. No schema migration.
+- **Frontmatter numbers follow YAML 1.2.** A page whose frontmatter used a clock-like value (`10:30`), a leading-zero number (`010`), `0o` octal or an underscore-separated number stores the new value the next time it syncs. Quote the value in the file to keep it as text either way.
 
 ## [0.60.78.0] - 2026-10-06
 
