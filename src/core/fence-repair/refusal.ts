@@ -20,11 +20,17 @@ import { opError, type OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { FENCE_REASONS, fenceMessage, issueLocation, renderFenceFix, type FenceMessageLocation } from './reasons.ts';
 import { extractRawRows, primaryFence, rowNumOf, type RawSection } from './raw-rows.ts';
+import { FENCE_RULES_VERSION } from './normalize.ts';
 import { ALLOWED, cellValid } from './schema.ts';
 import type { FenceIssue, FenceKind, FenceReason, FenceSection } from './types.ts';
 
-/** Bumped when the fence screen changes what it refuses; an older `invalid_fence` hold is re-screened. */
-export const FENCE_VERSION = 1;
+/**
+ * The screen's version, stored on `invalid_fence` holds as `fence_version`; an
+ * older hold is re-screened. It moves when the screen changes what it refuses:
+ * 1 was the strict screen alone; Tier 1 (`FENCE_RULES_VERSION`) admits the
+ * fences it fixes, so every rule-set bump moves it too.
+ */
+export const FENCE_VERSION = 1 + FENCE_RULES_VERSION;
 /** Row numbers a location carries at most. */
 export const FENCE_ROWS_MAX = 20;
 

@@ -330,12 +330,14 @@ test('fences.normalize=false: the fixable file is held like any malformed fence 
   expect(result.held![0]).toMatchObject({ path: 'people/fixable.md', code: 'invalid_fence', fence: { fence: 'facts', section: 'body' } });
   expect(readFileSync(join(s.root, 'people/fixable.md'), 'utf8')).toBe(before);
   expect(await engine.getPage('people/fixable', { sourceId: s.id })).toBeNull();
-  // Turning it back on: the held file re-screens on the next sync, is normalized and imports.
+  // A hold an older screen wrote (v0.60.98.0's fence_version 1, before Tier 1 existed) re-screens on the
+  // next sync with no command once normalization is on: the file is normalized, committed and imported.
   await engine.unsetConfig('fences.normalize');
-  await retryHeld(engine, s.id, { dryRun: false });
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,fence_version}','1'::jsonb) WHERE op='sync-hold' AND fingerprint LIKE $1`, [`${s.id}:%`]);
   const after = await s.sync();
   expect(after.fences_normalized).toMatchObject({ count: 1 });
   expect(await s.holds()).toEqual([]);
+  expect(parseFactsFence((await engine.getPage('people/fixable', { sourceId: s.id }))!.compiled_truth).facts[0]!.kind).toBe('fact');
 }), 180_000);
 
 test('a read-only mirror keeps the normalized fence in the database only; its checkout stays the remote bytes', () => each(async engine => {

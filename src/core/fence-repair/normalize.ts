@@ -19,7 +19,7 @@ import { extractRawRows, rowNumOf } from './raw-rows.ts';
 import { structuralPass } from './structure.ts';
 import type { FenceCtx, FenceFix, FenceIssue, FencePage, FenceSection, StoredRowMap } from './types.ts';
 
-/** Rule-set version, stored on fence holds as `fence_version`; bump when a rule widens so older holds are re-screened. */
+/** Rule-set version; bump when a rule widens. It is part of the hold `fence_version` (`FENCE_VERSION`), so older holds are re-screened. */
 export const FENCE_RULES_VERSION = 1;
 
 export interface NormalizeResult<T extends FencePage> {
