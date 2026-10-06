@@ -111,9 +111,6 @@ export interface GBrainConfig {
    * (and same DB-plane caveat) as voyage_api_key above.
    */
   together_api_key?: string;
-  /** Zhipu AI API key: file-plane slot folded into ZHIPUAI_API_KEY (the zhipu recipe's
-   *  embeddings and GLM chat). Same fold and DB-plane caveat as voyage_api_key. */
-  zhipu_api_key?: string;
   /**
    * Google Gemini API key (#3500). File-plane slot folded into the gateway
    * env as GOOGLE_GENERATIVE_AI_API_KEY (the name the google recipe reads).
@@ -1228,7 +1225,6 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'deepseek_api_key',
   'litellm_api_key',
   'together_api_key',
-  'zhipu_api_key',
   'google_api_key',
   'azure_openai_api_key',
   'azure_openai_endpoint',
