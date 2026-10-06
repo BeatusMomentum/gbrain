@@ -1,8 +1,18 @@
-# Time-aware retrieval and reading: development results
+# Time-aware retrieval and reading: results
 
-Development-split results for the mechanisms preregistered in
-[`TIME_AWARE_RETRIEVAL_PREREG.md`](TIME_AWARE_RETRIEVAL_PREREG.md). None of
-these numbers sets a default; held-out verdicts do.
+Results for the mechanisms preregistered in
+[`TIME_AWARE_RETRIEVAL_PREREG.md`](TIME_AWARE_RETRIEVAL_PREREG.md).
+
+**Held-out verdict — date frame in `think`: pass.** On the seven sealed LoCoMo
+conversations (1,399 paired questions) judged accuracy rises from 74.2% to
+88.2% (+14.0 pts, clustered 95% CI [+11.8, +16.2], 229 wins / 33 losses);
+every conversation improves; temporal questions 27 → 199 of 221; retrieval is
+identical. `think` p95 latency is unchanged (ratio 0.93, CI [0.88, 1.03], dev).
+The date frame ships on. Record:
+[`decisions/p6-think-dates-sealed/`](decisions/p6-think-dates-sealed/).
+LongMemEval-M sealed confirmation is pending.
+
+The sections below are development results; they set no default.
 
 ## Setup
 
