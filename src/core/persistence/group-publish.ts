@@ -36,7 +36,7 @@ import { cancelRows, windowPredecessor } from './sync-window.ts';
 import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markRecovering, prepareRecoveries,
   publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
-import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
+import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
 import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
 import { requestAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
@@ -352,6 +352,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
     })();
     if (await lease.whileHeld(preparing) === CLAIM_LOST) {
       run.leftRunning?.(preparing, true);
+      await endLostLease(lease);
       for (const row of rows) await releaseUnpublishedClaim(engine, row, 'claim_lost');
       return false;
     }

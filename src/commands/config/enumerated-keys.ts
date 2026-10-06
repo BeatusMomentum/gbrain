@@ -39,8 +39,8 @@ export function refuseUnregisteredEnumeratedKey(key: string, force: boolean): vo
   exitCliError(usageError(
     `Unknown config key "${shown}".${didYouMean} Nothing was written.`,
     suggestion
-      ? `Set the registered key instead: gbrain config set ${suggestion} <value>. To write "${shown}" anyway (a key only a newer release reads), re-run with --force.`
-      : `Set a registered ${prefix}* key instead. To write "${shown}" anyway (a key only a newer release reads), re-run with --force.`,
+      ? `Set the registered key instead: gbrain config set ${suggestion} <value>. To write "${shown}" anyway (a key that a newer release reads), re-run with --force.`
+      : `Set a registered ${prefix}* key instead. To write "${shown}" anyway (a key that a newer release reads), re-run with --force.`,
     {
       why: `Every ${prefix}* key gbrain reads is registered, so nothing would read this one.`,
       fix: {
