@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 209,
+    "count": 210,
     "gaps": [
       17,
       18,
@@ -35,7 +35,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "59d9ccfea1c53384d8607874a51209a9c2dfd51b2b85a2cb6269fa4120faf1f3"
     },
-    "latest": 214,
+    "latest": 215,
     "records": [
       {
         "handler": {
@@ -2865,8 +2865,8 @@
         "idempotent": true,
         "name": "f1_write_attribution",
         "sql": {
-          "length": 14289,
-          "sha256": "7ea729556506f9d73682f50fb7c26950a61cc3b60ab82d3d2fcbd4252956fb9f"
+          "length": 14327,
+          "sha256": "b33d4cab4dd9f1bed8e7847e800b632c7c6b1ac800c19ddf12d176f83b8b0cd0"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -3178,6 +3178,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 214
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "facts_attributed_to",
+        "sql": {
+          "length": 9118,
+          "sha256": "2e772deed199aba5dc05c6b9f88b70c57a6b50dc724d60b0e9eca684c66f63ba"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 215
       }
     ],
     "versions": [
@@ -3389,7 +3402,8 @@
       211,
       212,
       213,
-      214
+      214,
+      215
     ]
   },
   "normalizer": "migrations-record-v1"
