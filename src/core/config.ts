@@ -1713,7 +1713,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
  * Levenshtein suggestion in `gbrain config set`.
  */
 export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
-  'search.',           // search.* (mode, cache.*, etc.)
+  'search.',           // search.* (mode, cache.*, etc.); config set refuses unregistered leaves (commands/config/enumerated-keys.ts)
   'graph.',            // graph.edge_validity (temporal typed-edge read policy, src/core/link-validity.ts)
   'models.',           // models.* (tier, aliases, per-task)
   'dream.',            // dream.synthesize.*, dream.patterns.*
@@ -1721,7 +1721,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'embedding_columns.', // per-column overrides
   'provider_base_urls.', // per-provider base URL overrides
   'provider_chat_options.', // per-provider / per-model chat providerOptions
-  'content_sanity.',    // v0.41 content-sanity tunables
+  'content_sanity.',    // v0.41 content-sanity tunables; enumerated like search.
   'mcp.',               // mcp.publish_skills, mcp.skills_dir (PR1 skill catalog)
   'autopilot.',         // autopilot.nightly_quality_probe.*, autopilot.auto_drain.* (#1685)
   'chronicle.',         // Life Chronicle knobs; config set refuses leaves outside CHRONICLE_CONFIG_KEYS (#5876)
