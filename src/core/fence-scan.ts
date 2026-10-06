@@ -462,25 +462,31 @@ export function protectedRegions(
 ): { regions: ProtectedRegion[]; truncatedAt: number } {
   const regions: ProtectedRegion[] = [];
   const markers = pairs.flatMap(p => [p.begin, p.end]);
-  const pattern = new RegExp(markers.map(m => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
   // The code scan runs only once a marker exists at all.
   let code: MarkdownCodeMap | undefined;
   let open: { pair: number; start: number; read: boolean } | null = null;
-  // Each token is visited once, in body order.
-  for (const token of body.matchAll(pattern)) {
-    const at = token.index;
+  // Each marker occurrence is visited once, in body order (literal search, no regex).
+  for (let from = 0; ;) {
+    let at = -1;
+    let token = '';
+    for (const marker of markers) {
+      const hit = body.indexOf(marker, from);
+      if (hit !== -1 && (at === -1 || hit < at || (hit === at && marker.length > token.length))) { at = hit; token = marker; }
+    }
+    if (at === -1) break;
+    from = at + token.length;
     code ??= scanMarkdownCode(body);
     const read = codeEndAt(code, at) === -1;
     if (!open) {
-      const pair = pairs.findIndex(p => p.begin === token[0]);
+      const pair = pairs.findIndex(p => p.begin === token);
       if (pair !== -1) open = { pair, start: at, read };
       continue;
     }
-    const isEnd = token[0] === pairs[open.pair]!.end;
+    const isEnd = token === pairs[open.pair]!.end;
     // A reader-visible fence runs to its reader-visible end.
     if (open.read && !read && isEnd) continue;
     if (!isEnd) return { regions, truncatedAt: open.start };
-    regions.push({ pair: open.pair, start: open.start, end: at + token[0].length, read: open.read });
+    regions.push({ pair: open.pair, start: open.start, end: at + token.length, read: open.read });
     open = null;
   }
   return { regions, truncatedAt: open ? open.start : -1 };
