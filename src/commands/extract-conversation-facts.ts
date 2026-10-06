@@ -100,6 +100,7 @@ import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
 import { upsertExtractRollup, classifyRunStop } from '../core/extract/rollup-writer.ts';
 import { ALLOWED_TYPES, ALLOWED_TYPE_ALIASES, isConversationFactsEligiblePage, pageTypesForAllowed, requireParseableConversationFlag, type AllowedType } from '../core/facts/conversation-types.ts';
 import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE } from '../core/facts/audit-sources.ts';
+import { resolveDefaultVisibility, type FactVisibility } from '../core/facts/visibility.ts';
 import {
   emptySaveTimeResolutionCounts,
   formatSaveTimeResolutionCounts,
@@ -725,6 +726,7 @@ interface ExtractCoreState {
   sleepMs: number;
   segmentLimit: number;
   types: AllowedType[];
+  factVisibility: FactVisibility;
   signal: AbortSignal | undefined;
   /**
    * Injected per-segment extractor (BrainBench decision 15). ONLY set when a
@@ -1178,7 +1180,7 @@ async function processPage(
       // so master's per-row resolveEntitySlug mapper (#4567's independent fix for
       // the same issue) is superseded rather than layered on top.
       const rows = extracted.map((fact, i) => ({
-        ...fact,
+        ...fact, visibility: state.factVisibility,
         row_num: rowNum + i,
         source_markdown_slug: page.slug,
         source: PER_SEGMENT_SOURCE_PREFIX,
@@ -1371,6 +1373,7 @@ export async function runExtractConversationFactsCore(
 
   const types = await resolveTypesFromConfig(engine, opts.types);
   const strictEligibility = await requireParseableConversationFlag(engine);
+  const factVisibility = await resolveDefaultVisibility(engine);
   const dryRun = !!opts.dryRun;
   const sleepMs = opts.sleepMs ?? DEFAULT_INTER_CALL_SLEEP_MS;
   const segmentLimit = opts.segmentLimit ?? 0;
@@ -1410,6 +1413,7 @@ export async function runExtractConversationFactsCore(
     sleepMs,
     segmentLimit,
     types,
+    factVisibility,
     signal,
     extractor: opts.extractor,
     cpMap: new Map(),

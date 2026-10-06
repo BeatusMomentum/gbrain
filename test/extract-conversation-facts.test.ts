@@ -459,6 +459,7 @@ describe('runExtractConversationFactsCore', () => {
     await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'conversations/%' OR slug LIKE 'people/alice%'`);
     // Set facts.extraction_enabled=true so kill-switch doesn't refuse.
     await engine.setConfig('facts.extraction_enabled', 'true');
+    await engine.unsetConfig('facts.default_visibility');
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
     await engine.setConfig('sync.repo_path', repoDir);
     // Seed test pages.
@@ -1206,6 +1207,48 @@ describe('runExtractConversationFactsCore', () => {
       fingerprint: extractConversationFactsFingerprint({ sourceId: 'default' }),
     });
     expect(checkpoint.filter(entry => entry.includes(c.slug))).toHaveLength(1);
+  });
+
+  // facts.default_visibility applies to extracted conversation facts, never
+  // to the terminal or non-extractable audit rows.
+  async function visibilitiesBySource(slug: string): Promise<Record<string, string[]>> {
+    const rows = await engine.executeRaw<{ source: string; visibility: string }>(
+      `SELECT source, visibility FROM facts WHERE source_markdown_slug = $1 ORDER BY source, row_num`,
+      [slug],
+    );
+    const out: Record<string, string[]> = {};
+    for (const row of rows) (out[row.source] ??= []).push(row.visibility);
+    return out;
+  }
+
+  test.each([
+    { name: 'world', value: 'world', expected: 'world' },
+    { name: 'unset', value: null, expected: 'private' },
+    { name: 'invalid', value: 'everyone', expected: 'private' },
+  ])('facts.default_visibility $name: extracted rows are $expected, the terminal row stays private', async (c) => {
+    if (c.value !== null) await engine.setConfig('facts.default_visibility', c.value);
+    const slug = 'conversations/imessage/alice-example';
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug, sleepMs: 0 });
+    expect(result.facts_inserted).toBe(2);
+    expect(await visibilitiesBySource(slug)).toEqual({
+      [PER_SEGMENT_SOURCE_PREFIX]: [c.expected, c.expected],
+      [TERMINAL_AUDIT_SOURCE]: ['private'],
+    });
+  });
+
+  test('facts.default_visibility world: the non-extractable audit row stays private', async () => {
+    await engine.setConfig('facts.default_visibility', 'world');
+    const slug = 'conversations/imessage/one-message-example';
+    await engine.putPage(slug, {
+      type: 'conversation',
+      title: 'iMessage: One message example',
+      compiled_truth: fmt('Alice Example', '2024-03-15', '9:00 AM', 'Only one message here.'),
+      timeline: '',
+      frontmatter: {},
+    });
+    const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug, sleepMs: 0 });
+    expect(result.pages_marked_non_extractable).toBe(1);
+    expect(await visibilitiesBySource(slug)).toEqual({ [NON_EXTRACTABLE_AUDIT_SOURCE]: ['private'] });
   });
 
   test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
