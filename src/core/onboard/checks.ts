@@ -25,6 +25,7 @@ import type { Action } from '../agent-output.ts';
 import { embeddingEnablement, type ReadinessState } from '../readiness.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { loadConfig } from '../config.ts';
+import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../types.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -57,7 +58,8 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
   }
 }
 
-const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
+/** The coverage checks' entity population (`p` = pages); impact capture counts the same pages. */
+export const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
   AND p.deleted_at IS NULL
   AND ${QUARANTINE_FILTER_FRAGMENT}`;
 
@@ -273,6 +275,16 @@ export async function checkEntityLinkCoverage(
       remediations: [],
     };
   }
+  if (totalEntities < MIN_ENTITY_PAGES_FOR_COVERAGE) {
+    return {
+      check: {
+        name: 'entity_link_coverage',
+        status: 'ok',
+        message: `Only ${totalEntities} entity page${totalEntities === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
+      },
+      remediations: [],
+    };
+  }
 
   // Decide TABLESAMPLE policy (PG only, when >50K entities)
   const useSample = engine.kind === 'postgres' && totalEntities > 50_000;
@@ -357,6 +369,16 @@ export async function checkTimelineCoverage(
   if (totalEntities === 0) {
     return {
       check: { name: 'timeline_coverage', status: 'ok', message: 'No entity pages — coverage check vacuous' },
+      remediations: [],
+    };
+  }
+  if (totalEntities < MIN_ENTITY_PAGES_FOR_COVERAGE) {
+    return {
+      check: {
+        name: 'timeline_coverage',
+        status: 'ok',
+        message: `Only ${totalEntities} entity page${totalEntities === 1 ? '' : 's'} (< ${MIN_ENTITY_PAGES_FOR_COVERAGE}) — coverage ratio not meaningful at this scale`,
+      },
       remediations: [],
     };
   }

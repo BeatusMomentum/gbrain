@@ -908,6 +908,19 @@ read-only preview command (`stale-atoms: gbrain repair stale-atoms`), and
 "explicit_kind_required"`, `preview_command`, `docs`). Run each by name after
 the user agrees (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 
+When one kind's preview fails (for example a statement timeout on a large
+brain), the rest of the plan still prints. The kind is not a repair step: a
+`Repair previews that failed` block lists it with its error code, its error
+and its preview command (`--json`: `repair_preview_failures[]`, present only
+when a preview failed, each `{kind, code, message, why, fix}`; `code` is
+`timeout` for a statement timeout, which `GBRAIN_STATEMENT_TIMEOUT` controls,
+and `preview_failed` otherwise; `fix` is the read-only preview). The error
+text is redacted and capped at 300 characters. `gbrain doctor --remediate`
+runs the other steps, lists the failed kinds with their errors, and exits 1.
+A plan approved while a preview failed binds the steps it showed, so once
+that preview succeeds the approval no longer matches and the run refuses with
+`preview_changed`: preview the plan again and ask the user.
+
 `gbrain doctor --remediate --yes` runs job steps only. Repair steps run only
 when you also pass `--include-repairs`, which records the user's agreement;
 without it they are listed as `N repair steps skipped (user agreement required):

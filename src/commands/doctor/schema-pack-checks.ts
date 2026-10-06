@@ -186,11 +186,13 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<C
  * targets the ACTIVE source — following it literally on a multi-source
  * brain deletes the correctly-routed row).
  */
-export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
+export function multiSourceDriftAdvice(count: number, sampleStr: string, managed = false): string {
   // #4490: cause (3) + the --include-gitignored pointer must precede the
   // delete step — an operator whose file is simply not git-tracked would
   // otherwise re-sync (which imports nothing for that file) and then delete
-  // a row nothing will recreate.
+  // a row nothing will recreate. A managed brain's sync refuses a git pull
+  // and --include-gitignored, so its advice names `--no-pull` and drops the
+  // ignored-file walk.
   return (
     `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
     `(e.g., ${sampleStr}). Three possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
@@ -198,28 +200,30 @@ export function multiSourceDriftAdvice(count: number, sampleStr: string): string
     `(3) the file behind the slug is not git-tracked in the source repo — the sync walker ` +
     `reads through git objects, so a re-sync imports nothing for it. ` +
     `Verify with 'gbrain sources status', then re-sync with ` +
-    `'gbrain sync --source <id> --full' (reconciles drift without deleting data); ` +
-    `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
-    `(full filesystem walk that also picks up ignored/untracked syncable files). ` +
+    `'gbrain sync --source <id>${managed ? ' --no-pull' : ''} --full' (reconciles drift without deleting data); ` +
+    (managed
+      ? `for cause (3), commit the file (managed sync imports only committed files). `
+      : `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
+        `(full filesystem walk that also picks up ignored/untracked syncable files). `) +
     `Only if a misrouted default-source row remains after that, remove it with ` +
-    `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
-    `so pin it to 'default' explicitly.`
+    `'GBRAIN_SOURCE=default gbrain delete <slug> --force' — delete targets the active source, ` +
+    `so pin it to 'default' explicitly (--force: page writes are revisioned, and a delete ` +
+    `naming neither --force nor --expected-revision is refused with revision_conflict).`
   );
 }
 
 /**
- * #4712 — note appended when one or more sources were excluded from the
- * multi_source_drift walk because they're pinned to slug_root_mode='git-root'
- * (#4342). The check only derives local_path-relative ('source-root')
- * slugs; comparing a git-root-pinned source against that shape produced
- * false-positive drift (and dangerous delete advice naming an unrelated
- * default page). Skipped, not mismatched — this is disclosure of reduced
- * coverage, not a problem to fix.
+ * Note appended when one or more sources were excluded from the
+ * multi_source_drift walk: pinned to slug_root_mode='git-root' (#4342) with a
+ * local_path whose git toplevel could not be resolved, so the git-root prefix
+ * their slugs carry cannot be derived. Comparing them against
+ * local_path-relative slugs would produce false-positive drift (and delete
+ * advice naming an unrelated default page). Skipped, not mismatched.
  */
 export function multiSourceDriftGitRootSkipNote(skippedIds: string[]): string {
   return (
-    ` ${skippedIds.length} source(s) not checked (git-root-pinned, prefix-aware ` +
-    `matching not yet implemented — #4712): ${skippedIds.join(', ')}.`
+    ` ${skippedIds.length} source(s) not checked (pinned to git-root slugs, but the git toplevel ` +
+    `of local_path could not be resolved, so their slug prefix cannot be derived): ${skippedIds.join(', ')}.`
   );
 }
 
@@ -227,14 +231,15 @@ const DRIFT_DOCS = 'docs/guides/troubleshooting.md#not-verified-doctor-checks';
 
 /**
  * #5432: one multi_source_drift verdict for the local and remote doctor. A
- * truncated walk or an unreadable source root/subdirectory is "not
- * verified" (warn), never "no drift"; the walk bounds and unreadable sources
- * ride in details.
+ * truncated walk, an unreadable source root/subdirectory or a skipped
+ * git-root source is "not verified" (warn), never "no drift"; the walk
+ * bounds, unreadable and skipped sources ride in details.
  */
 export function multiSourceDriftCheck(
   result: MisroutedResult,
   candidateSources: number,
   host: 'local' | 'remote',
+  managed = false,
 ): Check {
   const details = {
     walk_truncated: result.walk_truncated,
@@ -266,10 +271,10 @@ export function multiSourceDriftCheck(
   if (result.count > 0) {
     const sampleStr = result.sample.map((s) => `${s.slug} (intended=${s.intended_source})`).join(', ');
     const advice = host === 'local'
-      ? multiSourceDriftAdvice(result.count, sampleStr)
+      ? multiSourceDriftAdvice(result.count, sampleStr, managed)
       : `${result.count} page slug(s) appear at 'default' but NOT at the intended source ` +
         `(e.g., ${sampleStr}). Likely pre-v0.30.3 misroutes OR an incomplete initial sync. ` +
-        `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id> --full\`.`;
+        `Verify on the brain host: \`gbrain sources status\` then \`gbrain sync --source <id>${managed ? ' --no-pull' : ''} --full\`.`;
     return { name: 'multi_source_drift', status: 'warn', message: advice + skipNote + unreadableNote, details: { ...details, code: 'drift_detected' } };
   }
   if (unreadable.length > 0) {
@@ -280,23 +285,21 @@ export function multiSourceDriftCheck(
       details: { ...details, code: 'not_verified', verified: false },
     };
   }
-  // #4712: if EVERY candidate source was skipped as git-root-pinned, no walk
-  // ran — 'ok' would misreport "verified clean" when nothing was checked.
-  const allSkipped = result.git_root_skipped.length > 0 && result.git_root_skipped.length >= candidateSources;
-  if (allSkipped) {
+  // A skipped source (git-root-pinned, git toplevel unresolvable) was not
+  // verified, so 'ok' would misreport "verified clean"; when EVERY candidate
+  // was skipped, no source was checked at all.
+  if (result.git_root_skipped.length > 0) {
+    const allSkipped = result.git_root_skipped.length >= candidateSources;
     return {
       name: 'multi_source_drift',
       status: 'warn',
-      message: `Multi-source drift check performed no verification${skipNote}`,
+      message: allSkipped
+        ? `Multi-source drift check performed no verification${skipNote}`
+        : `No cross-source slug drift among checked sources.${skipNote}`,
       details: { ...details, code: 'not_verified', verified: false },
     };
   }
-  return {
-    name: 'multi_source_drift',
-    status: 'ok',
-    message: skipNote ? `No cross-source slug drift detected among checked sources.${skipNote}` : 'No cross-source slug drift detected.',
-    details,
-  };
+  return { name: 'multi_source_drift', status: 'ok', message: 'No cross-source slug drift detected.', details };
 }
 
 /** #5432: the drift check itself failed (e.g. the sources query); report it instead of dropping the check. */
