@@ -3,33 +3,30 @@
 // aggregates (orphan_count, stale_count, coverage fractions) by design.
 // Per A26 lint opt-out.
 //
-// v0.41.18.0 (A6 + A25 + A17, T11). Capture before/after stats per
-// remediation job step so `gbrain onboard --history` can show "you reduced
-// orphans 47% (88% → 41%)". runRemediation (doctor --remediate, onboard
-// --auto, MCP run_onboard) calls startStepImpact before it submits a step's
-// job and finishes it once the job is terminal. Only the metric the step's
-// job moves is read, and a step that is skipped or never reaches a terminal
-// job records nothing.
+// v0.41.18.0 (A6 + A25 + A17, T11). Before/after stats for remediation job
+// steps, the rows `gbrain onboard --history` reads ("you reduced orphans
+// 47% (88% → 41%)"). runRemediation is the writer: it opens a probe before
+// it submits a step's job and closes it once that job is terminal. Steps
+// whose job moves no tracked metric, dry runs, and steps that throw before
+// their job is terminal leave no row.
 //
-// Each metric reads the predicate the brain already reports it with (the
-// embed worker's stale count, get_health's orphan count, the onboard
-// coverage checks' entity population), so a history row agrees with
-// `gbrain onboard --check` and `gbrain doctor`.
+// Every metric is read through the brain's own definition of it, so a row
+// agrees with doctor and `onboard --check`: the embed worker's stale-chunk
+// count, findOrphanPages under the shared orphan-reporting policy (what
+// get_health counts), and the onboard coverage checks' own query.
 //
-// Best-effort per A17: a stat-query throw must NOT block the remediation.
-// Failures log to stderr and record metric_before/after = null.
+// Best-effort per A17: a stat-query or log-write failure must NOT change the
+// step's outcome. Failures log to stderr; a failed capture records null.
 //
-// Attribution columns per A25 + codex finding #10: every row carries
-// job_id (FK to minion_jobs), source_id, started_at, idempotency_key so
-// concurrent onboard/autopilot/manual runs can't misattribute deltas to the
-// wrong remediation.
+// Attribution columns per A25 + codex finding #10: rows carry job_id (FK to
+// minion_jobs), source_id, started_at and idempotency_key so concurrent
+// onboard/autopilot/manual runs can't misattribute deltas to the wrong
+// remediation.
 
 import type { BrainEngine } from './../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
-import { VISIBLE_ENTITY_PREDICATE } from './checks.ts';
-import { loadOrphanPolicyOverrides, orphanExclusionSql } from '../orphan-policy.ts';
-import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
-import { renderFragment, sqlFragment, trustedSql } from '../engine-sql/fragment.ts';
+import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../orphan-policy.ts';
+import { LINK_COVERAGE_FEATURE, TIMELINE_COVERAGE_FEATURE, visibleEntityCoverageSql } from './checks.ts';
 
 export type MetricName =
   | 'orphan_count'
@@ -59,6 +56,28 @@ const JOB_METRICS: Readonly<Record<string, MetricName>> = {
 };
 
 /**
+ * The tracked metric a remediation job is expected to move, or null when its
+ * effect has no single metric (its steps then record no history row).
+ */
+export function impactMetricForJob(job: string): MetricName | null {
+  switch (job) {
+    case 'embed':
+    case 'embed-catch-up':
+      return 'stale_count';
+    case 'extract':
+      return 'orphan_count';
+    case 'extract-ner':
+      return 'entity_link_coverage';
+    case 'extract-timeline-from-meetings':
+      return 'timeline_coverage';
+    case 'extract-takes-from-pages':
+      return 'takes_count';
+    default:
+      return null;
+  }
+}
+
+/**
  * Pure-ish: returns the current numeric value for `metric`. Returns null
  * on any throw (best-effort capture per A17).
  */
@@ -71,31 +90,19 @@ export async function captureMetric(
       case 'stale_count':
         return await engine.countStaleChunks();
       case 'orphan_count': {
-        // get_health's orphan_pages without the rest of its aggregates: live,
-        // unquarantined pages outside the orphan policy with no live inbound
-        // and no live outbound link.
-        const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS count FROM pages p
-          WHERE p.deleted_at IS NULL AND ${trustedSql(QUARANTINE_FILTER_FRAGMENT)}
-            AND NOT ${orphanExclusionSql('p', await loadOrphanPolicyOverrides(engine))}
-            AND NOT EXISTS (SELECT 1 FROM links l JOIN pages src ON src.id = l.from_page_id WHERE l.to_page_id = p.id AND src.deleted_at IS NULL)
-            AND NOT EXISTS (SELECT 1 FROM links l JOIN pages tgt ON tgt.id = l.to_page_id WHERE l.from_page_id = p.id AND tgt.deleted_at IS NULL)`);
-        const [row] = await engine.executeRaw<{ count: number }>(text, params);
-        return Number(row?.count ?? 0);
+        const [candidates, overrides] = await Promise.all([
+          engine.findOrphanPages(),
+          loadOrphanPolicyOverrides(engine),
+        ]);
+        return candidates.filter((page) => !shouldExcludeFromOrphanReporting(page.slug, overrides, page)).length;
       }
       case 'entity_link_coverage':
       case 'timeline_coverage': {
-        // Exact (unsampled) fraction of visible entity pages with the feature.
-        const feature = metric === 'entity_link_coverage'
-          ? 'SELECT 1 FROM links l WHERE l.to_page_id = p.id'
-          : 'SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id';
-        const [row] = await engine.executeRaw<{ total: number; matched: number }>(
-          `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE EXISTS (${feature}))::int AS matched
-             FROM pages p
-            WHERE ${VISIBLE_ENTITY_PREDICATE}`,
-        );
-        const total = Number(row?.total ?? 0);
-        if (total === 0) return 1; // vacuous truth — empty brain has full coverage
-        return Number(row?.matched ?? 0) / total;
+        const feature = metric === 'entity_link_coverage' ? LINK_COVERAGE_FEATURE : TIMELINE_COVERAGE_FEATURE;
+        const [row] = await engine.executeRaw<{ sample_size: number; matched: number }>(visibleEntityCoverageSql(feature));
+        const population = Number(row?.sample_size ?? 0);
+        // An empty population is vacuously covered.
+        return population === 0 ? 1 : Number(row?.matched ?? 0) / population;
       }
       case 'takes_count': {
         const rows = await engine.executeRaw<{ count: string | number }>(
@@ -152,39 +159,51 @@ export async function writeImpactLogRow(
   }
 }
 
+/** A step's metric as read just before its job was submitted. */
+export interface StepImpactProbe {
+  metric: MetricName;
+  before: number | null;
+  startedAt: string;
+}
+
+type ImpactStep = Pick<RemediationStep, 'id' | 'job' | 'idempotency_key' | 'params'>;
+
 /**
- * Capture a remediation step's metric before its job is submitted. Returns
- * the finisher that captures it again once the job is terminal and writes
- * the row, or null when the step's job moves no tracked metric.
- *
- * Per A17: capture failures DO NOT block the step. A null before/after is
- * recorded; the row still lands so downstream consumers see a "ran but
- * impact unknown" entry.
+ * Read the metric `step`'s job moves, before the job is submitted. Returns
+ * null (and reads nothing) when the job has no tracked metric.
  */
-export async function startStepImpact(
-  engine: BrainEngine,
-  step: Pick<RemediationStep, 'id' | 'job' | 'idempotency_key' | 'params'>,
-): Promise<((jobId: number, details: Record<string, unknown>) => Promise<void>) | null> {
-  const metric = JOB_METRICS[step.job];
-  if (!metric) return null;
+export async function openStepImpact(engine: BrainEngine, step: ImpactStep): Promise<StepImpactProbe | null> {
+  const metric = impactMetricForJob(step.job);
+  if (metric === null) return null;
   const startedAt = new Date().toISOString();
-  const before = await captureMetric(engine, metric);
-  return async (jobId, details) => {
-    const after = await captureMetric(engine, metric);
-    const sourceId = step.params.sourceId;
-    await writeImpactLogRow(
-      engine,
-      {
-        remediation_id: step.id,
-        job_id: jobId,
-        started_at: startedAt,
-        idempotency_key: step.idempotency_key,
-        ...(typeof sourceId === 'string' ? { source_id: sourceId } : {}),
-      },
-      metric,
-      before,
-      after,
-      { job: step.job, ...details },
-    );
-  };
+  return { metric, startedAt, before: await captureMetric(engine, metric) };
+}
+
+/**
+ * Read the metric again now that the step's job is terminal and write the
+ * step's history row. Never throws: a failed read records null and a failed
+ * write only logs (A17).
+ */
+export async function closeStepImpact(
+  engine: BrainEngine,
+  probe: StepImpactProbe,
+  step: ImpactStep,
+  outcome: { jobId: number; status: string; doctorRunId: string },
+): Promise<void> {
+  const after = await captureMetric(engine, probe.metric);
+  const sourceId = typeof step.params.sourceId === 'string' ? step.params.sourceId : undefined;
+  await writeImpactLogRow(
+    engine,
+    {
+      remediation_id: step.id,
+      job_id: outcome.jobId,
+      started_at: probe.startedAt,
+      idempotency_key: step.idempotency_key,
+      source_id: sourceId,
+    },
+    probe.metric,
+    probe.before,
+    after,
+    { job: step.job, status: outcome.status, doctor_run_id: outcome.doctorRunId },
+  );
 }

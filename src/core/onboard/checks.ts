@@ -58,8 +58,7 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
   }
 }
 
-/** The coverage checks' entity population (`p` = pages); impact capture counts the same pages. */
-export const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
+const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
   AND p.deleted_at IS NULL
   AND ${QUARANTINE_FILTER_FRAGMENT}`;
 
@@ -78,9 +77,37 @@ function ungradedCoverageResult(name: string, entityPages: number): OnboardCheck
   return { check: { name, status: 'ok', message }, remediations: [] };
 }
 
-type CoverageFeature =
+export type CoverageFeature =
   | { table: 'links'; pageIdColumn: 'to_page_id' }
   | { table: 'timeline_entries'; pageIdColumn: 'page_id' };
+
+/** entity_link_coverage counts inbound links; timeline_coverage counts timeline entries. */
+export const LINK_COVERAGE_FEATURE: CoverageFeature = { table: 'links', pageIdColumn: 'to_page_id' };
+export const TIMELINE_COVERAGE_FEATURE: CoverageFeature = { table: 'timeline_entries', pageIdColumn: 'page_id' };
+
+/**
+ * One row `{ sample_size, matched }`: the visible entity pages (optionally
+ * TABLESAMPLEd) and how many of them have `feature`. The coverage checks and
+ * remediation impact capture both read coverage through this query, so a
+ * `gbrain onboard --history` row measures the population the check grades.
+ */
+export function visibleEntityCoverageSql(feature: CoverageFeature, sampleClause = ''): string {
+  return `WITH sampled_entities AS (
+         SELECT p.id
+           FROM pages p ${sampleClause}
+          WHERE ${VISIBLE_ENTITY_PREDICATE}
+       )
+       SELECT
+         COUNT(*)::int AS sample_size,
+         COUNT(*) FILTER (
+           WHERE EXISTS (
+             SELECT 1
+               FROM ${feature.table} f
+              WHERE f.${feature.pageIdColumn} = s.id
+           )
+         )::int AS matched
+         FROM sampled_entities s`;
+}
 
 interface EntityCoverageSample {
   matched: number;
@@ -105,23 +132,7 @@ async function sampleVisibleEntityCoverage(
   feature: CoverageFeature,
 ): Promise<EntityCoverageSample> {
   try {
-    const result = await engine.executeRaw(
-      `WITH sampled_entities AS (
-         SELECT p.id
-           FROM pages p ${sampleClause}
-          WHERE ${VISIBLE_ENTITY_PREDICATE}
-       )
-       SELECT
-         COUNT(*)::int AS sample_size,
-         COUNT(*) FILTER (
-           WHERE EXISTS (
-             SELECT 1
-               FROM ${feature.table} f
-              WHERE f.${feature.pageIdColumn} = s.id
-           )
-         )::int AS matched
-         FROM sampled_entities s`,
-    );
+    const result = await engine.executeRaw(visibleEntityCoverageSql(feature, sampleClause));
     const rows = (result as { rows?: Array<Record<string, unknown>> } | undefined)?.rows
       ?? (result as Array<Record<string, unknown>> | undefined)
       ?? [];
@@ -297,7 +308,7 @@ export async function checkEntityLinkCoverage(
   const sample = await sampleVisibleEntityCoverage(
     engine,
     sampleClause,
-    { table: 'links', pageIdColumn: 'to_page_id' },
+    LINK_COVERAGE_FEATURE,
   );
   const { coverage, ci } = coverageWithConfidence(sample);
 
@@ -379,7 +390,7 @@ export async function checkTimelineCoverage(
   const sample = await sampleVisibleEntityCoverage(
     engine,
     sampleClause,
-    { table: 'timeline_entries', pageIdColumn: 'page_id' },
+    TIMELINE_COVERAGE_FEATURE,
   );
   const { coverage, ci } = coverageWithConfidence(sample);
   const pct = Math.round(coverage * 100);
