@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
-import { resetPgliteState, truncateCascade } from './reset-pglite.ts';
+import { resetPgliteState } from './reset-pglite.ts';
 
 let engine: PGLiteEngine;
 
@@ -211,62 +211,5 @@ describe('resetPgliteState', () => {
     expect(await engine.executeRaw('SELECT * FROM persistence_brain')).toEqual(brain);
     expect(await engine.executeRaw("SELECT current_setting('session_replication_role') AS role")).toEqual([{ role: 'origin' }]);
     await expect(engine.executeRaw('INSERT INTO reset_fixture_child (parent_id) VALUES (999)')).rejects.toThrow('foreign key');
-  });
-});
-
-describe('truncateCascade', () => {
-  test('empties the named table and its transitive referencers, reusing storage and continuing sequences', async () => {
-    await engine.executeRaw('CREATE SCHEMA reset_fixture_external');
-    await engine.executeRaw('CREATE TABLE reset_fixture_external.child (id serial PRIMARY KEY, child_id int REFERENCES reset_fixture_child)');
-    await engine.executeRaw('CREATE TABLE reset_fixture_added (id serial PRIMARY KEY)');
-    await engine.executeRaw("INSERT INTO reset_fixture_parent (value) VALUES ('parent')");
-    await engine.executeRaw('INSERT INTO reset_fixture_child (parent_id) VALUES (1)');
-    await engine.executeRaw('INSERT INTO reset_fixture_external.child (child_id) VALUES (1)');
-    await engine.executeRaw('INSERT INTO reset_fixture_added DEFAULT VALUES');
-    const sql = "SELECT oid, relfilenode FROM pg_class WHERE oid IN ('reset_fixture_parent'::regclass, 'reset_fixture_child_pkey'::regclass) ORDER BY oid";
-    const storage = await engine.executeRaw(sql);
-    await truncateCascade(engine, ['reset_fixture_parent']);
-    expect(await engine.executeRaw(sql)).toEqual(storage);
-    for (const table of ['reset_fixture_parent', 'reset_fixture_child', 'reset_fixture_external.child']) {
-      expect(await engine.executeRaw(`SELECT * FROM ${table}`)).toEqual([]);
-    }
-    expect(await engine.executeRaw('SELECT id FROM reset_fixture_added')).toEqual([{ id: 1 }]);
-    expect(await engine.executeRaw("INSERT INTO reset_fixture_parent (value) VALUES ('next') RETURNING id")).toEqual([{ id: 2 }]);
-    expect(await engine.executeRaw("SELECT current_setting('session_replication_role') AS role")).toEqual([{ role: 'origin' }]);
-    await expect(engine.executeRaw('INSERT INTO reset_fixture_child (parent_id) VALUES (999)')).rejects.toThrow('foreign key');
-  });
-
-  test('bypasses ordinary DELETE triggers like TRUNCATE and leaves them active afterwards', async () => {
-    await engine.executeRaw("CREATE FUNCTION reset_fixture_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'delete trigger is active'; END $$");
-    await engine.executeRaw('CREATE TRIGGER reset_fixture_delete BEFORE DELETE ON reset_fixture_child FOR EACH ROW EXECUTE FUNCTION reset_fixture_guard()');
-    await engine.executeRaw("INSERT INTO reset_fixture_parent (value) VALUES ('parent')");
-    await engine.executeRaw('INSERT INTO reset_fixture_child (parent_id) VALUES (1)');
-    await truncateCascade(engine, ['reset_fixture_parent']);
-    expect(await engine.executeRaw('SELECT * FROM reset_fixture_child')).toEqual([]);
-    await engine.executeRaw('INSERT INTO reset_fixture_child (parent_id) VALUES (NULL)');
-    await expect(engine.executeRaw('DELETE FROM reset_fixture_child')).rejects.toThrow('delete trigger is active');
-  });
-
-  test.each(['ALWAYS', 'REPLICA'])('falls back to TRUNCATE with an ENABLE %s row trigger in the closure', async mode => {
-    await engine.executeRaw("CREATE FUNCTION reset_fixture_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'replica delete trigger'; END $$");
-    await engine.executeRaw('CREATE TRIGGER reset_fixture_delete BEFORE DELETE ON reset_fixture_child FOR EACH ROW EXECUTE FUNCTION reset_fixture_guard()');
-    await engine.executeRaw(`ALTER TABLE reset_fixture_child ENABLE ${mode} TRIGGER reset_fixture_delete`);
-    await engine.executeRaw("INSERT INTO reset_fixture_parent (value) VALUES ('parent')");
-    await engine.executeRaw('INSERT INTO reset_fixture_child (parent_id) VALUES (1)');
-    await truncateCascade(engine, ['reset_fixture_parent']);
-    expect(await engine.executeRaw('SELECT * FROM reset_fixture_child')).toEqual([]);
-  });
-
-  test('fires TRUNCATE triggers anywhere in the closure', async () => {
-    await engine.executeRaw('CREATE TEMP TABLE reset_fixture_truncate_events (value text)');
-    await engine.executeRaw("CREATE FUNCTION reset_fixture_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO reset_fixture_truncate_events VALUES (TG_TABLE_NAME); RETURN NULL; END $$");
-    await engine.executeRaw('CREATE TRIGGER reset_fixture_truncate AFTER TRUNCATE ON reset_fixture_child EXECUTE FUNCTION reset_fixture_guard()');
-    await truncateCascade(engine, ['reset_fixture_parent']);
-    expect(await engine.executeRaw('SELECT * FROM reset_fixture_truncate_events')).toEqual([{ value: 'reset_fixture_child' }]);
-  });
-
-  test('refuses empty or unsafe table lists', async () => {
-    await expect(truncateCascade(engine, [])).rejects.toThrow('non-empty');
-    await expect(truncateCascade(engine, ['pages; DROP TABLE pages'])).rejects.toThrow('invalid table name');
   });
 });

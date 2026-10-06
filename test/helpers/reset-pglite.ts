@@ -193,13 +193,19 @@ export async function resetPgliteStateNarrow(
  * the named tables and every table that references them, transitively, by
  * foreign key. Works on either engine.
  *
- * TRUNCATE gives every table and index in that closure new storage, even when
- * all of them are already empty. `pages` alone reaches 23 tables and over 100
- * indexes, so on a Postgres container one call costs ~0.8 s; a per-test reset
- * built on it dominated embedding-recovery-parity's wall clock. This deletes
- * the closure's rows under replica role instead (no file churn), and keeps
- * TRUNCATE whenever DELETE could behave differently (DELETE_DIVERGES_FROM_TRUNCATE).
- * No ALTER SEQUENCE is issued, so event triggers see nothing on either path.
+ * On Postgres, TRUNCATE gives every table and index in that closure new
+ * storage files, even when all of them are already empty. `pages` alone
+ * reaches 23 tables and over 100 indexes, so one call costs ~0.8 s on a
+ * container; a per-test reset built on it dominated embedding-recovery-parity's
+ * wall clock. There this deletes the closure's rows under replica role instead
+ * (~4 ms), and keeps TRUNCATE whenever DELETE could behave differently
+ * (DELETE_DIVERGES_FROM_TRUNCATE).
+ *
+ * Without an autovacuum launcher (PGLite) TRUNCATE is kept: nothing reclaims
+ * the deleted rows, and the stale page counts misled the planner enough to
+ * slow two later embedding-recovery tests from ~2 s to ~11 s, while TRUNCATE
+ * there is an in-memory operation. No ALTER SEQUENCE is issued, so event
+ * triggers see nothing on either path.
  */
 export async function truncateCascade(engine: NarrowResetEngine, tables: string[]): Promise<void> {
   if (tables.length === 0) throw new Error('truncateCascade: table list must be non-empty');
@@ -222,7 +228,9 @@ export async function truncateCascade(engine: NarrowResetEngine, tables: string[
         SELECT c.conrelid FROM pg_constraint c JOIN closure ON c.confrelid = closure.oid WHERE c.contype = 'f'
       )
       SELECT array_agg(oid::regclass), sum(pg_total_relation_size(oid)) INTO tables, storage_bytes FROM closure;
-      IF ${DELETE_DIVERGES_FROM_TRUNCATE} THEN
+      IF ${DELETE_DIVERGES_FROM_TRUNCATE} OR NOT EXISTS (
+        SELECT 1 FROM pg_stat_activity WHERE backend_type = 'autovacuum launcher'
+      ) THEN
         EXECUTE 'TRUNCATE ${quoted} CASCADE';
       ELSE
         PERFORM set_config('session_replication_role', 'replica', true);
