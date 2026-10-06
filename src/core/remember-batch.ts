@@ -23,7 +23,7 @@ import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
-const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility']);
+const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
 
 /** Deterministic UUID for child `index` of a batch request (stable across replays). */
 export function childRequestId(requestId: string, index: number): string {
@@ -51,6 +51,10 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   }
   if (typeof p.fact === 'string' && p.fact.trim()) {
     throw verbError('invalid_params', 'Pass either fact or items, not both.', 'Move the single fact into items, or drop items.');
+  }
+  if (p.replaces !== undefined) {
+    throw verbError('invalid_params', 'replaces names one fact, so it cannot apply to a whole batch.',
+      'Put replaces on the item it belongs to: items: [{ "fact": "...", "replaces": "<fact_id>" }].');
   }
   const shared: Record<string, unknown> = {};
   for (const key of ['provenance', 'source_id', 'kind', 'ttl', 'visibility', 'infer_entity']) if (p[key] !== undefined) shared[key] = p[key];

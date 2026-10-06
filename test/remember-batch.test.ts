@@ -64,6 +64,24 @@ describe('remember items[] batch', () => {
   });
 });
 
+describe('remember items[] and replaces', () => {
+  test('replaces travels with the item it names', async () => {
+    const { handler, writes } = fakeSingle();
+    await runRememberBatch(ctx, { provenance: 'p', items: [{ fact: 'Moved to Lisbon', replaces: '42' }, { fact: 'Ships Fridays' }] }, handler, ve);
+    expect(writes.map(w => w.replaces)).toEqual(['42', undefined]);
+  });
+
+  test('a batch-level replaces is refused before any write: it names one fact', async () => {
+    const { handler, writes } = fakeSingle();
+    let err: unknown;
+    try { await runRememberBatch(ctx, { provenance: 'p', replaces: '42', items: [{ fact: 'a' }, { fact: 'b' }] }, handler, ve); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(OperationError);
+    expect((err as OperationError).code).toBe('invalid_params');
+    expect((err as Error).message).toContain('replaces');
+    expect(writes).toHaveLength(0);
+  });
+});
+
 describe('remember items[] shorthand and receipts', () => {
   test('a bare string item is one fact with the shared provenance', async () => {
     const { handler, writes } = fakeSingle();
