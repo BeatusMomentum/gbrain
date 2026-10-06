@@ -10,18 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.93.0] - 2026-10-06
+## [0.60.92.0] - 2026-10-06
 
-**The embedding-migration bad-flag test stops timing out in serial shard 3, and it now actually catches a CLI that opens the brain before rejecting a flag.**
+**The Windows colon-slug managed-sync test no longer fails with `partial` when its first page publishes slowly.**
 
-No user-facing behavior changes. A bad flag on `gbrain migrate embeddings` or `gbrain retrieval-upgrade` already exits 2 with an `unknown_flag` envelope before touching the brain, and it still does when another process holds the brain lock. For contributors and agents working on gbrain:
+`test/colon-slug-windows-5032.test.ts` ran one managed sync pass and expected `first_sync`. A single pass is a single attempt by design: when a page's write is still publishing after the pass's 5-second wait, the pass returns `partial` with reason `writer_pending`, the write stays queued, and the next pass resumes from the same cursor. `gbrain sync` never stops there, because it always drains: it re-enters the pass until the cursor is done. On the `windows-latest` security-regressions runner, the first page's publication took longer than 5 seconds, so the test failed even though the sync would have finished. The two managed first syncs in the file now run through the same drain `gbrain sync` uses and keep every assertion. When the status check fails, it now prints the result's reason, its drain report and the state of each write request. gbrain itself does not change.
 
-- **`test/migrate-embeddings-recovery-cli.serial.test.ts`** never had a hung child. Its matrix test ran 126 cold CLI starts and 126 in-process PGLite reopens, one after another, inside a single 180-second budget. That took 69 s on an idle 4-core machine and more than 180 s on a shared CI runner, where the runner killed whichever child was running at the deadline ("killed 1 dangling process"). Every control is still checked on both routes, now in-process through the same `parseGlobalFlags` and `migrationCliArgumentError` call the CLI entry makes. One real CLI process runs for each distinct rejection (14 per route), and the test takes 27 s instead of 69 s. Pinned to one core beside three other serial files, the old test hit its 180 s timeout and the new one passed in 135 s.
-- **The test is stronger.** After each rejected run, it now requires the brain directory to be untouched (same size, mtime and ctime for every file), and it still compares the row snapshot once per route. It also runs a bad flag while the test itself holds the brain open. A mutation that opens the engine before validating the flags passed the old test, but it fails the new one on both checks.
+### For contributors
 
-## To take advantage of v0.60.93.0
+- A probe preload holds the consumer's first prepared request for 6 seconds. Before the fix, it reproduces the CI failure on PGLite (`partial`, `writer_pending`, `notes/plain` still `running`) and also fails the POSIX rename test. After the fix, all 9 tests pass with the probe on PGLite and Postgres, and with a 35-second hold, longer than the drain's 30-second per-page wait.
 
-Nothing to do: this release changes a test only.
+## [0.60.91.0] - 2026-10-06
+
+**The `doctor-harness-smoke` live-serve test no longer fails on a busy CI runner. It used to start a second serve that could take the brain lock from the serve under test.**
+
+The test starts a stdio `gbrain serve` and checks that `gbrain doctor --only harness_wiring` reports it as the brain's lock owner without spawning a smoke serve. It ran doctor immediately, before the serve had taken the lock. So the first doctor run always found no owner and spawned its own smoke serve, and the two raced for the lock. Locally the test's serve won. On the coverage shard that failed (run 37453549563), doctor's smoke serve won. The test's serve then found a live serve holding the brain, switched to status-only mode, and never retried: a stdio serve re-checks the lock only inside a tool call, and nothing called it. Every poll for 30 seconds saw doctor's own smoke pass, and none saw the test's serve as the owner. Now the test completes an MCP handshake with its serve before running doctor. Serve takes the lock before it answers the handshake, so one doctor run gives the verdict and no second serve starts. A forced probe delays the serve's boot until doctor's smoke serve holds the lock. The old test fails with the CI error after 30 seconds; the new test passes. A failure now prints the serve's stderr, its PID and the lock owner record that doctor saw.
 
 ## [0.60.90.0] - 2026-10-06
 
