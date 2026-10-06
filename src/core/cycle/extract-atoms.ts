@@ -675,6 +675,7 @@ export async function runPhaseExtractAtoms(
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait);
   const atomFiles = await derivedWriteThrough(engine, 'extract_atoms', sourceId, { managed: managed !== null, dryRun: opts.dryRun ?? false });
   const writeRequests: WriteReceipt[] = [];
+  const pageAtomTitles = new Map<string, Map<string, string[]>>();
 
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
@@ -1180,7 +1181,7 @@ export async function runPhaseExtractAtoms(
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
           const slug =
             item.kind === 'page'
-              ? await resolvePageAtomSlug(engine, atom.title, item.slug, sourceId, undatedDate)
+              ? await resolvePageAtomSlug(engine, atom.title, item.slug, sourceId, undatedDate, pageAtomTitles)
               : atomSlug(atom.title, srcRef, undefined, undatedDate);
           const originFrontmatter =
             item.kind === 'transcript'
@@ -1557,7 +1558,12 @@ function atomSlug(title: string, srcRef: string, sourcePageSlug?: string, undate
  *   3. A legacy-slug atom bound to a DIFFERENT source locator (the #4733
  *      collision class) is left untouched; the new-shape slug lands beside
  *      it — that separation is the whole point of the locator fold.
- * Both reads are scoped to the write's source (unscoped-check/scoped-write).
+ *   4. Neither exact slug exists: a case-only title change would mint a
+ *      duplicate (#5030). The first miss for a source page loads that page's
+ *      live bound atoms once per run into `pageAtomTitles`; exactly one match
+ *      on the JS-lowercased title (SQL LOWER() differs for some non-ASCII
+ *      titles) is adopted, while zero or several mint the new-shape slug.
+ * Every read is scoped to the write's source (unscoped-check/scoped-write).
  */
 async function resolvePageAtomSlug(
   engine: BrainEngine,
@@ -1565,6 +1571,7 @@ async function resolvePageAtomSlug(
   sourcePageSlug: string,
   sourceId: string,
   undatedDate: string,
+  pageAtomTitles: Map<string, Map<string, string[]>>,
 ): Promise<string> {
   const slug = atomSlug(title, sourcePageSlug, sourcePageSlug, undatedDate);
   if (await engine.getPage(slug, { sourceId })) return slug;
@@ -1573,7 +1580,17 @@ async function resolvePageAtomSlug(
   if (legacy && legacy.type === 'atom' && isCompatibleAtomBinding(legacy.frontmatter, sourcePageSlug)) {
     return legacySlug;
   }
-  return slug;
+  let titles = pageAtomTitles.get(sourcePageSlug);
+  if (!titles) {
+    titles = new Map();
+    const rows = await engine.executeRaw<{ slug: string; title: string }>(
+      `SELECT slug, title FROM pages WHERE type = 'atom' AND deleted_at IS NULL AND source_id = $1 AND frontmatter->>'source_slug' = $2`,
+      [sourceId, sourcePageSlug]);
+    for (const row of rows) titles.set(row.title.toLowerCase(), [...(titles.get(row.title.toLowerCase()) ?? []), row.slug]);
+    pageAtomTitles.set(sourcePageSlug, titles);
+  }
+  const variants = titles.get(title.toLowerCase()) ?? [];
+  return variants.length === 1 ? variants[0]! : slug;
 }
 
 /**
