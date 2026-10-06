@@ -503,8 +503,6 @@ Evidence for each item is in `docs/test-audit/2026-09-29/`.
   **What:** `skills/archive-crawler/SKILL.md` says the fence is enforced by `src/core/storage-config.ts`; the enforcing module `src/core/archive-crawler-config.ts` is unwired. **Fix:** wire the check or correct the skill text. Held in the permitted set.
 - [ ] **P2 — Progressive-batch rewire or retire.**
   **What:** the progressive-batch orchestrator, retrofit-wrap and stage-report modules lost their callers in #1519 while an open item (see the progressive-batch entry below) still plans to rewire them. **Fix:** decide rewire vs abandon; held in the permitted set until then.
-- [ ] **P2 — `gbrain embed --all` exits 0 with pages unembedded when the page snapshot read throws.**
-  **What:** in the `--all` pool path the worker pool swallows a thrown snapshot read, so the run reports `failures: 0`. Same class as #3037. **Fix:** count the error as a failure and exit non-zero; add a test that throws from the snapshot read.
 - [ ] **P2 — `gbrain auth rescope-client … --dry-run` and `auth local-writer register … --dry-run` fail with "unknown flag".**
   **What:** the handlers read `--dry-run`, but the generated flag registry drops it for `auth` (the generator deletes `--dry-run` unless it finds a quoted use in the command's own module). Two guides document these commands and are allowlisted in the docs-CLI truth check. **Fix:** teach the generator about delegated handlers, regenerate, and remove the allowlist entries.
 - [ ] **P3 — `jobs watch` budget-owners panel reads columns only the deleted minions budget tracker wrote.**

@@ -11,6 +11,11 @@ import { prepareRemoteJob, authorizeJobExecution, assertNoUnreviewedJobs } from 
 import { authorizeLegacyJobs } from '../../src/core/minions/authorize-legacy.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { randomUUID } from 'node:crypto';
+import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
+import { authorizeStoredRequest } from '../../src/core/persistence/authority.ts';
+import { getWriteRequest } from '../../src/core/persistence/journal.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const suite = hasDatabase() ? describe : describe.skip;
 suite('Postgres queued authority parity', () => {
@@ -29,6 +34,7 @@ suite('Postgres queued authority parity', () => {
   afterAll(async () => {
     // Later files on the same database start real workers, which refuse to run while any unreviewed job remains.
     await getEngine().executeRaw('DELETE FROM minion_jobs');
+    await disposePersistenceConsumer(getEngine());
     await teardownDB();
     if (sandbox) rmSync(sandbox, { recursive: true, force: true });
   });
@@ -52,6 +58,36 @@ suite('Postgres queued authority parity', () => {
     expect((await queue.replayJob(job.id))?.submission_authority).toEqual(accepted.authority);
     await getEngine().executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'authority-test-client'");
     await expect(queue.replayJob(job.id)).rejects.toThrow('revoked');
+  });
+  test('an OAuth job-namespace write retains its job id in JSONB authority and replays only for that job (#5920)', async () => {
+    const engine = getEngine();
+    const clientId = `job-writer-${randomUUID()}`;
+    await engine.executeRaw(`INSERT INTO oauth_clients
+      (client_id, client_name, client_secret_hash, scope, source_id, bound_source_id, federated_read, bound_tools, delegated_namespace)
+      VALUES ($1, 'example-job-writer', 'fixture-hash', 'read agent', 'default', 'default', ARRAY['default']::text[], ARRAY['put_page'], 'job')`, [clientId]);
+    const jobCtx: OperationContext = { ...ctx(), viaSubagent: true, subagentId: 382,
+      auth: { token: 'test-only', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'agent'], sourceId: 'default' } };
+    const request_id = randomUUID();
+    await withEnv({ GBRAIN_HOME: sandbox }, async () => {
+      const result = await submitPageMutation(jobCtx, { operation: 'put_page', params: { slug: 'wiki/agents/382/result', content: 'Owned job output', request_id } });
+      expect(result.state).toBe('committed');
+    });
+    const [stored] = await engine.executeRaw<{ kind: string; id: number }>(
+      `SELECT jsonb_typeof(authority->'subagentId') AS kind, (authority->>'subagentId')::int AS id
+         FROM persistence_requests WHERE principal_id = $1 AND request_id = $2::uuid`, [clientId, request_id]);
+    expect(stored).toEqual({ kind: 'number', id: 382 });
+    const row = (await getWriteRequest(engine, jobCtx.auth!.principal!, request_id))!;
+    await authorizeStoredRequest(engine, row);
+    for (const subagentId of [383, Number.NaN, undefined]) {
+      await expect(authorizeStoredRequest(engine, { ...row, authority: { ...row.authority, subagentId } }))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    }
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools = ARRAY['get_page'] WHERE client_id = $1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
+    await engine.executeRaw("UPDATE oauth_clients SET bound_tools = ARRAY['put_page'], delegated_namespace = 'prefixes', delegated_slug_prefixes = ARRAY['notes/*'] WHERE client_id = $1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
+    await engine.executeRaw("UPDATE oauth_clients SET delegated_namespace = 'job', delegated_slug_prefixes = NULL, deleted_at = now() WHERE client_id = $1", [clientId]);
+    await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'permission_denied' });
   });
   test('legacy CAS rollback, NULL cutover gate, and raw-object stamp match PGLite', async () => {
     const job = await queue.add('maintenance', { example: true });
