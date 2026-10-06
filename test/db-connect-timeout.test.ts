@@ -20,6 +20,7 @@ import { createServer, type AddressInfo, type Socket } from 'net';
 import * as db from '../src/core/db.ts';
 import { ConnectionManager } from '../src/core/connection-manager.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const BASE = 'postgres://user:secret@db.example.test:5432/gbrain';
 
@@ -61,13 +62,16 @@ function fatal(): Buffer {
 async function openSilentEndpoint() {
   const held: Socket[] = [];
   let refusing = false;
+  let accepted = 0;
   const server = createServer(socket => {
+    accepted += 1;
     held.push(socket);
     socket.on('data', () => { if (refusing && !socket.writableEnded) socket.end(fatal()); });
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   return {
     url: `postgres://user@127.0.0.1:${(server.address() as AddressInfo).port}/gbrain`,
+    get accepted() { return accepted; },
     refuse() { refusing = true; for (const socket of held.splice(0)) socket.end(fatal()); },
     close() { server.close(); },
   };
@@ -146,4 +150,33 @@ describe('the URL connect_timeout reaches every pool', () => {
       errSpy.mockRestore();
     }
   });
+});
+
+describe('worker connect retry composes with the URL connect_timeout (#5946)', () => {
+  const quietly = async <T>(fn: () => Promise<T>) => {
+    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+    try { return await fn(); } finally { warnSpy.mockRestore(); }
+  };
+
+  test('each retried worker connect gives up at the URL value and dials again', async () => {
+    const engine = new PostgresEngine();
+    cleanups.push(() => engine.disconnect());
+    const started = Date.now();
+    const error = await quietly(() => withEnv({ GBRAIN_NO_RETRY_CONNECT: undefined }, () =>
+      db.connectWorkerEngine(engine, { database_url: `${endpoint.url}?connect_timeout=1`, poolSize: 1 }).catch(e => e)));
+    const elapsed = Date.now() - started;
+    expect((error as { code?: string }).code).toBe('CONNECT_TIMEOUT');
+    expect(endpoint.accepted).toBe(3);
+    expect(elapsed).toBeGreaterThanOrEqual(5_000);
+    expect(elapsed).toBeLessThan(9_500);
+  }, 20_000);
+
+  test('GBRAIN_NO_RETRY_CONNECT=1 makes the worker connect a single attempt', async () => {
+    const engine = new PostgresEngine();
+    cleanups.push(() => engine.disconnect());
+    const error = await quietly(() => withEnv({ GBRAIN_NO_RETRY_CONNECT: '1' }, () =>
+      db.connectWorkerEngine(engine, { database_url: `${endpoint.url}?connect_timeout=1`, poolSize: 1 }).catch(e => e)));
+    expect((error as { code?: string }).code).toBe('CONNECT_TIMEOUT');
+    expect(endpoint.accepted).toBe(1);
+  }, 20_000);
 });
