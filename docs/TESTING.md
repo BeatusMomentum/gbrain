@@ -866,8 +866,7 @@ by the engines and by `migrate.ts`, so an import back up is an ESM cycle that
 can fail with a temporal-dead-zone error at module load. Take the executor as a
 parameter and import types from `src/core/engine.ts`; migration helpers live in
 `schema-migrations/helpers.ts` and the `Migration` type in
-`schema-migrations/types.ts`. Persistence, the write commit path, never calls a
-generative model: it embeds via `src/core/embedding.ts` and queues model work. Fixtures:
+`schema-migrations/types.ts`; persistence embeds via `src/core/embedding.ts`. Fixtures:
 `test/fixtures/guards/check-layering.ts/`; forms are driven in
 `test/scripts/layering.test.ts`.
 
@@ -875,8 +874,8 @@ generative model: it embeds via `src/core/embedding.ts` and queues model work. F
 
 `scripts/check-ai-sdk-importers.ts` (in `bun run verify`) fails when a file
 outside `scripts/ai-sdk-importers.allowlist` imports a provider SDK (`ai`,
-`@ai-sdk/*`, `@anthropic-ai/sdk`, `openai`) as a value; stale allowlist lines
-fail too, so every model call goes through `invokeAI`. Each mutating op has a
+`@ai-sdk/*`, `@anthropic-ai/sdk`, `openai`) as a value, so every model call
+goes through `invokeAI`. Each mutating op has a
 write-inference class (`src/core/ops/write-inference.ts`).
 `test/write-path-zero-llm.serial.test.ts` asserts no generative call before
 commit and only attributed facts extraction after it.
