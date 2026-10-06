@@ -160,26 +160,20 @@ export function isConnectionEndedError(err: unknown): boolean {
 }
 
 /**
- * Is this a transient failure of a PER-WORKER pool's connect (the extra
- * PostgresEngine pools that parallel `import` and `sync` open, one per worker)?
+ * Did postgres.js abandon a connection handshake because its own
+ * `connect_timeout` timer fired? It reports that as code `CONNECT_TIMEOUT`
+ * with the message "write CONNECT_TIMEOUT <host>:<port>" (the host and port
+ * read "undefined:undefined" once the socket has been upgraded to TLS).
  *
- * Everything `isRetryableConnError` accepts, plus postgres.js's library code
- * `CONNECT_TIMEOUT` ("write CONNECT_TIMEOUT host:port", or "undefined:undefined"
- * once the socket has been upgraded to TLS). The general matcher leaves that
- * code out on purpose: on a process's FIRST connect a timeout usually means
- * the host does not route (pg-access-classify's `network_unreachable`), and
- * the fix is the URL, not a retry.
- *
- * A worker pool is different by construction. It is opened only after the
- * parent engine has connected to the same `database_url`, so the route is
- * proven, and a handshake that misses `connect_timeout` there was starved
- * rather than misrouted: most often by the client's own event loop, held by a
- * synchronous stretch (a large repository walk) longer than the timeout. No
- * session was established, so a fresh attempt is safe.
+ * Kept OUT of `isRetryableConnError` on purpose: on a process's first connect
+ * a handshake timeout usually means the host does not route, which
+ * pg-access-classify reports as `network_unreachable`, and retrying cannot
+ * fix that. A caller that has already reached the same URL in this process
+ * opts in through connectWithRetry's `retryConnectTimeout`.
  */
-export function isRetryableWorkerConnectError(err: unknown): boolean {
-  if (isRetryableConnError(err)) return true;
-  return getCode(err) === 'CONNECT_TIMEOUT' || /CONNECT_TIMEOUT/.test(getMessage(err));
+export function isConnectTimeoutError(err: unknown): boolean {
+  if (getCode(err) === 'CONNECT_TIMEOUT') return true;
+  return /\bCONNECT_TIMEOUT\b/.test(getMessage(err));
 }
 
 /**
