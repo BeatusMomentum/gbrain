@@ -45,6 +45,39 @@ export function stripReasoningBlocks(raw: string): string {
     .trim();
 }
 
+/**
+ * Index of the bracket that closes the array or object opened at `s[0]`, or -1
+ * when `s[0]` is not `[`/`{` or the value never closes. Depth tracking skips
+ * brackets inside JSON strings (honoring escapes), so a `[Source: X]` citation
+ * after the value cannot be mistaken for its closer.
+ */
+export function findJsonCloseIndex(s: string): number {
+  const open = s[0];
+  const close = open === '[' ? ']' : open === '{' ? '}' : null;
+  if (close === null) return -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === open) {
+      depth++;
+    } else if (ch === close) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   const direct = parseLlmJsonInner<T>(raw, opts);

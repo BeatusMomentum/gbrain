@@ -173,6 +173,34 @@ describe('parseJudgeJson failure signalling (#2606)', () => {
   });
 });
 
+describe('parseJudgeJson: trailing bracketed prose does not hijack recovery', () => {
+  const EVENT = '{"when":"2026-06-18","who":[],"what":"x","kind":"meeting"}';
+
+  test('recovers the array when a [Source: X] citation follows it', () => {
+    const arr = parseJudgeJson(`[${EVENT}]\nSee [Source: alice-example].`);
+    expect(Array.isArray(arr)).toBe(true);
+    expect(arr!.length).toBe(1);
+  });
+
+  test('recovers the array when a [[wikilink]] backlink follows it', () => {
+    expect(parseJudgeJson(`[${EVENT}]\nRelated: [[people/alice-example]].`)!.length).toBe(1);
+  });
+
+  test('a legitimate empty array followed by bracketed prose is still []', () => {
+    expect(parseJudgeJson('[]\nSee [Source: X].')).toEqual([]);
+  });
+
+  test('a bracket inside a quoted string field does not confuse the depth count', () => {
+    const arr = parseJudgeJson('[{"when":"2026-06-18","who":[],"what":"see [note]","kind":"meeting"}]\nSee [Source: X].');
+    expect(arr!.length).toBe(1);
+    expect(arr![0]!.what).toBe('see [note]');
+  });
+
+  test('an array that never closes is still a parse failure', () => {
+    expect(parseJudgeJson(`[${EVENT}, {"when":"2026-06-19"`)).toBeNull();
+  });
+});
+
 // #5876 (E2): the default judge used to map a thrown provider error and a
 // refusal to `{events: []}`, so a failed call was recorded as no_events and
 // its content never retried.
