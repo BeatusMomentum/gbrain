@@ -50,6 +50,12 @@ describe('frontmatter writes round-trip', () => {
     }
   });
 
+  test('an undefined field is refused, not dropped (js-yaml 4 would skip it)', () => {
+    expect(() => stringifyDataFrontmatter('body\n', { title: 't', lesson: undefined })).toThrow(/"lesson" is undefined/);
+    expect(() => stringifyDataFrontmatter('body\n', { tags: ['a', undefined] })).toThrow(/is undefined/);
+    expect(() => stringifyDataFrontmatter('body\n', { nested: { x: undefined } })).toThrow(/"x" is undefined/);
+  });
+
   test('dump never emits a value that load reads back as a different type', () => {
     for (const value of risky) expect(load(dump({ value }))).toEqual({ value });
   });

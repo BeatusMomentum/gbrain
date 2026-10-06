@@ -79,9 +79,23 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
   };
 }
 
+/**
+ * YAML dump that refuses `undefined`. js-yaml 4 silently drops an undefined
+ * mapping value, so a field a caller meant to write would vanish; a write site
+ * omits the key (conditional spread) or writes null instead.
+ */
+export function dumpFrontmatterYaml(data: unknown, opts: { lineWidth?: number } = {}): string {
+  return dump(data, { ...opts, replacer: (key: string, value: unknown) => {
+    if (value === undefined) {
+      throw new TypeError(`Frontmatter field "${key}" is undefined. Why: YAML has no undefined, so the field would be dropped silently. Fix: omit the key at the write site (\`...(v ? { ${key}: v } : {})\`) or pass null.`);
+    }
+    return value;
+  } });
+}
+
 /** Serialize metadata without ever interpreting the body as frontmatter. */
 export function stringifyDataFrontmatter(content: string, data: Record<string, unknown>): string {
-  const yaml = dump(data).trim();
+  const yaml = dumpFrontmatterYaml(data).trim();
   const header = yaml === '{}' ? '' : `---\n${yaml}\n---\n`;
   return header + (content.endsWith('\n') ? content : content + '\n');
 }
