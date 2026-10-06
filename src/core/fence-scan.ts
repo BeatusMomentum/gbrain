@@ -465,13 +465,17 @@ export function protectedRegions(
   // The code scan runs only once a marker exists at all.
   let code: MarkdownCodeMap | undefined;
   let open: { pair: number; start: number; read: boolean } | null = null;
-  // Each marker occurrence is visited once, in body order (literal search, no regex).
+  // Each marker occurrence is visited once, in body order (literal search, no
+  // regex). `next[i]` caches marker i's next occurrence, so each marker's
+  // indexOf only moves forward and the whole scan stays linear in the body.
+  const next = markers.map(m => body.indexOf(m));
   for (let from = 0; ;) {
     let at = -1;
     let token = '';
-    for (const marker of markers) {
-      const hit = body.indexOf(marker, from);
-      if (hit !== -1 && (at === -1 || hit < at || (hit === at && marker.length > token.length))) { at = hit; token = marker; }
+    for (let i = 0; i < markers.length; i++) {
+      if (next[i] !== -1 && next[i]! < from) next[i] = body.indexOf(markers[i]!, from);
+      const hit = next[i]!;
+      if (hit !== -1 && (at === -1 || hit < at || (hit === at && markers[i]!.length > token.length))) { at = hit; token = markers[i]!; }
     }
     if (at === -1) break;
     from = at + token.length;
