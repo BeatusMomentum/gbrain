@@ -65,6 +65,15 @@ export function classifyProbeError(message: string): ConnectProbeReason {
 }
 
 /** Pull the text payload out of an MCP tool result's content array. */
+/**
+ * The JSON body of a gbrain tool result: its first text block. Notices (for example the one-time
+ * `behavior_changes` disclosure after an upgrade) ride as extra text blocks after it.
+ */
+export function extractResultBody(content: unknown): string {
+  const first = Array.isArray(content) ? content.find(c => c && typeof c === 'object' && typeof (c as { text?: unknown }).text === 'string') : undefined;
+  return first ? (first as { text: string }).text : '';
+}
+
 export function extractResultText(content: unknown): string {
   if (!Array.isArray(content)) return '';
   return content
