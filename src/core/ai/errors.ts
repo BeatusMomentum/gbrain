@@ -327,7 +327,9 @@ function statusToClass(status: number): GlobalLlmErrorClass | null {
  * halt instead of accumulating one swallowed warning per item.
  *
  * Matching is conservative by design: numeric status properties on the error
- * (or its `cause` chain), STRUCTURED status forms in the message, or specific
+ * (or its `cause` chain, falling back to RetryError's `lastError`, where the
+ * AI SDK keeps the final attempt's status once its retries are spent:
+ * #5473), STRUCTURED status forms in the message, or specific
  * provider phrases. Plain 400s (context length, malformed request) stay
  * per-item — they can genuinely differ page to page. Billing phrases outrank
  * a 429 status because a monthly spend limit surfaces as 429 but is a billing
@@ -343,7 +345,8 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
     else if (typeof (cur as { message?: unknown }).message === 'string') {
       messages.push((cur as { message: string }).message);
     }
-    cur = (cur as { cause?: unknown }).cause;
+    const next = cur as { cause?: unknown; lastError?: unknown };
+    cur = next.cause ?? next.lastError;
   }
   const message = messages.join('\n');
   // Phrase regexes (and the prose-shaped status forms) only see text BEFORE
