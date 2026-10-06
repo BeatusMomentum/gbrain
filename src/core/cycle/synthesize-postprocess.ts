@@ -4,13 +4,13 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { publicationHold } from '../persistence/accepted-pending.ts';
 import { authorizeStoredRequest } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { writeResponse } from '../persistence/service.ts';
-import { maintenancePublicationDeferral } from './publication-deferral.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { DiscoveredTranscript } from './transcript-discovery.ts';
 import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
@@ -127,7 +127,7 @@ export async function postprocessManagedSynthesis(
  * other error is rethrown. A contended publish writes one stderr line naming it.
  */
 export function deferPublishOrThrow(error: unknown, what: string): void {
-  const deferral = maintenancePublicationDeferral(error);
+  const deferral = publicationHold(error);
   if (!deferral) throw error;
   if (deferral === 'contention') {
     process.stderr.write(`[dream] synthesize: ${what} deferred, write admission blocked by database contention; the next cycle admits it\n`);

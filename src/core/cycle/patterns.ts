@@ -48,7 +48,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { resolveCycleDate } from './cycle-date.ts';
 import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
-import { maintenancePublicationDeferral } from './publication-deferral.ts';
+import { publishOrHold } from '../persistence/accepted-pending.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
@@ -362,19 +362,20 @@ export async function runPhasePatterns(
     throwIfAborted(opts.signal, '[dream] patterns output');
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
-    const { quoteVerify, deferred: deferredSlugs } = await stampPatternOutputs(engine, maintenance, writtenRefs, reflections, config, cycleSourceId, cycleDate, opts.signal);
-    const finalizedRefs = writtenRefs.filter(ref => !deferredSlugs.has(ref.slug));
-    const reverseWriteCount = maintenance ? (finalizedRefs.length ? await verifyMaintenanceOutputs(engine, maintenance, finalizedRefs) : 0)
+    // #6052: `finalized` leaves out outputs whose managed publication is held (pending or contended); `held` counts them.
+    const { quoteVerify, finalized, held } = await stampPatternOutputs(engine, maintenance, writtenRefs, reflections, config, cycleSourceId, cycleDate, opts.signal);
+    const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, finalized)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
-
-    const details = patternOutputDetails(reflections.length, finalizedRefs.length, reverseWriteCount, outcome, job.id, deferredSlugs.size, quoteVerify);
+    const details = { reflections_considered: reflections.length, patterns_written: finalized.length,
+      ...(quoteVerify ? { quote_verify: quoteVerify } : {}), reverse_write_count: reverseWriteCount, publish_deferred: held,
+      child_outcome: outcome, job_id: job.id };
 
     // #2782: the phase status must reflect the child outcome. Pre-fix this
     // returned status:ok even when the subagent timed out (e.g. no
     // subagent-capable worker slot free for the whole wait window) and zero
     // pattern pages were written — a silent no-op for days.
     if (outcome !== 'completed') {
-      if (finalizedRefs.length === 0) {
+      if (finalized.length === 0) {
         return {
           phase: 'patterns',
           status: 'fail',
@@ -396,15 +397,13 @@ export async function runPhasePatterns(
         phase: 'patterns',
         status: 'warn',
         duration_ms: 0,
-        summary: `${finalizedRefs.length} pattern page(s) written but subagent job ${job.id} ended '${outcome}'`,
+        summary: `${finalized.length} pattern page(s) written but subagent job ${job.id} ended '${outcome}'`,
         details,
       };
     }
-
-    if (deferredSlugs.size) {
-      return { phase: 'patterns', status: 'warn', duration_ms: 0,
-        summary: `${finalizedRefs.length} pattern page(s) finalized; ${deferredSlugs.size} publication(s) deferred (writer busy); retry next cycle`, details };
-    }
+    // A held output is unfinished: warn and leave the evidence watermark unstamped so the next cycle retries.
+    if (held > 0) return { phase: 'patterns', status: 'warn', duration_ms: 0, details,
+      summary: `${finalized.length} pattern page(s) written; ${held} publication(s) held by the writer (pending or contended), retried next cycle` };
 
     // #4879: stamp the EVIDENCE watermark (not now()) only on a completed
     // child — fail/warn/timeout above must retry next tick. A reflection
@@ -441,12 +440,6 @@ export async function runPhasePatterns(
 }
 
 // ── Config ────────────────────────────────────────────────────────────
-
-function patternOutputDetails(reflections: number, finalized: number, reverseWrites: number, outcome: MinionJobStatus | 'timeout',
-  jobId: number, deferred: number, quoteVerify: { pages: number; quarantined: number; repaired: number } | null) {
-  return { reflections_considered: reflections, patterns_written: finalized, ...(quoteVerify ? { quote_verify: quoteVerify } : {}),
-    reverse_write_count: reverseWrites, child_outcome: outcome, job_id: jobId, publish_deferred: deferred };
-}
 
 interface PatternsConfig {
   enabled: boolean;
@@ -642,37 +635,31 @@ When done, briefly list the pattern slugs you wrote/updated in your final messag
  */
 /**
  * Quote-ground the pattern outputs (and pages a crashed run left unverified), then stamp provenance on the
- * outputs. Returns the grounding counts (null when dream.quote_verify is off) and the slugs whose managed
- * publication was deferred (pending or contended), which are neither stamped nor counted as finalized.
+ * outputs. Returns the grounding counts (null when dream.quote_verify is off), the written refs whose managed
+ * publications all landed, and the number of pages whose publication is held for a later cycle.
  */
 async function stampPatternOutputs(engine: BrainEngine, maintenance: MaintenanceAuthority | null, written: Array<{ slug: string; source_id: string }>,
   reflections: ReflectionRef[], config: { outputSlugPrefix: string; sourceSlugPrefix: string }, sourceId: string, cycleDate: string, signal?: AbortSignal) {
-  const deferred = new Set<string>();
-  const quoteVerify = await groundPatternPages(engine, maintenance, written, reflections, config.outputSlugPrefix, sourceId, cycleDate, signal, deferred);
-  const outputs = written.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`) && !deferred.has(ref.slug));
-  for (const slug of await stampProvenance(engine, maintenance, outputs, cycleDate, config.sourceSlugPrefix, sharedSeat(reflections), signal)) deferred.add(slug);
-  return { quoteVerify, deferred };
+  const heldSlugs = new Set<string>();
+  const quoteVerify = await groundPatternPages(engine, maintenance, written, reflections, config.outputSlugPrefix, sourceId, cycleDate, signal, heldSlugs);
+  await stampProvenance(engine, maintenance, written.filter(ref => ref.slug.startsWith(`${config.outputSlugPrefix}/`)), cycleDate, config.sourceSlugPrefix, sharedSeat(reflections), signal, heldSlugs);
+  // Holds are recorded for this cycle's source only, so a ref in any other source is never excused from verification.
+  const finalized = written.filter(ref => ref.source_id !== sourceId || !heldSlugs.has(ref.slug));
+  return { quoteVerify, finalized, held: heldSlugs.size };
 }
 
 async function stampProvenance(engine: BrainEngine, maintenance: MaintenanceAuthority | null,
-  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, sourceSlugPrefix: string, seat: string | undefined, signal?: AbortSignal): Promise<Set<string>> {
+  refs: Array<{ slug: string; source_id: string }>, cycleDate: string, sourceSlugPrefix: string, seat: string | undefined, signal: AbortSignal | undefined,
+  heldSlugs: Set<string>): Promise<void> {
   const reason = `derived from reflections under ${sourceSlugPrefix}/; raw traces live on the cited reflection pages`;
   // A pattern earns a seat only while its reflections share one, so a pattern without one drops a seat an earlier run stamped.
-  const deferred = new Set<string>();
-  if (!maintenance) {
-    await stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: reason, seat: seat ?? null })), cycleDate, signal);
-    return deferred;
-  }
+  if (!maintenance) return stampDreamProvenance(engine, refs.map(ref => ({ ...ref, raw_trace_exempt_reason: reason, seat: seat ?? null })), cycleDate, signal);
   for (const ref of refs) {
     throwIfAborted(signal, '[dream] patterns provenance');
-    try {
-      await stampMaintenancePage(engine, maintenance, ref.slug, cycleDate, undefined, reason, seat ?? null);
-    } catch (error) {
-      if (!maintenancePublicationDeferral(error)) throw error;
-      deferred.add(ref.slug);
-    }
+    // A page whose grounding publish is held must not be stamped over the pending revision.
+    if (heldSlugs.has(ref.slug)) continue;
+    if (await publishOrHold(() => stampMaintenancePage(engine, maintenance, ref.slug, cycleDate, undefined, reason, seat ?? null))) heldSlugs.add(ref.slug);
   }
-  return deferred;
 }
 
 // ── Quote grounding ──────────────────────────────────────────────────
@@ -683,10 +670,12 @@ async function stampProvenance(engine: BrainEngine, maintenance: MaintenanceAuth
  * its evidence). A failing claim unit leaves the body for frontmatter
  * `unverified_claims`; `quote_verified_at` marks a checked page, so a page a
  * crashed run left behind is verified by the next run. Kill switch:
- * dream.quote_verify (default on). Returns null when disabled.
+ * dream.quote_verify (default on). Returns null when disabled. With `heldSlugs`
+ * a managed publish that is pending or contended (publicationHold) is recorded
+ * there and the loop moves on; without it every publish error propagates.
  */
 export async function groundPatternPages(engine: BrainEngine, maintenance: MaintenanceAuthority | null, refs: Array<{ slug: string; source_id: string }>,
-  reflections: ReflectionRef[], outputSlugPrefix: string, sourceId: string, cycleDate: string, signal?: AbortSignal, deferred?: Set<string>):
+  reflections: ReflectionRef[], outputSlugPrefix: string, sourceId: string, cycleDate: string, signal?: AbortSignal, heldSlugs?: Set<string>):
   Promise<{ pages: number; quarantined: number; repaired: number } | null> {
   const { dreamQuoteVerifyEnabled, groundSource, verifyBody } = await import('./synthesize-verify.ts');
   if (!await dreamQuoteVerifyEnabled(engine)) return null;
@@ -720,12 +709,9 @@ export async function groundPatternPages(engine: BrainEngine, maintenance: Maint
     const content = serializePageToMarkdown(page, snapshot.tags);
     if (maintenance) {
       const { publishMaintenancePage } = await import('../persistence/prepared-maintenance.ts');
-      try {
-        await publishMaintenancePage(engine, maintenance, slug, content, { expectedRevision: snapshot.revision });
-      } catch (error) {
-        if (!deferred || !maintenancePublicationDeferral(error)) throw error;
-        deferred.add(slug);
-      }
+      const publish = () => publishMaintenancePage(engine, maintenance, slug, content, { expectedRevision: snapshot.revision });
+      if (!heldSlugs) await publish();
+      else if (await publishOrHold(publish)) heldSlugs.add(slug);
     } else {
       const [{ importFromContent }, { isAvailable }] = await Promise.all([import('../import-file.ts'), import('../ai/gateway.ts')]);
       await importFromContent(engine, slug, content, { noEmbed: !isAvailable('embedding'), sourceId });

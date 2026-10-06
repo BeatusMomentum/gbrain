@@ -255,34 +255,45 @@ function numericStatusOf(e: unknown): number | undefined {
 }
 
 /**
- * A thrown provider error and the errors it wraps, outermost first: the
- * `cause` chain, including the AI SDK's RetryError (`lastError`) once its
- * retries are spent. normalizeAIError keeps the provider's own error on
- * `cause`, so its status, name and code are only reachable this way.
- * Objects only, at most five layers.
+ * The layers of a thrown provider error, outermost first. chat() throws the
+ * gateway's normalized error with the provider's own error on `cause`; the AI
+ * SDK's RetryError keeps the final attempt on `lastError` instead. Objects
+ * only, and the walk stops after `limit` layers or at a layer already seen,
+ * so a self-referencing chain cannot loop.
  */
-export function providerErrorChain(err: unknown): object[] {
-  const chain: object[] = [];
-  let cur: unknown = err;
-  for (let depth = 0; cur && typeof cur === 'object' && depth < 5; depth++) {
-    chain.push(cur);
-    const e = cur as { cause?: unknown; lastError?: unknown };
-    cur = e.cause ?? e.lastError;
+function* wrappedErrorLayers(err: unknown, limit = 5): Generator<Record<string, unknown>> {
+  const seen = new Set<object>();
+  let layer = err;
+  while (layer !== null && typeof layer === 'object' && seen.size < limit && !seen.has(layer)) {
+    seen.add(layer);
+    const fields = layer as Record<string, unknown>;
+    yield fields;
+    layer = fields.cause ?? fields.lastError;
   }
-  return chain;
 }
 
-/**
- * The HTTP status a thrown provider error carries, outermost first along its
- * providerErrorChain: `status`, `statusCode`, or the claude-cli provider's
- * `apiErrorStatus`, which normalizeAIError carries to the top level.
- */
-export function providerErrorStatus(err: unknown): number | undefined {
-  for (const e of providerErrorChain(err)) {
-    const status = numericStatusOf(e);
-    if (status !== undefined) return status;
+/** What a thrown provider error reports about itself once its wrappers are opened (#5964). */
+export interface ProviderFailureSignals {
+  /** The first finite numeric HTTP status on any layer (see numericStatusOf), outermost first. */
+  status: number | undefined;
+  /** String `name` values on the layers, outermost first (e.g. `TimeoutError`). */
+  names: string[];
+  /** String `code` values on the layers, outermost first (e.g. `ECONNRESET`). */
+  codes: string[];
+}
+
+export function readProviderFailureSignals(err: unknown): ProviderFailureSignals {
+  const signals: ProviderFailureSignals = { status: undefined, names: [], codes: [] };
+  try {
+    for (const layer of wrappedErrorLayers(err)) {
+      signals.status ??= numericStatusOf(layer);
+      if (typeof layer.name === 'string') signals.names.push(layer.name);
+      if (typeof layer.code === 'string') signals.codes.push(layer.code);
+    }
+  } catch {
+    // A throwing getter on a wrapped error ends the walk; what was read stands.
   }
-  return undefined;
+  return signals;
 }
 
 /**
@@ -299,11 +310,12 @@ export function providerErrorStatus(err: unknown): number | undefined {
 const STRUCTURED_OUTPUT_REJECTION_RE = /response_format|json_schema|structured[ _-]?outputs?/i;
 
 export function isStructuredOutputRejection(err: unknown): boolean {
-  const status = providerErrorStatus(err);
-  const named = providerErrorChain(err).some((e) => {
-    const { message, responseBody } = e as { message?: unknown; responseBody?: unknown };
-    return [message, responseBody].some(t => typeof t === 'string' && STRUCTURED_OUTPUT_REJECTION_RE.test(t));
-  });
+  let status: number | undefined;
+  let named = false;
+  for (const layer of wrappedErrorLayers(err)) {
+    status ??= numericStatusOf(layer);
+    named ||= [layer.message, layer.responseBody].some(t => typeof t === 'string' && STRUCTURED_OUTPUT_REJECTION_RE.test(t));
+  }
   if (status !== undefined && (status < 400 || status >= 500 || status === 429)) return false;
   return named;
 }

@@ -251,29 +251,28 @@ describe('parseExtractorOutput', () => {
     expect(out[0]!.claim_text).toBe('Z');
   });
 
-  // Last-bracket recovery picked up a bracket from prose after the JSON, so a
-  // well-formed response followed by a citation parsed as nothing.
-  test('recovers the array when a [Source: X] citation follows it', () => {
-    const raw = '[{"claim_text":"Cities send messages","kind":"take","holder":"brain","weight":0.65}]\n' +
-      'See [Source: alice-example].';
-    const out = parseExtractorOutput(raw);
-    expect(out).toHaveLength(1);
-    expect(out[0]!.claim_text).toBe('Cities send messages');
+  // #5209: recovery must stop at the value's own closing bracket; the last
+  // `]`/`}` in the reply can belong to prose after it.
+  const take = (claim: string, kind = 'take') => JSON.stringify({ claim_text: claim, kind, holder: 'brain', weight: 0.7 });
+
+  test('an array followed by a numbered citation keeps its takes', () => {
+    const out = parseExtractorOutput(`[${take('Pricing beats features')},${take('Hiring lags plan', 'bet')}]\n[1] board memo`);
+    expect(out.map(t => [t.claim_text, t.kind])).toEqual([['Pricing beats features', 'take'], ['Hiring lags plan', 'bet']]);
   });
 
-  test('recovers a single object when a [[wikilink]] backlink follows it', () => {
-    const raw = '{"claim_text":"Y","kind":"hunch","holder":"brain","weight":0.4}\nRelated: [[people/alice-example]].';
-    const out = parseExtractorOutput(raw);
-    expect(out).toHaveLength(1);
-    expect(out[0]!.claim_text).toBe('Y');
+  test('a lone object followed by a stray `]` is recovered', () => {
+    const out = parseExtractorOutput(`${take('Churn is seasonal', 'hunch')}\n]`);
+    expect(out.map(t => t.claim_text)).toEqual(['Churn is seasonal']);
   });
 
-  test('a bracket inside a quoted string field does not confuse the depth count', () => {
-    const raw = '[{"claim_text":"see [note] for context","kind":"take","holder":"brain","weight":0.5}]\n' +
-      'See [Source: X].';
-    const out = parseExtractorOutput(raw);
-    expect(out).toHaveLength(1);
-    expect(out[0]!.claim_text).toBe('see [note] for context');
+  test('brackets, braces and an escaped quote inside claim_text', () => {
+    const claim = 'Ratio {a]/[b} is "stable"';
+    const out = parseExtractorOutput(`[${take(claim)}] per [[companies/acme-example]]`);
+    expect(out.map(t => t.claim_text)).toEqual([claim]);
+  });
+
+  test('control: a cut-off array followed by a citation still yields nothing', () => {
+    expect(parseExtractorOutput(`[${take('A')},{"claim_text":"B"\nSee [Source: memo]`)).toEqual([]);
   });
 });
 
