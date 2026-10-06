@@ -876,12 +876,10 @@ outside `scripts/ai-sdk-importers.allowlist` imports a provider SDK (`ai`,
 `@ai-sdk/*`, `@anthropic-ai/sdk`, `openai`) as a value; stale allowlist lines
 fail too, so every model call goes through `invokeAI`. Each mutating op has a
 write-inference class (`src/core/ops/write-inference.ts`).
-`test/write-path-zero-llm.serial.test.ts` runs the covered write surfaces with
-keys set and asserts no generative call before commit, keyword recall at
-commit, and only attributed facts extraction after it.
-`test/write-path-no-egress.serial.test.ts` asserts keyless CLI writes open no
-connection. Fixtures: `test/fixtures/guards/check-ai-sdk-importers.ts/`,
-`test/helpers/ai-tripwire.ts`.
+`test/write-path-zero-llm.serial.test.ts` asserts no generative call before
+commit and only attributed facts extraction after it.
+`test/write-path-no-egress.serial.test.ts`: keyless CLI writes open no
+connection. Helper: `test/helpers/ai-tripwire.ts`.
 
 #### Durable-flush guard
 
