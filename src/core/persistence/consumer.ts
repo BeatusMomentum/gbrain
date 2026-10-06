@@ -69,6 +69,10 @@ export class PersistenceConsumer {
   private idleLane: { conn: ReservedConnection; release: () => Promise<void> } | undefined;
   private idleLaneRetryAt = 0;
   private active = new Set<Promise<void>>();
+  /** #5373: preparations and renewals left running after a claim loss; stop() drains them before engine close. */
+  private abandoned = new Set<Promise<unknown>>();
+  /** #5373: per claimed head row, the abandoned preparation its root (or lane slot) waits for before release. */
+  private rootHolds = new Map<string, Promise<unknown>>();
   private activeRoots = new Set<string>();
   /** #5984 lanes: running lane tasks per worktree. */
   private laneTasks = new Map<string, number>();
@@ -99,7 +103,7 @@ export class PersistenceConsumer {
   private abandonedReleased = false;
   readonly hostId: string;
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
-    private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; onError?: (error: unknown) => void;
+    private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number; renewalIntervalMs?: number; onError?: (error: unknown) => void;
       onSettled?: (row: WriteRequest) => void;
       /** Engine graduation drain: claim, recover and publish requests only; effect, projection, topology and maintenance workers never start. */
       requestsOnly?: boolean } = {}) {
@@ -393,7 +397,12 @@ export class PersistenceConsumer {
     const task = this.executeOrGroup(row).then(result => { progressed = result; }).catch(error => this.report(error)).finally(() => {
       if (!progressed) this.rootRetryAfter.set(key, Date.now() + (this.opts.pollMs ?? 250));
       else { this.progressWake = true; this.publishedSinceMaintenance++; }
-      this.active.delete(task); done(); this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);
+      this.active.delete(task);
+      const hold = this.rootHolds.get(row.id);
+      this.rootHolds.delete(row.id);
+      if (hold) void hold.then(() => { done(); this.schedule(0); });
+      else done();
+      this.schedule(progressed ? 0 : this.opts.pollMs ?? 250);
     });
     this.active.add(task);
   }
@@ -486,12 +495,26 @@ export class PersistenceConsumer {
     if (!this.opts.onError) process.stderr.write(`[persistence] phase=${phase} reason=${code}${detail ? ` message="${detail}"` : ''}${timing}`
       + '; unfinished work remains tracked; fix: gbrain sources writer status --json; docs: docs/ENGINES.md#persistence-consumer-log\n');
   }
+  /** #5373: keep a promise that outlived its claim tracked until it settles; it never rejects into the caller. */
+  private abandon(work: Promise<unknown>, holdFor?: string): void {
+    const settled = work.then(() => undefined, () => undefined);
+    this.abandoned.add(settled);
+    void settled.then(() => this.abandoned.delete(settled));
+    if (holdFor) this.rootHolds.set(holdFor, settled);
+  }
   private async execute(row: WriteRequest): Promise<boolean> {
-    let renewing: Promise<unknown> | undefined;
+    let renewing: Promise<void> | undefined;
     let claimLive = true;
     let closed = false;
     let preparationActive = true;
     const abort = new AbortController();
+    const claimLost = Promise.withResolvers<void>();
+    const loseClaim = () => {
+      if (!claimLive) return;
+      claimLive = false;
+      abort.abort({ code: 'claim_lost' });
+      claimLost.resolve();
+    };
     const observation = { request_id: row.request_id, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.preparationAttempts };
     this.preparing.set(row.id, observation);
     this.executing.add(row.id);
@@ -509,14 +532,24 @@ export class PersistenceConsumer {
     const interval = setInterval(() => {
       if (closed || renewing) return;
       const renewalAbort = new AbortController();
-      const deadline = setTimeout(() => { claimLive = false; renewalAbort.abort(); }, this.opts.phaseMs ?? 5000);
-      renewing = renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, 30_000,
-        this.engine.kind === 'postgres' ? renewalAbort.signal : undefined).then(live => { claimLive &&= live; })
-        .catch(() => { claimLive = false; }).finally(() => { clearTimeout(deadline); renewing = undefined; });
-    }, 10_000);
+      const deadline = setTimeout(() => { loseClaim(); renewalAbort.abort(); }, this.opts.phaseMs ?? 5000);
+      const task: Promise<void> = renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, 30_000,
+        this.engine.kind === 'postgres' ? renewalAbort.signal : undefined).then(live => { if (!live) loseClaim(); })
+        .catch(() => { loseClaim(); }).finally(() => { clearTimeout(deadline); if (renewing === task) renewing = undefined; });
+      renewing = task;
+    }, this.opts.renewalIntervalMs ?? 10_000);
     interval.unref?.();
     try {
-      const prepared = await this.prepare(this.engine, row, this.config, bounded ? abort.signal : undefined);
+      const preparation = this.prepare(this.engine, row, this.config, bounded ? abort.signal : undefined)
+        .then(prepared => ({ kind: 'prepared' as const, prepared }), error => ({ kind: 'error' as const, error }));
+      const outcome = await Promise.race([preparation, claimLost.promise.then(() => ({ kind: 'claim_lost' as const }))]);
+      if (outcome.kind === 'claim_lost') {
+        this.abandon(preparation, row.id);
+        await releaseUnpublishedClaim(this.engine, row, 'claim_lost');
+        return false;
+      }
+      if (outcome.kind === 'error') throw outcome.error;
+      const prepared = outcome.prepared;
       if (timeout) clearTimeout(timeout);
       if (bounded && performance.now() >= deadline && !abort.signal.aborted) {
         observation.deadline_exceeded = true;
@@ -524,7 +557,7 @@ export class PersistenceConsumer {
         this.log('preparation', 'deadline_exceeded');
       }
       if (!claimLive || this.stopping || abort.signal.aborted) {
-        await releaseUnpublishedClaim(this.engine, row, observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping'); return false;
+        await releaseUnpublishedClaim(this.engine, row, !claimLive ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping'); return false;
       }
       this.preparing.delete(row.id);
       preparationActive = false;
@@ -538,7 +571,7 @@ export class PersistenceConsumer {
     } catch (error) {
       if (preparationActive && bounded && performance.now() >= deadline) observation.deadline_exceeded = true;
       if (preparationActive && (abort.signal.aborted || observation.deadline_exceeded)) {
-        await releaseUnpublishedClaim(this.engine, row, observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping');
+        await releaseUnpublishedClaim(this.engine, row, !claimLive ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping');
         return false;
       }
       const current = await getWriteRequestById(this.engine, row.id);
@@ -550,7 +583,8 @@ export class PersistenceConsumer {
       throw error;
     } finally {
       closed = true; clearInterval(interval); if (timeout) clearTimeout(timeout);
-      this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id); this.executing.delete(row.id); await renewing;
+      this.abort.signal.removeEventListener('abort', stop); this.preparing.delete(row.id); this.executing.delete(row.id);
+      if (renewing) this.abandon(renewing);
     }
   }
   /** #5984: a claimed bulk sync head takes its directly following group members along; one row runs the single path. */
@@ -569,6 +603,7 @@ export class PersistenceConsumer {
     for (const member of rows) this.executing.add(member.id);
     try {
       return await executeClaimedGroup(this.engine, rows, { hostId: this.hostId, lane, prepare: member => this.prepare(this.engine, member, this.config),
+        claim: { intervalMs: this.opts.renewalIntervalMs, phaseMs: this.opts.phaseMs, abandon: (work, holdRoot) => this.abandon(work, holdRoot ? row.id : undefined) },
         settled: done => {
           this.executing.delete(done.id);
           if (done.state === 'committed' && done.worktree_id && !String(done.intent?.kind).startsWith('managed_sync_')) {
@@ -586,6 +621,7 @@ export class PersistenceConsumer {
     await this.tickPromise;
     await this.releaseIdleLane();
     await Promise.allSettled([...this.active]);
+    while (this.abandoned.size) await Promise.allSettled([...this.abandoned]);
     await this.projectionWorker;
     await this.effectsWorker;
     await this.topologyWorker;
