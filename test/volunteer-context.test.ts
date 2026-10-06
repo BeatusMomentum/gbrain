@@ -24,6 +24,7 @@ import {
 import type { PointerBlock } from '../src/core/context/retrieval-reflex.ts';
 import { insertVolunteerEvents } from '../src/core/context/volunteer-events.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -158,6 +159,33 @@ describe('volunteerContext', () => {
     expect(pages[0].slug).toBe('people/bob-sample');
   });
 
+  test('search hard excludes (GBRAIN_SEARCH_EXCLUDE) skip BEFORE the cap: an excluded subtree never takes the slot', async () => {
+    await seed('inbox/cards/alice-example', 'Alice Example', 'Flashcard.');
+    await seed('people/bob-sample', 'Bob Sample', 'Engineer.');
+    const turns = parseWindow('user: intro Alice Example to Bob Sample');
+    const run = () => volunteerContext(engine, turns, { sourceIds: ['default'], maxPages: 1 });
+    // Negative control: with no exclusion the card takes the single slot.
+    await withEnv({ GBRAIN_SEARCH_EXCLUDE: undefined }, async () => {
+      expect((await run()).map((p) => p.slug)).toEqual(['inbox/cards/alice-example']);
+    });
+    // Excluded before the cap, so Bob gets the slot (a post-cap filter returns []).
+    await withEnv({ GBRAIN_SEARCH_EXCLUDE: 'scratch/,inbox/cards/' }, async () => {
+      expect((await run()).map((p) => p.slug)).toEqual(['people/bob-sample']);
+    });
+    // Prefix-anchored: a different subtree is untouched.
+    await withEnv({ GBRAIN_SEARCH_EXCLUDE: 'cards/' }, async () => {
+      expect((await run()).map((p) => p.slug)).toEqual(['inbox/cards/alice-example']);
+    });
+  });
+
+  test('the default hard excludes apply with no env: a test/ page is never volunteered', async () => {
+    await seed('test/alice-example', 'Alice Example', 'Fixture.');
+    await withEnv({ GBRAIN_SEARCH_EXCLUDE: undefined }, async () => {
+      const pages = await volunteerContext(engine, parseWindow('user: ask Alice Example'), { sourceIds: ['default'] });
+      expect(pages).toEqual([]);
+    });
+  });
+
   test('confidence gate drops slug-suffix matches at the default threshold', async () => {
     // Page resolvable ONLY via slug-suffix: title differs from the mention.
     await seed('projects/widget-co', 'The Widget Company Project', 'A project page.');
@@ -253,6 +281,33 @@ describe('gateVolunteeredPointers — direct unit (the pure gate step)', () => {
   const CANDS = candidatesByNorm(
     extractCandidatesFromWindow([{ role: 'user', text: 'Alice Example met Widget Co' }]),
   );
+
+  test('excludeSlugPrefixes drops a whole subtree BEFORE the cap consumes a slot', () => {
+    // Two card pointers sit AHEAD of the real hit, so a post-cap filter
+    // would return nothing at maxPages: 1.
+    const block: PointerBlock = {
+      pointers: [
+        { display: 'Delivery', slug: 'inbox/cards/oratory-delivery', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+        { display: 'Cell', slug: 'inbox/cards/cells', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+        { display: 'Alice Example', slug: 'people/alice-example', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 },
+      ],
+      text: 'BLOCK',
+    };
+    const cands = candidatesByNorm(extractCandidatesFromWindow([{ role: 'user', text: 'Delivery Cell Alice Example' }]));
+    expect(gateVolunteeredPointers(block, cands, { windowSize: 1, maxPages: 1 }).map((p) => p.slug)).toEqual(['inbox/cards/oratory-delivery']);
+    expect(gateVolunteeredPointers(block, cands, { windowSize: 1, maxPages: 1, excludeSlugPrefixes: ['inbox/cards/'] }).map((p) => p.slug))
+      .toEqual(['people/alice-example']);
+  });
+
+  test('excludeSlugPrefixes is prefix-anchored, not a substring match', () => {
+    const block: PointerBlock = {
+      pointers: [{ display: 'Alice Example', slug: 'people/inbox/cards-note', source_id: 'default', synopsis: 'x', arm: 'alias', confidence: 0.9 }],
+      text: 'BLOCK',
+    };
+    const cands = candidatesByNorm(extractCandidatesFromWindow([{ role: 'user', text: 'Alice Example' }]));
+    expect(gateVolunteeredPointers(block, cands, { windowSize: 1, excludeSlugPrefixes: ['inbox/cards/'] }).map((p) => p.slug))
+      .toEqual(['people/inbox/cards-note']);
+  });
 
   test('gates below-threshold arms out; passes alias arm with newest-turn boost', () => {
     const pages = gateVolunteeredPointers(BLOCK, CANDS, { windowSize: 1 });
