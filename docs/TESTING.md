@@ -1443,18 +1443,17 @@ cross-subsystem duplicate entries, and byte caps for the entry docs and referenc
 
 ### Test-isolation lint and helpers
 
-**This section is the canonical home of the test-isolation discipline** — CONTRIBUTING.md and other docs link here rather than restating the rules.
-
-The cross-file flake class is enforced statically by `scripts/check-test-isolation.sh`, wired into `bun run verify`. Rules (non-serial unit files only; `*.serial.test.ts` and `test/e2e/*` are skipped):
+**The canonical home of the test-isolation rules** (other docs link here). `scripts/check-test-isolation.sh` (in `bun run verify`) enforces them on non-serial unit files; `*.serial.test.ts` and `test/e2e/*` are skipped:
 
 | Rule | What it bans | Fix |
 |---|---|---|
-| **R1** | `process.env.X = ...`, bracket assignment, `delete process.env.X`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` | Use `withEnv()` from `test/helpers/with-env.ts`, OR rename file to `*.serial.test.ts` |
-| **R2** | `mock.module(...)` anywhere in the file | Rename file to `*.serial.test.ts` (no DI on production code for testability) |
+| **R1** | `process.env.X = ...`, bracket assignment, `delete`, `Object.assign(process.env, ...)`, `Reflect.set(process.env, ...)` | `withEnv()` (`test/helpers/with-env.ts`) or `*.serial.test.ts` |
+| **R2** | `mock.module(...)` anywhere in the file | `*.serial.test.ts` (no DI on production code for testability) |
 | **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | Use the canonical block (below) inside `beforeAll(` |
-| **R4** | Files creating `new PGLiteEngine(` without `engine.disconnect(` inside an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
+| **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
+| **R5** | `configureGateway(` with no `resetGateway(` (comments ignored): the global gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
 
-Files that violated these rules at the isolation-lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time** — never add new entries.
+Files that violated these rules at the lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time**: never add entries.
 
 #### Opt-in naming rule
 
