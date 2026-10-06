@@ -12,9 +12,17 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.89.0] - 2026-10-06
 
-**The `doctor-harness-smoke` live-serve test no longer fails on a busy CI runner. It used to start a second serve that could take the brain lock from the serve under test.**
+**Nightly CI repairs: the dream E2E no longer kills its own test process, a test stops planting a fake error annotation on every Test run, and CI shard weights are current.**
 
-The test starts a stdio `gbrain serve` and checks that `gbrain doctor --only harness_wiring` reports it as the brain's lock owner without spawning a smoke serve. It ran doctor immediately, before the serve had taken the lock. So the first doctor run always found no owner and spawned its own smoke serve, and the two raced for the lock. Locally the test's serve won. On the coverage shard that failed (run 37453549563), doctor's smoke serve won. The test's serve then found a live serve holding the brain, switched to status-only mode, and never retried: a stdio serve re-checks the lock only inside a tool call, and nothing called it. Every poll for 30 seconds saw doctor's own smoke pass, and none saw the test's serve as the owner. Now the test completes an MCP handshake with its serve before running doctor. Serve takes the lock before it answers the handshake, so one doctor run gives the verdict and no second serve starts. A forced probe delays the serve's boot until doctor's smoke serve holds the lock. The old test fails with the CI error after 30 seconds; the new test passes. A failure now prints the serve's stderr, its PID and the lock owner record that doctor saw.
+No user-facing behavior changes. For contributors and agents working on gbrain:
+
+- **`test/e2e/dream.test.ts`** drops the ambient Anthropic key its test gateway lacks, so LLM phases skip as on a keyless brain instead of starting and failing at chat time. `runDream`'s exit on a failed phase now surfaces as a named test error with the captured output, not a silent process death with no JUnit report.
+- **`test/scripts/nightly-e2e.test.ts`** captures the `::error`/`::warning`/`::notice` workflow commands the shard classifier prints, so they no longer become real annotations on the Test run (and no longer block `bun run weights:mine`).
+- **Shard weights** are re-mined, so the scheduled `check:weight-coverage` passes and CI shards stay balanced.
+
+## To take advantage of v0.60.89.0
+
+Nothing to do: this release changes tests and CI data only.
 
 ## [0.60.88.0] - 2026-10-06
 
