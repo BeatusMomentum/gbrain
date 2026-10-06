@@ -82,3 +82,17 @@ export function startClaimLease(renew: (signal: AbortSignal) => Promise<boolean>
     },
   };
 }
+
+/**
+ * After a lost claim: stop renewing and give the cancelled in-flight renewal up
+ * to `boundMs` to settle, so its server-side statement is gone before the
+ * caller queues the release behind the same row lock. Never rejects.
+ */
+export async function endLostLease(lease: ClaimLease, boundMs = 1_000): Promise<void> {
+  const renewal = lease.end();
+  if (!renewal) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([renewal, new Promise<void>(resolve => { timer = setTimeout(resolve, boundMs); })]);
+  if (timer) clearTimeout(timer);
+}
+

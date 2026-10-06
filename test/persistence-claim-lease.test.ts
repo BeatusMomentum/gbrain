@@ -13,7 +13,7 @@
  * in milliseconds, with no datastore.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLAIM_LOST, startClaimLease } from '../src/core/persistence/claim-lease.ts';
+import { CLAIM_LOST, endLostLease, startClaimLease } from '../src/core/persistence/claim-lease.ts';
 
 const FAST = { everyMs: 5, deadlineMs: 40 };
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -117,5 +117,28 @@ describe('startClaimLease', () => {
     await sleep(60);
     expect(renewals).toBe(0);
     expect(lease.held).toBe(true);
+  });
+
+  test('endLostLease waits for the cancelled renewal to settle before the caller releases', async () => {
+    const cancelled = Promise.withResolvers<void>();
+    let renewing = false;
+    const lease = startClaimLease(signal => {
+      renewing = true;
+      return new Promise<boolean>((_, reject) => signal.addEventListener('abort', () => setTimeout(() => { cancelled.resolve(); reject(new Error('canceled')); }, 40)));
+    }, { everyMs: 5, deadlineMs: 15 });
+    await lease.lost;
+    expect(renewing).toBe(true);
+    let cancelSettled = false;
+    void cancelled.promise.then(() => { cancelSettled = true; });
+    await endLostLease(lease);
+    expect(cancelSettled).toBe(true);
+  });
+
+  test('endLostLease gives up on a renewal that never settles after its bound', async () => {
+    const lease = startClaimLease(() => new Promise<boolean>(() => {}), { everyMs: 5, deadlineMs: 10 });
+    await lease.lost;
+    const started = performance.now();
+    await endLostLease(lease, 50);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });

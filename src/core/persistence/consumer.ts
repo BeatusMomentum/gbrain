@@ -4,7 +4,7 @@ import { CLAIMABLE_WRITE_SQL, claimGroupFollowers, claimNextLaneHead, claimNextW
 import { finishUnpublishedFailure, publishMutation, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { localHostId } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX } from './group-publish.ts';
-import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
+import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
@@ -541,6 +541,7 @@ export class PersistenceConsumer {
       const prepared = await lease.whileHeld(preparation);
       if (prepared === CLAIM_LOST) {
         root.until = this.keepUntilSettled(preparation);
+        await endLostLease(lease);
         await releaseUnpublishedClaim(this.engine, row, 'claim_lost');
         return false;
       }
