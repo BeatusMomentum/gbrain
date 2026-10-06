@@ -78,7 +78,7 @@ export function validateCoreConfigValue(key: string, value: string): string | nu
     return `${key} must be an integer from ${CORE_MIN_MAX_CHARS} to ${CORE_MAX_MAX_CHARS} (default ${CORE_DEFAULT_MAX_CHARS}).`;
   }
   if (key === CORE_CONFIG_KEYS.remoteEdit && parseCoreRemoteEdit(value) === null) return `${key} must be allow, notify or refuse (default notify).`;
-  if (key === CORE_CONFIG_KEYS.enabled && parseBool(value) === null) return `${key} must be true or false (default true).`;
+  if (key === CORE_CONFIG_KEYS.enabled && parseBool(value) === null) return `${key} must be true or false (default false).`;
   return null;
 }
 
@@ -92,7 +92,7 @@ export async function readCoreSettings(engine: Pick<BrainEngine, 'getConfig'>): 
     engine.getConfig(CORE_CONFIG_KEYS.remoteEdit).catch(() => null),
   ]);
   return {
-    enabled: parseBool(enabled) ?? true,
+    enabled: parseBool(enabled) ?? false,
     maxChars: parseCoreMaxChars(max) ?? CORE_DEFAULT_MAX_CHARS,
     remoteEdit: parseCoreRemoteEdit(remote) ?? 'notify',
   };

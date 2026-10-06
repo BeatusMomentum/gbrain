@@ -23,6 +23,9 @@ import {
 import { serializePageToMarkdown } from '../core/markdown.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
+/** Core is opt-in: marking a page does nothing for sessions until the owner turns delivery on. */
+const CORE_OFF_HINT = 'Core memory is off (the default), so sessions do not load it yet. If the user wants it always loaded: gbrain config set memory.core.enabled true';
+
 const USAGE = `Usage: gbrain core <list|show|status|add|remove|diff|ack|init|suggest> [options]
   list    [--source <id>] [--json]
   show    [--source <id>] [--json]
@@ -180,6 +183,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
         const usage = await coreUsage(engine);
         const settings = await readCoreSettings(engine);
         console.log(`${result === 'unchanged' ? 'Already' : 'Now'} ${sub === 'add' ? 'in' : 'out of'} core: ${sourceId}:${slug}. Core uses ${usage.chars}/${settings.maxChars} chars.`);
+        if (sub === 'add' && !settings.enabled) console.log(CORE_OFF_HINT);
       } catch (e) {
         fail((e as Error).message, sub === 'add' ? 'run gbrain core status to see where the budget goes' : undefined);
       }
@@ -217,6 +221,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       if (existing && !existing.page.deleted_at) {
         const result = await setMarking(engine, sourceId, target, { core: true, priority: 10 }).catch((e: Error) => { fail(e.message); return null; });
         if (result) console.log(`${sourceId}:${target} exists and is ${result === 'unchanged' ? 'already' : 'now'} in core.`);
+        if (result && !(await readCoreSettings(engine)).enabled) console.log(CORE_OFF_HINT);
         return;
       }
       const content = `---\ntitle: About the user\nalways_load: true\ncore_priority: 10\n---\n\n${STARTER_BODY}\n`;
@@ -224,6 +229,7 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
         await handleToolCall(engine, 'put_page', { slug: target, content, source_id: sourceId }, { sourceId });
       } catch (e) { fail((e as Error).message); return; }
       console.log(`Created ${sourceId}:${target} in core. Next: ask the user the four questions on that page and replace each "(fill in)" with edit_page, keeping it short.`);
+      if (!(await readCoreSettings(engine)).enabled) console.log(CORE_OFF_HINT);
       return;
     }
     case 'suggest': {

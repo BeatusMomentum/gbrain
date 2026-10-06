@@ -35,6 +35,7 @@ beforeEach(async () => {
   fixture = mkdtempSync(join(tmpdir(), 'gb-core-cli-'));
   mkdirSync(join(fixture, 'brain'));
   await engine.setConfig('sync.repo_path', join(fixture, 'brain'));
+  await engine.setConfig('memory.core.enabled', 'true');
 });
 afterEach(async () => { await disposePersistenceConsumer(engine); rmSync(fixture, { recursive: true, force: true }); });
 
@@ -89,6 +90,16 @@ describe('gbrain core CLI', () => {
     expect((await cli(['remove', 'notes/prefs'])).out).toContain('Now out of core');
     expect(await corePages()).toEqual([]);
     expect((await cli(['add', 'notes/missing'])).err).toContain('No live page default:notes/missing');
+  });
+
+  test('core is opt-in: with memory.core.enabled unset, add and init say how to turn it on', async () => {
+    await engine.unsetConfig('memory.core.enabled');
+    await put('notes/prefs', page('Working preferences', 'Prefers short answers.'), false);
+    const added = (await cli(['add', 'notes/prefs'])).out;
+    expect(added).toContain('Now in core: default:notes/prefs');
+    expect(added).toContain('gbrain config set memory.core.enabled true');
+    expect((await cli(['init'])).out).toContain('gbrain config set memory.core.enabled true');
+    expect(JSON.parse((await cli(['status', '--json'])).out)).toMatchObject({ enabled: false, pages: 2 });
   });
 
   test('init creates a marked starter page; the owner add is held to the budget', async () => {

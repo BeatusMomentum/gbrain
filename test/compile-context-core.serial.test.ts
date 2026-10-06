@@ -33,6 +33,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  await engine.setConfig('memory.core.enabled', 'true');
   await engine.putPage('people/ada-example', { type: 'note', title: 'Ada Example', compiled_truth: 'A collaborator profile used by the compile fixtures.' });
   await engine.putPage('concepts/core-prefs', {
     type: 'note', title: 'Working preferences', compiled_truth: 'Prefers short answers with the command to run.',

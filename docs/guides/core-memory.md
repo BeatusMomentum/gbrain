@@ -9,6 +9,20 @@ Everything else in the brain stays on demand (search, `query`, `recall`,
 per-turn context). Core is for the few facts an agent should never have to
 look up.
 
+Core memory is opt-in: it is off until the owner turns it on. In the held-out
+evaluation, loading a standing-preferences page in every session helped one
+model and hurt another on instruction following, so it is not on by default
+(see [the verdict](../eval/decisions/p4-heldout-core-2026-10-06/README.md)).
+To use it:
+
+```bash
+gbrain config set memory.core.enabled true
+gbrain core init                 # or: gbrain core add <slug>
+```
+
+The save-before-compaction notice ([below](#saving-before-compaction)) is a
+separate feature and is on by default.
+
 ## What makes a page core
 
 A page is core when its frontmatter says so:
@@ -121,7 +135,7 @@ Two pieces cover that:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `memory.core.enabled` | `true` | Deliver core in sessions. |
+| `memory.core.enabled` | `false` | Deliver core in sessions (opt-in). |
 | `memory.core.max_chars` | `4000` | Brain-wide rendered budget, 500 to 6,000. |
 | `memory.core.remote_edit` | `notify` | `allow`, `notify` or `refuse` for remote edits to core pages. |
 | `memory.pressure.enabled` | `true` | The save-before-compaction notice. |

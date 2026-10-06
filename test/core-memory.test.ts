@@ -18,6 +18,8 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
   await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('wiki', 'wiki') ON CONFLICT DO NOTHING`);
+  // Core is opt-in (off by default, per the held-out core gate); these tests exercise it turned on.
+  await engine.setConfig('memory.core.enabled', 'true');
 }, 60_000);
 afterAll(async () => { if (engine) await engine.disconnect(); }, 60_000);
 
@@ -124,6 +126,10 @@ describe('listing (PGLite)', () => {
     expect(defaultOnly.pages.map(p => p.source_id)).toEqual(['default']);
     const granted = await loadCoreBlock(engine, { sessionSourceId: 'wiki', allowedSources: ['wiki'] });
     expect(granted.pages.map(p => p.source_id)).toEqual(['wiki']);
+    await engine.unsetConfig('memory.core.enabled');
+    const unset = await loadCoreBlock(engine, { sessionSourceId: 'wiki' });
+    expect(unset.enabled).toBe(false);
+    expect(unset.text).toBe('');
     await engine.setConfig('memory.core.enabled', 'false');
     const off = await loadCoreBlock(engine, { sessionSourceId: 'wiki' });
     expect(off.enabled).toBe(false);

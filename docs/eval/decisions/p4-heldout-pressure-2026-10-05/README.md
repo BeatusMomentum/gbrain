@@ -61,9 +61,10 @@ post-upgrade notice state these costs.
 arrives in one large turn can jump past the warning point before the next
 prompt; those misses are where the notice can improve next.
 
-## Still to come
+## Related verdicts
 
-The core gate (BEAM-100k sealed, all four models) and the report-only slice
-(claude-opus-5-5, gpt-6.1-sol and claude-fable-5-1 on four BEAM-500K sealed
-conversations) run next. This PR lands only after the core verdict is
-recorded.
+The core gate (BEAM-100k sealed, all four models) failed, so core memory is
+off by default and available as an opt-in:
+[core verdict](../p4-heldout-core-2026-10-06/README.md). The report-only
+slice (claude-opus-5-5, gpt-6.1-sol and claude-fable-5-1 on four BEAM-500K
+sealed conversations) decides nothing and is recorded when it lands.
