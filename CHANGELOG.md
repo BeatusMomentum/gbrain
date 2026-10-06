@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.85.0] - 2026-10-06
+
+**The Gmail attachment-repair command test no longer fails when its second seeded thread page is still publishing as the test hands the database to the command.**
+
+The test seeds two thread pages through a managed connector sweep, stops the in-process persistence consumer, and runs `gbrain google attachments backfill --json` in a child process, which counts the source's thread pages. A managed sweep returns once its wait budget (1.5 seconds in tests) runs out, even if a write it accepted has not published yet: the write stays queued and the cursor stays put, as designed. On a busy CI machine the second page was still `running` when the sweep returned, so the child counted 1 page instead of 2. The seed now waits for every write the source accepted to commit before it reads or hands off the database, and checks that each one committed. gbrain itself does not change.
+
+### For contributors
+
+- `settleConnectorWrites(engine, sourceId)` in `test/helpers/connector-fixture.ts` waits for every persistence request the source admitted and expects each one to be `committed`.
+- `test/google-attachments-command.test.ts` and the `seed` helper in `test/google-attachment-backfill.test.ts` call it after their seeding sweep. The backfill file had the same race in two tests.
+- A probe that holds the consumer's preparation of the second import for 2.5 seconds reproduces the CI failure on PGLite and Postgres (`imported_thread_pages` 1, expected 2) and fails both backfill tests. With the fix, all 15 tests in the two files pass with the probe in place.
+
 ## [0.60.84.0] - 2026-10-06
 
 **The 12k-file clone fixture no longer races a background `git gc`, so the large-manifest clone test stops failing with git exit 128.**
