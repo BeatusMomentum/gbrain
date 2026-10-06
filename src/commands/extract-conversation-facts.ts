@@ -69,6 +69,7 @@ import type { Page } from '../core/types.ts';
 import {
   extractFactsFromTurnWithOutcome,
   isFactsExtractionEnabled,
+  type ExtractFailureReason,
   type ExtractInput,
   type ExtractedFact,
 } from '../core/facts/extract.ts';
@@ -1145,9 +1146,9 @@ async function processPage(
         const detail = extraction.error instanceof Error
           ? `: ${extraction.error.message}`
           : '';
-        throw new Error(
+        throw Object.assign(new Error(
           `segment ${seg.startIso}..${seg.endIso} extraction failed (${extraction.reason})${detail}`,
-        );
+        ), { extractionReason: extraction.reason });
       }
       extracted = extraction.facts;
     }
@@ -1507,7 +1508,12 @@ export async function runExtractConversationFactsCore(
           result.pages_skipped_type_mismatch++;
           continue;
         }
-        await processPageWithLock(page);
+        try {
+          await processPageWithLock(page);
+        } catch (error) {
+          if (isAbortError(error) || error instanceof BudgetExhausted) throw error;
+          recordPageFailure(result, sourceId, slug, error);
+        }
       }
     } else if (opts.slug) {
       const page = await engine.getPage(opts.slug, { sourceId });
@@ -1590,15 +1596,7 @@ export async function runExtractConversationFactsCore(
               name: 'AbortError',
             });
           }
-          result.pages_failed += poolResult.errored;
-          for (const failure of poolResult.failures) {
-            const message = failure.error instanceof Error
-              ? failure.error.message
-              : String(failure.error);
-            process.stderr.write(
-              `[extract-conversation-facts] ${failure.label} failed: ${message}\n`,
-            );
-          }
+          for (const failure of poolResult.failures) recordPageFailure(result, sourceId, failure.label, failure.error);
 
           processedPagesCount += claimable.length;
           offset += batch.length;
@@ -2171,6 +2169,13 @@ function pickLaterIso(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// The log names only the closed extraction reason, never provider or error text.
+function recordPageFailure(result: ExtractConversationFactsResult, sourceId: string, slug: string, error: unknown): void {
+  result.pages_failed++;
+  const reason = (error as { extractionReason?: ExtractFailureReason } | null)?.extractionReason ?? 'page_error';
+  process.stderr.write(`[extract-conversation-facts] ${slug} failed (${reason}) and stays unfinished; retry: gbrain extract-conversation-facts --source-id ${sourceId} --slug ${slug}\n`);
 }
 
 export function isAbortError(err: unknown): boolean {
