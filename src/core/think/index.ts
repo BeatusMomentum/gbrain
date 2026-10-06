@@ -213,6 +213,17 @@ export interface ThinkResult {
   feedback_evidence?: Array<{ source_id: string; slug: string; content_hash: string | null }>;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
+  /**
+   * Quote grounding (think.quote_verify, default on): `answer` is the safe
+   * version (near-match quotes repaired to the evidence's words, quotes found
+   * in no evidence unquoted and marked [unverified]); `answer_raw` is what the
+   * model wrote. Present only when the answer contained quotes.
+   */
+  answer_raw?: string;
+  quote_check?: { grounded: number; repaired: number; unverified: number };
+  unverified_quotes?: Array<{ text: string; reason: string }>;
+  /** What `persistSynthesis` saves: the raw answer with every claim unit carrying an unverified quote removed, and those units. */
+  persist?: { answer: string; unverified_claims: Array<{ text: string; reason: string; detail: string }> };
   /** Diagnostics for `--explain` callers (CLI surface for v0.29). */
   diagnostics: {
     pagesFromHybrid: number;
@@ -522,6 +533,27 @@ async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: 
 }
 
 /**
+ * The question embedding gather may use, or undefined. A brain that opted out
+ * of embedding never sends the question to a provider (warning
+ * QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED); a failing embedder degrades to
+ * QUESTION_EMBED_FAILED with the raw error on stderr only (D6).
+ */
+async function embedThinkQuestion(engine: BrainEngine, opts: RunThinkOpts, warnings: string[]): Promise<Float32Array | undefined> {
+  if (!opts.embedQuestion) return undefined;
+  const { factEmbeddingDisabled } = await import('../embedding-disabled.ts');
+  if (await factEmbeddingDisabled(engine)) {
+    warnings.push((await import('../interop-notices.ts')).QUESTION_EMBED_OPTED_OUT);
+    return undefined;
+  }
+  try {
+    return (await opts.embedQuestion(opts.question)) ?? undefined;
+  } catch (e) {
+    warnings.push('QUESTION_EMBED_FAILED');
+    process.stderr.write(`[think] question embed failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    return undefined;
+  }
+}
+/**
  * Run the think pipeline. Returns a ThinkResult — caller decides whether
  * to print, persist as synthesis page, or surface as MCP response.
  */
@@ -556,18 +588,8 @@ export async function runThink(
     }
   }
 
-  // Optional question embedding — caller decides whether to pay the embedder.
-  let questionEmbedding: Float32Array | undefined;
-  if (opts.embedQuestion) {
-    try {
-      const e = await opts.embedQuestion(opts.question);
-      if (e) questionEmbedding = e;
-    } catch (e) {
-      // D6: code-only on the wire; raw exception text goes to server logs.
-      warnings.push('QUESTION_EMBED_FAILED');
-      process.stderr.write(`[think] question embed failed: ${e instanceof Error ? e.message : String(e)}\n`);
-    }
-  }
+  // Optional question embedding — caller decides whether to pay the embedder; an opted-out brain never does.
+  const questionEmbedding = await embedThinkQuestion(engine, opts, warnings);
 
   const thinkDecide = await startThinkDecide(engine, opts, classifyIntent(opts.question)).catch(() => undefined); // System One S2/S4; undefined when both are off
   // GATHER
@@ -951,7 +973,7 @@ export async function runThink(
 
   return {
     question: opts.question,
-    answer: response.answer,
+    answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [opts.question, pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
     citations: resolved.citations,
     gaps: response.gaps,
     pagesGathered: gather.pages.length,
@@ -1036,11 +1058,12 @@ export async function persistSynthesis(
     .slice(0, 60) || 'untitled';
   const slug = `synthesis/${slugSafe}-${today}`;
 
-  // Build the markdown body
+  // Build the markdown body. A claim whose quote is not in the evidence is not saved as prose;
+  // it goes to frontmatter unverified_claims (reviewable with get_page, out of search and recall).
   const body = [
     `# ${result.question}`,
     '',
-    stripGapsSection(result.answer),
+    stripGapsSection(result.persist?.answer ?? result.answer),
     '',
     result.gaps.length > 0 ? '## Gaps\n\n' + result.gaps.map(g => `- ${g}`).join('\n') : '',
   ].filter(Boolean).join('\n');
@@ -1056,6 +1079,7 @@ export async function persistSynthesis(
       date: today,
       pages_gathered: result.pagesGathered,
       takes_gathered: result.takesGathered,
+      ...(result.persist?.unverified_claims.length ? { unverified_claims: result.persist.unverified_claims.map(c => ({ ...c, sources: ['think evidence'], detected_at: today })) } : {}),
     },
   }, scope.sourceId ? { sourceId: scope.sourceId } : undefined));
 
@@ -1104,6 +1128,37 @@ async function readThinkTrajectoryEnabled(engine: BrainEngine): Promise<boolean>
     const lower = v.trim().toLowerCase();
     if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'off') return false;
     return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Ground every quoted span of a synthesized answer against the evidence blocks
+ * the prompt carried, the user's question included (quoting the question back
+ * is supported). Empty when think.quote_verify is off or the answer has no
+ * quotes; otherwise the safe answer, what the model wrote, the counts, and the
+ * body persistSynthesis saves (failing claim units removed).
+ */
+async function groundThinkAnswer(engine: BrainEngine, answer: string, blocks: string[], warnings: string[]):
+  Promise<Partial<Pick<ThinkResult, 'answer' | 'answer_raw' | 'quote_check' | 'unverified_quotes' | 'persist'>>> {
+  if (answer.trim().length === 0 || !await readThinkQuoteVerify(engine)) return {};
+  const { groundSource, groundAnswerQuotes, verifyBody } = await import('../cycle/synthesize-verify.ts');
+  const sources = blocks.map((block, i) => ({ block, i })).filter(b => b.block.trim().length > 0)
+    .map(b => groundSource(`think-evidence-${b.i}`, b.block, { tolerant: true }));
+  const check = groundAnswerQuotes(answer, sources);
+  if (check.quote_check.grounded + check.quote_check.repaired + check.quote_check.unverified === 0) return {};
+  if (check.quote_check.unverified > 0) warnings.push('QUOTE_NOT_IN_EVIDENCE');
+  const persisted = verifyBody(answer, sources, { checks: 'quotes' });
+  return { answer: check.answer, answer_raw: answer, quote_check: check.quote_check, unverified_quotes: check.unverified_quotes,
+    persist: { answer: persisted.body, unverified_claims: persisted.quarantined } };
+}
+
+/** `think.quote_verify` (on unless set false): ground quoted spans in think answers against the prompt's evidence. */
+async function readThinkQuoteVerify(engine: BrainEngine): Promise<boolean> {
+  try {
+    const v = await engine.getConfig('think.quote_verify');
+    return !v || !['false', '0', 'no', 'off'].includes(v.trim().toLowerCase());
   } catch {
     return true;
   }

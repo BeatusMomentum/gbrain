@@ -212,6 +212,7 @@ import { v208 } from './v208-delta-per-arm-cursor.ts';
 import { v209 } from './v209-page-facts-reconcile.ts';
 import { v210 } from './v210-clamp-oauth-token-ttl.ts';
 import { v211 } from './v211-function-search-path.ts';
+import { v212 } from './v212-decide-review-proposals.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -422,4 +423,5 @@ export const MIGRATIONS: Migration[] = [
   v209,
   v210,
   v211,
+  v212,
 ];
