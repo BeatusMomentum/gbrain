@@ -23,6 +23,8 @@ import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { runCli } from './helpers/cli-spawn.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
+
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -110,6 +112,9 @@ describe('gbrain repair timeline', () => {
       // Stand-in for the page's own extraction having run: its outbox entry is settled.
       await disposePersistenceConsumer(engine);
       await engine.executeRaw(`UPDATE persistence_effects SET state='committed' WHERE kind='facts-backstop' AND source_id=$1`, [source]);
+      const [{ id: pageId }] = await engine.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE source_id=$1 AND slug='notes/report'`, [source]);
+      const done = await new MinionQueue(engine).add('facts-absorb', { slug: 'notes/report', sourceId: source, page_id: pageId }, { queue: 'default' });
+      await engine.executeRaw(`UPDATE minion_jobs SET status='completed', finished_at=now() WHERE id=$1`, [done.id]);
       const receipts = async () => engine.executeRaw<{ id: string; facts: unknown }>(
         `SELECT id, outcome->'facts_backstop' AS facts FROM persistence_requests
           WHERE source_id=$1 AND slug='notes/report' AND operation='put_page' AND state='committed' ORDER BY created_at`, [source]);

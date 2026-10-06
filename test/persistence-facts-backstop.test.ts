@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
-import { BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES } from '../src/core/persistence/effect-facts.ts';
 import { admitWrite, claimNextWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
@@ -182,10 +181,12 @@ test.each(['waiting', 'delayed', 'paused', 'waiting-children', 'active'])('#6042
   expect(await rewrite(retitled('Renamed during the job'))).toEqual({ status: { queued: true }, effectQueued: true });
 }));
 
-test.each(['completed', 'failed', 'dead', 'cancelled'])('#6042: a facts-absorb job that is %s no longer blocks the skip', (status) => fixture(async () => {
+test.each(['completed', 'failed', 'dead', 'cancelled'])('#6042: on an extracted page, a later facts-absorb job that is %s no longer blocks the skip', (status) => fixture(async () => {
   await publish();
   await finishExtractions();
-  await engine.executeRaw("UPDATE minion_jobs SET status = $1 WHERE name = 'facts-absorb'", [status]);
+  const { page } = (await engine.readPageSnapshot('notes/example', { sourceId: 'default' }))!;
+  const later = await new MinionQueue(engine).add('facts-absorb', { slug: 'notes/example', sourceId: 'default', page_id: page.id }, { queue: 'default' });
+  await engine.executeRaw('UPDATE minion_jobs SET status = $1 WHERE id = $2', [status, later.id]);
   expect((await rewrite(retitled('Renamed after the job'))).status).toEqual({ skipped: 'body_unchanged' });
 }));
 
@@ -212,17 +213,26 @@ test('#6042: rewriting a soft-deleted page with its old body queues extraction a
   expect(await rewrite(content)).toEqual({ status: { queued: true }, effectQueued: true });
 }));
 
-test('#6071 switch: a body-preserving rewrite of a never-extracted eligible page follows BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES', () => fixture(async () => {
+test('#6071: a body-preserving rewrite of an extracted page queues no extraction', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  const before = (await jobs()).length;
+  expect(await rewrite(retitled('Renamed after extraction'))).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
+  expect(await jobs()).toHaveLength(before);
+}));
+
+test('#6071: a body-preserving rewrite of a never-extracted eligible page still queues extraction', () => fixture(async () => {
   await engine.setConfig('facts.extraction_enabled', 'false');
   expect((await publish()).outcome?.facts_backstop).toEqual({ skipped: 'extraction_disabled' });
   await engine.setConfig('facts.extraction_enabled', 'true');
-  const result = await rewrite(retitled('Renamed after enabling'));
-  if (BODY_PRESERVING_WRITES_EXTRACT_NEVER_OFFERED_PAGES) {
-    expect(result).toEqual({ status: { queued: true }, effectQueued: true });
-  } else {
-    expect(result).toEqual({ status: { skipped: 'body_unchanged' }, effectQueued: false });
-    expect(await jobs()).toHaveLength(0);
-  }
+  expect(await rewrite(retitled('Renamed after enabling'))).toEqual({ status: { queued: true }, effectQueued: true });
+}));
+
+test('#6071: an extraction that did not complete does not count as extracted', () => fixture(async () => {
+  await publish();
+  await finishExtractions();
+  await engine.executeRaw("UPDATE minion_jobs SET status = 'failed' WHERE name = 'facts-absorb'");
+  expect(await rewrite(retitled('Renamed after a failed extraction'))).toEqual({ status: { queued: true }, effectQueued: true });
 }));
 
 test('a slug-bound writer\'s backstop refusal says the page was written and who widens the grant', async () => {
