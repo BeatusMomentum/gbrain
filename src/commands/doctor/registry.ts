@@ -91,6 +91,7 @@ import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { edgeValidityEntry } from './checks/edge-validity.ts';
+import { coreMemoryEntry } from './checks/core-memory.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
@@ -171,6 +172,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   plannerStatsEntry,
   retrievalFeedbackEntry,
   revisionBackfillEntry,
+  coreMemoryEntry,
   searchModeEntry,
 ];
 

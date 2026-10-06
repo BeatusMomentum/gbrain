@@ -539,7 +539,7 @@ export interface FactRow {
   fact_fingerprint?: string;
   /** Set by `listFactsKeyset`: created_at at the column's microsecond precision (ISO UTC). */
   created_at_iso?: string;
-  /** Who asserted the claim (migration v213); null when attribution is unavailable. */
+  /** Who asserted the claim (migration v214); null when attribution is unavailable. */
   attributed_to?: FactAttribution | null;
 }
 
@@ -594,7 +594,7 @@ export interface NewFact {
    * set this — leaving it undefined preserves pre-v0.40 behavior.
    */
   event_type?: string | null;
-  /** Speaker attribution (migration v213). Undefined/null → NULL (unavailable). */
+  /** Speaker attribution (migration v214). Undefined/null → NULL (unavailable). */
   attributed_to?: FactAttribution | null;
 }
 
