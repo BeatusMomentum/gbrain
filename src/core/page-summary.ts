@@ -30,7 +30,7 @@
  * loop and handles page-level fall-back.
  */
 
-import { providerErrorChain, providerErrorStatus } from './ai/errors.ts';
+import { readProviderFailureSignals } from './ai/errors.ts';
 import { chat, type ChatOpts, type ChatResult } from './ai/gateway.ts';
 import { logSynopsisFailure, type SynopsisFailureKind } from './audit-synopsis.ts';
 import { sanitizeSynopsis } from './embedding-context.ts';
@@ -279,16 +279,21 @@ function buildUserPrompt(
   ].join('\n');
 }
 
+const TIMEOUT_ERROR_NAMES = new Set(['AbortError', 'TimeoutError']);
+const NETWORK_ERROR_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ECONNRESET']);
+// `adapter aborted` is the claude-cli adapter's plain Error when the call's
+// signal fires (the gateway's chat timeout or a cancel); it has no abort name.
+const TIMEOUT_MESSAGE_RE = /timeout|timed out|adapter aborted/i;
+
 /**
  * Map a thrown error from `gateway.chat()` into the D27 P1-2 failure envelope.
  *
- * chat() throws the gateway's normalized error, which keeps the provider's
- * own error on `cause` (#5964): the claude-cli provider's status rides as
- * `apiErrorStatus`, an AI SDK provider's as `statusCode` on the wrapped
- * cause (RetryError's `lastError` once retries are spent), and an AI SDK
- * timeout keeps its `TimeoutError` name there. Missing them turns a rate
- * limit or a timeout into `malformed`, which downgrades the whole page to
- * the title tier.
+ * chat() throws the gateway's normalized error, so the status, name and code
+ * that decide the class can sit on any wrapped layer (#5964): the claude-cli
+ * status as `apiErrorStatus`, an AI SDK `statusCode` on `cause` or on
+ * RetryError's `lastError`, a `TimeoutError` name on `cause`. Only an error
+ * that matches none of the transient classes is `malformed`, which makes the
+ * service re-embed the whole page at the title tier.
  */
 function classifyChatError(err: unknown): {
   kind: SynopsisFailureKind;
@@ -297,33 +302,24 @@ function classifyChatError(err: unknown): {
   if (err == null) {
     return { kind: 'malformed', detail: 'null error' };
   }
-  const e = err as { message?: string; code?: string };
-  const msg = (e.message ?? String(err)).slice(0, 200);
-  const status = providerErrorStatus(err);
-  const chain = providerErrorChain(err) as Array<{ name?: unknown; code?: unknown }>;
-  const networkCode = chain.map((c) => c.code).find(
-    (code) => code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'ECONNRESET',
-  );
+  const outer = err as { message?: unknown; code?: unknown };
+  const msg = (typeof outer.message === 'string' ? outer.message : String(err)).slice(0, 200);
+  const { status, names, codes } = readProviderFailureSignals(err);
 
-  if (status === 401 || status === 403) {
-    return { kind: 'auth_failure', detail: `status=${status} msg=${msg}` };
+  if (status !== undefined) {
+    const byStatus: SynopsisFailureKind | null =
+      status === 401 || status === 403 ? 'auth_failure'
+        : status === 429 ? 'rate_limit'
+          : status >= 500 && status < 600 ? 'provider_5xx'
+            : null;
+    if (byStatus) return { kind: byStatus, detail: `status=${status} msg=${msg}` };
   }
-  if (status === 429) {
-    return { kind: 'rate_limit', detail: `status=429 msg=${msg}` };
-  }
-  if (status != null && status >= 500 && status < 600) {
-    return { kind: 'provider_5xx', detail: `status=${status} msg=${msg}` };
-  }
-  // The message test covers wrappers that drop the name: the claude-cli
-  // adapter rejects a timed-out or aborted call as "claude-cli adapter aborted".
-  if (
-    chain.some((c) => c.name === 'AbortError' || c.name === 'TimeoutError' || c.code === 'ETIMEDOUT') ||
-    /timeout|timed out|\baborted\b/i.test(msg)
-  ) {
+  if (names.some(name => TIMEOUT_ERROR_NAMES.has(name)) || codes.includes('ETIMEDOUT') || TIMEOUT_MESSAGE_RE.test(msg)) {
     return { kind: 'timeout', detail: msg };
   }
+  const networkCode = codes.find(code => NETWORK_ERROR_CODES.has(code));
   if (networkCode !== undefined || /network|fetch/i.test(msg)) {
-    return { kind: 'network', detail: `code=${networkCode ?? e.code ?? '?'} msg=${msg}` };
+    return { kind: 'network', detail: `code=${networkCode ?? outer.code ?? '?'} msg=${msg}` };
   }
 
   // Unknown error shape — treat as malformed so the service routes it
