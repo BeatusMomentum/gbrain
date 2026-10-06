@@ -10,6 +10,74 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.84.0] - 2026-10-06
+
+**The 12k-file clone fixture no longer races a background `git gc`, so the large-manifest clone test stops failing with git exit 128.**
+
+The fixture committed 12,000 files as loose objects, and that commit started a detached `git gc --auto`. The gc packed the objects and deleted the loose copies while the fixture's `git clone --bare` was still copying them, so the clone died with `failed to copy file ... No such file or directory`. On a loaded CI VM the overlap was common enough to fail the full gate. Large fixture repositories now turn off automatic gc and maintenance in their own config before the first commit, so no background job touches them while a test clones, reads or deletes them. The same change covers the 20k-file CLI ceilings fixture and the 12k-file read-only mirror fixture. Fixture git failures now include git's stderr instead of a bare exit status.
+
+## [0.60.83.0] - 2026-10-06
+
+**The Postgres embedding-recovery parity suite runs in about 25 seconds instead of 210 to 260, so it no longer hits the 180-second per-file E2E cap.**
+
+Its per-test reset ran `TRUNCATE ... CASCADE` on `pages` and `facts`. That reaches 26 tables and 126 indexes, and Postgres gives each of them new storage files even when they are already empty, so each reset cost about 0.8 seconds. With more than 200 resets across 157 tests, resets were most of the file's runtime, and slower or busier machines pushed it past the cap. A new test helper empties the same tables on Postgres by deleting their rows, which takes about 4 milliseconds, and falls back to `TRUNCATE` whenever a delete could behave differently. Every test and assertion is unchanged, and gbrain itself does not change.
+
+### For contributors
+
+- `truncateCascade(engine, tables)` in `test/helpers/reset-pglite.ts` leaves the same end state as `TRUNCATE <tables> CASCADE`: it empties the named tables and every table that references them through a foreign key, and sequences keep counting. On Postgres it deletes the rows with `session_replication_role = replica`. It runs `TRUNCATE` instead when the tables have TRUNCATE triggers, always- or replica-enabled triggers or rules, inheritance, more than 8 MiB of storage, or no superuser to switch roles. It also runs `TRUNCATE` when no autovacuum launcher is running, which includes PGLite. With nothing to clean up the deleted rows there, two later PGLite tests slowed from about 2 seconds to 11, and `TRUNCATE` on PGLite runs in memory. `resetPgliteState` now uses the same fallback rules.
+- `test/embedding-recovery.serial.test.ts` uses the helper for all nine of its resets. On a local pgvector container, the direct-Postgres file took 206 to 251 seconds before the change and 24 to 25 seconds after. With four busy CPU cores it took 243 to 262 seconds before and 26 to 28 seconds after. The PgBouncer pass dropped from 248 seconds to 42 or 43. The PGLite run is unchanged at about 47 seconds.
+- `scripts/e2e-backend-matrix.txt` drops the file's `pooled-timeout=600` override, so the PgBouncer pass is held to the standard 180-second cap again.
+- `test/truncate-cascade.test.ts` (PGLite, unit lane) and its Postgres wrapper `test/e2e/truncate-cascade-postgres.test.ts` cover each fallback rule. They check the end state, and they check that Postgres keeps its storage while PGLite gets new storage.
+
+## [0.60.82.0] - 2026-10-06
+
+**Sync lanes that start at the same moment share the worktree lock instead of all but one reporting it busy, so a clean catch-up no longer falls back to slower paths mid-run (#5984).**
+
+Lanes in one process share the worktree's native lock through a counted lease. When no lease existed, every lane that arrived together asked the operating system for the lock: one got it and the rest were told the worktree was busy. Each of those released its group back to the queue, and the groups behind it followed, because a lane gives way when the group before it is back in the queue. One master CI run saw three fallbacks this way in a clean 80-page sync. The same happened when a lane arrived while the last holder was still releasing the lock. Now one lane takes the lock while the others wait and join its lease, and a lease stays registered until its lock is actually free. Lanes still refuse to join while an exclusive writer is waiting, and a lock held by another process still reports busy.
+
+## [0.60.81.0] - 2026-10-06
+
+**An interrupted `ubi-runner.sh up` or `run` now always exits 130, including when bash 5.2 loses the signal's trap.**
+
+Bash 5.2, the bash on Ubuntu 24.04, can drop a signal trap. When SIGTERM, SIGINT, SIGHUP or SIGQUIT lands just before the shell parses a `$(...)`, the trap never runs and the shell exits 2. The runner's exit handler still destroyed the VM, so nothing leaked, but the interrupted `up` or `run` reported 2 instead of 130, and the provisioning-signal test failed intermittently in CI. The runner now recognizes that exit and reports 130. A command that really fails with status 2 still exits 2.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| A signal reaches `up` or `run` while bash 5.2 is parsing a `$(...)` | VM destroyed, exit 2 | VM destroyed, exit 130 |
+
+## To take advantage of v0.60.81.0
+
+There is nothing to do. `ubi-runner.sh` is a contributor tool: `gbrain upgrade` installs the binary, and there are no schema migrations.
+
+### For contributors
+
+- `test/scripts/ubi-runner.test.ts` forces the lost trap for `up` and `run` on every run: `BASH_ENV` turns on xtrace with a `PS4` that sends the runner SIGTERM, then makes bash parse a `$(...)` with that trap pending.
+- The managed connector job contract's `embed_backfill` and `extract_conversation_facts_thread` cases cancel the `loops_extract` job the Gmail sweep queued before running their own worker. Left waiting, that worker could run it afterwards: its commitment fact republished a page as a chunk not yet embedded (`embed_backfill` read 1 of 2 embedded) or wrote the facts the thread case asserts never appear.
+
+## [0.60.80.0] - 2026-10-06
+
+**A Postgres brain set to one database connection (`GBRAIN_POOL_SIZE=1`) can be created and migrated again: `gbrain init --db-only`, `gbrain apply-migrations`, `gbrain repair request-indexes` and `gbrain backfill` no longer stop with "No pool capacity is available for long-running writes".**
+
+Schema migrations that cannot run inside a transaction (concurrent index builds and similar DDL) run on a reserved connection. gbrain keeps one connection free for reads and control work whenever something holds a connection for a long time, so a pool of one refused every such migration and a fresh `gbrain init` failed at migration 48. Migration DDL, concurrent index builds and backfill batches use nothing but their own connection, like a transaction, so they may now take a single connection. Holds that keep other work running alongside them (write publication, the writer's idle probe, embedding index builds that report progress) still leave a connection free, and the only direct session at `GBRAIN_DIRECT_POOL_SIZE=1` is still never lent.
+
+| With `GBRAIN_POOL_SIZE=1` on Postgres | Before | After |
+| --- | --- | --- |
+| `gbrain init --db-only` on a fresh database | fails at migration 48 with `writer_pool_capacity` | succeeds |
+| `gbrain apply-migrations`, or any command that auto-applies pending schema migrations | fails at the first `transaction: false` migration | succeeds |
+| `gbrain repair request-indexes --apply`, `gbrain backfill <kind>` | `internal_error`: no pool capacity | succeeds |
+
+### Things to watch
+
+- **Managed writes still need two connections.** With one connection, a managed write stays queued with `writer_pool_capacity`, so `gbrain init` without `--db-only` creates the schema and then stops at its packaged-skill install with `write_pending`. Rerun with `GBRAIN_POOL_SIZE=2`; init resumes the same request. Long-running processes still need 6 ([pool sizing](docs/ENGINES.md#pool-sizing)).
+
+For contributors and agents working on gbrain:
+
+- `withReservedConnection(fn, { selfContained: true })` declares that `fn` uses only the reserved connection and never waits on the pool while holding it. Only such holders may take the only connection of a one-connection ordinary pool. Tests: `test/pool-budget.test.ts`, `test/postgres-engine-reserved-routing.test.ts`, `test/e2e/pool-size-one-migrations.test.ts`.
+
+## To take advantage of v0.60.80.0
+
+`gbrain upgrade`. No schema migration.
+
 ## [0.60.79.0] - 2026-10-06
 
 **js-yaml 4: no more vulnerable YAML command-line dependency, and frontmatter reads clock times and leading-zero numbers the way YAML 1.2 does.**

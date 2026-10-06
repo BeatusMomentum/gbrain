@@ -16,7 +16,7 @@
  * Graduation is CLI-only: no operations.ts entry, no remote caller.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -43,7 +43,7 @@ import {
 } from './graduation-custody.ts';
 import {
   drainTimeoutError, embeddingDimensionMismatchError, foreignHostBindingError, inProgressError, interruptedError, planArgv as planArgvOf,
-  resumeArgv, rollbackWritesLostError, runArgv as runArgvOf, sourceWriterHeldError, statusArgv, targetAuthFailedError, targetNotEmptyError,
+  resumeArgv, retainedCopyMissingError, rollbackWritesLostError, runArgv as runArgvOf, sourceWriterHeldError, statusArgv, targetAuthFailedError, targetNotEmptyError,
   targetUnsupportedError, unsupportedPlatformError, verifyFailedError,
 } from './graduation-errors.ts';
 import { rollbackLosses, type RollbackLoss } from './graduation-losses.ts';
@@ -1233,6 +1233,7 @@ async function rollbackBeforeCutover(run: Run): Promise<GraduationRollbackResult
 
 async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<GraduationRollbackResult> {
   const from = run.m.state;
+  assertRetainedCopy(run, from);
   const hadAuthority = from === 'authoritative' || from === 'graduated';
   await openTargets(run);
   if (hadAuthority) {
@@ -1251,6 +1252,7 @@ async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<Graduat
   try {
     await claimPause(run);
     await takeKernelLock(run);
+    assertRetainedCopy(run, from);
     if (hadAuthority) losses = await detectRollbackLosses(run);
   } catch (error) {
     if (hadAuthority) await returnToAuthority(run);
@@ -1272,6 +1274,15 @@ async function rollbackAfterCutover(run: Run, opts: RunOptions): Promise<Graduat
   await approveAndRestore(run);
   return { state: 'rolled_back', restoredPath: run.dataDir,
     dropped: losses.filter(l => l.lossKind === 'operational').map(l => ({ relation: l.relation, rows: l.rows, lossKind: l.lossKind })) };
+}
+
+/** Rollback after cutover restores the retained copy; with it gone, going on would open an empty brain at the old path and route this machine to it. */
+function assertRetainedCopy(run: Run, from: ManifestState): void {
+  const movedTo = graduatedPath(run.dataDir, run.m.runId);
+  let unmoved = false;
+  try { unmoved = from === 'cutover' && lstatSync(run.dataDir).isDirectory(); } catch { /* absent */ }
+  if (existsSync(movedTo) || unmoved) return;
+  throw retainedCopyMissingError({ runId: run.m.runId, retainedPath: movedTo });
 }
 
 async function approveAndRestore(run: Run): Promise<void> {

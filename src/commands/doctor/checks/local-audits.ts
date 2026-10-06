@@ -461,7 +461,7 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
           fix: {
             argv: ['rm', '-rf', copy.path], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
             verify: { argv: ['gbrain', 'doctor', '--only', 'pglite_leftovers', '--json'] }, docs: 'docs/guides/move-to-postgres.md#after-the-move',
-            why: `${copy.path} is the PGLite brain engine graduation moved to Postgres; it still holds private memory and token hashes. Deleting it frees the disk and ends the option to roll back.`,
+            why: `${copy.path} is the PGLite brain engine graduation moved to Postgres; it still holds private memory and token hashes. Deleting it frees the disk and ends the option to roll back: afterwards a rollback to PGLite refuses with not_found and the brain stays on Postgres.`,
             user_message: `After moving your brain to Postgres, gbrain kept the old local copy at ${copy.path}. It still contains your private memory and access-token hashes. Should I delete it? You could then no longer roll back to it.`,
           },
         } : {}),

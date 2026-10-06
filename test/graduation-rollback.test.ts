@@ -10,16 +10,20 @@
  * refusal; durable substeps reconcile after a crash (back to authority before
  * approval, forward to rolled_back after it). Regressions that fail it: a
  * timestamp-based security check (revocations delete rows), a refusal that
- * strands the target fenced, a crash after approval that restores authority.
+ * strands the target fenced, a crash after approval that restores authority,
+ * a rollback that runs without its retained copy (it would open an empty
+ * brain at the old path and route this machine to it).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   planGraduation, readGraduationManifest, reconcileGraduation, rollbackGraduation, runGraduation, type GraduationOptions,
 } from '../src/core/persistence/engine-graduation.ts';
 import { assertGraduationConnectAllowed, readIntentMarker, readTombstone } from '../src/core/persistence/graduation-custody.ts';
+import { retainedCopyMissingError } from '../src/core/persistence/graduation-errors.ts';
 import { graduationFenceStatus, readGraduationRow } from '../src/core/persistence/graduation-schema.ts';
+import { cliRenderContext, toAgentError } from '../src/core/agent-output.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
 import { crashAt, makeHarness, openPglite, probeRows, SOURCE_TOKEN_ID, TARGET_URL, type Harness } from './helpers/graduation-harness.ts';
 
@@ -107,6 +111,39 @@ for (const [label, postgresUrl] of targets) {
       });
     }, 120_000);
 
+    async function assertRetainedCopyRefusal(refused: { code?: string; message: string }, copy: string): Promise<void> {
+      expect(refused.code).toBe('not_found');
+      expect(refused.message).toContain('nothing to roll back to');
+      expect(manifest().state).toBe('graduated');
+      expect(config().engine).toBe('postgres');
+      expect(existsSync(copy)).toBe(false);
+      await assertTargetAuthoritative();
+    }
+
+    test('a retained copy deleted before the rollback: refused before the fence, nothing changes', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        const copy = `${h.dataDir}.graduated-${manifest().runId}`;
+        rmSync(copy, { recursive: true, force: true });
+        let fenced = false;
+        const refused = await refusal(rollbackGraduation(rollbackOpts({ pauseAt: 'rollback_fenced', pauseHook: async () => { fenced = true; } })));
+        expect(fenced).toBe(false);
+        await assertRetainedCopyRefusal(refused, copy);
+      });
+    }, 120_000);
+
+    test('a retained copy removed between the fence and the kernel lock: refused under the lock, the target returns to authority', async () => {
+      await fresh();
+      await h.inHome(async () => {
+        await graduate();
+        const copy = `${h.dataDir}.graduated-${manifest().runId}`;
+        const removeAtFence = async (step: string) => { if (step === 'rollback_fenced') rmSync(copy, { recursive: true, force: true }); };
+        const refused = await refusal(rollbackGraduation(rollbackOpts({ pauseAt: 'rollback_fenced', pauseHook: removeAtFence })));
+        await assertRetainedCopyRefusal(refused, copy);
+      });
+    }, 120_000);
+
     test('a target page-style edit is listed and rolls back only with the expect hash; it is never written back', async () => {
       await fresh();
       await h.inHome(async () => {
@@ -185,3 +222,16 @@ for (const [label, postgresUrl] of targets) {
     }, 120_000);
   });
 }
+
+test('the missing-retained-copy refusal renders the agent contract without naming a discard flag', () => {
+  const env = toAgentError(retainedCopyMissingError({ runId: 'run1', retainedPath: '/home/alice-example/.gbrain/brain.pglite.graduated-run1' }),
+    { transport: 'cli', command: 'migrate', render: cliRenderContext() });
+  expect(env.code).toBe('not_found');
+  expect(env.why).toContain('Nothing was changed');
+  expect(env.docs).toContain('#check-resume-or-roll-back');
+  expect(env.fix?.next).toBe('report');
+  expect(env.fix?.argv).toBeUndefined();
+  expect(env.fix?.verify?.argv).toEqual(['gbrain', 'migrate', '--status', '--json']);
+  expect(env.fix?.user_message).toContain('keeps working on Postgres');
+  expect(JSON.stringify(env)).not.toContain('--discard-source');
+});

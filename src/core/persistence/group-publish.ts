@@ -312,6 +312,8 @@ export interface GroupExecution {
   settled(row: WriteRequest): void;
   hostId: string;
   hooks?: GroupHooks;
+  /** #5373: renewal cadence and per-renewal deadline, and where a preparation left running after a claim loss is tracked. */
+  claim?: { intervalMs?: number; phaseMs?: number; abandon?: (work: Promise<unknown>, holdRoot?: boolean) => void };
 }
 
 /**
@@ -320,21 +322,44 @@ export interface GroupExecution {
  * members one at a time in order. After a member ends in failure the later
  * members are cancelled, and after one is released back to the queue the
  * later ones are released too, so nothing overtakes it. Claims are renewed
- * for the whole group while it runs. Returns whether any member settled.
+ * for the whole group while it runs; a renewal that loses a member's claim,
+ * fails or outlives its deadline during preparation abandons the group: the
+ * still-held claims are released unpublished and the preparation is handed to
+ * `claim.abandon`, never published. Returns whether any member settled.
  */
 export async function executeClaimedGroup(engine: BrainEngine, rows: WriteRequest[], run: GroupExecution): Promise<boolean> {
-  let renewing: Promise<unknown> | undefined;
-  const interval = setInterval(() => { renewing ??= renewGroupClaims(engine, rows).catch(() => undefined).finally(() => { renewing = undefined; }); }, 10_000);
+  let renewing: Promise<void> | undefined;
+  let preparing = true;
+  const claimLost = Promise.withResolvers<'claim_lost'>();
+  const loseClaim = () => { if (preparing) claimLost.resolve('claim_lost'); };
+  const interval = setInterval(() => {
+    if (renewing) return;
+    const renewalAbort = new AbortController();
+    const deadline = setTimeout(() => { loseClaim(); renewalAbort.abort(); }, run.claim?.phaseMs ?? 5000);
+    const task: Promise<void> = renewGroupClaims(engine, rows, 30_000, renewalAbort.signal).then(held => { if (held.size < rows.length) loseClaim(); })
+      .catch(loseClaim).finally(() => { clearTimeout(deadline); if (renewing === task) renewing = undefined; });
+    renewing = task;
+  }, run.claim?.intervalMs ?? 10_000);
   interval.unref?.();
   if (run.lane) laneClaimed(run.lane, rows);
   try {
     const prepared: Array<{ ok: PreparedMutation } | { error: unknown }> = new Array(rows.length);
     // A put_pages group prepares all of its (at most PAGE_BATCH_GROUP_MAX) pages at once.
     const width = publicationGroupKey(rows[0]!)?.startsWith('batch:') ? PAGE_BATCH_GROUP_MAX : 4;
-    for (let start = 0; start < rows.length; start += width) {
-      await Promise.all(rows.slice(start, start + width).map(async (row, offset) => {
-        try { prepared[start + offset] = { ok: await run.prepare(row) }; } catch (error) { prepared[start + offset] = { error }; }
-      }));
+    const preparation = (async () => {
+      for (let start = 0; start < rows.length; start += width) {
+        await Promise.all(rows.slice(start, start + width).map(async (row, offset) => {
+          try { prepared[start + offset] = { ok: await run.prepare(row) }; } catch (error) { prepared[start + offset] = { error }; }
+        }));
+      }
+      return 'prepared' as const;
+    })();
+    const outcome = await Promise.race([preparation, claimLost.promise]);
+    preparing = false;
+    if (outcome === 'claim_lost') {
+      run.claim?.abandon?.(preparation, true);
+      for (const row of rows) await releaseUnpublishedClaim(engine, row, 'claim_lost');
+      return false;
     }
     // A put_pages batch is independent page writes: one page's failure never cancels its siblings.
     const independent = publicationGroupKey(rows[0]!)?.startsWith('batch:') === true;
@@ -378,6 +403,6 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
   } finally {
     if (run.lane) laneFinished(run.lane, rows);
     clearInterval(interval);
-    await renewing;
+    if (renewing) run.claim?.abandon?.(renewing);
   }
 }

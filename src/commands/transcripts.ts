@@ -17,6 +17,7 @@
 
 import { homedir } from 'node:os';
 import type { BrainEngine } from '../core/engine.ts';
+import type { CliDispatchContext } from '../cli/command-table.ts';
 import type { RecentTranscript } from '../core/transcripts.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
@@ -359,7 +360,7 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   return lines.join('\n');
 }
 
-async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
+async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'>): Promise<void> {
   const parsed = parseIngestArgs(args);
   if ('help' in parsed) {
     console.log(HELP);
@@ -491,6 +492,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
   reporter.start('transcripts.ingest', paths.length);
 
   let result: TranscriptsIngestResult;
+  const context = await dispatch.makeContext?.(engine, { source: sourceId, dry_run: parsed.dryRun === true });
   try {
     result = await runTranscriptsIngest(engine, {
       paths,
@@ -502,6 +504,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
       maxBytes: parsed.maxBytes,
       embed: parsed.embed,
       activePack,
+      context,
       onFileDone: () => reporter.tick(),
       // Multi-session stores (one hermes state.db = thousands of sessions)
       // need liveness BETWEEN file ticks.
@@ -594,10 +597,10 @@ async function runStatus(engine: BrainEngine, args: string[]): Promise<void> {
   }
 }
 
-export async function runTranscripts(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runTranscripts(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'> = {}): Promise<void> {
   const sub = args[0];
   if (sub === 'ingest') {
-    await runIngest(engine, args.slice(1));
+    await runIngest(engine, args.slice(1), dispatch);
     return;
   }
   if (sub === 'status') {
@@ -606,7 +609,7 @@ export async function runTranscripts(engine: BrainEngine, args: string[]): Promi
   }
   if (sub === 'recover') {
     const { runTranscriptsRecover } = await import('./transcripts-recover.ts');
-    await runTranscriptsRecover(engine, args.slice(1));
+    await runTranscriptsRecover(engine, args.slice(1), dispatch);
     return;
   }
   if (sub !== 'recent') {

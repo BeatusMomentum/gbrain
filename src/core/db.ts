@@ -5,7 +5,7 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
-import { isRetryableConnError } from './retry-matcher.ts';
+import { isRetryableConnError, isRetryableWorkerConnectError } from './retry-matcher.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -29,6 +29,10 @@ export const POOL_END_TIMEOUT_SECONDS = 2;
  * rejects is worse than one that races past a stuck socket. The race timer is
  * the real guarantee; `{ timeout }` just lets a healthy drain return in ms.
  *
+ * The guard timer stays referenced: an unref'd guard is not serviced under
+ * `bun test` on Windows, which disarms the bound. The finally clearTimeout keeps
+ * the fast path from holding the event loop.
+ *
  * Note callers that close MULTIPLE pools should `Promise.all` them rather than
  * awaiting sequentially, so the per-pool bounds run concurrently instead of
  * stacking.
@@ -39,7 +43,6 @@ export async function endPoolBounded(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const guard = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, POOL_END_TIMEOUT_SECONDS * 1000 + 500);
-    timer.unref?.();
   });
   try {
     await Promise.race([
@@ -105,6 +108,34 @@ export function resolvePrepare(url: string): boolean | undefined {
   }
 
   return undefined;
+}
+
+const DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
+
+/**
+ * Client connect timeout, in seconds, for every postgres() call site (module
+ * singleton, engine instance pool, ConnectionManager read + direct pools).
+ *
+ * postgres.js resolves each option as `k in opts ? opts[k] : k in url.query ? ...`
+ * (`parseOptions`), so an explicit `connect_timeout` in the options object
+ * shadows a `?connect_timeout=N` in the URL; a hardcoded value would silently
+ * discard the URL's. A positive integer in the URL wins (whole seconds, as
+ * libpq defines the parameter); anything else keeps the 10s default. `0` is
+ * not honoured: postgres.js reads it as "no timer at all", and every gbrain
+ * connect stays bounded.
+ */
+export function resolveConnectTimeoutSeconds(url: string): number {
+  try {
+    const parsed = new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+    const raw = parsed.searchParams.get('connect_timeout')?.trim();
+    if (raw && /^\d+$/.test(raw)) {
+      const seconds = Number(raw);
+      if (seconds > 0) return seconds;
+    }
+  } catch {
+    // URL parse failure — fall through to default
+  }
+  return DEFAULT_CONNECT_TIMEOUT_SECONDS;
 }
 
 export function resolvePoolSize(explicit?: number): number {
@@ -290,7 +321,7 @@ export async function connect(config: EngineConfig, hooks: { onpoisoned?: (statu
     const opts: Record<string, unknown> = {
       max: resolvePoolSize(),
       idle_timeout: 20,
-      connect_timeout: 10,
+      connect_timeout: resolveConnectTimeoutSeconds(url),
       // Explicit (matches the postgres.js implicit default; GBRAIN_POOL_MAX_LIFETIME_S overrides).
       max_lifetime: resolveMaxLifetimeSeconds(),
       types: {
@@ -399,6 +430,8 @@ export interface ConnectWithRetryOpts {
   baseDelayMs?: number;
   noRetry?: boolean;
   log?: (line: string) => void;
+  /** Which errors earn another attempt. Defaults to `isRetryableDbConnectError`. */
+  isRetryable?: (err: unknown) => boolean;
 }
 
 export async function connectWithRetry(
@@ -418,7 +451,7 @@ export async function connectWithRetry(
       return;
     } catch (e: unknown) {
       lastErr = e;
-      const retryable = isRetryableDbConnectError(e);
+      const retryable = (opts.isRetryable ?? isRetryableDbConnectError)(e);
       const isLast = i === attempts - 1;
       if (!retryable || isLast) {
         throw e;
@@ -431,4 +464,20 @@ export async function connectWithRetry(
   }
   // Unreachable, but TS needs the throw.
   throw lastErr;
+}
+
+/**
+ * Connect one per-worker pool of a parallel `import` or incremental `sync`.
+ * Each is a fresh TCP + TLS + auth handshake, and one that failed used to
+ * abort the whole import (under `sync --all`, drop the whole source). Same
+ * bounded retry as the CLI's startup connect (3 attempts, 1s/2s backoff;
+ * GBRAIN_NO_RETRY_CONNECT=1 opts out), plus CONNECT_TIMEOUT: the parent engine
+ * already reached this URL, so a timeout here is a starved handshake, not a
+ * bad route (see isRetryableWorkerConnectError).
+ */
+export function connectWorkerEngine(
+  engine: BrainEngine,
+  config: EngineConfig & { poolSize: number },
+): Promise<void> {
+  return connectWithRetry(engine, config, { isRetryable: isRetryableWorkerConnectError });
 }
