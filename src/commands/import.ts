@@ -41,6 +41,7 @@ import { importManagedFile } from '../core/persistence/import-mutations.ts';
 import { acceptedPendingReceipt } from '../core/persistence/accepted-pending.ts';
 import { estimateCostFromChars, lookupEmbeddingPrice } from '../core/embedding-pricing.ts';
 import { getEmbeddingModel } from '../core/ai/gateway.ts';
+import { GIT_CHECK_IGNORE_ARGS, GIT_LS_FILES_ARGS, GIT_LS_FILES_MAX_BUFFER, gitListCandidates, gitListSyncableFilesAsync, walkOptions, type CollectedWalk } from '../core/sync-walk.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
@@ -255,6 +256,8 @@ export async function runImport(
     heldPaths?: ReadonlySet<string>;
     /** #5988: each file's outcome (a throw arrives as `{ status: 'error', error }`); `'held'` = the caller held it, not a failure. */
     onFileResult?: (path: string, filePath: string, result: Pick<ImportResult, 'status' | 'error' | 'refusal' | 'frontmatter_recovery'>) => Promise<'held' | undefined>;
+    /** #5947: runImport's completed walk (root-relative, before `exclude`), so a full sync can reuse it. */
+    onCollected?: (walk: CollectedWalk) => void;
     /**
      * #753/#774: glob patterns to exclude from the import (same semantics as
      * `isSyncable`'s `exclude` — matched against the dir-relative path).
@@ -560,11 +563,12 @@ export async function runImport(
   const malformedExcluded: string[] = [];
   const company = currentCompanyBrainSync(sourceId);
   let allFiles = company ? company.plan.manifest.filter(entry => entry.disposition === 'included').map(entry => join(dir, entry.path))
-    : singleFile ? [dir] : collectSyncableFiles(dir, {
+    : singleFile ? [dir] : await collectSyncableFilesAsync(dir, {
     strategy, includeGitignored,
     includeHidden: opts.includeHidden,
     onExcluded: (rel) => { malformedExcluded.push(rel); },
   });
+  if (!company && !singleFile && !opts.signal?.aborted) opts.onCollected?.({ complete: true, root: dir, options: walkOptions({ strategy, includeGitignored, includeHidden: opts.includeHidden, exclude: opts.exclude }), files: allFiles.map(abs => relative(dir, abs)) });
   console.error(
     `[gbrain phase] import.collect_files done ${Date.now() - _walkT0}ms files=${allFiles.length}`,
   );
@@ -1311,7 +1315,7 @@ function isCollectibleForWalker(
 /** Whether the git work tree around `dir` ignores `dir` itself (`git check-ignore` exits 0). */
 function gitIgnoresDir(dir: string): boolean {
   try {
-    execFileSync('git', ['-C', dir, 'check-ignore', '-q', '.'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', dir, ...GIT_CHECK_IGNORE_ARGS], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -1340,11 +1344,7 @@ function gitListSyncableFiles(
 ): string[] | null {
   let stdout: string;
   try {
-    stdout = execFileSync(
-      'git',
-      ['-C', dir, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-      { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
-    );
+    stdout = execFileSync('git', ['-C', dir, ...GIT_LS_FILES_ARGS], { encoding: 'utf8', maxBuffer: GIT_LS_FILES_MAX_BUFFER, stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
     return null; // not a git work tree, or git not on PATH → FS-walk fallback
   }
@@ -1352,14 +1352,7 @@ function gitListSyncableFiles(
   // nothing here, so an explicit import of it would succeed with zero files. Walk it directly instead.
   if (stdout === '' && gitIgnoresDir(dir)) return null;
   const files: string[] = [];
-  for (const rel of stdout.split('\0')) {
-    if (!rel) continue;
-    // Malformed check FIRST (separately from the collectible gate) so the
-    // exclusion is reportable — other filters (strategy, prune, metafile)
-    // are silent by design; this one hides renameable content.
-    if (hasMalformedPathSegment(rel)) { onExcluded?.(rel); continue; }
-    if (!isCollectibleForWalker(rel, strategy, multimodalOn, includeHidden)) continue;
-    const full = join(dir, rel);
+  for (const full of gitListCandidates(dir, stdout, rel => isCollectibleForWalker(rel, strategy, multimodalOn, includeHidden), onExcluded)) {
     let st;
     try {
       st = lstatSync(full);
@@ -1473,6 +1466,22 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
 
   walk(dir, 0);
   return files.sort();
+}
+
+/**
+ * `collectSyncableFiles` for long-running async callers (import, full sync):
+ * the git fast path yields the event loop instead of holding it. Same output;
+ * the FS walk (`--include-gitignored`, non-git and git-ignored dirs) is the
+ * synchronous one.
+ */
+export async function collectSyncableFilesAsync(dir: string, opts: CollectOpts = {}): Promise<string[]> {
+  if (!opts.includeGitignored) {
+    const multimodalOn = process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+    const gitFiles = await gitListSyncableFilesAsync(dir,
+      rel => isCollectibleForWalker(rel, opts.strategy ?? 'markdown', multimodalOn, opts.includeHidden), opts.onExcluded);
+    if (gitFiles) return gitFiles;
+  }
+  return collectSyncableFiles(dir, { ...opts, includeGitignored: true });
 }
 
 /**
