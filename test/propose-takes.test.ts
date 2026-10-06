@@ -250,6 +250,31 @@ describe('parseExtractorOutput', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.claim_text).toBe('Z');
   });
+
+  // Last-bracket recovery picked up a bracket from prose after the JSON, so a
+  // well-formed response followed by a citation parsed as nothing.
+  test('recovers the array when a [Source: X] citation follows it', () => {
+    const raw = '[{"claim_text":"Cities send messages","kind":"take","holder":"brain","weight":0.65}]\n' +
+      'See [Source: alice-example].';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Cities send messages');
+  });
+
+  test('recovers a single object when a [[wikilink]] backlink follows it', () => {
+    const raw = '{"claim_text":"Y","kind":"hunch","holder":"brain","weight":0.4}\nRelated: [[people/alice-example]].';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('Y');
+  });
+
+  test('a bracket inside a quoted string field does not confuse the depth count', () => {
+    const raw = '[{"claim_text":"see [note] for context","kind":"take","holder":"brain","weight":0.5}]\n' +
+      'See [Source: X].';
+    const out = parseExtractorOutput(raw);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.claim_text).toBe('see [note] for context');
+  });
 });
 
 // ─── isWellFormedEmptyExtraction ────────────────────────────────────

@@ -48,6 +48,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
+import { findJsonCloseIndex } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -551,15 +552,13 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
   try {
     parsed = JSON.parse(text.slice(start));
   } catch {
-    // Fallback: truncate at last ] or } to handle trailing noise (e.g. leftover
-    // markdown fences after <think> stripping). Try array-closing first.
+    // Fallback: trim to the value's own closing bracket so trailing noise
+    // (leftover fences, a `[Source: X]` citation) cannot hijack recovery.
     const sliced = text.slice(start);
-    const lastArr = sliced.lastIndexOf(']');
-    const lastObj = sliced.lastIndexOf('}');
-    const end = Math.max(lastArr, lastObj);
-    if (end > 0) {
+    const closeOffset = findJsonCloseIndex(sliced);
+    if (closeOffset !== -1) {
       try {
-        parsed = JSON.parse(sliced.slice(0, end + 1));
+        parsed = JSON.parse(sliced.slice(0, closeOffset + 1));
       } catch {
         return [];
       }

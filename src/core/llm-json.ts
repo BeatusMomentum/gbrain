@@ -7,8 +7,11 @@
  *   1. Strip ```json...``` fences if present, then JSON.parse.
  *   2. Direct JSON.parse.
  *   3. Find the first {...} substring (or [...] when array=true) and parse.
- *   4. Retry 1-3 with reasoning blocks stripped (see stripReasoningBlocks).
- *   5. Return null.
+ *   4. When a fence was found and 1-3 failed on its extract, retry 2-3 from
+ *      the opening fence (or on the whole text): a ``` inside a JSON string
+ *      value ends the non-greedy fence extract early.
+ *   5. Retry 1-4 with reasoning blocks stripped (see stripReasoningBlocks).
+ *   6. Return null.
  *
  * Adversarial input throws are swallowed; callers get null on any failure.
  */
@@ -45,6 +48,39 @@ export function stripReasoningBlocks(raw: string): string {
     .trim();
 }
 
+/**
+ * Index of the bracket that closes the array or object opened at `s[0]`, or -1
+ * when `s[0]` is not `[`/`{` or the value never closes. Depth tracking skips
+ * brackets inside JSON strings (honoring escapes), so a `[Source: X]` citation
+ * after the value cannot be mistaken for its closer.
+ */
+export function findJsonCloseIndex(s: string): number {
+  const open = s[0];
+  const close = open === '[' ? ']' : open === '{' ? '}' : null;
+  if (close === null) return -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === open) {
+      depth++;
+    } else if (ch === close) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
 export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   const direct = parseLlmJsonInner<T>(raw, opts);
@@ -62,7 +98,20 @@ export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T 
 function parseLlmJsonInner<T>(raw: string, opts: { array?: boolean } = {}): T | null {
   if (typeof raw !== 'string' || !raw.trim()) return null;
   const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/i);
-  const cleaned = (fenceMatch ? fenceMatch[1] : raw).trim();
+  if (fenceMatch) {
+    const fenced = parseJsonCandidate<T>(fenceMatch[1].trim(), opts);
+    if (fenced !== null) return fenced;
+    // Only after the extract failed (so every payload that parsed before parses
+    // the same way): retry from the opening fence when it starts a line, else
+    // on the whole text, because the ``` sat inside a JSON string.
+    const at = fenceMatch.index ?? 0;
+    const startsLine = raw.slice(raw.lastIndexOf('\n', at - 1) + 1, at).trim() === '';
+    return parseJsonCandidate<T>((startsLine ? raw.slice(at) : raw).trim(), opts);
+  }
+  return parseJsonCandidate<T>(raw.trim(), opts);
+}
+
+function parseJsonCandidate<T>(cleaned: string, opts: { array?: boolean }): T | null {
   try {
     const direct = JSON.parse(cleaned);
     if (opts.array && Array.isArray(direct)) return direct as T;
