@@ -62,7 +62,11 @@ export interface ExtractTakesFromPagesOpts {
   sourceIdFilter?: string;
   /** Max pages to classify per run (caps cost). Default 50. */
   maxPages?: number;
-  /** #5059: continue strictly below this `(updated_at, id)` keyset cursor (a prior run's `next_before`). */
+  /**
+   * Resume point from an earlier run's `next_before` (#5043): only pages
+   * ordered after it (older `updated_at`, or the same instant and a lower id)
+   * are selected.
+   */
   before?: { updatedAt: string; id: number };
   /**
    * Also rescan pages that already hold takes (refresh semantics).
@@ -89,11 +93,12 @@ export interface ExtractTakesFromPagesResult {
   pages_scanned: number;
   claims_extracted: number;
   /**
-   * #5059: `<updated_at>,<id>` of the last page this run processed (exact
-   * timestamptz text), or null when it processed none. Pass it to the next
-   * run's `--before` to continue past pages that yielded no claims; a page
-   * skipped on a failure stays uncovered, so a run without `--before`
-   * selects it again.
+   * Where the next run should resume, as `<updated_at text>,<page id>`: the
+   * position of the last page this run finished with, or null if it finished
+   * none. Pages that yield no claims stay uncovered and would otherwise be
+   * selected first forever (#5043); passing this to `--before` moves past
+   * them. A page a budget stop never reached is not counted as finished, and
+   * one skipped on an error stays uncovered for a run without `--before`.
    */
   next_before: string | null;
   /** True if the run was a no-op because bootstrapEnabled is false. */
@@ -134,6 +139,8 @@ interface PageRow {
   type: string;
   compiled_truth: string;
   updated_at: string | Date;
+  /** `<updated_at::text>,<id>`, the value `next_before` reports for this page. */
+  resume_at: string;
 }
 
 /**
@@ -195,13 +202,14 @@ export async function extractTakesFromPages(
   const maxPages = opts.maxPages ?? 50;
   const holder = opts.holder ?? 'system';
   const params: unknown[] = [];
-  const sourceFilter = opts.sourceIdFilter ? `AND source_id = $${params.push(opts.sourceIdFilter)}` : '';
-  // #5059: keyset continuation. updated_at travels as its exact timestamptz
-  // text (microseconds and offset) and binds as text: a ::timestamptz-typed
-  // parameter makes postgres.js serialize it through a JS Date (milliseconds).
-  const beforeFilter = opts.before
-    ? `AND (updated_at, id) < ($${params.push(opts.before.updatedAt)}::text::timestamptz, $${params.push(opts.before.id)})`
-    : '';
+  const bind = (value: unknown): string => `$${params.push(value)}`;
+  const scope: string[] = [];
+  if (opts.sourceIdFilter) scope.push(`source_id = ${bind(opts.sourceIdFilter)}`);
+  // Resume strictly after the caller's position in the (updated_at DESC,
+  // id DESC) order. The timestamp is bound as text and cast in SQL so its
+  // microseconds survive; a parameter typed as timestamptz goes through a JS
+  // Date in postgres.js and loses them.
+  if (opts.before) scope.push(`(updated_at, id) < (${bind(opts.before.updatedAt)}::text::timestamptz, ${bind(opts.before.id)})`);
 
   // Fetch eligible pages. Order by updated_at DESC so recently-edited
   // pages get bootstrapped first.
@@ -215,14 +223,13 @@ export async function extractTakesFromPages(
     ? ''
     : `AND NOT EXISTS (SELECT 1 FROM takes t WHERE t.page_id = pages.id)`;
   const pages = await engine.executeRaw<PageRow>(
-    `SELECT id, slug, source_id, type, compiled_truth, updated_at::text AS updated_at
+    `SELECT id, slug, source_id, type, compiled_truth, updated_at, updated_at::text || ',' || id AS resume_at
        FROM pages
       WHERE type IN (${typesList})
         AND deleted_at IS NULL
         AND length(COALESCE(compiled_truth, '')) > 200
         ${coveredFilter}
-        ${sourceFilter}
-        ${beforeFilter}
+        ${scope.map((condition) => `AND ${condition}`).join(' ')}
       ORDER BY updated_at DESC, id DESC
       LIMIT ${maxPages}`,
     params,
@@ -235,7 +242,6 @@ export async function extractTakesFromPages(
   let budgetExhausted = false;
   let duplicatesSkipped = 0;
   const skipped: Array<{ slug: string; reason: string }> = [];
-  let nextBefore: string | null = null;
   const model = opts.model || getChatModel();
   const meter = new BudgetMeter({
     budgetUsd: await resolveBudgetUsd(engine, opts.budgetUsd),
@@ -253,8 +259,6 @@ export async function extractTakesFromPages(
   };
 
   for (const page of pages) {
-    const previousCursor = nextBefore;
-    nextBefore = `${String(page.updated_at)},${page.id}`;
     pagesScanned++;
     opts.onProgress?.(pagesScanned, pages.length, claimsExtracted);
 
@@ -296,8 +300,6 @@ export async function extractTakesFromPages(
       label: 'takes_bootstrap',
     });
     if (!budget.allowed) {
-      // The page was never classified: the next run resumes at it.
-      nextBefore = previousCursor;
       budgetExhausted = true;
       break;
     }
@@ -410,10 +412,12 @@ export async function extractTakesFromPages(
     }
   }
 
+  // Every page the loop entered is finished except the one a budget stop broke on.
+  const finished = budgetExhausted ? pagesScanned - 1 : pagesScanned;
   return {
     pages_scanned: pagesScanned,
     claims_extracted: claimsExtracted,
-    next_before: nextBefore,
+    next_before: finished > 0 ? pages[finished - 1]!.resume_at : null,
     consent_gate_blocked: false,
     llm_unavailable: false,
     pages_skipped: pagesSkipped,
