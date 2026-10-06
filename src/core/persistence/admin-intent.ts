@@ -12,7 +12,7 @@ export async function writerAdminState(engine: SqlEngine): Promise<string> {
       'mode_epoch',to_jsonb(persistence_brain)->'mode_epoch') FROM persistence_brain WHERE singleton=1),
     'sources', (SELECT jsonb_agg(jsonb_build_array(id,incarnation,archived,local_path,config->>'kind') ORDER BY id) FROM sources),
     'fallback', (SELECT value FROM config WHERE key='sync.repo_path'),
-    'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,encode(sha256(convert_to(manifest::text,'UTF8')),'hex')) ORDER BY id) FROM persistence_worktrees),
+    'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,manifest) ORDER BY id) FROM persistence_worktrees),
     'bindings', (SELECT jsonb_agg(jsonb_build_array(source_id,source_incarnation,worktree_id,relative_path,topology_generation::text) ORDER BY source_id) FROM persistence_source_bindings),
     'hosts', (SELECT jsonb_agg(jsonb_build_array(worktree_id,host_id,local_path,coordination_path) ORDER BY worktree_id,host_id) FROM persistence_host_bindings),
     'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id) FROM gbrain_cycle_locks)

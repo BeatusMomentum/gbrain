@@ -24,10 +24,7 @@ records refuse without deleting uncertain state. Regression coverage:
 - `src/core/persistence/admin-intent.ts` — whole-brain topology fingerprints
   bind a deliberate writer action to inspected state. Administration requires
   an exact action name and a fresh fingerprint; the mutation transaction
-  rechecks it under metadata locks. Each stored worktree manifest is hashed in
-  SQL (`sha256` of `manifest::text`) before aggregation, so the full manifest
-  stays covered without nesting it in the aggregate; cached manifest digests
-  are never trusted. Generic confirmation and terminal presence
+  rechecks it under metadata locks. Generic confirmation and terminal presence
   are not substitutes. This protects routine repair from accidental topology
   changes, not against a malicious trusted local administrator. Read the
   [operator procedure](../topologies.md) before changing its preconditions.
@@ -47,9 +44,7 @@ The CLI uses the shared BigInt replacer when rendering PostgreSQL epochs.
 Behavioral coverage lives in `test/helpers/deep-research-contract.ts`, its
 PGLite/Postgres callers, `test/e2e/deep-research-http.test.ts` (live OAuth
 rescoping/revocation), `test/deep-research-cli.test.ts`,
-`test/persistence-admin-intent.test.ts`,
-`test/persistence-admin-fingerprint.test.ts` (every topology field and the
-full manifest on both engines), and
+`test/persistence-admin-intent.test.ts`, and
 `test/e2e/persistence-admin-intent.test.ts` (actual routine and deliberate CLI
 sequences). These tests establish the exercised boundaries, not a universal
 authorization guarantee.
