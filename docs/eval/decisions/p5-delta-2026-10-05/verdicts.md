@@ -28,6 +28,7 @@ and idiomatic leaves, exchange moves, first-day starts). Link typing is as at `0
   "moved to [X] (role)") and idiomatic leave phrases the cue lexicon does not read. A future change needs its own
   preregistration and held-out set.
 
-## Pending
+## First run
 
-First-run verdicts H3 (junk audit), H5b (agent loop duplicates) and H6 (typed lines help answers).
+First-run verdicts are in `../p5-dev-2026-10-04/verdicts.md`: H5b (agent loop duplicates) failed, so
+`put_page.similar_pages` is off by default. H3 (junk audit) and H6 (typed lines help answers) are pending.

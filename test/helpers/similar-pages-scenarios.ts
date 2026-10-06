@@ -15,11 +15,14 @@ const put = async (ctx: OperationContext, slug: string, title: string, extra = '
   return written.outcome ?? written;
 };
 
-/** Creates get lexical candidates with their evidence; updates and distinct pages get none. */
+/** Off by default (held-out verdict H5b); once on, creates get lexical candidates with their evidence and updates and distinct pages get none. */
 export async function similarPagesOnCreate(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx }) => {
     const acme = await put(ctx, 'companies/acme-example', 'Acme Example', 'aliases: [Acme Corp]\n');
     expect(acme.similar_pages).toBeUndefined();
+    const { findSimilarPages } = await import('../../src/core/similar-pages.ts');
+    expect(await findSimilarPages(engine, { sourceId: 'default', slug: 'companies/acme-example-2', title: 'Acme Example', excludePrivate: false })).toBeNull();
+    await engine.setConfig('put_page.similar_pages', 'true');
     expect((await put(ctx, 'companies/acme-example-2', 'Acme Example')).similar_pages)
       .toMatchObject({ candidates: [{ slug: 'companies/acme-example', source_id: 'default', evidence: 'exact_title' }], semantic: 'not_checked' });
     const aliasHit = await put(ctx, 'companies/acme-corp', 'Acme Corp');
@@ -42,7 +45,8 @@ export async function similarPagesOnCreate(databaseUrl?: string) {
 
 /** A caller that may not read private pages is never pointed at one. */
 export async function similarPagesSkipPrivate(databaseUrl?: string) {
-  await managedBrain(async ({ ctx }) => {
+  await managedBrain(async ({ engine, ctx }) => {
+    await engine.setConfig('put_page.similar_pages', 'true');
     await put(ctx, 'people/secret-example', 'Secret Example', 'visibility: private\n');
     const local = await put(ctx, 'people/secret-example-2', 'Secret Example');
     expect(local.similar_pages.candidates).toContainEqual(expect.objectContaining({ slug: 'people/secret-example' }));

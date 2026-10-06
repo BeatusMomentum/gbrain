@@ -27,7 +27,7 @@ const MAX_CANDIDATES = 3;
  * Existing pages in `sourceId` that a newly created `slug` probably
  * duplicates. `excludePrivate` keeps private pages out for callers that may
  * not read them. Returns null when `slug` already existed (not a create) or
- * when `put_page.similar_pages` is off.
+ * when `put_page.similar_pages` is not turned on (default off).
  */
 export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, input: {
   sourceId: string; slug: string; title: string; excludePrivate: boolean;
@@ -43,8 +43,8 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
       SELECT NULL::text AS slug, 'page_exists' AS evidence, 0 AS tier, 0::real AS sim FROM pages p
         WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
       UNION ALL
-      SELECT NULL::text, 'disabled', 0, 0::real FROM config c
-        WHERE c.key = 'put_page.similar_pages' AND lower(trim(c.value)) IN ('false', '0', 'no', 'off')
+      SELECT NULL::text, 'disabled', 0, 0::real WHERE NOT EXISTS (SELECT 1 FROM config c
+        WHERE c.key = 'put_page.similar_pages' AND lower(trim(c.value)) IN ('true', '1', 'yes', 'on'))
       UNION ALL
       SELECT p.slug, 'exact_title' AS evidence, 1 AS tier, 1.0::real AS sim FROM pages p
         WHERE p.source_id = $1 AND p.slug <> $2 AND p.deleted_at IS NULL AND $3 <> '' AND p.title ILIKE $7 ESCAPE '\\'${privacy}
@@ -62,7 +62,7 @@ export async function findSimilarPages(engine: Pick<BrainEngine, 'executeRaw'>, 
     SELECT DISTINCT ON (slug) slug, evidence, tier, sim FROM hits ORDER BY slug, tier, sim DESC`,
   [input.sourceId, input.slug, title, normalizeAlias(title), basename, dir, title.replace(/[\\%_]/g, ch => `\\${ch}`)]);
   // The page already exists (a create raced another writer, or this is an update): not a create, no advisory.
-  // `put_page.similar_pages` false (default on) turns the advisory off; read in the same statement.
+  // The advisory runs only when `put_page.similar_pages` is true (default off, held-out verdict H5b); read in the same statement.
   if ((rows as Array<{ evidence: string }>).some(row => row.evidence === 'page_exists' || row.evidence === 'disabled')) return null;
   const ranked = (rows as Array<{ slug: string; evidence: SimilarPageEvidence; tier: number; sim: number }>)
     .sort((a, b) => a.tier - b.tier || b.sim - a.sim || a.slug.localeCompare(b.slug)).slice(0, MAX_CANDIDATES);

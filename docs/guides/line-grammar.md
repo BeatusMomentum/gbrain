@@ -2,8 +2,8 @@
 
 Three write-path features keep the graph honest without an LLM call: typed
 relation and fact lines a person can type in any editor, a queue of link
-targets that have no page yet, and a "did you mean an existing page?" hint
-when a write creates a page.
+targets that have no page yet, and an opt-in "did you mean an existing page?"
+hint when a write creates a page.
 
 ## Typed relation lines
 
@@ -83,18 +83,26 @@ Off switch: `gbrain config set wanted_pages.enabled false`.
 
 ## Similar-page hints
 
-When a write creates a page, a few indexed lexical checks look for an existing
-page in the same source that is probably the same thing: the same title, a
-declared alias, the same name in another directory, or a very similar title in
-the same directory. Up to three slugs come back in `similar_pages` with the
-evidence that matched. It is a question, never a merge: move the content with
-`edit_page` and delete the new page if it is the same thing, keep both if not.
-Semantic (embedding) duplicate detection is not part of this check
+Off by default; turn it on with `gbrain config set put_page.similar_pages true`.
+In the held-out agent test, the hint cut duplicate pages from 3.06% to 2.22%,
+but the 95% interval of that change ([−2.8, +1.1] points) includes zero, and
+wrong merges rose from 2.50% to 3.75%, past the one-point limit. Claude Sonnet
+5.5 behaved the same with and without it. All of the change came from
+`gpt-6.1-sol`, whose duplicates fell from 2.8% to 1.1% while its wrong merges
+rose from 5.0% to 7.5%.
+
+When it is on and a write creates a page, a few indexed lexical checks look for
+an existing page in the same source that is probably the same thing: the same
+title, a declared alias, the same name in another directory, or a very similar
+title in the same directory. Up to three slugs come back in `similar_pages` with
+the evidence that matched. It is a question, never a merge: move the content
+with `edit_page` and delete the new page if it is the same thing, keep both if
+not. Semantic (embedding) duplicate detection is not part of this check
 (`semantic: "not_checked"`).
 
 **Say to your agent:** *"Before you file this, check whether we already have a page for this company."*
 
-Off switch: `gbrain config set put_page.similar_pages false`.
+Turn off again: `gbrain config set put_page.similar_pages false`.
 
 ## Field usage
 

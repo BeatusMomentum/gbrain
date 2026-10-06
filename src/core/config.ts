@@ -1611,7 +1611,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Validity ranges on typed relation lines stored as dated edge transitions
   // (core/link-effective.ts). On by default (held-out verdict H7).
   'line_grammar.effective_ranges',
-  // put_page "did you mean an existing page?" advisory on creates (core/similar-pages.ts).
+  // put_page "did you mean an existing page?" advisory on creates (core/similar-pages.ts). Off by default (held-out verdict H5b).
   'put_page.similar_pages',
   // #5584: skillopt optimizer output cap (default 32000 thinking / 4096 otherwise).
   'skillopt.reflect_max_tokens',
