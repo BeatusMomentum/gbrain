@@ -74,3 +74,12 @@ does, so a push to master does not cancel the nightly full corpus.
 - 2026-10-05: created (green master wave, lane C): solo verify phase,
   typecheck heap ceiling, full-corpus shard classification, macOS typecheck
   skip (#6040, #6056).
+
+## Evals in the unit lane
+
+`check:eval-chronicle` and `check:eval-canary` are not in the `bun run verify`
+battery. Their test-file twins, `test/eval-chronicle.test.ts` and
+`test/eval-canary.test.ts`, run the identical evals in the unit matrix, and
+CI's verify job and unit matrix always run together. The package scripts stay
+for on-demand runs, so a local caller who runs only `verify` gets neither eval.
+
