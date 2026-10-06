@@ -173,31 +173,32 @@ describe('parseJudgeJson failure signalling (#2606)', () => {
   });
 });
 
-describe('parseJudgeJson: trailing bracketed prose does not hijack recovery', () => {
-  const EVENT = '{"when":"2026-06-18","who":[],"what":"x","kind":"meeting"}';
+// #5209: the judge reply's array ends at its own `]`. Slicing to the last `]`
+// in the reply pulled a trailing footnote or wikilink into the JSON and lost
+// a valid answer as parse_failed.
+describe('parseJudgeJson ignores brackets in prose after the array (#5209)', () => {
+  const meeting = (what: string) => JSON.stringify({ when: '2027-03-02', who: ['alice-example'], what, kind: 'meeting' });
 
-  test('recovers the array when a [Source: X] citation follows it', () => {
-    const arr = parseJudgeJson(`[${EVENT}]\nSee [Source: alice-example].`);
-    expect(Array.isArray(arr)).toBe(true);
-    expect(arr!.length).toBe(1);
+  test('a footnote marker after the array', () => {
+    expect(parseJudgeJson(`[${meeting('kickoff')}]\nBased on the transcript [1].`)).toEqual([JSON.parse(meeting('kickoff'))]);
   });
 
-  test('recovers the array when a [[wikilink]] backlink follows it', () => {
-    expect(parseJudgeJson(`[${EVENT}]\nRelated: [[people/alice-example]].`)!.length).toBe(1);
+  test('two events, then a wikilink line', () => {
+    const out = parseJudgeJson(`Events:\n[${meeting('kickoff')},${meeting('retro')}]\nAlso see [[projects/acme-example]]`);
+    expect(out?.map(e => e.what)).toEqual(['kickoff', 'retro']);
   });
 
-  test('a legitimate empty array followed by bracketed prose is still []', () => {
-    expect(parseJudgeJson('[]\nSee [Source: X].')).toEqual([]);
+  test('a closing bracket and an escaped quote inside a field', () => {
+    const out = parseJudgeJson(`[${meeting('she said "ship it]" twice')}] (refs: [a], [b])`);
+    expect(out?.[0]?.what).toBe('she said "ship it]" twice');
   });
 
-  test('a bracket inside a quoted string field does not confuse the depth count', () => {
-    const arr = parseJudgeJson('[{"when":"2026-06-18","who":[],"what":"see [note]","kind":"meeting"}]\nSee [Source: X].');
-    expect(arr!.length).toBe(1);
-    expect(arr![0]!.what).toBe('see [note]');
+  test('control: a cut-off array followed by a citation is still a failure', () => {
+    expect(parseJudgeJson(`[${meeting('kickoff')}, {"when":"2027-03-03"\n[Source: notes]`)).toBeNull();
   });
 
-  test('an array that never closes is still a parse failure', () => {
-    expect(parseJudgeJson(`[${EVENT}, {"when":"2026-06-19"`)).toBeNull();
+  test('control: prose with brackets but no JSON array is still a failure', () => {
+    expect(parseJudgeJson('No events found [see policy].')).toBeNull();
   });
 });
 

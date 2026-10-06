@@ -3,7 +3,7 @@
  * anchor scan and the atom shape gate. Peeled out of extract-atoms.ts, which
  * re-exports the public names.
  */
-import { findJsonCloseIndex, stripReasoningBlocks } from '../llm-json.ts';
+import { matchingCloseBracket, stripReasoningBlocks } from '../llm-json.ts';
 import { ATOM_TYPES } from './extract-atoms-schema.ts';
 
 export interface ExtractedAtom {
@@ -83,7 +83,7 @@ function parseArrayAtOffset(
     parsed = JSON.parse(slice);
   } catch {
     // Trim back to the array's own closing bracket to drop trailing prose.
-    const arrayEnd = findJsonCloseIndex(slice);
+    const arrayEnd = matchingCloseBracket(slice);
     if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
     try {
       parsed = JSON.parse(slice.slice(0, arrayEnd + 1));

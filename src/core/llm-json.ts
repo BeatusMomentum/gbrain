@@ -50,34 +50,39 @@ export function stripReasoningBlocks(raw: string): string {
 }
 
 /**
- * Index of the bracket that closes the array or object opened at `s[0]`, or -1
- * when `s[0]` is not `[`/`{` or the value never closes. Depth tracking skips
- * brackets inside JSON strings (honoring escapes), so a `[Source: X]` citation
- * after the value cannot be mistaken for its closer.
+ * Where the JSON array or object opening at `text[openAt]` ends: the index of
+ * its own closing bracket, or -1 when `text[openAt]` is not `[`/`{` (including
+ * an out-of-range `openAt`) or the value is still open at the end of `text`.
+ * String literals are skipped whole, so a bracket quoted in a field cannot end
+ * the value, and a bracketed citation after the value (`[Source: X]`,
+ * `[[wikilink]]`) is never reached. Only the opener's own kind is counted; a
+ * stray closer of the other kind is left for JSON.parse to reject.
  */
-export function findJsonCloseIndex(s: string): number {
-  const open = s[0];
-  const close = open === '[' ? ']' : open === '{' ? '}' : null;
-  if (close === null) return -1;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === '\\') escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
+export function matchingCloseBracket(text: string, openAt = 0): number {
+  const opener = text.charAt(openAt);
+  if (opener !== '[' && opener !== '{') return -1;
+  const closer = opener === '[' ? ']' : '}';
+  let open = 0;
+  for (let i = openAt; i < text.length; i++) {
+    const ch = text[i];
     if (ch === '"') {
-      inString = true;
-    } else if (ch === open) {
-      depth++;
-    } else if (ch === close) {
-      depth--;
-      if (depth === 0) return i;
+      i = closingQuote(text, i);
+      if (i === -1) return -1;
+    } else if (ch === opener) {
+      open += 1;
+    } else if (ch === closer) {
+      open -= 1;
+      if (open === 0) return i;
     }
+  }
+  return -1;
+}
+
+/** Index of the `"` that ends the string literal starting at `text[quoteAt]`, or -1 if it never ends. */
+function closingQuote(text: string, quoteAt: number): number {
+  for (let i = quoteAt + 1; i < text.length; i++) {
+    if (text[i] === '\\') i += 1;
+    else if (text[i] === '"') return i;
   }
   return -1;
 }
@@ -126,7 +131,7 @@ function parseLlmJsonInner<T>(raw: string, opts: { array?: boolean } = {}): T | 
  * fence regex is non-greedy, so it ends at the first ``` after the opener,
  * and a verbatim quote of a code block puts exactly that inside a JSON string.
  * The matched ``` is then one of two things, and the string-aware bracket scan
- * (findJsonCloseIndex) tells them apart without trusting any later ```:
+ * (matchingCloseBracket) tells them apart without trusting any later ```:
  *
  *   - a quote inside an unfenced reply: the first JSON value in the text
  *     opens before the match and closes after it, so that value is the answer;
@@ -147,8 +152,8 @@ function recoverFromQuotedFence<T>(raw: string, fence: RegExpMatchArray, opts: {
     const offset = raw.slice(from).search(/[[{]/);
     if (offset < 0) return null;
     const start = from + offset;
-    const close = findJsonCloseIndex(raw.slice(start));
-    return close < 0 ? null : { start, text: raw.slice(start, start + close + 1) };
+    const close = matchingCloseBracket(raw, start);
+    return close < 0 ? null : { start, text: raw.slice(start, close + 1) };
   };
 
   const leading = firstValueFrom(0);
