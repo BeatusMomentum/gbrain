@@ -30,7 +30,10 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
-import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient } from '../core/grants/model.ts';
+import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, validatePrincipalGrant, type GrantSources } from '../core/grants/model.ts';
+import { OperationError, opError, type OpErrorOpts } from '../core/ops/contract.ts';
+import { exitCliError, usageError } from '../cli/cli-error.ts';
+import { ALL_SOURCES, isValidSourceId } from '../core/source-id.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 
@@ -71,8 +74,8 @@ async function withConfiguredSql<T>(
   }
 }
 
-async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[] } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write]'); process.exit(1); }
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; source?: string } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--sources <id>]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
   // here, never silently brick (or widen) the token.
@@ -85,9 +88,6 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       process.exit(1);
     }
   }
-  const token = generateToken('gbrain_');
-  const hash = hashToken(token);
-
   try {
     await withConfiguredSql(async (_sql, engine) => {
       // v0.28: persist per-token takes-holder allow-list. Default ['world'] keeps
@@ -95,24 +95,32 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
         ? opts.takesHolders
         : ['world'];
+      // #4780: the source is checked before any token exists, so a typo or an
+      // archived source mints nothing.
+      const sources = await createSourceGrant(engine, name, opts.source);
+      const token = generateToken('gbrain_');
       // F3: the token is born on the unified grant shape (columns + the
       // permissions JSONB mirror older binaries read). Scopes land in the
       // original-schema scopes TEXT[] column; omitted → NULL → the historical
       // grandfathered full-access grant.
       await insertUnifiedToken(engine, {
-        name, tokenHash: hash, ...(opts.scopes !== undefined ? { scopes: opts.scopes } : {}),
-        grant: { sources: { kind: 'default' }, takesHolders, allowedOperations: null },
+        name, tokenHash: hashToken(token), ...(opts.scopes !== undefined ? { scopes: opts.scopes } : {}),
+        grant: { sources, takesHolders, allowedOperations: null },
       });
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
-      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}):\n`);
+      const sourceLine = sources.kind === 'federated'
+        ? `source=${sources.writeSource}`
+        : 'source=default (pass --sources <id> to bind another source)';
+      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}, ${sourceLine}):\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
       console.log(`Change its grants: gbrain auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
     });
   } catch (e: any) {
+    if (e instanceof OperationError) exitCliError(e, 'auth');
     if (e.code === '23505') {
       console.error(`A token named "${name}" already exists. Revoke it first or use a different name.`);
     } else {
@@ -120,6 +128,36 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
     }
     process.exit(1);
   }
+}
+
+const SOURCES_LIST_FIX: OpErrorOpts['fix'] = {
+  argv: ['gbrain', 'sources', 'list', '--json'], consent: [], actor: 'agent', requires_exclusive: false,
+  why: 'Lists the live source ids; pass exactly one of them to --sources.',
+  verify: { argv: ['gbrain', 'sources', 'list', '--json'] },
+};
+
+/**
+ * #4780: the source grant `auth create --sources <id>` mints. Without the
+ * flag the token keeps the historical `default` grant. With it, the id must
+ * name a live (unarchived) source, and the token is bound to that one source
+ * for both writes and reads, the same federated shape `auth rescope --sources`
+ * writes. Never widens: no list, no `none`, no all-sources sentinel.
+ */
+export async function createSourceGrant(engine: BrainEngine, name: string, source: string | undefined): Promise<GrantSources> {
+  if (source === undefined) return { kind: 'default' };
+  const live = await engine.executeRaw<{ ok: number }>(
+    'SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1', [source]);
+  if (live.length === 0) {
+    throw opError('unknown_source', 'auth create --sources names no live source; no token was created.',
+      'Pick a live source id from `gbrain sources list --json` and run auth create again.',
+      { why: 'A token bound to a missing or archived source could never write or read; the id is checked before any token is minted.', fix: SOURCES_LIST_FIX });
+  }
+  const sources: GrantSources = { kind: 'federated', writeSource: source, readSources: [source] };
+  validatePrincipalGrant({
+    principal: { kind: 'legacy_token', id: name }, scopes: [], sources, allowedOperations: null, takesHolders: null,
+    revision: 0, shape: 'unified', drift: [], permissionsMalformed: false,
+  }, { operationNames: new Set() });
+  return sources;
 }
 
 /** `auth permissions <name> set-takes-holders <list>`: alias of `auth rescope --token <name> --takes-holders <list>`. */
@@ -1157,7 +1195,7 @@ async function clientsCmd(args: string[]) {
  * register-client #3990 normalization precedent). Validation against the
  * allowed scope set happens in create() so the error path exits cleanly.
  */
-export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; error?: string } {
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; source?: string; error?: string; sourcesError?: OperationError } {
   const takesIdx = rest.indexOf('--takes-holders');
   const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
   // Fail closed on a missing/flag-like value: `--scopes` as the last arg
@@ -1177,8 +1215,33 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   const scopes = scopesValue !== undefined
     ? scopesValue.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
     : undefined;
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue);
-  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}) };
+  // #4780: `--sources` binds the token to exactly one live source.
+  const sourcesIdx = rest.indexOf('--sources');
+  const sourcesValue = sourcesIdx >= 0 ? rest[sourcesIdx + 1] : undefined;
+  if (sourcesIdx >= 0) {
+    const sourcesError = createSourcesRefusal(sourcesValue);
+    if (sourcesError) return { name: '', sourcesError };
+  }
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== sourcesValue);
+  return {
+    name: positional || '', takesHolders,
+    ...(scopes !== undefined ? { scopes } : {}),
+    ...(sourcesValue !== undefined ? { source: sourcesValue } : {}),
+  };
+}
+
+/** Usage refusal for an `auth create --sources` value that is not exactly one source id; never echoes the value. */
+function createSourcesRefusal(value: string | undefined): OperationError | undefined {
+  const refuse = (message: string) => usageError(message,
+    'Pass exactly one source id, e.g. `gbrain auth create <name> --sources <id>`, or omit --sources for the default source.',
+    { why: 'auth create binds a new token to one source; widening or emptying a grant is `gbrain auth rescope --token <name> --sources …`.', fix: SOURCES_LIST_FIX });
+  if (value === undefined || value.startsWith('--')) return refuse('auth create --sources requires a source id.');
+  if (value.includes(',')) return refuse('auth create --sources takes exactly one source id, not a list.');
+  if (value === 'none' || value === 'all' || value === ALL_SOURCES) {
+    return refuse('auth create --sources takes one source id; none and all-sources grants are not available at mint time.');
+  }
+  if (!isValidSourceId(value)) return refuse('auth create --sources got an invalid source id (1-32 lowercase letters, digits and interior hyphens).');
+  return undefined;
 }
 
 const AUTH_USAGE = `GBrain Token Management
@@ -1191,8 +1254,10 @@ Admin dashboard login (running HTTP server):
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
-                                                          Create a legacy bearer token. v0.28: --takes-holders
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--sources <id>]
+                                                          Create a legacy bearer token. --sources binds it to
+                                                          one live source for writes and reads (omit = the
+                                                          'default' source). v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
@@ -1306,7 +1371,8 @@ export async function runAuth(args: string[]): Promise<void> {
         console.error(`Error: ${parsed.error}`);
         process.exit(1);
       }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
+      if (parsed.sourcesError) exitCliError(parsed.sourcesError, 'auth');
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, source: parsed.source });
       return;
     }
     case 'list': await list(); return;
