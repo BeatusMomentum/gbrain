@@ -32,6 +32,7 @@ export const INJECTION_PATTERNS: Array<{ name: string; rx: RegExp; replacement: 
   // word in Spanish and Indonesian (#5910).
   { name: 'do-anything-now',  rx: /\bDAN\b/g, replacement: '[redacted]' },
   { name: 'do-anything-now-phrase', rx: /\b(?:do\s+anything\s+now|developer\s+mode\s+enabled?)\b/gi, replacement: '[redacted]' },
+  { name: 'dan-mode',         rx: /\bdan\s+mode\b/gi, replacement: '[redacted]' },
   // Tag injection — try to close the structural <take> wrapper
   { name: 'close-take',       rx: /<\s*\/\s*take\s*>/gi, replacement: '&lt;/take&gt;' },
   { name: 'open-system',      rx: /<\s*system\s*>/gi, replacement: '&lt;system&gt;' },
