@@ -1183,6 +1183,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
     }
 
+    // #4907: a phase knob the phase would ignore is refused before the write.
+    const { PHASE_CONFIG_KEYS, parsePhaseConfigValue } = await import('../core/cycle/phase-config-values.ts');
+    if (PHASE_CONFIG_KEYS.includes(key)) {
+      try { parsePhaseConfigValue(key, value); }
+      catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
+    }
+
     // #5254: an unknown value would silently keep refusing unbound writes.
     const { UNBOUND_WRITE_KEY, parseUnboundWriteValue } = await import('../core/persistence/unbound-source.ts');
     if (key === UNBOUND_WRITE_KEY) {
