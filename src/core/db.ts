@@ -5,7 +5,7 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
-import { isRetryableConnError, isRetryableWorkerConnectError } from './retry-matcher.ts';
+import { isConnectTimeoutError, isRetryableConnError } from './retry-matcher.ts';
 
 let sql: ReturnType<typeof postgres> | null = null;
 let connectedUrl: string | null = null;
@@ -438,8 +438,16 @@ export interface ConnectWithRetryOpts {
   baseDelayMs?: number;
   noRetry?: boolean;
   log?: (line: string) => void;
-  /** Which errors earn another attempt. Defaults to `isRetryableDbConnectError`. */
-  isRetryable?: (err: unknown) => boolean;
+  /**
+   * Also retry postgres.js CONNECT_TIMEOUT (#5946). Set it only when this
+   * process already holds a connection to the same database_url, as the
+   * per-worker pools of parallel import and incremental sync do: the route is
+   * then known to work, so a missed handshake timer means the handshake was
+   * starved (typically by a long synchronous stretch on this event loop), and
+   * no session existed yet, so dialing again is safe. Every other caller
+   * keeps failing fast on a timeout, which usually means a bad route.
+   */
+  retryConnectTimeout?: boolean;
 }
 
 export async function connectWithRetry(
@@ -459,7 +467,7 @@ export async function connectWithRetry(
       return;
     } catch (e: unknown) {
       lastErr = e;
-      const retryable = (opts.isRetryable ?? isRetryableDbConnectError)(e);
+      const retryable = isRetryableDbConnectError(e) || (opts.retryConnectTimeout === true && isConnectTimeoutError(e));
       const isLast = i === attempts - 1;
       if (!retryable || isLast) {
         throw e;
@@ -472,20 +480,4 @@ export async function connectWithRetry(
   }
   // Unreachable, but TS needs the throw.
   throw lastErr;
-}
-
-/**
- * Connect one per-worker pool of a parallel `import` or incremental `sync`.
- * Each is a fresh TCP + TLS + auth handshake, and one that failed used to
- * abort the whole import (under `sync --all`, drop the whole source). Same
- * bounded retry as the CLI's startup connect (3 attempts, 1s/2s backoff;
- * GBRAIN_NO_RETRY_CONNECT=1 opts out), plus CONNECT_TIMEOUT: the parent engine
- * already reached this URL, so a timeout here is a starved handshake, not a
- * bad route (see isRetryableWorkerConnectError).
- */
-export function connectWorkerEngine(
-  engine: BrainEngine,
-  config: EngineConfig & { poolSize: number },
-): Promise<void> {
-  return connectWithRetry(engine, config, { isRetryable: isRetryableWorkerConnectError });
 }
