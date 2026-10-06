@@ -6,8 +6,9 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 | Part | Gate | Held-out result | Verdict | Default |
 |---|---|---|---|---|
 | Write cost (section 2) | commit-path generative attempts = 0 in both arms | 0 in the extraction-on and extraction-off arms | PASS | Guard on; cost published |
-| Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6%; the second custodian's rescore with the fixed scorer: 16 of 319 (5.0%), upper bound 8.0% | FAIL | `think.quote_verify` and `dream.quote_verify` off by default (opt-in) |
-| Quote grounding retest (section 6, amendment 2026-10-05) | same gate, fresh sealed quotes | pending (second custodian) | — | stays off until PASS |
+| Quote grounding (section 6) | supported spans wrongly flagged, Wilson 95% upper bound ≤ 5% | 4.7% wrongly flagged, upper bound 7.6%; the second custodian's rescore with the fixed scorer: 16 of 319 (5.0%), upper bound 8.0% | FAIL | superseded by the retest below |
+| Quote grounding retest on sealed-confirmation-v2 | — | stopped after a 26-question pilot and 31 of 260 questions; no gate computed (v2 is reserved for release decisions) | VOID | — |
+| Quote grounding retest (section 6, amendment 2026-10-05) | same gate, fresh custodian-written sessions, build 7715e647a | 5 of 321 supported spans wrongly flagged (1.56%), upper bound 3.59% | PASS | `think.quote_verify` and `dream.quote_verify` on by default |
 | Semantic withdrawal review (section 3) | precision LB ≥ 0.90, end-to-end recall ≥ 0.60, zero proposals on corrected values, N5 unchanged | precision LB 0.970 (124/124 eval families, 248 actions), end-to-end recall 0.977, 0 proposals on corrected values, N5 contracts pass | PASS | `review_withdraw` on (proposes where the conflict slot is on with a TypeSafe key); reference calibration shipped |
 | Advertised tool surface (section 7) | pooled success ≥ control − 3 pts, no leak rise, hidden-tool family ≥ control − 5 pts | `starter` −8.5 pts pooled (95% CI −12.5 to −4.8), hidden-tool −50.0; `verbs` −9.9 pts (−13.3 to −6.7), hidden-tool −21.2; no leaks | FAIL (both arms) | new installs advertise `full`; `mcp.advertised_surface` stays opt-in; `rate_answer` not added as an eighth verb |
 | HTTP graph freshness (report-only) | remote `put_page`: timeline row at commit; mention links after the `links` effect; typed edges only after extract | as stated, on PGLite (`test/remote-graph-freshness.test.ts`) | REPORT | no switch |
@@ -15,29 +16,36 @@ Each part's held-out result, measured by the custodian (P0) against the gates in
 
 ## Quote grounding
 
-The held-out failure keeps the new quote grounding (think answers and the `synthesize` verb, `think --save`,
-concept narratives, pattern pages) opt-in: `gbrain config set think.quote_verify true` and
-`gbrain config set dream.quote_verify true`. The dream synthesis quote check that predates P8
-(`dream.synthesize.quote_verify`, default on) matches master exactly: the matching tolerance P8 adds (markdown
-link syntax read as its text, punctuation and elision at a quote's edges) applies only to the opt-in coverage's
-sources (`groundSource(…, { tolerant: true })`), because the held-out run measured it only as part of that
-coverage, which failed.
+The new quote grounding (think answers and the `synthesize` verb, `think --save`, concept narratives, pattern
+pages) is on by default after its retest passed; `gbrain config set think.quote_verify false` and
+`gbrain config set dream.quote_verify false` turn it off. The dream synthesis quote check that predates P8
+(`dream.synthesize.quote_verify`, default on) matches master byte for byte: the matching tolerance P8 adds applies
+only to the new coverage's sources (`groundSource(…, { tolerant: true })`).
 
-Root cause of the over-flagging, from the second custodian's rerun (the sealed text was not shared): the scorer
-fix left the verdict unchanged at 16 of 319 supported spans flagged (5.0%, upper bound 8.0%), and most false flags
-were matcher gaps in the opt-in tolerance. The tolerant matcher now also accepts:
+The record, in order:
 
-1. link display text written as `[Name]` without the target, against the source's `[Name](target)`;
-2. the source's inner `"` written as `'` inside a quotation (a repair never inserts a `"`);
-3. editorial brackets in or at the end of a word: `[T]he` for `the`, `decide[s]` or `want[ed]` for `decide` or
-   `want`;
-4. a quote of the user's own question (policy decision): the question is a grounding source for think answers.
+1. **First sealed run: FAIL.** 4.7% of supported spans wrongly flagged (upper bound 7.6%) on build 6c958d6e2.
+2. **Rescore: FAIL stands.** The second custodian fixed a scorer defect (flagged quotes were matched to answer
+   spans by substring containment) and replayed the sealed answers and judge labels with no model calls: 16 of 319
+   (5.0%, upper bound 8.0%). Record: gbrain-evals `docs/benchmarks/2026-10-05-heldout-verdicts/p8-quotes-rerun-2026-10-05.json`.
+   Most false flags were matcher gaps, now handled by the tolerant matcher (described without sealed text):
+   - link display text written as `[Name]` without the target, against the source's `[Name](target)`;
+   - the source's inner `"` written as `'` inside a quotation (a repair never inserts a `"`);
+   - editorial brackets in or at the end of a word: `[T]he` for `the`, `decide[s]` or `want[ed]`;
+   - a quote of the user's own question (policy decision): the question is a grounding source for think answers.
+3. **Retest on sealed-confirmation-v2: VOID.** Stopped after a 26-question pilot and 31 of 260 questions, with no
+   gate computed, because that corpus is reserved for release decisions; its results did not shape P8.
+4. **Retest on fresh material: PASS.** Per the 2026-10-05 retest amendment, on frozen build 7715e647a, think model
+   `claude-sonnet-5-5`, judge `gpt-6.1-sol` (it sees the question, so a quote of the question counts as
+   supported): 320 questions over 552 custodian-written synthetic sessions (new seed, disjoint from the dev
+   questions and the first sealed set, no sealed-confirmation-v2 content). 5 of 321 supported spans wrongly flagged
+   (1.56%, Wilson 95% upper bound 3.59%; bar below 5%). Reported, not gated: 5 of 173 questions had a wrong flag
+   (upper bound 6.6%). Cost about $15. Record: gbrain-evals
+   `docs/benchmarks/2026-10-05-heldout-verdicts/p8-quotes-retest2-2026-10-05.json` (gbrain-evals#85).
 
-The custodian estimates about 2.2% wrongly flagged (upper bound 4.5%) after items 1–3, lower with item 4. That is an
-estimate, not a verdict: per the 2026-10-05 retest amendment in the preregistration, the second custodian writes a
-fresh sealed quote set and runs it against the frozen build with the same gate. Quote grounding stays off by
-default until that retest passes. The dream synthesis quote check (`dream.synthesize.quote_verify`) stays
-byte-identical to master; none of these changes reach it.
+What the gate does not show: of the 7 spans the judge labeled unsupported, gbrain flagged 2 and kept 5. The run is
+sized to measure false flags only, so quote grounding is not yet a measured safety net against made-up quotes.
+Follow-up: a run sized to measure how often unsupported quotes are caught.
 
 ## Advertised tool surface
 
