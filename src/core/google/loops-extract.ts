@@ -118,8 +118,10 @@ export function loopExtractionEligibility(
   // below only counts messages the owner actually wrote — an "Accepted:" RSVP
   // Calendar sends on the owner's behalf (SENT label, METHOD:REPLY) is still
   // calendar mail, so a pure invitation exchange never pays for a model call.
+  // RFC 3834 auto-submitted mail (tracker notices, auto-replies) is machine
+  // mail by its own declaration and counts exactly like a noise sender.
   const substantive = messages.filter(
-    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m),
+    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m) && !m.autoSubmitted,
   );
   if (substantive.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
 
@@ -432,8 +434,13 @@ export async function runLoopsExtract(
         confidence: 0.85,
       });
       factId = result.id;
-    } catch {
-      /* the loop row still lands; facts projection is best-effort */
+    } catch (err) {
+      // The loop row still lands; the facts projection is best-effort, but its
+      // failure is logged. Slug, source and a bounded error only: the
+      // commitment text and quote stay out of logs.
+      const code = (err as { code?: unknown })?.code;
+      console.warn(`[loops_extract] fact projection failed slug=${payload.slug} source=${payload.sourceId}` +
+        ` (${typeof code === 'string' ? code : err instanceof Error ? err.name : 'error'}): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
     }
 
     // Counterparty slug: high-confidence resolutions only. The facts layer's
