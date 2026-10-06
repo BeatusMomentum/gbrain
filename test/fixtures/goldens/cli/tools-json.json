@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 205271,
-    "stdoutSha256": "da809efc7b48f86f0bbcfd84a381dd40355662fd644b446ec28dd219e69d5b94",
+    "stdoutBytes": 205173,
+    "stdoutSha256": "cc60b726a258b932cc425079c3011b4a1f0b376ea6c258273e54d019ab75e9cc",
     "toolNames": [
       "remember",
       "entity",
@@ -1110,8 +1110,6 @@
           "detail": "string?",
           "embedding_column": "string?",
           "expand": "boolean?",
-          "explain": "boolean?",
-          "explain_target": "string?",
           "fields": "string?",
           "image": "string?",
           "image_mime": "string?",
@@ -1167,14 +1165,6 @@
             "expand": {
               "description": "Default true; false skips the LLM expansion.",
               "type": "boolean"
-            },
-            "explain": {
-              "description": "Per-row score_details.",
-              "type": "boolean"
-            },
-            "explain_target": {
-              "description": "Expected page (slug or source:slug): why it is missing.",
-              "type": "string"
             },
             "fields": {
               "description": "lean (remote default) or full.",
@@ -3838,6 +3828,7 @@
           "anchor": "string?",
           "model": "string?",
           "question": "string",
+          "reference_date": "string?",
           "rounds": "number?",
           "save": "boolean?",
           "since": "string?",
@@ -3857,6 +3848,10 @@
             },
             "question": {
               "description": "The question to think about",
+              "type": "string"
+            },
+            "reference_date": {
+              "description": "YYYY-MM-DD the question's relative time words resolve against (default: today in brain.timezone).",
               "type": "string"
             },
             "rounds": {
