@@ -28,12 +28,16 @@ const noEngine = null as unknown as BrainEngine;
 
 async function captureLog(fn: () => Promise<void>): Promise<string> {
   const orig = console.log;
+  const origExit = process.exit;
   let out = '';
   console.log = (...a: unknown[]) => { out += a.map(String).join(' ') + '\n'; };
+  // A refused write fails the calling test instead of ending the runner.
+  (process as { exit: unknown }).exit = ((code?: number) => { throw new Error(`process.exit(${code}) during a write expected to succeed`); }) as unknown as typeof process.exit;
   try {
     await fn();
   } finally {
     console.log = orig;
+    process.exit = origExit;
   }
   return out;
 }
@@ -202,6 +206,7 @@ const GATEWAY_MAPPED_KEYS = [
   'voyage_api_key',
   'dashscope_api_key',
   'deepseek_api_key',
+  'zhipu_api_key',
   'google_api_key',
 ] as const;
 
@@ -231,6 +236,21 @@ describe('config set — vendor API keys are FILE-plane canonical', () => {
         expect(cfg[key]).toBe(`secret-for-${key}`);
       });
     }
+  });
+
+  test('zhipu_api_key: set lands in config.json, never the DB plane, and set + show print it redacted', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-apikey-zhipu-'));
+    await withEnv({ GBRAIN_HOME: parent, DATABASE_URL: undefined }, async () => {
+      // The null engine proves the write never reaches the DB plane.
+      const setOut = await captureLog(() => runConfig(noEngine, ['set', 'zhipu_api_key', 'zp-TEST-VALUE-123']));
+      expect(setOut).toContain('file plane');
+      expect(setOut).not.toContain('zp-TEST-VALUE-123');
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      expect((JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>).zhipu_api_key).toBe('zp-TEST-VALUE-123');
+      const showOut = await captureLog(() => runConfig({} as unknown as BrainEngine, ['show']));
+      expect(showOut).toContain('zhipu_api_key: ***');
+      expect(showOut).not.toContain('zp-TEST-VALUE-123');
+    });
   });
 
   test('unset removes the key from the file plane, so set/unset round-trip on one plane', async () => {
