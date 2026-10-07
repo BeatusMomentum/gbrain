@@ -260,6 +260,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.0.0-wave11', text: 'Doctor\'s new `persistence_write_stall` check warns when a managed write has held its claim longer than `persistence.max_claim_ms` (default 10 minutes) and names the stuck phase; `gbrain sources writer status --json` shows each running request\'s `claim` phase.' },
   { since: '0.0.0-wave11', text: 'On a brain whose managed persistence was never activated, `gbrain sources writer deactivate` now releases sources claimed before activation (the dry run lists them as `pre_activation_claims`), so classic `gbrain sync` of them works again; `gbrain sources writer deactivate --dry-run --json` previews it.' },
   { since: '0.0.0-wave11', text: 'Writer transfer, `gbrain sources set-path` and reclone now compare only the files Git tracks in a Git checkout, so ignored files such as `.env.local` are never read or need copying and a clean `git clone` verifies; a transfer prepared before this release is prepared again (`writer_manifest_rescope_required`), and upgrading drops the per-file path and hash maps older releases stored.' },
+  { since: '0.0.0-wave11', text: 'A managed sync import that races a database-only write to the same page is now held with code `concurrent_write` (the sync finishes, the database version is kept) instead of leaving the source `blocked_by_failures`; `gbrain sources reconcile <source> <slug> --preview` resolves it.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */

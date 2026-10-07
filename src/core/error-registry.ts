@@ -99,6 +99,7 @@ export const CODES = {
   code_reused: { class: 'caller', summary: "Google connect credential error: code reused.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   colon_slug_windows_write_through: { class: 'caller', summary: "A colon slug cannot be written through on Windows." },
   command_failed: { class: 'server', summary: "The command failed before it wrote its JSON result." },
+  concurrent_write: { class: 'caller', summary: "A managed sync import raced a database-only write to the same page, so the file is held and the page keeps the database version; neither was overwritten.", why: "The page's live revision was written by a committed non-sync request after the import was frozen, so the Git file and the database genuinely diverge; choosing either silently would lose the other.", docs: 'docs/guides/write-refusals.md#concurrent_write', suggestion: 'Preview the reconciliation with gbrain sources reconcile <source> <slug> --preview, resolve it with the user, then run gbrain sources retry-held <source> and gbrain sync --source <source> --no-pull.' },
   config_error: { class: 'caller', summary: "A required configuration value or directory is missing or invalid." },
   confirmation_required: { class: 'consent', summary: "The command needs the user's authorization before it runs; nothing was changed.", exit: 3 },
   conflicting_source_scope: { class: 'caller', summary: "--source and --all-sources were both given." },

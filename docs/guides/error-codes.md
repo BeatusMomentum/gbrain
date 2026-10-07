@@ -486,6 +486,16 @@ More: [docs/guides/write-refusals.md#colon_slug_windows_write_through](../../doc
 |---|---|---|---|---|---|---|
 | The command failed before it wrote its JSON result. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### concurrent_write
+
+<a id="concurrent_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed sync import raced a database-only write to the same page, so the file is held and the page keeps the database version; neither was overwritten. | The page's live revision was written by a committed non-sync request after the import was frozen, so the Git file and the database genuinely diverge; choosing either silently would lose the other. | Preview the reconciliation with gbrain sources reconcile <source> <slug> --preview, resolve it with the user, then run gbrain sources retry-held <source> and gbrain sync --source <source> --no-pull. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#concurrent_write](../../docs/guides/write-refusals.md#concurrent_write)
+
 ### config_error
 
 <a id="config_error"></a>

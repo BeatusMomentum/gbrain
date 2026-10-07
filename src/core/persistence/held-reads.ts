@@ -28,7 +28,7 @@ export interface HeldPage { record: GitHoldRecord; revision: string | null }
  * Held files of the sources in a read scope: new files with no page (`missing`) and pages whose newer file is held (`stale`);
  * `fences` (present only when some are) counts the #6188 `invalid_fence` holds among them, which route to a fence edit instead of frontmatter repair.
  */
-export interface HeldCoverage { source_id: string; missing: number; stale: number; fences?: number }
+export interface HeldCoverage { source_id: string; missing: number; stale: number; fences?: number; concurrent?: number }
 
 /** `get_page.file_held`. */
 export interface FileHeld {
@@ -84,24 +84,25 @@ export function readHeldCoverage(engine: Exec, scope: { sourceId?: string; sourc
   const ids = scope.sourceIds ?? (scope.sourceId !== undefined && scope.sourceId !== ALL_SOURCES ? [scope.sourceId] : null);
   if (ids && !ids.length) return Promise.resolve([]);
   return cached(request, `coverage:${ids ? [...ids].sort().join(',') : '*'}`, async () => {
-    const rows = await engine.executeRaw<{ source_id: string; count: number | string; stale: number | string; fences: number | string }>(`SELECT s.id AS source_id,
+    const rows = await engine.executeRaw<{ source_id: string; count: number | string; stale: number | string; fences: number | string; concurrent: number | string }>(`SELECT s.id AS source_id,
         COALESCE((h.completed_keys->0->>'count')::int,0) AS count, COALESCE((h.completed_keys->0->>'stale')::int,0) AS stale,
-        COALESCE((h.completed_keys->0->>'fences')::int,0) AS fences
+        COALESCE((h.completed_keys->0->>'fences')::int,0) AS fences, COALESCE((h.completed_keys->0->>'concurrent')::int,0) AS concurrent
       FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
       WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
         AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
       ORDER BY s.id`, [GIT_HOLD_SUMMARY_OP, ids]);
     return rows.map(row => {
       const count = Number(row.count), stale = Math.min(Number(row.stale), count), fences = Math.min(Number(row.fences), count);
-      return { source_id: row.source_id, missing: count - stale, stale, ...(fences ? { fences } : {}) };
+      const concurrent = Math.min(Number(row.concurrent), count - fences);
+      return { source_id: row.source_id, missing: count - stale, stale, ...(fences ? { fences } : {}), ...(concurrent ? { concurrent } : {}) };
     });
   });
 }
 
 /** D6: which repair a held source needs, from its counts. */
 export function coverageRoute(source: HeldCoverage): HoldRepairRoute {
-  const fences = source.fences ?? 0;
-  return { fences, others: Math.max(0, source.missing + source.stale - fences) };
+  const fences = source.fences ?? 0, concurrent = source.concurrent ?? 0;
+  return { fences, others: Math.max(0, source.missing + source.stale - fences - concurrent), ...(concurrent ? { concurrent } : {}) };
 }
 
 function repairArgv(sourceId: string): string[] {
@@ -117,10 +118,12 @@ function repairArgv(sourceId: string): string[] {
 export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; route?: HoldRepairRoute }>, why: string): Action {
   const frontmatter = sources.filter(source => !source.route || source.route.others > 0).map(source => `'${repairArgv(source.source_id).join(' ')}'`);
   const fences = sources.filter(source => source.route && source.route.fences > 0).map(source => source.source_id);
+  const concurrent = sources.filter(source => source.route?.concurrent).map(source => source.source_id);
   const first = sources[0]!;
   const parts = [
     ...(frontmatter.length ? [`Please run ${frontmatter.join(', ')} on the brain host to preview the fixes, then apply them.`] : []),
     ...(fences.length ? [`Some held files have a facts or takes table gbrain cannot import: on the brain host run ${fences.map(id => `'gbrain sources status ${id}'`).join(', ')} to see which file and table, edit that table and commit, then run ${fences.map(id => `'gbrain sync --source ${id} --no-pull'`).join(', ')}.`] : []),
+    ...(concurrent.length ? [`Some notes changed in their files while an agent saved a different version to the brain, so both were kept: on the brain host run ${concurrent.map(id => `'gbrain sources status ${id}'`).join(', ')} and reconcile each named note with 'gbrain sources reconcile <source> <slug> --preview'.`] : []),
   ];
   return { argv: first.route ? holdRepairSteps(first.source_id, first.route).argv : repairArgv(first.source_id), consent: [], actor: 'host_admin', requires_exclusive: false, why,
     user_message: `Some files in your brain could not be imported, so answers from it can miss or show outdated notes. ${parts.join(' ')}` };
@@ -128,7 +131,7 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
 
 /** The route of one hold record. */
 export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRoute {
-  return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : { fences: 0, others: 1 };
+  return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : record.code === 'concurrent_write' ? { fences: 0, others: 0, concurrent: 1 } : { fences: 0, others: 1 };
 }
 
 /** `get_page.file_held` for a page whose newer file is held; the path only for trusted local callers. */

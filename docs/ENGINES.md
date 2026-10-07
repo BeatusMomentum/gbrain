@@ -679,6 +679,16 @@ config set persistence.max_claim_ms 900000` raises it, and `config set` refuses
 anything else with `invalid_params`). See
 [troubleshooting](guides/troubleshooting.md#persistence-write-stall).
 
+<a id="concurrent-write-hold"></a>**A database-only write racing a managed sync import.** When a write that
+does not publish the canonical file (write-through off, a sandboxed or a
+derived write) commits to a page while managed sync imports a newer Git
+version of it, the import's receipt fails `revision_conflict`. If the page's
+live revision was written by a committed non-sync request for that page, the
+file is held with code `concurrent_write` and the sync continues; neither
+version is overwritten (#6194). Resolve it with `gbrain sources reconcile
+<source> <slug> --preview`; see
+[troubleshooting](guides/troubleshooting.md#concurrent-write-hold).
+
 ## JSONB writes: never double-encode
 
 Writing a JS value into a `jsonb` column has exactly two correct forms. Get this

@@ -38,6 +38,7 @@ import { isContentRefusal } from '../import-screen.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
+import { concurrentWriteHold, concurrentWriteProof } from './sync-concurrent-write.ts';
 import { faultPoint } from './fault-points.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
@@ -224,6 +225,9 @@ function writeDiagnostic(cursor: Cursor, pending: Pending, row: WriteRequest): M
   };
   const diagnostic: ManagedSyncWriteDiagnostic = { source_id: cursor.sourceId, slug: pending.slug,
     path: pending.intent.path, write_error: code, ...detail, write_request: publicWriteReceipt(receiptFor(row)) };
+  // #6194: an import that lost to a database write the hold could not prove; --retry-failed re-imports the Git version over it.
+  if (terminal && code === 'revision_conflict' && pending.intent.kind === 'managed_sync_import') diagnostic.suggestion = `The page changed in the database after this import was frozen. `
+    + `Before retrying, compare the file and the page with gbrain sources reconcile ${cursor.sourceId} ${pending.slug} --preview (it writes nothing): a retry re-imports the Git version over the database one. ${diagnostic.suggestion}`;
   if (terminal) diagnostic.suggestion += ` After repair, run ${checkpointRetryCommand({ sourceId: cursor.sourceId, processingOptions: cursor.processingOptions, syncOptions: cursor.syncOptions ?? null, repoPath: pending.intent.repoPath })} to start a new request. Without --retry-failed, the frozen terminal request returns the same outcome. Skipping failures cannot bypass a managed write.`;
   if (diagnostic.reason === 'pinned_git_worktree_conflict' && pending.intent.path && pending.intent.content !== null) {
     try {
@@ -413,7 +417,8 @@ async function convertBlockedCursor(engine: BrainEngine, blocked: Cursor, key: s
 }
 
 /**
- * #6188 (E10): a page request of this run that failed with a fence refusal is held in the
+ * #6188 (E10): a page request of this run that failed with a fence refusal (or, #6194, a
+ * `revision_conflict` proven to come from a concurrent database-only write) is held in the
  * same run instead of blocking it (the single path, and a bulk group's failed member, which
  * the group step leaves as the single pending entry). Other requests of the source settle
  * first, within the run's wait budget; when they are still running the run returns
@@ -427,7 +432,10 @@ async function holdFailedFenceRequest(engine: BrainEngine, cursor: Cursor, key: 
   if (!run.screen || cursor.companyPlan || pending.intent.kind !== 'managed_sync_import' || typeof pending.intent.content !== 'string') return null;
   const fence = fenceReceiptLocation(done);
   const entry = cursor.entries[cursor.index];
-  if (!fence || !entry || entry.path !== pending.intent.path) return null;
+  if (!entry || entry.path !== pending.intent.path) return null;
+  // #6194 (D4): a revision conflict proven to come from a concurrent database-only write is held the same way (sync-concurrent-write.ts).
+  const proof = fence ? null : await concurrentWriteProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pending, done });
+  if (!fence && !proof) return null;
   const deadline = performance.now() + waitMs;
   for (;;) {
     const unfinished = await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) LIMIT 1", [cursor.sourceId]);
@@ -436,7 +444,8 @@ async function holdFailedFenceRequest(engine: BrainEngine, cursor: Cursor, key: 
     if (performance.now() >= deadline) return 'pending';
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  const hold = prepareTimeFenceHold(entry, pending.slug, pending.pageId, fence, pending.intent.content, pending.intent.blobOid);
+  const hold = fence ? prepareTimeFenceHold(entry, pending.slug, pending.pageId, fence, pending.intent.content, pending.intent.blobOid)
+    : concurrentWriteHold(entry, pending.slug, pending.pageId!, pending.intent, proof!);
   const base: Cursor = { ...cursor }; delete base.group;
   return saveCursor(engine, key, cursor, advanceHeld(base, [...(cursor.convertedFromFailed ?? []), pending.requestId]), false, assertActive, async tx => {
     await heldWrite(cursor, hold, run.observedAt!)(tx);
