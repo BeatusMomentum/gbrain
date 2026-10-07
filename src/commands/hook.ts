@@ -113,6 +113,7 @@ import {
 import { realpathOrResolve } from '../core/path-confine.ts';
 import { isClaudeCliSelfTranscriptPath } from '../core/ai/providers/claude-cli-scratch.ts';
 import { withoutPhysicalRootMetadata } from '../core/persistence/root-metadata.ts';
+import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
 
@@ -818,6 +819,7 @@ async function dirtyTreePush(
     const root = await resolveBootstrapWorkspaceRoot(ws);
     if (!root) return null;
     if (!(await treeNeedsPush(root))) return null; // clean + up to date → nothing to recover
+    if (isManagedFilesystemPath(root)) return { reason: 'push_managed_coordinator' };
     // There IS unpushed work. Defer until the repo phase verified privacy +
     // recorded repo_url — never recover-push to an unverified origin
     // (create-repo-first race). Only fires when work actually exists (P2-1).
@@ -944,6 +946,7 @@ async function stopPushIfDue(ws: string, io: HookIo): Promise<string> {
   // verified the origin and recorded repo_url (create-repo-first race).
   if (!(await repoPhaseComplete(root))) return 'push_deferred_repo_pending';
   if (!(await treeNeedsPush(root))) return 'push_clean';
+  if (isManagedFilesystemPath(root)) return 'push_managed_coordinator';
   try {
     // Written BEFORE the spawn so repeated fail-fast children stay debounced
     // on the healthy path; the [D20] failing-status bypass handles retries.
@@ -1858,7 +1861,9 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
   try {
     if (ws) {
       const root = await resolveBootstrapWorkspaceRoot(ws);
-      if (root && (await repoPhaseComplete(root))) {
+      if (root && isManagedFilesystemPath(root)) {
+        if (outcome === 'ok' && !reason) reason = 'push_managed_coordinator';
+      } else if (root && (await repoPhaseComplete(root))) {
         try {
           (io.spawnPush ?? spawnDetachedPush)(root);
           if (outcome === 'ok' && !reason) reason = 'push_spawned';

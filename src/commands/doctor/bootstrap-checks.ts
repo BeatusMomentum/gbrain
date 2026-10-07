@@ -16,6 +16,7 @@ import { resolveGbrainHome } from '../../core/gbrain-home.ts';
 import { isManagedFilesystemPath } from '../../core/persistence/filesystem-guard.ts';
 import { withoutPhysicalRootMetadata } from '../../core/persistence/root-metadata.ts';
 import { agentFix } from './check-fix.ts';
+import type { PushStatusEntry } from '../../core/workspace-push.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../version.ts';
 import type { Check } from '../doctor.ts';
 
@@ -68,6 +69,35 @@ function pushHealthCheck(root: string | null | undefined, status: 'warn' | 'fail
       'A managed canonical worktree is published by its persistence owner, not by a workspace push; the probe shows whether that owner is running and publishing, and changes nothing.',
       'bootstrap_push_health'),
   };
+}
+
+/** #6083: a tree with nothing uncommitted (ownership metadata aside) on a named branch, 0 commits ahead of a configured origin. */
+function treeMatchesOrigin(root: string): boolean {
+  const g = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
+  try {
+    g('remote', 'get-url', 'origin');
+    const branch = g('branch', '--show-current');
+    return branch !== '' && withoutPhysicalRootMetadata(g('status', '--porcelain')) === ''
+      && g('rev-list', '--count', `origin/${branch}..HEAD`) === '0';
+  } catch { return false; }
+}
+
+/**
+ * #6083: the recorded push failure finding. A failure whose tree now matches
+ * its origin is superseded (nothing is unpushed, and on a managed worktree
+ * nothing ever clears a refusal record); the first live failure decides.
+ */
+function recordedPushFailureCheck(failing: PushStatusEntry[], ws: string | null): Check {
+  const live = failing.filter((s) => !s.repoRoot || !treeMatchesOrigin(s.repoRoot));
+  if (live.length === 0) {
+    return { name: 'bootstrap_push_health', status: 'ok',
+      message: `last recorded push failed for ${failing.map((s) => s.repoRoot).join(', ')} (${failing[0]!.ts ?? 'unknown'}), but the tree matches its origin branch with nothing uncommitted; nothing to push` };
+  }
+  const s = live[0]!;
+  const target = s.repoRoot ?? ws ?? undefined;
+  const rest = live.length > 1 ? ` [+${live.length - 1} more workspace(s)]` : '';
+  return pushHealthCheck(target, 'warn', `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}`,
+    ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``);
 }
 
 export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise<Check[]> {
@@ -278,11 +308,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
       const { PUSH_STALE_MS } = await import('../hook.ts'); // hook.ts owns the threshold (single source)
       const failing = pushStatuses.filter((s) => s.ok === false);
       if (failing.length > 0) {
-        const s = failing[0]!;
-        const target = s.repoRoot ?? ws ?? undefined;
-        const rest = failing.length > 1 ? ` [+${failing.length - 1} more workspace(s)]` : '';
-        checks.push(pushHealthCheck(target, 'warn', `last workspace push FAILED${target ? ` for ${target}` : ''} (${s.ts ?? 'unknown'}): ${s.reason ?? 'unknown'}${rest}`,
-          ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``));
+        checks.push(recordedPushFailureCheck(failing, ws));
       } else {
         const stamps = pushStatuses.map((s) => Date.parse(s.ts ?? '')).filter((t) => Number.isFinite(t));
         const stalest = stamps.length > 0 ? Math.min(...stamps) : NaN;
