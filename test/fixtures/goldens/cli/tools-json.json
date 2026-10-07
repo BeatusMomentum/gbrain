@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 207549,
-    "stdoutSha256": "ba03674e7846f4d445030acf6a2bb53cd5544abdff7f8d28e480903f1e852586",
+    "stdoutBytes": 208397,
+    "stdoutSha256": "daa48a3e341a9686dc20d0d57b1d6e7ee16afc01a53b4248fef6b1c7e3ee587b",
     "toolNames": [
       "remember",
       "entity",
@@ -104,6 +104,7 @@
       "takes_resolve",
       "takes_supersede",
       "takes_remove",
+      "takes_rebuild",
       "whoami",
       "sources_add",
       "sources_list",
@@ -4316,6 +4317,35 @@
           "required": [
             "slug",
             "row_num"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Rebuild one page's takes index from the takes fence the page holds. Local-only. Rows whose number and claim still match keep their resolution; rows the index and the fence disagree on are re-inserted from the fence. CLI: `gbrain takes rebuild <slug>`.",
+        "idempotent": true,
+        "local_only": true,
+        "mutating": true,
+        "name": "takes_rebuild",
+        "parameters": {
+          "request_id": "string?",
+          "slug": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "request_id": {
+              "description": "UUID; retry with it on timeout.",
+              "type": "string"
+            },
+            "slug": {
+              "description": "Page slug.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "slug"
           ],
           "type": "object"
         },
