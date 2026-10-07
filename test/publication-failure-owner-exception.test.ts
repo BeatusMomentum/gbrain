@@ -18,7 +18,7 @@ import { receiptFor } from '../src/core/persistence/journal.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
-import { publicFailureDetail } from '../src/core/persistence/publication-failure.ts';
+import { publicFailureDetail, OWNER_EXCEPTION_MESSAGE } from '../src/core/persistence/publication-failure.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -62,7 +62,9 @@ describe('#5929 owner exceptions keep a bounded identity', () => {
     expect(thrown).toBeInstanceOf(OperationError);
     expect(thrown.code).toBe('storage_error');
     expect(row.error_code).toBe('storage_error');
-    expect(row.error_message).toBe(`Publication failed (TypeError in owner build ${VERSION}). Inspect owner diagnostics.`);
+    expect(row.error_message).toBe(OWNER_EXCEPTION_MESSAGE);
+    expect(row.error_message).not.toContain('TypeError');
+    expect(row.error_message).not.toContain(VERSION);
     const detail = row.error_detail as Record<string, any>;
     expect(detail).toMatchObject({ origin: 'owner_exception', error_class: 'TypeError', stage: 'publication', attempt: { consumer_version: VERSION } });
     expect(detail.frame).toBe('src/core/persistence/page-prepare.ts:120');
@@ -73,7 +75,8 @@ describe('#5929 owner exceptions keep a bounded identity', () => {
   test('an errno-bearing error keeps the errno', async () => {
     const { row } = await failingWrite(Object.assign(new Error('no space left on /home/alice-example/brain'), { code: 'ENOSPC' }));
     expect(row.error_detail).toMatchObject({ origin: 'owner_exception', error_class: 'Error', errno: 'ENOSPC' });
-    expect(row.error_message).toBe(`Publication failed (Error ENOSPC in owner build ${VERSION}). Inspect owner diagnostics.`);
+    expect(row.error_message).toBe(OWNER_EXCEPTION_MESSAGE);
+    expect(row.error_message).not.toContain('ENOSPC');
     expect(JSON.stringify(row)).not.toContain('alice-example');
   });
 

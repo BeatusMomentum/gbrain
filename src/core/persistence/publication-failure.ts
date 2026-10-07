@@ -94,15 +94,20 @@ function gbrainFrame(stack: unknown): string | undefined {
   return undefined;
 }
 
-/** #5929: the bounded identity of an unexpected owner exception, with a message naming only the class, errno and owner build. */
+/**
+ * #5929: the public message of an unexpected owner exception. Remote submitters read it, so it names no class,
+ * errno or build; those stay in the owner-only detail, `gbrain write-request <id>` on the brain host and the consumer log.
+ */
+export const OWNER_EXCEPTION_MESSAGE = 'Publication failed on an unexpected owner exception. On the brain host, gbrain write-request <request_id> and the persistence consumer log name its class, source frame and owner build.';
+
+/** #5929: the bounded identity of an unexpected owner exception (class, errno, frame), kept owner-only. */
 export function ownerExceptionFailure(error: unknown): PublicationFailure {
   const e = (error && typeof error === 'object' ? error : {}) as { constructor?: { name?: unknown }; code?: unknown; errno?: unknown; stack?: unknown };
   const errorClass = ident(e.constructor?.name);
   const raw = typeof e.code === 'string' ? e.code : typeof e.errno === 'number' ? String(e.errno) : undefined;
   const errno = raw && ERRNO.test(raw) ? raw : undefined;
   const frame = gbrainFrame(e.stack);
-  const what = [errorClass, errno].filter(Boolean).join(' ');
-  return { code: 'storage_error', message: `Publication failed (${what ? `${what} in ` : ''}owner build ${writerStamp().version}). Inspect owner diagnostics.`,
+  return { code: 'storage_error', message: OWNER_EXCEPTION_MESSAGE,
     detail: { origin: 'owner_exception', ...(errorClass ? { error_class: errorClass } : {}), ...(errno ? { errno } : {}), ...(frame ? { frame } : {}) } };
 }
 
