@@ -260,6 +260,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.0.0-wave11', text: 'Frontmatter validation and `--fix` no longer flag or rewrite valid YAML (a block-scalar line shaped like `Key: "a", then "b"`); a file an earlier `gbrain frontmatter validate --fix` rewrote can be restored from its backup under ~/.gbrain/backups/frontmatter/.' },
   { since: '0.0.0-wave11', text: 'Facts the sweep extracts from a saved session file are dated when the file was written, not when the sweep ran; facts saved earlier keep their dates.' },
   { since: '0.0.0-wave11', text: '`gbrain waiting --json` and MCP `open_loops` changed shape: loops that name no counterparty are no longer ranked as the person "unknown" but returned in `no_counterparty`, and each group lists at most 5 loops with `loops_omitted` counting the rest (`loop_count` stays the total).' },
+  { since: '0.0.0-wave11', text: 'Link extraction no longer types a link to a person, meeting or calendar page as `works_at` (or a meeting/calendar link as `founded`/`invested_in`) from a nearby role phrase; it becomes `mentions`. Existing edges change on re-extraction: `gbrain extract --stale`.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */
