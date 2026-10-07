@@ -23,6 +23,7 @@ import { withFilesystemPublication } from './filesystem-guard.ts';
 import { mayReprepare } from './semantic.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
+import type { GitCommitNote } from './effect-model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { withNoRepoWriteThroughWarning } from '../write-through.ts';
 import { assertUnboundPublication, classifyUnboundPage, unboundWriteWarning } from './unbound-source.ts';
@@ -34,6 +35,7 @@ import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts'
 import { databaseRefusal, ownerExceptionFailure, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { faultPoint, withFaultPoints } from './fault-points.ts';
+import { recordPublicationFenceTrend } from '../fence-repair/census-store.ts';
 
 interface PreparedMutationBase {
   sourceExclusive?: boolean;
@@ -61,8 +63,11 @@ interface PreparedMutationBase {
   postimage?: PageSnapshot | null;
   validate?(tx: BrainEngine): Promise<void>;
 }
-/** A page file target; `publishMode` (Google pages) is the exact mode it publishes with, and its created directories get 0700. */
-export type PageMutationFile = MutationFile & { publishMode?: number };
+/**
+ * A page file target; `publishMode` (Google pages) is the exact mode it publishes with, and its created directories get 0700.
+ * `commit` (trusted local preparers only) rides the Git effect into the commit message.
+ */
+export type PageMutationFile = MutationFile & { publishMode?: number; commit?: GitCommitNote };
 export type PreparedMutation = PreparedMutationBase & (
   | { target?: 'page'; file?: PageMutationFile; files?: never }
   | { target: 'skill_bundle'; file?: never; files: MutationFile[]; validate(tx: BrainEngine): Promise<void> }
@@ -339,6 +344,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       if (prepared.databaseOnlyReason === 'mirror_read_only') await classifyMirrorPage(tx, row);
       const final = skill ? null : await publicationPostimage(tx, row, prepared);
       decoratePublicationOutcome(row, prepared, outcome, final, files.length, skill);
+      await recordPublicationFenceTrend(tx, row, outcome);
       await queuePublicationEffects(tx, row, final, outcome, prepared);
       await hooks.boundary?.('before_commit', row);
       const committed = await completeWrite(tx, current, 'committed', outcome, undefined, current);
