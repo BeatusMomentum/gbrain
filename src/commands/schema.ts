@@ -140,7 +140,7 @@ Authoring (v0.40.6.0):
   edit <name>             Print the on-disk pack file path
   diff <a> <b>            Compare page_type sets across two packs
 
-  add-type <name> --primitive <p> --prefix <dir/>
+  add-type <name> --primitive <p> (--prefix <dir/> | --no-prefix)
                           [--extractable] [--expert] [--alias <a>]* [--pack <name>]
   remove-type <name>      [--pack <name>]
   update-type <name>      [--extractable BOOL] [--expert BOOL] [--primitive P] [--pack <name>]
