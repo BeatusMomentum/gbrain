@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.101.0] - 2026-10-07
+## [0.60.102.0] - 2026-10-07
 
 **Broken facts and takes tables in your notes now get repaired by themselves.**
 
@@ -61,6 +61,18 @@ gbrain config set fences.repair.llm false     # keep table rows away from the mo
 ### For contributors
 
 - `test/repair-fences.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`) covers preview then the printed apply across all three fix methods, rejected rewrites never paid twice, transient errors, `--no-llm`, unpriced models under default and user caps, the budget stop, every skip reason, mirrors, remote refusal, backups and the uncommitted notice, doctor remediation budgets, the time budget, two concurrent appliers at the cap and the cycle phase across ticks, with a privacy sentinel throughout. `test/fence-repair-llm.test.ts` pins the prompt bytes and covers HOLD, the structural-only re-ask, the wide headerless layout and the reasoning allowance; `test/fence-repair-normalize.test.ts` covers stray empty cells and split claims; `test/fence-walkthrough.test.ts` checks the guide's walkthrough line by line against a local provider stand-in. `evals/fence-repair-tier3/` is the Tier 3 measurement instrument (78 hand-written fixtures, a production-path runner, a $0 oracle and the scorer); `test/eval-fence-repair-tier3.test.ts` guards it without a key.
+
+## [0.60.101.0] - 2026-10-07
+
+**The nightly CI runs green again: E2E shard weights are re-mined from a full green E2E run on master.**
+
+No user-facing behavior changes. For contributors and agents working on gbrain:
+
+- **`scripts/e2e-weights.json`** is re-mined from full-corpus E2E run 37553155517 on master 9cc7c4677 (all 459 measured files). 59 of 462 E2E files had no weight (12.8%, over the 10% bound), mostly the files the long-pole splits created, so the scheduled `check:weight-coverage` failed every Test and macOS nightly. It passes under `GITHUB_EVENT_NAME=schedule`.
+
+## To take advantage of v0.60.101.0
+
+Nothing to do: this release changes CI data only.
 
 ## [0.60.100.0] - 2026-10-07
 
