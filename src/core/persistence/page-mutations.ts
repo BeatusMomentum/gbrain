@@ -4,6 +4,8 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { VERSION } from '../../version.ts';
+import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
 import { suffixedSlugAdmission } from './suffixed-slug.ts';
 import { defaultSlug, detectBinaryNullByte, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } from '../capture-content.ts';
@@ -135,7 +137,12 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
 }
 
 function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
-  return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) });
+  try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) }); } catch (error) {
+    // #5929: a trusted local caller is told when an owner on another build ran the failed attempt.
+    const mismatch = ctx.remote === false && error instanceof OperationError ? ownerBuildMismatch(row.error_detail, VERSION) : null;
+    if (mismatch) { error.why = mismatch.why; error.fix = mismatch.fix; }
+    throw error;
+  }
 }
 
 /** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice. */
