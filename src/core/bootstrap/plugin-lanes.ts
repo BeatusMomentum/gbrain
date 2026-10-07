@@ -30,14 +30,16 @@ export function codexPluginProvidesName(configPath: string, name: string): strin
   if (!existsSync(configPath)) return null;
   try {
     const lines = readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n').split('\n');
-    const header = new RegExp(`^\\[plugins\\."${name}@([^"]+)"\\]\\s*$`);
+    const prefix = `[plugins."${name}@`;
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(header);
-      if (!m) continue;
+      const head = lines[i].trimEnd();
+      if (!head.startsWith(prefix) || !head.endsWith('"]')) continue;
+      const marketplace = head.slice(prefix.length, -2);
+      if (!marketplace || marketplace.includes('"')) continue;
       for (let j = i + 1; j < lines.length; j++) {
         const line = lines[j].trim();
         if (line.startsWith('[')) break;
-        if (/^enabled\s*=\s*true\b/.test(line)) return `${name}@${m[1]}`;
+        if (/^enabled\s*=\s*true\b/.test(line)) return `${name}@${marketplace}`;
       }
     }
     return null;
@@ -101,8 +103,8 @@ export function codexAnyRegistrationExists(configPath: string, name: string): bo
   if (!existsSync(configPath)) return false;
   try {
     const lines = readFileSync(configPath, 'utf8').replace(/\r\n/g, '\n').split('\n');
-    const header = new RegExp(`^\\[mcp_servers\\.(?:${name}|"${name}")\\]\\s*$`);
-    return lines.some(l => header.test(l));
+    const headers = new Set([`[mcp_servers.${name}]`, `[mcp_servers."${name}"]`]);
+    return lines.some(l => headers.has(l.trimEnd()));
   } catch {
     return false;
   }
