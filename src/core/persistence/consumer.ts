@@ -11,7 +11,7 @@ import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
-import { cancelOrphanedWindowGroup } from './sync-window.ts';
+import { claimedHeadOrder } from './sync-window.ts';
 import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -597,9 +597,11 @@ export class PersistenceConsumer {
   private async executeOrGroup(row: WriteRequest, root: RootHold): Promise<boolean> {
     // #5984 admit-ahead: a window group whose predecessor did not commit is cancelled, never published after it.
     // A lane group may be claimed while its predecessor still publishes; its commit wait decides instead.
+    // A bulk-sync group member released mid-group follows the member before it, not only the previous group (#6153 class).
     const lane = laneOf(row);
-    const orphaned = lane ? null : await cancelOrphanedWindowGroup(this.engine, row);
-    if (orphaned) { for (const done of orphaned) this.settled(done); return true; }
+    const order = await claimedHeadOrder(this.engine, row, lane !== null);
+    if (order === 'wait') { await releaseUnpublishedClaim(this.engine, row, 'group_member_waiting'); return false; }
+    if (order) { for (const done of order) this.settled(done); return true; }
     const group = publicationGroupKey(row);
     if (!group || this.engine.kind !== 'postgres') return this.execute(row, root);
     // #6007: a put_pages batch publishes in groups of at most PAGE_BATCH_GROUP_MAX pages.

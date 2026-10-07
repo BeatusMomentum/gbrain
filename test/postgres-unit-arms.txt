@@ -98,6 +98,7 @@ test/source-retire-missing-checkout.test.ts
 test/stats-health-source-scope.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
+test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/withdrawal-overlay-concurrency.test.ts
