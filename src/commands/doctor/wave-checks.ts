@@ -244,6 +244,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     impact: 'Some closed commitment loops still have an active commitment fact, so recall keeps the finished promise',
     run: async (engine, scope) => (await import('./checks/loop-facts.ts')).loopFactsDriftCheck(engine, scope.sourceIds),
   },
+  {
+    id: 'ontology_facts_fenced', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Restoring fenced ontology observations is a host-side, explicit-only repair.',
+    count: d => Number(d.fenced ?? 0) + Number(d.retired ?? 0),
+    impact: 'Some ontology observations were moved onto an entity page\'s Facts table, and ontology_get no longer returns the ones a later page write retired',
+    run: async (engine, scope) => (await import('./checks/ontology-facts.ts')).ontologyFactsCheck(engine, scope.sourceIds),
+  },
 ];
 
 /** A check that could not run reports unknown, never ok. */

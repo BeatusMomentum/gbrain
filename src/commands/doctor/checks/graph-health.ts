@@ -298,6 +298,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'extractor_facts_expired',
     'captured_facts_active',
     'loop_facts_drift',
+    'ontology_facts_fenced',
   ],
   run: runTimelineHistory,
 };
