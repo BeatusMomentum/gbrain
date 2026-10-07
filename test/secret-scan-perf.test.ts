@@ -505,6 +505,10 @@ describe('labeled_credential (transcript lane): every candidate start does const
     ['a label, 200k spaces, then a value', 'password:' + ' '.repeat(200_000) + 'x'],
     ['200 KB of `a/` after a login label', 'login: ' + 'a/'.repeat(100_000)],
     ['20000 dangling pair lines', Array.from({ length: 20_000 }, () => 'login: alice-example /').join('\n')],
+    ['20000 dangling single labels', Array.from({ length: 20_000 }, () => 'password:').join('\n')],
+    ['a 10k-row table with two credential columns', ['| user | password | pwd |', '|---|---|---|', ...Array.from({ length: 10_000 }, (_, k) => `| u${k} | s3cret${k} | p${k}x\\|y |`)].join('\n')],
+    ['a 200 KB row of escaped pipes', '| password | ' + '\\|'.repeat(100_000) + ' |'],
+    ['200 KB of `--password `', '--password '.repeat(20_000)],
   ];
   for (const [name, text] of adversaries) {
     test(`${name}: redact < 400ms`, () => {

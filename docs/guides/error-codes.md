@@ -2710,7 +2710,7 @@ More: [docs/architecture/topologies.md#transfer-manifest-scope](../../docs/archi
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, or a Git-scoped comparison ran on a directory Git cannot list. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, a Git-scoped comparison ran on a directory Git cannot list, or Git cannot read a directory that holds .git. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 ### writer_not_initialized
 

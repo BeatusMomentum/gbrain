@@ -52,6 +52,22 @@ const MUST_REDACT: Array<[string, string]> = [
   ['pwd label', `pwd=${PW}`],
   ['passcode label', `passcode: ${PW}`],
   ['trailing sentence punctuation', `The password: ${PW}.`],
+  // W4.1
+  ['CLI flag with a separate value', `mysql -u root --password ${PW} -h db.example`],
+  ['short CLI flag word', `psql --pass ${PW}`],
+  ['quoted CLI value with a space', `tool --password "a b ${PW}"`],
+  ['value alone on the next line', `password:\n${PW}`],
+  ['digitless value on the next line', `password:\n${['hunter', 'abc'].join('')}${PW}`],
+  ['next-line value with CRLF and indentation', `Password:\r\n    ${PW}\r\n`],
+  ['quoted next-line value (pretty JSON)', `"password":\n  "${PW}",`],
+  ['suffix after the label', `PASSWORD_DB=${PW}`],
+  ['label inside an env name', `FOO_PASSWORD_BAR=${PW}`],
+  ['table column', `| user | password |\n|---|---|\n| alice-example | ${PW} |`],
+  ['table without outer pipes', `user | password\n--- | ---\nalice-example | ${PW}`],
+  ['table cell with an escaped pipe', `| user | password |\n|---|---|\n| alice-example | a\\|${PW} |`],
+  ['table with two credential columns', `| password | user | pwd |\n|---|---|---|\n| ${PW} | alice-example | x${PW}y |`],
+  ['key/value table row', `| password | ${PW} |`],
+  ['table with CRLF', `| user | password |\r\n|---|---|\r\n| alice-example | ${PW} |\r\n`],
 ];
 
 const MUST_KEEP: Array<[string, string]> = [
@@ -82,6 +98,16 @@ const MUST_KEEP: Array<[string, string]> = [
   ['await', 'const passphrase = await passphraseFrom(args);'],
   ['code span label', 'the libpq form (`password=`, `sslpassword=`) is scrubbed'],
   ['already redacted', 'password: <REDACTED:high_entropy_assignment>'],
+  // W4.1
+  ['setting suffix', 'PASSWORD_MIN_LENGTH=12345'],
+  ['file flag', '--password-file /run/secrets/db'],
+  ['file env', 'POSTGRES_PASSWORD_FILE=/run/secrets/db'],
+  ['n/a table cell', '| password | n/a |'],
+  ['policy header table', '| Password policy | Notes |\n|---|---|\n| strong | yes please |'],
+  ['password header row is not a key/value row', '| Password | Notes |\n|---|---|\n| x | y |'],
+  ['pass the test', 'make sure we pass the test suite'],
+  ['prose under a password heading', 'Password:\nYou can change it in the settings page'],
+  ['pass/fail column', '| test | pass |\n|---|---|\n| auth | ok2 |'],
 ];
 
 describe('labeled_credential on the transcript page lane', () => {

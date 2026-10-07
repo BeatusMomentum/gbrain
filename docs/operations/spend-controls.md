@@ -146,6 +146,7 @@ line naming the cap, its source and how to remove it, e.g.
 | Backfill per-job budget | `embed.backfill_max_usd` | `10` | caps the job's tracker | `off` (`0`/garbage → default, fail-closed) | uncapped (still ledgered) |
 | Backfill cooldown | `embed.backfill_cooldown_min` | `10` | skips re-submission inside window | — (latency knob, not spend) | **not** bypassed |
 | `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--max-cost off` | runs uncapped (still ledgered) |
+| `reindex --markdown` consent gate | — | — | TTY prompt / non-TTY exit 3; a queued job needs the approval stored at submit | `--dry-run`, `--no-embed` | derived cap |
 | `migrate embeddings` consent gate | — (plan + estimate before provider migration) | — | TTY y/N prompt / non-TTY refuse + exit 3 (`confirmation_required`) | `--yes` | estimate marked informational, but **still prompts** (guards a destructive schema rebuild, not just spend) |
 | `enrich` | `--max-usd` (per-call) | — | non-TTY without `--yes`/`--max-usd`: refuse + exit 3 (`confirmation_required`); `--yes` runs under the derived cap | `--max-usd off` | runs uncapped (still ledgered) |
 | `onboard --auto` | `--max-usd` (per-call) | — | refuses without `--max-usd` (exit 2); manual-only steps (pack upgrade, takes bootstrap) never run, their commands are printed | `--max-usd off` | runs uncapped (still ledgered) |
