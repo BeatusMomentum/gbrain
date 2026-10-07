@@ -71,26 +71,46 @@ export function hasCurrentQuarantineOverride(page: Bound & { frontmatter?: Recor
  * Trusted local sync/export round-trips keep them. Fail-closed: strip
  * whenever `remote` is true.
  *
- * #6259: remote input also loses any `quarantine_override`, then keeps the
- * stored one only when it still binds this content; trusted input keeps its
- * own override only while it binds. A stale or malformed override is dropped,
- * and a current one drops classifier markers the content still carries.
+ * #6259: remote input also loses any `quarantine_override` (the gate may
+ * carry the stored one forward, `carryStoredQuarantineOverride`); trusted
+ * input keeps its own override only while it binds. A stale or malformed
+ * override is dropped, and a current one drops classifier markers the content
+ * still carries.
  */
-export async function settleGateOwnedMarkers(engine: Pick<BrainEngine, 'executeRaw'>, parsed: ParsedMarkdown,
-  slug: string, sourceId: string | undefined, remote: boolean): Promise<void> {
+export function settleGateOwnedMarkers(parsed: ParsedMarkdown, remote: boolean): void {
   if (remote) {
     for (const key of [QUARANTINE_KEY, CONTENT_FLAG_KEY, EMBED_SKIP_KEY, ATOMS_SCAN_HASH_KEY, QUARANTINE_OVERRIDE_KEY]) delete parsed.frontmatter[key];
-    const [stored] = await engine.executeRaw<{ override: unknown }>(
-      `SELECT frontmatter->'${QUARANTINE_OVERRIDE_KEY}' AS override FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId ?? 'default', slug]);
-    const carried = overrideOf(stored?.override);
-    if (carried && carried.binding === quarantineOverrideBinding(parsed)) parsed.frontmatter[QUARANTINE_OVERRIDE_KEY] = carried;
-  } else if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && !hasCurrentQuarantineOverride(parsed)) {
-    delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
+    return;
   }
-  // A classifier marker the content still carries (a file written before the clear) goes with a current override.
+  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && !hasCurrentQuarantineOverride(parsed)) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
+  dropClassifierMarkers(parsed);
+}
+
+/** A classifier marker the content still carries (a file written before the clear) goes with a current override. */
+function dropClassifierMarkers(parsed: ParsedMarkdown): void {
   if (!hasCurrentQuarantineOverride(parsed)) return;
   delete parsed.frontmatter[QUARANTINE_KEY];
   if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason !== 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];
+}
+
+/**
+ * The gate verdict for a remote write: when the classifier would hide or
+ * markup-flag the page, the stored override is carried forward if it still
+ * binds this exact title, type and body, so a remote edit that leaves them
+ * unchanged (a tag edit) does not re-hide a cleared page. The stored row is
+ * read only on that path, so a clean remote write costs no extra statement
+ * (#6007 statement budget).
+ */
+export async function carryStoredQuarantineOverride(engine: Pick<BrainEngine, 'executeRaw'>, parsed: ParsedMarkdown, result: ContentSanityResult,
+  page: { slug: string; sourceId: string | undefined; remote: boolean }): Promise<ContentSanityResult> {
+  if (!page.remote || !(result.shouldQuarantine || result.flag_reason === 'markup_heavy')) return result;
+  const [stored] = await engine.executeRaw<{ override: unknown }>(
+    `SELECT frontmatter->'${QUARANTINE_OVERRIDE_KEY}' AS override FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [page.sourceId ?? 'default', page.slug]);
+  const carried = overrideOf(stored?.override);
+  if (!carried || carried.binding !== quarantineOverrideBinding(parsed)) return result;
+  parsed.frontmatter[QUARANTINE_OVERRIDE_KEY] = carried;
+  dropClassifierMarkers(parsed);
+  return withQuarantineOverride(result, parsed);
 }
 
 /** The gate verdict with the classifier's hide and markup-flag outcomes removed for an overridden page; size outcomes stay. */
