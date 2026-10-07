@@ -148,7 +148,7 @@ for (const backend of testBackends()) {
       await propose(ctx, 'location', 'Example City', '2026-02-01');
       // The page's fence row is not indexed yet (an edit synced from another host, never reconciled).
       await engine.executeRaw('DELETE FROM facts WHERE dimension IS NULL');
-      const report = await runCycle(engine, { sourceId: 'default', phases: ['extract_facts'] });
+      const report = await runCycle(engine, { brainDir: null, sourceId: 'default', phases: ['extract_facts'] });
       const phase = report.phases.find(p => p.phase === 'extract_facts')!;
       expect(phase.summary).not.toContain('skipped');
       expect(phase.details).toMatchObject({ factsInserted: 1, unfencedRowsFenced: 0 });
