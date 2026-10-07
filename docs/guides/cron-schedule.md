@@ -173,6 +173,9 @@ per-transcript synthesis subagents. The dials:
   judging NEW files; a big cold corpus triages across a few cycles (cached
   files are free). Deferred files are labeled "not yet triaged", never
   silently rejected.
+- A truncated, refused or unparseable verdict backs off (24h, doubling to
+  7 days; `triage_unreliable_backoff`) instead of being re-paid nightly;
+  `gbrain dream retriage --force` re-judges now.
 - `dream.synthesize.max_submissions_per_source_per_day` (default 0 = off) —
   opt-in backstop cap on synthesis jobs per source; 200/day is a sane value
   for busy deployments.
