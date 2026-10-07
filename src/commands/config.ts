@@ -1204,6 +1204,12 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
     }
 
+    // #6134: a path in cycle.lint_exclude would never match a basename.
+    if (key === 'cycle.lint_exclude') {
+      try { (await import('../core/cycle/lint-fix-setting.ts')).parseCycleLintExclude(value); }
+      catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
+    }
+
     // #5254: an unknown value would silently keep refusing unbound writes.
     const { UNBOUND_WRITE_KEY, parseUnboundWriteValue } = await import('../core/persistence/unbound-source.ts');
     if (key === UNBOUND_WRITE_KEY) {

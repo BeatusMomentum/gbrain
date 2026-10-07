@@ -662,7 +662,7 @@ function writeLintFixOrRefusal(page: string, relPath: string, fixed: string): Li
     const errno = (e as NodeJS.ErrnoException | null)?.code;
     if (typeof errno !== 'string' || !UNWRITABLE_CODES.has(errno)) throw e;
     const envelope = toAgentError(opError('fix_not_writable', `fix not applied: ${relPath} is not writable (${errno}); the file was left unchanged.`,
-      'Make the file writable by the user running gbrain, or pass its directory or file name to `gbrain lint --exclude`, then lint again.', {
+      'Make the file writable by the user running gbrain, or pass its directory or file name to `gbrain lint --exclude` (for the cycle: `gbrain config set cycle.lint_exclude <name>`), then lint again.', {
         why: 'Lint repairs files in place, and this file refused the write (its permissions or a read-only mount).',
         fix: { consent: [], actor: 'user', requires_exclusive: false, why: 'Only the file owner can change its permissions or mount.',
           user_message: `Make ${relPath} writable for gbrain, or exclude it from lint.` },
