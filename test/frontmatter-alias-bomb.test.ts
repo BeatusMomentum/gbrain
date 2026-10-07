@@ -36,6 +36,16 @@ describe('frontmatter alias bomb (W5.1 security review)', () => {
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
+  // Pre-existing on master (not from #6157): tag extraction stringified nested
+  // tag arrays, which expands the same bomb. Only scalar tags are kept.
+  test('parsing a tags: bomb returns fast; nested tag arrays are not tags', () => {
+    const started = performance.now();
+    const parsed = parseMarkdown(page(bomb('tags')));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(parsed.tags).toEqual([]);
+    expect(parseMarkdown(page('tags: [yc, 2025, "w25"]')).tags).toEqual(['yc', '2025', 'w25']);
+  });
+
   test('the alias limit counts aliases outside quotes only', () => {
     expect(yamlAliasesWithinLimit(bomb('tags'))).toBe(false);
     expect(yamlAliasesWithinLimit('base: &b {a: 1}\nother: *b\nnote: "a *star* in a string"')).toBe(true);

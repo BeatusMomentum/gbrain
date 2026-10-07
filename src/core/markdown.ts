@@ -1193,7 +1193,8 @@ function inferSlug(filePath?: string): string {
 function extractTags(frontmatter: Record<string, unknown>): string[] {
   const tags = frontmatter.tags;
   if (!tags) return [];
-  if (Array.isArray(tags)) return tags.map(String);
+  // Only scalar items are tags: stringifying a nested array would expand a YAML alias bomb.
+  if (Array.isArray(tags)) return tags.filter(t => t instanceof Date || (t !== null && typeof t !== 'object')).map(String);
   if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).filter(Boolean);
   return [];
 }
