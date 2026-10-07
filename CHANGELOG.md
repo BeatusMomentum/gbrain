@@ -52,7 +52,7 @@ gbrain search modes --reset --mode <mode>          # --source <mode> still works
 - **Scripts:** `reindex --markdown` now exits 3 without approval; `edge-proposals list` with a bad `--limit` exits 2; `search modes --reset` refuses a missing or conflicting `--mode`/`--source`.
 - **The patterns breaker counts per source,** so a brain in the reported overflow state is refused right after the upgrade; clear it with `gbrain dream reset-key 'dream:patterns:source:<id>'`.
 - **Upgrade builds two indexes on `pages`** (online on Postgres) for the reconcile check.
-- **The MCP instructions move the `forget` caveat** inside the 2,048 characters Claude Code reads, and put_page asks for a request_id UUID again. A smoke on the newest Opus, GPT and Sonnet models compared it with the previous text before release.
+- **put_page asks for a request_id UUID again.** A smoke on the newest Opus, GPT and Sonnet models compared the instruction and tool text with wave 11's: no regression. Moving the `forget` caveat inside the 2,048 characters Claude Code reads cost Opus write-back accuracy, so that change was left out.
 - **Not fixed here:** the hard ceiling for a stuck write (waits for the sync-speed rework), the free relabel for a legacy bare `embedding_model` (the refusal now names the migrate preview), the transcript budget for dream patterns, and Cyrillic slug folding (#6235 declined; the bug stays open). See TODOS.md.
 
 ### Itemized changes
