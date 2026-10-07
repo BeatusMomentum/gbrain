@@ -639,35 +639,27 @@ From the CLI: `gbrain call edit_page '{"slug":"projects/example","expected_revis
 
 One deterministic, budget-packed bundle for a set of standing
 entities — entity cards + open threads + hot facts. Built for **session
-boundaries**: call it at session start to warm cold context, and immediately
-after compaction to rehydrate what the summary dropped. Composes existing arms
-(`entity` card builder + the hot-facts arm); never calls an LLM.
+boundaries**: call it at session start and right after compaction. Never
+calls an LLM.
 
 `entities` is comma-separated, capped at 8 (the response echoes the capped list). `budget_tokens` packs
-server-side (cards first, then facts; each item costs its rendered line and the
-envelope + section headers are reserved first, so `text` fits the budget) and the
-response reports `budget_used` (the token estimate of `text`) + `dropped_count`
-— it never trims client-side. `since` filters
+server-side (cards first, then facts; each item costs its rendered line after the
+envelope and headers are reserved, so `text` fits) and reports `budget_used`
+(tokens of `text`) + `dropped_count`. `since` filters
 open-thread events to those after the cursor. **Visibility is WORLD-ONLY by
-default** on every arm (a pack is injected into an agent context window that may
-be logged or synced to a cloud model). `include_private` widens ALL arms in
+default** on every arm (a pack lands in a context window that may be logged or
+synced to a cloud model). `include_private` widens ALL arms in
 lockstep, and is honored ONLY for trusted-local callers (`remote === false`); a
 remote caller never widens (fail-closed).
 
 Response: `{ protocol_version, entities, cards[], open_threads[], facts[], text,
 degraded_reason?, budget_tokens?, budget_used?, dropped_count?, core? }`. `text` is the
-pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
-rendered from the packed sets and never exceeds the declared budget.
+envelope-wrapped injectable block, rendered from the packed sets within `budget_tokens`.
 
-`entities` scopes the cards and open threads, not the facts. The hot-facts arm
-is the session's recent memory (its facts, else the last 24 hours of the
-session's source), the same set every MCP response carries, so a fact about
-another entity, or about none, can appear next to the requested ones. For a
-strictly entity-scoped read use `recall` with `entity` (`gbrain recall --entity
-<slug>`). Each `facts[]` entry (here and in `delta`) carries `fact_id`, the
-opaque id `forget` accepts, and `provenance`, the stored source attribution
-(`remember --provenance`), so a packed fact traces back to its full record;
-neither enters `text`.
+`entities` scopes cards and threads, not the hot facts (the session's recent
+memory), so other facts can appear; `recall` with `entity` reads one entity
+strictly. `facts[]` here and in `delta` carry `fact_id` (what `forget` takes)
+and `provenance` (the stored source), never rendered into `text`.
 
 #### context_pack core memory (additive)
 
@@ -787,9 +779,8 @@ isolation on every read. Remote callers see `visibility = world` facts only.
 
 Read verbs redact credential-shaped values in their responses with the
 canonical secret scanner: a value becomes `<REDACTED:pattern>`. `recall`,
-`context_pack` and `delta` redact the facts' `fact`, `context` and provenance
-(`source` and `provenance` in `recall`, `provenance` in `context_pack` and
-`delta`) fields for remote callers (`ctx.remote !== false`; every MCP transport,
+`context_pack` and `delta` redact the facts' `fact`, `context` and `source`
+(`provenance`) fields for remote callers (`ctx.remote !== false`; every MCP transport,
 including stdio, and thin clients) and return them as stored to the trusted
 local CLI, so a remembered credential is readable only with `gbrain recall` on
 the brain host. Search results, the rendered `text` and `entity` cards are
