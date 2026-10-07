@@ -46,6 +46,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { startPersistenceConsumer } from '../src/core/persistence/service.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 const EXTRACTOR = 'cli:extract-conversation-facts:sess';
 const ENTITY = 'people/alice-example';
@@ -320,6 +321,9 @@ for (const backend of testBackends()) {
           let first: RepairJson;
           try { first = await repair(engine, null, ['--apply', '--expect', hash]); } finally { restoreWait(); }
           expect((first.results[0] as { stopped?: { reason: string } }).stopped?.reason).toBe('write_pending');
+          // A stopped run sets the CLI exit verdict (and process.exitCode) to 1; this file must still exit 0.
+          expect(currentExitCode()).toBe(1);
+          _resetCliExitVerdictForTests(); process.exitCode = 0;
           expect(await activeIds(engine, seeded.slow)).toEqual([]);
           // The publication is still held when the rerun starts and commits 5.5 s into its replay wait.
           setTimeout(release, 5_500);
