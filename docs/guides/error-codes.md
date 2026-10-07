@@ -1460,6 +1460,16 @@ More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#leg
 |---|---|---|---|---|---|---|
 | Another process holds the lock this command needs. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### maintenance_backpressure
+
+<a id="maintenance_backpressure"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Managed maintenance stopped admitting requests because this writer's outstanding requests reached 80% of its limit; nothing more was submitted. | Each page of a maintenance run publishes as its own request. Stopping well below principalOutstanding leaves room for the writer's other work and keeps a slow consumer from turning the run into refused admissions. | Wait briefly, then retry the same request (writes: reuse the same request_id). Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 12 | yes |
+
+More: [docs/guides/write-refusals.md#maintenance_backpressure](../../docs/guides/write-refusals.md#maintenance_backpressure)
+
 ### managed_pull_skipped
 
 <a id="managed_pull_skipped"></a>

@@ -75,8 +75,23 @@ import {
   type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
-import { managedDerivedFactsPreflight, replaceDerivedFactsForPage, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
+import { writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
+import { maintenancePreflight, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
+import { loadConfig, type GBrainConfig } from '../core/config.ts';
+import { OperationError } from '../core/ops/contract.ts';
+import { resolveManagedFactsEmbedding } from '../core/persistence/facts-maintenance.ts';
+import {
+  assertConversationAdmissionHeadroom,
+  buildConversationIntent,
+  conversationIntentByteLimit,
+  estimateConversationIntentBytes,
+  startConversationGeneration,
+  submitConversationIntent,
+  type ConversationFactRow,
+  type GenerationStart,
+} from '../core/facts/conversation-publication.ts';
+import type { FactEmbeddingSignature } from '../core/facts/extract.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingMessage } from '../core/budget/no-pricing.ts';
 import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
@@ -100,7 +115,7 @@ import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-chec
 import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
 import { upsertExtractRollup, classifyRunStop } from '../core/extract/rollup-writer.ts';
 import { ALLOWED_TYPES, ALLOWED_TYPE_ALIASES, isConversationFactsEligiblePage, pageTypesForAllowed, requireParseableConversationFlag, type AllowedType } from '../core/facts/conversation-types.ts';
-import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE } from '../core/facts/audit-sources.ts';
+import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, stampExtractorVersion } from '../core/facts/audit-sources.ts';
 import { resolveDefaultVisibility, type FactVisibility } from '../core/facts/visibility.ts';
 import {
   emptySaveTimeResolutionCounts,
@@ -354,6 +369,10 @@ export interface ExtractConversationFactsResult {
   fallback_slugify_count: number;
   /** Entity values kept raw after a best-effort resolution failure. */
   resolution_errors: number;
+  /** Managed brains: pages whose publication was accepted but is still pending (retried next run). */
+  pages_pending?: number;
+  /** Managed brains: pages whose extraction generation is blocked until the page changes (no model call). */
+  pages_blocked?: number;
   budget_exhausted?: boolean;
   budget_reason?: BudgetReason;
   budget_model?: string;
@@ -746,8 +765,13 @@ interface ExtractCoreState {
   result: ExtractConversationFactsResult;
   engine: BrainEngine;
   sourceId: string;
-  /** Managed brain: a page's rows are buffered and replace the prior batch in one coordinator transaction. */
+  /** Managed brain: a page's rows are buffered and replace the prior batch in one receipted request. */
   managed: boolean;
+  /** Managed brain, not a dry run: the maintenance authority its requests publish under. */
+  authority: MaintenanceAuthority | null;
+  config: GBrainConfig;
+  /** Managed brain: the facts embedding signature frozen batches carry (null: no vectors). */
+  embedding: FactEmbeddingSignature | null;
   dryRun: boolean;
   sleepMs: number;
   segmentLimit: number;
@@ -944,28 +968,99 @@ async function snapshotIsCurrent(
   return currentSnapshot.versionToken === snapshot.versionToken;
 }
 
+/** The parser-input version token of `page` as it is now (the managed preparer's recheck). */
+export async function currentConversationVersionToken(engine: BrainEngine, page: Page): Promise<string> {
+  return (await preparePageSnapshot(engine, page)).versionToken;
+}
+
 /**
- * Managed publication: under the page lock the page must still be the same
- * row at the same revision with the same parser input the batch came from.
- * Counts the replaced prior batch as cleaned and returns the rows inserted.
+ * Managed brains, before any model work for one page: resolve its extraction
+ * generation and settle it without the model when this writer already
+ * admitted a request for it (replayed, resubmitted, pending or blocked), or
+ * when its largest possible batch cannot fit one request. Returns the
+ * generation to extract into otherwise.
  */
-async function replacePageFacts(
+async function startManagedPage(
   state: ExtractCoreState,
   snapshot: ConversationPageSnapshot,
-  build: (tx: BrainEngine) => Promise<Array<NewFact & { row_num: number; source_markdown_slug: string }>>,
-): Promise<number> {
+  sinceIso: string | undefined,
+  segments: number,
+): Promise<{ done: { newEndIso: string | null } } | { start: Extract<GenerationStart, { kind: 'extract' }> }> {
+  const authority = state.authority!;
   const { page } = snapshot;
-  const { deleted, inserted } = await replaceDerivedFactsForPage(state.engine, state.sourceId, page.slug, {
-    sourcePrefix: 'cli:extract-conversation-facts',
-    isCurrent: async tx => {
-      const current = await tx.getPage(page.slug, { sourceId: state.sourceId });
-      return !!current && current.id === page.id && current.knowledge_revision === page.knowledge_revision &&
-        (await preparePageSnapshot(tx, current)).versionToken === snapshot.versionToken;
-    },
-    build,
+  const start = await startConversationGeneration(state.engine, authority, state.config, {
+    slug: page.slug, page, versionToken: snapshot.versionToken, since: sinceIso ?? null, segmentLimit: state.segmentLimit,
   });
-  state.result.orphan_facts_cleaned += deleted;
-  return inserted;
+  if (start.kind === 'extract') {
+    const planned = state.segmentLimit > 0 ? Math.min(segments, state.segmentLimit) : segments;
+    const estimate = estimateConversationIntentBytes(planned, state.embedding);
+    const limit = await conversationIntentByteLimit(state.engine);
+    if (estimate > limit) {
+      state.result.pages_skipped_too_large++;
+      process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: up to ${planned} segment(s) could freeze a ${estimate}-byte batch, over the ${limit}-byte request limit; its prior facts were kept and no model call ran. Narrow it with --slug ${page.slug} --segment-limit <n>\n`);
+      return { done: { newEndIso: null } };
+    }
+    await assertConversationAdmissionHeadroom(state.engine, authority);
+    return { start };
+  }
+  if (start.kind === 'resubmit') {
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: resubmitting the stored batch of this page generation (attempt ${start.attempt + 1}); no model call\n`);
+    await assertConversationAdmissionHeadroom(state.engine, authority);
+    return { done: settleManagedReceipt(state, page.slug, await submitConversationIntent(state.engine, authority, page.slug, start, start.intent)) };
+  }
+  if (start.kind === 'settled') {
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: this page generation was already published; replaying its receipt, no model call\n`);
+    return { done: settleManagedReceipt(state, page.slug, start.receipt) };
+  }
+  if (start.kind === 'pending') {
+    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
+    process.stderr.write(`[extract-conversation-facts] ${page.slug}: request ${start.requestId} for this page is accepted and still pending; rerun to confirm (no model call)\n`);
+    return { done: { newEndIso: null } };
+  }
+  state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
+  process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: ${start.message}\n`);
+  return { done: { newEndIso: null } };
+}
+
+/** Books a committed managed receipt into the run's counters. */
+function settleManagedReceipt(state: ExtractCoreState, slug: string, receipt: Record<string, unknown>): { newEndIso: string | null } {
+  state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
+  state.result.facts_inserted += Number(receipt.facts_inserted ?? 0);
+  if (receipt.page_outcome === 'non_extractable') {
+    state.result.pages_marked_non_extractable++;
+    return { newEndIso: null };
+  }
+  state.result.pages_processed++;
+  const newest = typeof receipt.newest_end === 'string' ? receipt.newest_end : null;
+  if (newest) state.cpMap.set(cpMapKey(state.sourceId, slug), newest);
+  return { newEndIso: newest };
+}
+
+/**
+ * Managed publication of one page's frozen batch as a receipted request.
+ * Returns the fact rows inserted, or null when the request is accepted but
+ * still pending after the job's wait (the page stays unfinished).
+ */
+async function publishManagedBatch(
+  state: ExtractCoreState,
+  snapshot: ConversationPageSnapshot,
+  start: Extract<GenerationStart, { kind: 'extract' }>,
+  rows: ConversationFactRow[],
+  newestEnd: string | null,
+): Promise<number | null> {
+  const complete = rows.some(row => row.source === TERMINAL_AUDIT_SOURCE || row.source === NON_EXTRACTABLE_AUDIT_SOURCE);
+  const intent = await buildConversationIntent(state.engine, state.config, start, rows,
+    { complete, newestEnd, visibility: state.factVisibility });
+  try {
+    const receipt = await submitConversationIntent(state.engine, state.authority!, snapshot.page.slug, start, intent);
+    state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
+    return Number(receipt.facts_inserted ?? 0);
+  } catch (error) {
+    if (!(error instanceof OperationError) || error.code !== 'write_pending') throw error;
+    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
+    process.stderr.write(`[extract-conversation-facts] ${snapshot.page.slug}: its facts were accepted and are still pending; rerun to confirm (the rerun replays them, no model call)\n`);
+    return null;
+  }
 }
 
 async function processPage(
@@ -1055,8 +1150,7 @@ async function processPage(
   // #5025 / N2: undated time-only turns, a single email or a prose
   // meeting/email page end in a not-extractable outcome instead of
   // epoch-dated facts or a rescan every run.
-  const skip = conversationSkip(page, body, parseResult, messages, { llmFallback: Boolean(state.llmFallbackModel), managed: state.managed });
-  const terminalSkip = skip?.durable ? skip : null;
+  const skip = conversationSkip(page, body, parseResult, messages, { llmFallback: Boolean(state.llmFallbackModel) });
   if (skip) {
     process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: ${skip.message}\n`);
     messages = [];
@@ -1069,15 +1163,15 @@ async function processPage(
   const segments = splitIntoSegments(messages, { gapMinutes, sinceIso });
   if (segments.length === 0) {
     state.result.pages_skipped++;
-    if (!declinedUnrecognizedSpeaker && !terminalSkip) {
+    if (!declinedUnrecognizedSpeaker && !skip) {
       if (messages.length === 0) state.result.pages_skipped_unparsed++;
       else if (allSegments.length === 0) state.result.pages_skipped_insufficient_turns++;
       else state.result.pages_skipped_since++;
     }
     if (
       !state.dryRun &&
-      (parseResult.phase !== 'no_match' || terminalSkip !== null) &&
-      allSegments.length === 0 && !(skip && !skip.durable) &&
+      (parseResult.phase !== 'no_match' || skip !== null) &&
+      allSegments.length === 0 &&
       // #4136 — a decline must stay NON-TERMINAL. The audit row is keyed by
       // a content versionToken and skips the page on every future run; a
       // declined page must retry once the parser learns the label instead.
@@ -1085,14 +1179,15 @@ async function processPage(
       // orphan cleanup below until the page re-extracts.)
       !declinedUnrecognizedSpeaker
     ) {
-      const reason = terminalSkip?.reason ?? (messages.length === 0
+      const reason = skip?.reason ?? (messages.length === 0
         ? 'no conversation messages found'
         : 'fewer than two eligible messages');
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
-        if (state.managed) {
-          await replacePageFacts(state, snapshot, async tx => [
-            nonExtractableAuditFact(page.slug, await peekRowNumStart(tx, state.sourceId, page.slug), snapshot.versionToken, reason),
-          ]);
+        if (state.authority) {
+          const managed = await startManagedPage(state, snapshot, sinceIso, 0);
+          if ('done' in managed) return managed.done;
+          const row = nonExtractableAuditFact(page.slug, 0, snapshot.versionToken, reason);
+          if (await publishManagedBatch(state, snapshot, managed.start, [row], null) === null) return { newEndIso: null };
         } else {
           state.result.orphan_facts_cleaned += await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
           const rowNum = await peekRowNumStart(state.engine, state.sourceId, page.slug);
@@ -1112,12 +1207,19 @@ async function processPage(
     return { newEndIso: null };
   }
 
+  let managedStart: Extract<GenerationStart, { kind: 'extract' }> | null = null;
+  if (state.authority) {
+    const managed = await startManagedPage(state, snapshot, sinceIso, segments.length);
+    if ('done' in managed) return managed.done;
+    managedStart = managed.start;
+  }
+
   // D11: delete-orphans-first replay safety. Wipes any facts written by
   // a prior crashed / killed / partial run for this (sourceId, slug)
   // pair before we re-extract. The lock we hold (D2 + D12 refreshing
   // lock above the caller) guarantees no other worker is writing to
   // this page right now, so the DELETE+INSERT pair is safe. A managed brain
-  // keeps the prior batch until replacePageFacts swaps it atomically below.
+  // keeps the prior batch until its receipted request replaces it below.
   const cleaned = state.managed ? 0 : await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
   if (cleaned > 0) {
     state.result.orphan_facts_cleaned += cleaned;
@@ -1264,9 +1366,10 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  if (state.managed && newestEnd !== null) {
-    pageInsertedTotal = await replacePageFacts(state, snapshot, async () => managedRows) -
-      managedRows.filter(row => row.source === TERMINAL_AUDIT_SOURCE).length;
+  if (managedStart && newestEnd !== null) {
+    const inserted = await publishManagedBatch(state, snapshot, managedStart, managedRows, newestEnd);
+    if (inserted === null) return { newEndIso: null };
+    pageInsertedTotal = inserted;
     state.result.facts_inserted += pageInsertedTotal;
   }
 
@@ -1301,6 +1404,7 @@ function terminalAuditFact(
     source_session: outcomeSession(TERMINAL_AUDIT_SOURCE, slug, versionToken),
     confidence: 1.0,
     notability: 'low',
+    context: stampExtractorVersion(null),
     row_num: rowNum,
     source_markdown_slug: slug,
   };
@@ -1324,7 +1428,7 @@ function nonExtractableAuditFact(
     ),
     confidence: 1.0,
     notability: 'low',
-    context: `scanned, not extractable: ${reason}`,
+    context: stampExtractorVersion(`scanned, not extractable: ${reason}`),
     row_num: rowNum,
     source_markdown_slug: slug,
   };
@@ -1349,7 +1453,13 @@ export async function runExtractConversationFactsCore(
   if (!sourceId) {
     throw new Error('runExtractConversationFactsCore: opts.sourceId is required');
   }
-  const managed = await managedDerivedFactsPreflight(engine, sourceId);
+  // A managed brain publishes each page's batch as a receipted maintenance
+  // request; the authority is preflighted once, before any model work. A dry
+  // run writes nothing and registers nothing.
+  const managed = await managedPersistenceEnabled(engine);
+  const authority = managed && !opts.dryRun ? await maintenancePreflight(engine, sourceId) : null;
+  const config = loadConfig() ?? { engine: engine.kind };
+  if (authority) await assertConversationAdmissionHeadroom(engine, authority, opts.slugs?.length ?? (opts.slug ? 1 : opts.limit ?? 1));
 
   const result: ExtractConversationFactsResult = {
     pages_considered: 0,
@@ -1434,6 +1544,9 @@ export async function runExtractConversationFactsCore(
     engine,
     sourceId,
     managed,
+    authority,
+    config,
+    embedding: authority ? await resolveManagedFactsEmbedding(engine, config) : null,
     dryRun,
     sleepMs,
     segmentLimit,
@@ -1540,7 +1653,7 @@ export async function runExtractConversationFactsCore(
         try {
           await processPageWithLock(page);
         } catch (error) {
-          if (isAbortError(error) || error instanceof BudgetExhausted) throw error;
+          if (isAbortError(error) || error instanceof BudgetExhausted || stopsRun(error)) throw error;
           recordPageFailure(result, sourceId, slug, error);
         }
       }
@@ -1612,11 +1725,11 @@ export async function runExtractConversationFactsCore(
             workers,
             signal,
             onItem: (page) => processPageWithLock(page),
-            onError: (error) => (isAbortError(error) ? 'abort' : 'continue'),
+            onError: (error) => (isAbortError(error) || stopsRun(error) ? 'abort' : 'continue'),
             failureLabel: (page) => page.slug,
           });
           const cancellation = poolResult.failures.find((failure) =>
-            isAbortError(failure.error),
+            isAbortError(failure.error) || stopsRun(failure.error),
           );
           if (cancellation) throw cancellation.error;
           if (signal?.aborted) {
@@ -2082,6 +2195,8 @@ export async function runExtractConversationFacts(
       aggregate.facts_inserted += perSource.facts_inserted;
       aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
       aggregate.resolution_errors += perSource.resolution_errors;
+      if (perSource.pages_pending) aggregate.pages_pending = (aggregate.pages_pending ?? 0) + perSource.pages_pending;
+      if (perSource.pages_blocked) aggregate.pages_blocked = (aggregate.pages_blocked ?? 0) + perSource.pages_blocked;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
       if (perSource.budget_reason === 'no_pricing') unpricedModels.add(perSource.budget_model ?? 'unknown model');
       if (perSource.budget_pricing) pricingGuidance.set(perSource.budget_pricing.model, perSource.budget_pricing);
@@ -2141,6 +2256,12 @@ export async function runExtractConversationFacts(
     }
     if (aggregate.pages_failed > 0) {
       console.error(`  Failed ${aggregate.pages_failed} page(s); they remain unfinished and will retry.`);
+    }
+    if (aggregate.pages_pending) {
+      console.log(`  ${aggregate.pages_pending} page(s) were accepted and are still pending; rerun the same command to confirm them (no model call).`);
+    }
+    if (aggregate.pages_blocked) {
+      console.log(`  ${aggregate.pages_blocked} page(s) are blocked at their current version after a request failed; they are retried only once the page changes (each SKIP line names the receipt).`);
     }
     if (aggregate.pages_llm_fallback > 0) {
       console.log(`  Parsed ${aggregate.pages_llm_fallback} page(s) with the opt-in LLM fallback.`);
@@ -2205,6 +2326,11 @@ function recordPageFailure(result: ExtractConversationFactsResult, sourceId: str
   result.pages_failed++;
   const reason = (error as { extractionReason?: ExtractFailureReason } | null)?.extractionReason ?? 'page_error';
   process.stderr.write(`[extract-conversation-facts] ${slug} failed (${reason}) and stays unfinished; retry: gbrain extract-conversation-facts --source-id ${sourceId} --slug ${slug}\n`);
+}
+
+/** Managed admission backpressure and exhausted request ids stop the whole run, not one page. */
+function stopsRun(err: unknown): boolean {
+  return err instanceof OperationError && (err.code === 'maintenance_backpressure' || err.code === 'queue_capacity');
 }
 
 export function isAbortError(err: unknown): boolean {

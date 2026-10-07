@@ -49,6 +49,7 @@ export const ERROR_CATALOGUE = {
   source_checkout_missing: { code: 'recovery_required', docs: 'docs/guides/write-refusals.md#source_checkout_missing' },
   managed_pull_skipped: { code: 'managed_pull_skipped', docs: 'docs/guides/write-refusals.md#managed_pull_skipped' },
   no_pricing: { code: 'no_pricing', docs: 'docs/guides/write-refusals.md#no_pricing' },
+  maintenance_backpressure: { code: 'maintenance_backpressure', docs: 'docs/guides/write-refusals.md#maintenance_backpressure' },
   // F0 `gbrain sources refresh` (worktree-wide coordinated ff-only refresh).
   refresh_not_managed: { code: 'refresh_not_managed', docs: 'docs/guides/write-refusals.md#refresh_not_managed' },
   refresh_not_owner: { code: 'refresh_not_owner', docs: 'docs/guides/write-refusals.md#refresh_not_owner' },
