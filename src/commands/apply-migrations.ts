@@ -185,7 +185,7 @@ Exit codes:
   0  Success (including "nothing to do").
   1  An orchestrator failed, the migration lease stopped matching this run
      (migration_lease_lost), or the run left the schema behind
-     (migrations_pending: not_applied → rerun with --yes; still_behind or
+     (migrations_pending: not_applied → apply them with --yes; still_behind or
      schema_unreadable → run gbrain doctor --json and report, not --yes again).
      An unreachable Postgres stays 0 (GBRAIN_DB_ACCESS on stderr) unless --require-db.
   2  Invalid arguments.

@@ -90,25 +90,15 @@ Requires **Bun 1.4.0 or newer**. Existing worker installations should follow the
 before restarting services with this version.
 
 > [!WARNING]
-> **GBrain is NOT distributed on npm.** The npm package named `gbrain` is an unrelated
-> package with no connection to this project. Do not run `npm install -g gbrain` or
-> `bun add -g gbrain` — you'll get something else, and it can shadow the real binary on
-> your PATH. Install and upgrade ONLY via the documented paths below
-> (`bun install -g github:garrytan/gbrain`, or `git clone` + `bun install && bun link`).
-> If you already ran the npm install by mistake: `npm uninstall -g gbrain` /
-> `bun remove -g gbrain`, then reinstall from GitHub. `gbrain doctor` detects a
-> shadowing npm install and prints the fix.
-
-<!-- #218 recovery: canonical copy; synced into AGENTS.md and INSTALL_FOR_AGENTS.md. -->
-If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0` (Bun
-sometimes skips the postinstall hook on global installs, so schema migrations
-don't run), the CLI prints a recovery hint pointing at
-[#218](https://github.com/garrytan/gbrain/issues/218). Run
-`gbrain apply-migrations --yes --no-autopilot-install`. It exits 0 only when the
-schema is at head. Exit 1 with `migrations_pending` means the schema is still
-behind: running `--yes` again repeats the failure, so run `gbrain doctor --json`
-and use the deterministic install:
-`git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+> **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
+> can shadow the real binary, so never run `npm install -g gbrain` or
+> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain`
+> or `git clone` + `bun install && bun link`.
+> Installed it by mistake? `npm uninstall -g gbrain` / `bun remove -g gbrain`, then
+> reinstall; `gbrain doctor` detects it.
+> Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))?
+> Run `gbrain apply-migrations --yes --no-autopilot-install`; exit 1 means it's still
+> behind: run `gbrain doctor --json`, not `--yes` again.
 
 Start with the agent you already use. For Grok Bot and Muse, the dedicated guides above install an isolated launcher, repairable runtime, and memory in a verified persistent directory. For a coding agent, paste:
 
