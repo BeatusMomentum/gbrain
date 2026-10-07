@@ -35,6 +35,7 @@ import { loadActivePack } from '../core/schema-pack/load-active.ts';
 import { loadActivePackForLocalEngine } from '../core/schema-pack/best-effort.ts';
 import { safeCliToken, sanitizeTypeForDisplay, storedTypeMissesPack, type TypeUsagePack } from '../core/schema-pack/type-usage.ts';
 import { parseLineGrammar } from '../core/line-grammar.ts';
+import { stripCodeBlocks } from '../core/markdown-code.ts';
 import { pathToSlug } from '../core/sync.ts';
 import { isManagedBrain } from '../core/cycle/phase-table.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
@@ -204,17 +205,13 @@ export function lintContent(content: string, filePath: string, opts: LintContent
     });
   }
 
-  // Rule: Placeholder dates. #3958: skip lines inside fenced code blocks —
-  // a page DOCUMENTING date formats (```\ncreated: YYYY-MM-DD\n```) is not a
-  // page with an unfilled placeholder. Both ``` and ~~~ fences toggle.
-  let inFence = false;
+  // Rule: Placeholder dates. #3958/#6133: code is not a placeholder — a page
+  // DOCUMENTING date formats (```\ncreated: YYYY-MM-DD\n``` or `YYYY-MM-DD`)
+  // is not a page with an unfilled one. stripCodeBlocks masks fenced blocks
+  // and inline spans in place, so line numbers stay exact.
+  const prose = stripCodeBlocks(content).split('\n');
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s{0,3}(```|~~~)/.test(lines[i])) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    if (lines[i].match(/\bYYYY-MM-DD\b/) || lines[i].match(/\bXX-XX\b/) || lines[i].match(/\b\d{4}-XX-XX\b/)) {
+    if (prose[i].match(/\bYYYY-MM-DD\b/) || prose[i].match(/\bXX-XX\b/) || prose[i].match(/\b\d{4}-XX-XX\b/)) {
       issues.push({
         file: filePath, line: i + 1, rule: 'placeholder-date',
         message: `Placeholder date found: ${lines[i].trim().slice(0, 60)}`,
