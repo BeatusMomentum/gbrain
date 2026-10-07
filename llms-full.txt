@@ -6176,6 +6176,14 @@ You also exercised the full mutation skeleton: bundled-pack guard, per-pack lock
 
 ## Next steps
 
+**Add a type set by frontmatter only.** Some types don't live in one directory: an `archive` page can sit anywhere and is typed by its frontmatter `type: archive`. Declare it with `--no-prefix` instead of `--prefix`:
+
+```bash
+gbrain schema add-type archive --primitive concept --no-prefix
+```
+
+The pack records `path_prefixes: []`, and the output notes that pages get this type only from frontmatter, never from a file path. Every type needs one of the two: leaving out both `--prefix` and `--no-prefix` is refused (exit 2, `invalid_params`) with a copy-paste example of each, so a forgotten `--prefix` never creates a type nothing infers. `--no-prefix` can't be combined with `--extractable` or `--expert`: extractable types are checked through their prefixes (lint rule `extractable_empty_corpus`), and expert routing without a prefix misses content (lint rule `expert_routing_without_prefix`). The type name is the first argument that isn't a flag value, so `gbrain schema add-type --primitive concept archive --no-prefix` also names the type `archive`.
+
 **Add a link verb.** A `researcher` can `author` a `paper`. To model that:
 
 ```bash
