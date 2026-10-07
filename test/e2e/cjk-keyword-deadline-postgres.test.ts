@@ -2,7 +2,9 @@
  * Postgres parity for the CJK keyword OR fallback (#6043) and the bounded arm
  * (#5989): a real statement timeout inside the scoped read transaction rolls
  * back to the savepoint, the capped retry keeps the source scope, and the
- * engine serves the next query normally.
+ * engine serves the next query normally. The corpus is sized so the full
+ * scoring takes well past 2/3 of the 1.5 s deadline (asserted) while the capped
+ * retry needs tens of milliseconds, so the outcome does not depend on load.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -27,7 +29,7 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
     await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('cjk-a', 'cjk-a'), ('cjk-b', 'cjk-b') ON CONFLICT DO NOTHING`);
     await seed('cjk-b', 'cjkb/seats-', 1, 1, '团队版的席位数量由管理员配置。');
     await seed('cjk-b', 'cjkb/upgrade-', 1, 1, '升级到专业版后可以使用更多功能。');
-    await seed('cjk-a', 'cjka/p-', 20_000, 8, `${'팀 좌석을 업그레이드하는 방법과 좌석 수 관리, '.repeat(10)}`);
+    await seed('cjk-a', 'cjka/p-', 20_000, 8, `${'팀 좌석을 업그레이드하는 방법과 좌석 수 관리, '.repeat(40)}`);
     await engine.executeRaw('ANALYZE content_chunks');
   }, 600_000);
   afterAll(async () => { await teardownDB(); }, 120_000);
@@ -42,11 +44,14 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
     const metas: CjkKeywordMeta[] = [];
     const started = performance.now();
     const rows = await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', orFallback: true, limit: 20,
-      cjkKeyword: { deadlineMs: 900, onMeta: (m) => metas.push(m) } });
+      cjkKeyword: { deadlineMs: 1500, onMeta: (m) => metas.push(m) } });
     const elapsed = performance.now() - started;
     expect(metas).toHaveLength(1);
     expect(metas[0]).toMatchObject({ incomplete: true, reason: 'timeout', capped: true });
-    expect(elapsed).toBeLessThan(2_000);
+    const full = performance.now();
+    await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', limit: 20 });
+    expect(performance.now() - full).toBeGreaterThan(1_200);
+    expect(elapsed).toBeLessThan(2_500);
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.source_id === 'cjk-a')).toBe(true);
     const after = await engine.searchKeyword('席位', { sourceId: 'cjk-b' });
