@@ -37,7 +37,7 @@ import type { GBrainConfig } from '../config.ts';
 import { configDir, loadConfig } from '../config.ts';
 import { captureGateDecision, fileCaptureIsOff, resolveWritebackConfig, type CaptureGateDecision, type CaptureGateLane, type WritebackMode } from '../facts/writeback-config.ts';
 import { parseCorpusTurns } from './corpus-turns.ts';
-import { CAPTURE_OFF_SUFFIX, parseSegmentFileName, parseWbFileName, writebackOffSidecarJson } from './corpus-segments.ts';
+import { CAPTURE_OFF_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseSegmentFileName, parseWbFileName, writebackOffSidecarJson } from './corpus-segments.ts';
 
 export { CAPTURE_OFF_SUFFIX };
 
@@ -142,4 +142,24 @@ export async function applyCaptureGate(full: string, decision: CaptureGateDecisi
 /** `resolveCaptureGate` + `applyCaptureGate` for one file of one lane. */
 export async function gateCorpusFile(engine: BrainEngine, full: string, lane: CaptureGateLane): Promise<AppliedCaptureGate> {
   return applyCaptureGate(full, (await resolveCaptureGate(engine))[lane]);
+}
+
+/**
+ * Readers outside fact extraction (dream synthesis): `content` of corpus file
+ * `full` without the turns captured or retired under writeback off (this
+ * brain's capture record plus `.progress` `retired_turns`). Null when nothing
+ * is left. Content with no off-period turns comes back unchanged.
+ */
+export function withoutOffPeriodTurns(full: string, content: string): string | null {
+  const record = readRecord(full + CAPTURE_OFF_SUFFIX);
+  let retired: string[] = [];
+  try { retired = (JSON.parse(readFileSync(full + CORPUS_PROGRESS_SUFFIX, 'utf8')) as { retired_turns?: string[] }).retired_turns ?? []; } catch { /* no progress */ }
+  const off = new Set([...(record && record.brain === brainIdentity() ? record.turns : []), ...retired]);
+  if (off.size === 0) return content;
+  const turns = parseCorpusTurns(content);
+  const kept = turns.filter((t) => !off.has(t.sha256));
+  if (kept.length === turns.length) return content;
+  if (kept.length === 0) return null;
+  const bytes = Buffer.from(content, 'utf8');
+  return kept.map((t) => bytes.subarray(t.start, t.end).toString('utf8').trimEnd()).join('\n\n') + '\n';
 }

@@ -99,8 +99,11 @@ the file's claim and before any provider call:
   banked under off, before the file lands. Extraction applies the stricter of
   that record and the current setting: a transcript banked under `off` is
   never extracted, even after writeback is turned back on, and a resumed
-  session extracts only the turns banked under `on`. A record written by
-  another brain sharing the corpus directory is ignored.
+  session extracts only the turns banked under `on`, wherever a later rewrite
+  places the off-period turns (they are skipped by hash, not only as a leading
+  run). Dream synthesis reads the same transcripts without those turns, and
+  skips a transcript that holds nothing else. A record written by another
+  brain sharing the corpus directory is ignored.
 - **In-flight calls.** Facts from a capture lane carry their provenance into
   the fact request, and admission re-checks the gate (code
   `ambient_capture_off`). `off` applies to every capture-lane request admitted
