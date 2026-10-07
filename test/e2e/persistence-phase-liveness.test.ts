@@ -176,7 +176,7 @@ describe.skipIf(!url)('PostgreSQL persistence phase cancellation', () => {
       try {
         consumer.start();
         await waitFor(async () => (await observer.unsafe<{ waiting: boolean }[]>(
-          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE $1) AS waiting", [`%${table}%`]))[0].waiting && consumer.status().phase?.name === phase,
+          "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND strpos(query, $1)>0) AS waiting", [statement]))[0].waiting && consumer.status().phase?.name === phase,
         { timeoutMs: 5000 });
         const stopping = consumer.stop();
         await waitFor(() => consumer.status().phase === null, { timeoutMs: 2000, label: 'cancelled phase settlement before releasing its blocker' });
