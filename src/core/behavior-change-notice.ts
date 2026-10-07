@@ -295,6 +295,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: 'WAVE12', text: '`gbrain sources reconcile` no longer refuses a page whose file name more than 100 other pages share; upgrading builds two indexes on `pages` (online on Postgres) for that check.' },
   { since: 'WAVE12', text: 'A pending write\'s `poll_command` is now `gbrain write-request --brain <id> -- <request_id>`, the same command as the error\'s `fix`, instead of `gbrain call get_write_request ...`.' },
   { since: 'WAVE12', text: '`gbrain quarantine clear` works on a managed brain, and `--force` records `quarantine_override` in the page frontmatter so the page stays cleared until its title, type or body changes; `quarantine scan --apply` refuses on a managed brain. Preview with `gbrain quarantine list`.' },
+  { since: 'WAVE12', text: 'An inline `[Source: A, date; B, date]` citation now files one timeline entry per dated source instead of one entry with the last date, and timeline summaries drop paired `**`, `__`, `*` and `_` emphasis markers. Rows stored under the older reading are deleted the next time their page is written or extracted, never written back into the page; a row someone gave its own detail stays. Pages nobody edits keep the old rows until the timeline prune-orphans cleanup runs (see `gbrain extract timeline --help`).' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */

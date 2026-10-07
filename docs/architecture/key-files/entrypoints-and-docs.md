@@ -92,7 +92,7 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
 
 - `skills/media-ingest/SKILL.md` — Video/audio/PDF/book with entity extraction
 
-- `skills/meeting-ingestion/SKILL.md` — Transcripts with attendee enrichment chaining
+- `skills/meeting-ingestion/SKILL.md` — Transcripts with attendee enrichment chaining. The transcript sidecar carries `facts_backstop: false`, and the meeting page is drafted with it until the verification checklist passes (#6232), so automatic fact extraction reads only the verified page; `test/facts-eligibility.test.ts` pins both literals.
 
 - `skills/migrations/` — Version migration files with feature_pitch YAML frontmatter
 
