@@ -562,7 +562,33 @@
         },
         {
           "category": "meta",
-          "message": "Nothing to disclose: this brain is a fresh install at v<version>, after every disclosed behavior change, so the one-time behavior-change notice does not apply.",
+          "details": {
+            "baseline": "<version>",
+            "shown": {
+              "cli": false,
+              "stdio": false
+            },
+            "since": "0.60.100.0"
+          },
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "doctor",
+              "--only",
+              "behavior_changes",
+              "--json",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain doctor --only behavior_changes --json --brain host",
+            "consent": [],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/chat-fallback.md",
+            "next": "run",
+            "requires_exclusive": false,
+            "why": "Shows this disclosure again; read-only."
+          },
+          "message": "gbrain v0.60.100.0 changed 1 behavior on this brain. All stay on; this is a one-time disclosure, not a request for consent. (1) `gbrain doctor` has a new `fence_integrity` check: it counts malformed facts and takes fences still waiting (held files, stored pages, unsynced checkout files) by the tier that would fix them, and warns when a source had 20 or more fences normalized in 7 days. Each doctor run scans stored pages and source checkouts for up to 10 seconds (`GBRAIN_DOCTOR_FENCE_TIMEOUT_MS`) and resumes where it stopped; until a scan finishes the check reports partial instead of ok. New settings `fences.repair.max_usd_per_page` (0.05) and `fences.repair.max_usd_per_day` (1.00) cap model fence repair; nothing spends under them yet. gbrain doctor --only behavior_changes shows this again.",
           "name": "behavior_changes",
           "status": "ok"
         },
@@ -1640,6 +1666,77 @@
           },
           "message": "Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.",
           "name": "core_memory",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/write-refusals.md#invalid_fence",
+            "model_repair": {
+              "max_usd_per_day": 1,
+              "max_usd_per_page": 0.05,
+              "reserved_today_usd": 0,
+              "spent_today_usd": 0
+            },
+            "partial": false,
+            "partial_sources": [],
+            "sources": [
+              {
+                "by_tier": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "files": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "holds": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "oldest_hold_at": null,
+                "pages": {
+                  "deterministic": 0,
+                  "llm": 0,
+                  "manual": 0,
+                  "resolver": 0,
+                  "total": 0
+                },
+                "sample": [],
+                "scan": {
+                  "backfill_done": true,
+                  "checked_at": "<ts>",
+                  "complete": true,
+                  "fresh_at": "<ts>",
+                  "walking": false
+                },
+                "source_id": "default",
+                "total": 0
+              }
+            ],
+            "timeout_ms": "<volatile>",
+            "total": 0,
+            "trend": [
+              {
+                "by_day": [],
+                "normalized_7d": 0,
+                "source_id": "default",
+                "top_writers": []
+              }
+            ],
+            "warn_at_normalized_7d": 20
+          },
+          "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",
+          "name": "fence_integrity",
           "status": "ok"
         },
         {
