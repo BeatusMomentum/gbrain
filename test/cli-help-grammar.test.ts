@@ -99,4 +99,14 @@ describe('strict arguments', () => {
     expect(strictArgsRefusal('schema', ['use', 'a', 'b'])?.message).toContain('`b`');
     expect(strictArgsRefusal('schema', ['remove-type', '--pack', 'mine', 'people'])).toBeNull();
   });
+
+  test('a --flag=value form the handler would not read is refused, not ignored (security review)', () => {
+    // These handlers read only `--flag value`: `cache clear --source=x --yes` cleared every source.
+    expect(strictArgsRefusal('cache', ['clear', '--source=other', '--yes'])?.message).toContain('`--source=other`');
+    expect(strictArgsRefusal('search', ['modes', '--reset', '--source=conservative'])?.message).toContain('`--source=conservative`');
+    expect(strictArgsRefusal('schema', ['downgrade', '--to=my-pack'])?.message).toContain('`--to=my-pack`');
+    expect(strictArgsRefusal('cache', ['clear', '--source', 'other', '--yes'])).toBeNull();
+    expect(strictArgsRefusal('schema', ['downgrade', '--to', 'my-pack'])).toBeNull();
+    expect(strictArgsRefusal('schema', ['remove-type', '--pack=mine', 'people'])).toBeNull();
+  });
 });
