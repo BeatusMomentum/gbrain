@@ -261,6 +261,8 @@ export interface GBrainConfig {
     adaptive_return_min_keep?: number;
     /** #5824 rollback switch (search/vector-legacy-guard.ts); file > DB, env wins over both. */
     vector_legacy_guard?: boolean;
+    /** #6132 pgvector iterative scan mode (search/hnsw-iterative-scan.ts); file > DB, env wins over both. */
+    hnsw_iterative_scan?: string;
   };
 
   /**
@@ -1173,6 +1175,8 @@ export async function loadConfigWithEngine(
   }
   const dbVectorLegacyGuard = await dbBoolStrict('search.vector_legacy_guard');
   if (mergedSearch.vector_legacy_guard === undefined && dbVectorLegacyGuard !== undefined) mergedSearch.vector_legacy_guard = dbVectorLegacyGuard;
+  const dbHnswIterativeScan = await dbStr('search.hnsw_iterative_scan');
+  if (mergedSearch.hnsw_iterative_scan === undefined && dbHnswIterativeScan !== undefined) mergedSearch.hnsw_iterative_scan = dbHnswIterativeScan;
   if (Object.keys(mergedSearch).length > 0) {
     merged.search = mergedSearch;
   }
@@ -1353,6 +1357,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // review). See docs/operations/spend-controls.md.
   // #5824 one-release rollback, latched per process (search/vector-legacy-guard.ts).
   'search.vector_legacy_guard',
+  'search.hnsw_iterative_scan',
   'search.adaptive_return',
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',

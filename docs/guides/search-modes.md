@@ -143,6 +143,14 @@ Seven of the knobs deserve a sentence:
   to OR when strict AND matching finds nothing, so a multi-word query still
   gets keyword recall instead of leaning on vectors alone. Set the config
   key to `false` to keep strict AND matching.
+- **`hnsw_iterative_scan`** (Postgres with pgvector 0.8+; config key
+  `search.hnsw_iterative_scan`, string, default `relaxed_order`, one of
+  `relaxed_order | strict_order | off`; env `GBRAIN_HNSW_ITERATIVE_SCAN`
+  wins) is the iterative HNSW scan mode for filtered vector search. Relaxed
+  order keeps closer in-filter candidates that strict order drops; results
+  are re-sorted either way. `gbrain config set search.hnsw_iterative_scan
+  strict_order` restores the older mode (restart serve and autopilot: it is
+  read once per process); another value is refused with exit 2.
 
 ### Setting and resolving the mode
 

@@ -23,6 +23,7 @@ import { recordSearchTelemetry } from '../telemetry.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../source-boost.ts';
 import { resolveEmbeddingColumn } from '../embedding-column.ts';
 import { resolveVectorLegacyGuard } from '../vector-legacy-guard.ts';
+import { resolveHnswIterativeScan } from '../hnsw-iterative-scan.ts';
 import { resolveSearchDateBounds } from '../date-bounds.ts';
 import { type DecideSearchContext, decideMetaFor, resolveAndLaunchDecide } from '../decide-stage.ts';
 import { applySearchIntent } from '../decide-retrieval.ts';
@@ -235,6 +236,7 @@ export async function resolveHybridRequest(
     embeddingColumn: resolvedCol,
     // #5824 rollback switch, latched once per process from env/config.
     vectorLegacyGuard: resolveVectorLegacyGuard(cfgForColumn),
+    hnswIterativeScan: resolveHnswIterativeScan(cfgForColumn),
     // D2 fix (fix/title-retrieval-arm, Reviewer F1): the hybrid keyword arm
     // is a recall arm — opt in to the engine's AND→OR zero-recall fallback.
     // Direct searchKeyword consumers (countMentions, link-extraction, eval)

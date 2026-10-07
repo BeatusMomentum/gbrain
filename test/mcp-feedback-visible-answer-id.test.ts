@@ -89,7 +89,7 @@ describe('the rateable answer id is model-visible (#6192)', () => {
 describe('retrieval_feedback_health: many answers, zero ratings (#6192)', () => {
   async function doctorCheck() {
     const { retrievalFeedbackEntry } = await import('../src/commands/doctor/checks/retrieval-feedback.ts');
-    const checks = await retrievalFeedbackEntry.run({ engine, progress: { heartbeat() {} } } as never);
+    const checks = (await retrievalFeedbackEntry.run({ engine, progress: { heartbeat() {} } } as never)) as Array<{ name: string; status: string; message: string; fix?: unknown }>;
     return checks.find((c) => c.name === 'retrieval_feedback_health')!;
   }
   async function seedAnswers(n: number) {
