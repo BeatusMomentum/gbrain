@@ -139,8 +139,8 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
 function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
   try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) }); } catch (error) {
     // #5929: a trusted local caller is told when an owner on another build ran the failed attempt.
-    const mismatch = ctx.remote === false && error instanceof OperationError ? ownerBuildMismatch(row.error_detail, VERSION) : null;
-    if (mismatch) { error.why = mismatch.why; error.fix = mismatch.fix; }
+    const mismatch = ctx.remote === false ? ownerBuildMismatch(row.error_detail, VERSION) : null;
+    if (mismatch && error instanceof OperationError) { error.why = mismatch.why; error.fix = mismatch.fix; }
     throw error;
   }
 }

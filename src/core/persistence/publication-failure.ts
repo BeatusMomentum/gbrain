@@ -124,9 +124,9 @@ export function ownerBuildMismatch(detail: unknown, cliVersion: string): { owner
   return { owner, cli: cliVersion,
     why: `The owner process that ran this attempt is on gbrain ${owner}; this CLI is ${cliVersion}. Long-running \`gbrain serve\` processes (and autopilot or sync jobs) started before the upgrade still own writes and run the old code.`,
     fix: { consent: [], actor: 'user', requires_exclusive: false,
-      why: 'Restart every gbrain serve, autopilot and sync process on the brain host so the owner runs this build, then submit the write again with a new request_id.',
+      why: 'Restart every gbrain serve, autopilot and sync process on the brain host so the owner runs this build (gbrain sources writer status --probe --json shows the owner), then submit the write again with a new request_id.',
       user_message: `Restart the gbrain serve (and autopilot) processes on the brain host: they are on ${owner}, this CLI is ${cliVersion}.`,
-      verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] } } };
+      verify: { argv: ['gbrain', 'doctor', '--only', 'writer_version', '--json'] } } };
 }
 
 /** Stamps which build, host and stage ran the failed attempt. */

@@ -102,6 +102,6 @@ describe('#5929 owner exceptions keep a bounded identity', () => {
       operationsByName.get_write_request.handler(ctx(), { request_id: row.request_id })) as Record<string, any>;
     expect(receipt.owner_build).toMatchObject({ owner: '0.60.1.0', cli: VERSION });
     expect(receipt.owner_build.why).toContain('gbrain serve');
-    expect(receipt.owner_build.fix).toMatchObject({ actor: 'user', verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] } });
+    expect(receipt.owner_build.fix).toMatchObject({ actor: 'user', verify: { argv: ['gbrain', 'doctor', '--only', 'writer_version', '--json'] } });
   });
 });
