@@ -5688,7 +5688,7 @@ the SQLSTATE (for example `53300` when a pooler's client limit is reached),
 a write-error code, `storage_error`, or `deadline_exceeded` when the phase
 overran its five-second budget. `message` is the redacted error text, one line,
 at most 200 characters. When an unexpected exception in the owner failed a
-write (`storage_error` "Publication failed (TypeError in owner build 0.60.x)"),
+write (`storage_error` with a generic public message; the class and frame stay owner-only),
 the line also carries `class=`, `errno=` and `frame=` (the top gbrain source
 frame, repo-relative, for example `src/core/persistence/page-prepare.ts:120`):
 the owner diagnostics the receipt points at. The stored receipt keeps the same
