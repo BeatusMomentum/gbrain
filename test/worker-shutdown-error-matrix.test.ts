@@ -15,19 +15,13 @@
  * overwrites the handler's error text.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
+import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { UnrecoverableError, type MinionJobContext } from '../src/core/minions/types.ts';
 import { LocalConfigurationError } from '../src/core/minions/configuration-error.ts';
-
-let engine: PGLiteEngine;
-beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-}, 120_000);
-afterAll(async () => { await engine.disconnect(); });
 
 type Trigger = 'requestShutdown' | 'watchdog' | 'configuration';
 const ERRORS: Record<string, (ctx: MinionJobContext) => unknown> = {
@@ -38,7 +32,7 @@ const ERRORS: Record<string, (ctx: MinionJobContext) => unknown> = {
   plain: () => new Error('handler failed: upstream returned 500'),
 };
 
-async function runCase(trigger: Trigger, kind: keyof typeof ERRORS) {
+async function runCase(engine: BrainEngine, trigger: Trigger, kind: keyof typeof ERRORS) {
   const queue = new MinionQueue(engine);
   const worker = new MinionWorker(engine, { pollInterval: 10, lockDuration: 60_000, healthCheckInterval: 0, stalledInterval: 600_000 });
   let release!: () => void;
@@ -60,26 +54,33 @@ async function runCase(trigger: Trigger, kind: keyof typeof ERRORS) {
   return { status: row?.status, attempts: row?.attempts_made, error: row?.error_text };
 }
 
-describe('worker shutdown error matrix (W9F item 6, in-process)', () => {
+for (const backend of testBackends()) describe(`worker shutdown error matrix (W9F item 6, in-process, ${backend})`, () => {
+  let engine: BrainEngine;
+  let close: () => Promise<void>;
+  beforeAll(async () => {
+    ({ engine, close } = await isolatedSharedSkillsEngine(backend === 'postgres' ? requirePostgresTestDatabase() : undefined));
+  }, 120_000);
+  afterAll(async () => { await close(); });
+
   test('requestShutdown: only UnrecoverableError burns an attempt; every hand-back keeps the handler text', async () => {
     const reasonText = 'shutdown';
-    expect(await runCase('requestShutdown', 'reason')).toEqual({ status: 'waiting', attempts: 0, error: `worker_shutdown: ${reasonText}` });
-    expect(await runCase('requestShutdown', 'abortErrorWithCause')).toEqual({ status: 'waiting', attempts: 0, error: 'worker_shutdown: The operation was aborted' });
-    expect(await runCase('requestShutdown', 'wrappedAbort')).toEqual({ status: 'waiting', attempts: 0, error: 'worker_shutdown: subagent aborted during tool dispatch' });
-    expect(await runCase('requestShutdown', 'plain')).toEqual({ status: 'waiting', attempts: 0, error: 'worker_shutdown: handler failed: upstream returned 500' });
-    expect(await runCase('requestShutdown', 'unrecoverable')).toEqual({ status: 'dead', attempts: 1, error: 'invalid params: slug is required' });
+    expect(await runCase(engine, 'requestShutdown', 'reason')).toEqual({ status: 'waiting', attempts: 0, error: `worker_shutdown: ${reasonText}` });
+    expect(await runCase(engine, 'requestShutdown', 'abortErrorWithCause')).toEqual({ status: 'waiting', attempts: 0, error: 'worker_shutdown: The operation was aborted' });
+    expect(await runCase(engine, 'requestShutdown', 'wrappedAbort')).toEqual({ status: 'waiting', attempts: 0, error: 'worker_shutdown: subagent aborted during tool dispatch' });
+    expect(await runCase(engine, 'requestShutdown', 'plain')).toEqual({ status: 'waiting', attempts: 0, error: 'worker_shutdown: handler failed: upstream returned 500' });
+    expect(await runCase(engine, 'requestShutdown', 'unrecoverable')).toEqual({ status: 'dead', attempts: 1, error: 'invalid params: slug is required' });
   }, 60_000);
 
   test('watchdog: the per-job abort fires, so the job takes the abort path (attempt burned; UnrecoverableError dead)', async () => {
     for (const kind of ['reason', 'abortErrorWithCause', 'wrappedAbort', 'plain'] as const) {
-      expect(await runCase('watchdog', kind)).toEqual({ status: 'delayed', attempts: 1, error: 'aborted: watchdog' });
+      expect(await runCase(engine, 'watchdog', kind)).toEqual({ status: 'delayed', attempts: 1, error: 'aborted: watchdog' });
     }
-    expect(await runCase('watchdog', 'unrecoverable')).toEqual({ status: 'dead', attempts: 1, error: 'aborted: watchdog' });
+    expect(await runCase(engine, 'watchdog', 'unrecoverable')).toEqual({ status: 'dead', attempts: 1, error: 'aborted: watchdog' });
   }, 60_000);
 
   test('configuration block: every error releases through the configuration path with no attempt burned', async () => {
     for (const kind of Object.keys(ERRORS)) {
-      const row = await runCase('configuration', kind);
+      const row = await runCase(engine, 'configuration', kind);
       expect(row.attempts).toBe(0);
       expect(row.status).not.toBe('dead');
     }
