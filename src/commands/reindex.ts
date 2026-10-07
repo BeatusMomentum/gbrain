@@ -83,7 +83,7 @@ export interface ReindexResult {
 const REINDEX_HELP = `gbrain reindex — re-chunk / re-embed existing pages after a pipeline upgrade
 
 USAGE
-  gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--workers N] [--dry-run] [--no-embed] [--json] [--repo PATH]
+  gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--workers N] [--dry-run] [--no-embed] [--yes] [--max-usd USD] [--json] [--repo PATH]
   gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
   gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
   gbrain reindex --vectors    [--dry-run] [--json]
@@ -112,7 +112,11 @@ OPTIONS
   --dry-run         Report what would change; write nothing
   --cost-estimate   --multimodal only: print the embed cost estimate and stop
   --no-embed        Skip re-embedding (chunk-only reindex)
-  --yes             --multimodal only: skip the cost confirm
+  --yes             Approve the paid run: --markdown re-embeds pages and asks
+                    first (exit 3 without approval when not interactive;
+                    --dry-run, --no-embed and a keyless brain never ask);
+                    --multimodal skips its cost confirm
+  --max-usd USD     --markdown: approve the paid run with this cost cap
   --source <id>     --aliases only: restrict to one source
   --repo PATH       --markdown only: brain repo override
   --json            Machine-readable output
@@ -126,7 +130,7 @@ export function printReindexHelp(): void {
   console.log(REINDEX_HELP);
 }
 
-const REINDEX_VALUE_FLAGS = new Set(['--type', '--limit', '--repo', '--workers', '--concurrency']);
+const REINDEX_VALUE_FLAGS = new Set(['--type', '--limit', '--repo', '--workers', '--concurrency', '--max-usd']);
 
 export function normalizeReindexArgs(args: string[]): string[] {
   return args.flatMap((arg) => {
@@ -223,7 +227,7 @@ function parseArgs(args: string[]): ReindexOpts {
  * hook for post-v81 brains. The simple `chunker_version OR mode IS NULL`
  * predicate covers the headline upgrade case the wave is shipping.
  */
-async function countPending(engine: BrainEngine, type: string | null = null, noEmbed = false): Promise<number> {
+export async function countPending(engine: BrainEngine, type: string | null = null, noEmbed = false): Promise<number> {
   const driftPredicate = pendingDriftPredicate(noEmbed);
   if (type) {
     const rows = await engine.executeRaw<{ count: string | number }>(
@@ -290,7 +294,15 @@ async function readBatch(
   );
 }
 
-export async function runReindex(engine: BrainEngine, args: string[]): Promise<ReindexResult> {
+/** How a caller already authorized the paid run (W4.5): the job handler's stored spend record, or the upgrade prompt's TTY yes. */
+export interface ReindexRunOpts {
+  /** The paid run is already authorized; skip the consent gate. */
+  authorized?: boolean;
+  /** False for unattended callers (the job handler): the gate never prompts. */
+  interactive?: boolean;
+}
+
+export async function runReindex(engine: BrainEngine, args: string[], runOpts: ReindexRunOpts = {}): Promise<ReindexResult> {
   args = normalizeReindexArgs(args);
   const invalidType = args.some((arg, index) =>
     arg === '--type' && !parsePageType(args[index + 1]));
@@ -368,6 +380,12 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
       process.stderr.write(`[reindex] DRY-RUN: would re-chunk ${target} of ${pending} pending markdown pages${scope}.\n`);
     }
     return { pending, pendingAfter: pending, reindexed: 0, skipped: 0, failed: 0, dryRun: true, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
+  }
+
+  // W4.5: re-embedding is paid work; ask before it starts (throws the exit-3 consent refusal or cost_cap_exceeded).
+  if (!opts.noEmbed && !runOpts.authorized) {
+    const { requireReindexConsent } = await import('../core/reindex-consent.ts');
+    await requireReindexConsent(engine, { args, type, target, ...(runOpts.interactive === false ? { interactive: false } : {}) });
   }
 
   if (await managedPersistenceEnabled(engine)) return reindexManaged(engine, opts, type, pending);
