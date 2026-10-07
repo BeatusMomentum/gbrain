@@ -115,6 +115,22 @@ describe('W4.5: reindex --markdown asks before re-embedding', () => {
   });
 });
 
+describe('W12 P1: the inline run enforces the approved cap while it spends', () => {
+  test('--max-usd stops the run once measured spend passes the cap; the rest stays pending', async () => {
+    // Each embedding call reports 10M tokens (about $0.20 on text-embedding-3-small); the up-front estimate is tiny.
+    __setEmbedTransportForTests((async (args: { values: string[] }) => {
+      embedCalls++;
+      return { embeddings: args.values.map(() => Array.from({ length: 1536 }, () => 0.01)), usage: { tokens: 10_000_000 } };
+    }) as never);
+    const { stdout } = await quiet(() => runReindexCli(engine, ['--markdown', '--max-usd', '0.05', '--json']));
+    expect(currentExitCode()).toBe(1);
+    const doc = JSON.parse(stdout.trim().split('\n').at(-1)!);
+    expect(doc.budget_exhausted).toMatchObject({ cap_usd: 0.05 });
+    expect(embedCalls).toBeLessThan(3);
+    expect(await lagging()).toBeGreaterThan(0);
+  });
+});
+
 describe('W4.5: the reindex job handler', () => {
   const ctx = (spend?: boolean): MinionJobContext => ({
     id: 41, name: 'reindex', data: { markdown: true }, attempts_made: 0, signal: new AbortController().signal,

@@ -68,6 +68,21 @@ const MUST_REDACT: Array<[string, string]> = [
   ['table with two credential columns', `| password | user | pwd |\n|---|---|---|\n| ${PW} | alice-example | x${PW}y |`],
   ['key/value table row', `| password | ${PW} |`],
   ['table with CRLF', `| user | password |\r\n|---|---|\r\n| alice-example | ${PW} |\r\n`],
+  // W12 S1: a password that starts with "-" (redacted before W4.1; only a CLI flag's value may not start with "-")
+  ['single label, value starting with -', `password: -${PW}`],
+  ['pair, password starting with -', `login: alice-example / -Xy9${PW}!q`],
+  ['quoted env value starting with -', `DB_PASSWORD="-${PW}"`],
+  ['single label, value starting with --', `password: --${PW}x9`],
+  // W12 S2: a pair whose user half looks like a setting suffix
+  ['pair with a setting-like user name', `login: pass_auth / ${PW}x9`],
+  // W12 S4
+  ['prefixed CLI flag', `aws rds modify-db-instance --master-user-password ${PW}x9`],
+  ['db-password flag', `tool --db-password ${PW}x9`],
+  ['openssl -passin', `openssl rsa -in key.pem -passin pass:${PW}x9`],
+  ['pw flag', `client --pw ${PW}x9`],
+  ['table with |-|-| separators', `|user|password|\n|-|-|\n|alice-example|${PW}|`],
+  ['pw column header', `| user | pw |\n|---|---|\n| alice-example | ${PW} |`],
+  ['qualified column header', `| user | Password (prod) |\n|---|---|\n| alice-example | ${PW} |`],
 ];
 
 const MUST_KEEP: Array<[string, string]> = [
@@ -108,6 +123,10 @@ const MUST_KEEP: Array<[string, string]> = [
   ['pass the test', 'make sure we pass the test suite'],
   ['prose under a password heading', 'Password:\nYou can change it in the settings page'],
   ['pass/fail column', '| test | pass |\n|---|---|\n| auth | ok2 |'],
+  // W12 S1/S4: a flag is never a flag's value; boolean and action flags are not labels
+  ['flag followed by another flag', 'tool --password --interactive --verbose'],
+  ['no-password boolean flag', 'ssh-keygen --no-password build-key'],
+  ['skip-password flag', 'tool --skip-password-check release2'],
 ];
 
 describe('labeled_credential on the transcript page lane', () => {
