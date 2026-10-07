@@ -7,7 +7,7 @@
  * page_links, chunk_relations via existing FKs.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { purgeDeletedPagesCoordinated } from '../core/persistence/purge-deleted.ts';
+import { purgeConsentRequest, purgeDeletedPagesCoordinated } from '../core/persistence/purge-deleted.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import { strictArgsRefusal } from '../cli/strict-args.ts';
@@ -66,16 +66,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
     else console.log(`No pages to purge (older than ${olderThanHours}h).`);
     return;
   }
-  const authorized = await consentGate({
-    command: 'pages purge-deleted', effects: ['destructive'], actor: 'agent',
-    what: `Permanently purge ${preview.count} soft-deleted page(s)`,
-    why: 'A hard purge removes soft-deleted pages, their chunks and links, from every source of this brain.',
-    risk: 'Purged pages cannot be restored with `gbrain restore`.',
-    user_message: `Permanently delete ${preview.count} page(s) soft-deleted more than ${olderThanHours}h ago, across every source in this brain? They cannot be restored afterwards.`,
-    argv: ['gbrain', 'pages', 'purge-deleted', '--older-than', `${olderThanHours}h`, ...(json ? ['--json'] : []), '--yes'],
-    preview_argv: ['gbrain', 'pages', 'purge-deleted', '--older-than', `${olderThanHours}h`, '--dry-run', '--json'],
-    args,
-  }, { json });
+  const authorized = await consentGate(purgeConsentRequest(preview.count, olderThanHours, json, args), { json });
   if (!authorized) return;
 
   const result = await purgeDeletedPagesCoordinated(engine, olderThanHours);
