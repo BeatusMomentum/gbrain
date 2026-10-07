@@ -386,6 +386,11 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     const err = validateFenceConfigValue(key, value);
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
+  if (key === 'persistence.max_claim_ms') {
+    const { validateMaxClaimConfigValue } = await import('../core/persistence/claim-phase.ts');
+    const err = validateMaxClaimConfigValue(key, value);
+    if (err) { console.error(`[config] ${err}`); process.exit(1); }
+  }
   if (key.startsWith('facts.drain_')) {
     const { validateFactsDrainConfigValue } = await import('../core/facts/drain-config.ts');
     const err = validateFactsDrainConfigValue(key, value);

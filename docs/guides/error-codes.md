@@ -1726,6 +1726,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | This caller is not authorized for the operation. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### persistence_write_stall
+
+<a id="persistence_write_stall"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed write request has held its claim longer than persistence.max_claim_ms, so later writes on its root wait behind it. | The owner renews a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse; doctor names the stuck phase, the root, the claim's age and whether the same request resumes on its own. | Inspect the request with the command in fix, then restart the gbrain serve that owns the root; attach that status output when reporting the hang. Run: gbrain sources writer status --source '{source_id}' --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides/troubleshooting.md#persistence-write-stall)
+
 ### pglite_busy
 
 <a id="pglite_busy"></a>

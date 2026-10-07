@@ -1698,7 +1698,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_lifetime_ids', 'persistence.limits.brain_lifetime_ids',
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes',
-  'persistence.receipt_retention_days', 'persistence.unbound_write', // #5254: persistence/unbound-source.ts
+  'persistence.receipt_retention_days', 'persistence.unbound_write', 'persistence.max_claim_ms', // #5254: persistence/unbound-source.ts; #6176: persistence/claim-phase.ts
   // shared-skills migration inventory bounds (src/core/shared-skills/inventory-limits.ts)
   'shared_skills.inventory.max_files', 'shared_skills.inventory.max_total_bytes', 'shared_skills.inventory.max_file_bytes', 'shared_skills.inventory.max_entries',
   'persistence.write_wait_ms', // #5232: file plane, persistence/write-wait.ts

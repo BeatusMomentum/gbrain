@@ -664,6 +664,21 @@ never holds a direct or session-pooler connection, so a
 `GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
 idle `gbrain serve` processes.
 
+<a id="persistence-claim-phase"></a>**Claim phases and `persistence.max_claim_ms`.** Each claim renewal
+(every 10 seconds) also records which phase the claimed write is in
+(`preparing` or `publishing`), when the claim started and when that phase
+started, in the request's `claim_phase` column, keyed to the claim's execution
+token. `gbrain sources writer status --json` shows it on every running blocker as
+`claim` (`phase`, `claim_age_ms`, `phase_age_ms`, `resumes_on_its_own`, `why`);
+a running request whose claim lapsed is reported as `publication_transaction`
+and one whose files were being published as `file_publication`. Doctor's
+`persistence_write_stall` warns when a claim is older than
+`persistence.max_claim_ms` (milliseconds; default 600000, 10 minutes, about 40
+times the 15-second bulk transaction budget; valid 60000 to 86400000; `gbrain
+config set persistence.max_claim_ms 900000` raises it, and `config set` refuses
+anything else with `invalid_params`). See
+[troubleshooting](guides/troubleshooting.md#persistence-write-stall).
+
 ## JSONB writes: never double-encode
 
 Writing a JS value into a `jsonb` column has exactly two correct forms. Get this
