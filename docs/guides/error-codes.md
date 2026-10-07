@@ -2350,6 +2350,16 @@ Reasons: `content_directory`.
 |---|---|---|---|---|---|---|
 | Adding this source would replace or overlap another owner root. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### transcript_secret_exposure
+
+<a id="transcript_secret_exposure"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Imported conversation pages may still carry a typed credential from before the labeled-credential detector, or the last audit found some; pages are never rewritten automatically. | Re-ingest skips unchanged sessions, so pages imported before the detector keep any password typed in prose until someone reviews them. | Run the read-only audit to list affected slugs (never values), then review, edit or (after asking the user) remove each page, and ask the user to rotate any real credential. Run: gbrain transcripts audit-secrets --json | agent | `gbrain doctor --only transcript_secret_exposure --json` | 1 | no |
+
+More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/data-ingestion.md#credential-redaction)
+
 ### trusted_local_only
 
 <a id="trusted_local_only"></a>

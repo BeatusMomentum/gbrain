@@ -670,6 +670,10 @@
         "name": "retrieval_feedback_health"
       },
       {
+        "category": "brain",
+        "name": "transcript_secret_exposure"
+      },
+      {
         "category": "meta",
         "name": "revision_backfill"
       },
