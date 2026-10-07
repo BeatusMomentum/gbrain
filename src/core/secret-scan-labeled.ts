@@ -64,11 +64,14 @@ const PAIR_USER = `(?:${QUOTE}[^"'\`\\n/]{1,128}${QUOTE}|[^\\s/:"'\`]{1,128})`;
 const PAIR_SEP = '(?:\\s{0,4}/\\s{0,4}|:(?![/\\s]))';
 const LABEL_SUFFIX = '(?:_[A-Za-z0-9]{1,16}){0,2}';
 const SINGLE_HEAD = `${LEFT}[A-Za-z0-9_]{0,32}${SINGLE_LABEL}${LABEL_SUFFIX}${LABEL_END}${BOLD}${QUOTE}?\\s{0,4}${DELIM}${BOLD}\\s{0,4}`;
-const CLI_HEAD = '(?:^|\\s)--?(?:pass(?:word|wd|phrase)?|pwd)(?![A-Za-z0-9_=-])\\s{1,4}';
+const CLI_HEAD = '(?:^|\\s)--?(?!(?:no|skip|ask|prompt|reset|show|print|change|check|require)[-_])(?:[A-Za-z0-9]{1,16}[-_]){0,3}(?:pass(?:word|wd|phrase)?|pwd|pw)(?![A-Za-z0-9_=-])\\s{1,4}';
+/** openssl's `-passin pass:X` / `-passout pass:X`. */
+const OPENSSL_PASS_HEAD = '(?:^|\\s)-pass(?:in|out)\\s{1,4}pass:';
 
 export interface LabeledPattern {
   source: string;
-  form: 'single' | 'pair';
+  /** `cli`: a single label written as a command-line flag, whose value never starts with `-` (that is the next flag). */
+  form: 'single' | 'pair' | 'cli';
   /** Runs only on the line after one that ends in a dangling label of this form. */
   continuation?: 'single' | 'pair';
 }
@@ -80,15 +83,16 @@ export const LABELED_CREDENTIAL_PATTERNS: readonly LabeledPattern[] = [
   { form: 'pair', source: `(${PAIR_HEAD}${PAIR_USER}${PAIR_SEP}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE})` },
   { form: 'pair', source: `(${PAIR_HEAD}${PAIR_USER}${PAIR_SEP})(${BARE_PASS})${BARE_END}` },
   { form: 'pair', continuation: 'pair', source: `(^\\s{0,8}${QUOTE}?)(${BARE_PASS})${BARE_END}` },
-  { form: 'single', source: `(${CLI_HEAD}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE})` },
-  { form: 'single', source: `(${CLI_HEAD})(${BARE_VALUE})${BARE_END}` },
+  { form: 'cli', source: `(${CLI_HEAD}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE})` },
+  { form: 'cli', source: `(${CLI_HEAD})(${BARE_VALUE})${BARE_END}` },
+  { form: 'cli', source: `(${OPENSSL_PASS_HEAD})(${BARE_VALUE})${BARE_END}` },
   // The whole next line is the value (optionally quoted), so prose under a `Password:` heading is never claimed.
   { form: 'single', continuation: 'single', source: `(^\\s{0,8}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE}[,;]?\\s*$)` },
   { form: 'single', continuation: 'single', source: `(^\\s{0,8})(${BARE_VALUE})(?=[.,;]?\\s*$)` },
 ];
 
 /** Cheap gate before the label regexes run on a line. */
-export const LABELED_PRECHECK_RE = /pass|pwd|log-?in|cred/i;
+export const LABELED_PRECHECK_RE = /pass|pwd|\bpw\b|log-?in|cred/i;
 
 // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers
 const PAIR_DANGLING_RE = new RegExp(`${PAIR_HEAD}${PAIR_USER}\\s{0,4}/\\s{0,4}$`, 'i');
@@ -196,16 +200,19 @@ const PAIR_USER_TAIL_RE = /([^\s/:"'`*]+)["'`]?\s*[/:]\s*["'`]?$/;
  * or symbol, and its user half must not be a stoplisted word
  * (`login page / step2`).
  */
-export function labeledValueIsCredential(value: string, form: 'single' | 'pair', head = ''): boolean {
-  if (value.length < 3 || isStopword(value) || value.startsWith('-')) return false;
-  if (settingSuffix(head)) return false;
+export function labeledValueIsCredential(value: string, form: 'single' | 'pair' | 'cli', head = ''): boolean {
+  if (value.length < 3 || isStopword(value)) return false;
+  // A flag's "value" starting with `-` is the next flag; a typed password may start with `-` (W12 S1).
+  if (form === 'cli' && value.startsWith('-')) return false;
+  // Only a single env-style label carries a setting suffix (`PASSWORD_FILE=`); a pair's user half may look like one (W12 S2).
+  if (form === 'single' && settingSuffix(head)) return false;
   if (head.endsWith('`') && closesCodeSpan(head)) return false;
   if (QUERY_PWD_RE.test(head)) return false;
   if (PLACEHOLDER_PREFIX_RE.test(value) || MASK_RE.test(value) || URL_RE.test(value) || PATH_RE.test(value)) return false;
   if (value.includes('(') || DOTTED_IDENTIFIER_RE.test(value)) return false;
   const digitless = !/[0-9]/.test(value);
   if (IDENTIFIER_RE.test(value) && digitless && (LABEL_WORD_RE.test(value) || COMPOUND_IDENTIFIER_RE.test(value))) return false;
-  if (form === 'single') return true;
+  if (form !== 'pair') return true;
   const user = PAIR_USER_TAIL_RE.exec(head)?.[1];
   if (user !== undefined && isStopword(user)) return false;
   return value.length >= 4 && LETTER_RE.test(value) && PAIR_SYMBOL_RE.test(value) && !VERSION_RE.test(value);
@@ -217,8 +224,8 @@ export function labeledEchoEligible(value: string): boolean {
 }
 
 /** A password-label column header or key cell (`Password`, `DB password`, `pwd`), after stripping Markdown emphasis and a colon. */
-const TABLE_LABEL_RE = /^(?:[a-z0-9]{1,32}[ _-])?(?:pass(?:word|wd|code|phrase)|pwd)$/;
-const TABLE_SEPARATOR_CELL_RE = /^:?-{3,}:?$/;
+const TABLE_LABEL_RE = /^(?:[a-z0-9]{1,32}[ _-])?(?:pass(?:word|wd|code|phrase)|pwd|pw)$/;
+const TABLE_SEPARATOR_CELL_RE = /^:?-+:?$/;
 
 interface TableCell { start: number; text: string }
 
@@ -245,7 +252,8 @@ function isSeparatorRow(cells: TableCell[] | null): boolean {
 }
 
 function isLabelCell(text: string): boolean {
-  return TABLE_LABEL_RE.test(text.replace(/[*_`]/g, ' ').trim().replace(/:$/, '').replace(/\s+/g, ' ').toLowerCase());
+  // A trailing qualifier names the same column (`Password (prod)`).
+  return TABLE_LABEL_RE.test(text.replace(/[*_`]/g, ' ').trim().replace(/:$/, '').replace(/\s*\([^()]{0,64}\)$/, '').replace(/\s+/g, ' ').toLowerCase());
 }
 
 /** The value inside a cell: trimmed, without one pair of surrounding backticks or quotes. */
@@ -293,10 +301,12 @@ export function tableCredentialCells(line: string, next: string | undefined, sta
     const v = cell ? cellValue(cell) : null;
     if (v && !isLabelCell(v.value) && labeledValueIsCredential(v.value, 'single')) out.push(v);
   };
-  if (state.columns) for (const k of state.columns) claim(cells[k]);
+  // One Set per row keeps the key/value pass linear in cells (W12 S3).
+  const columns = new Set(state.columns ?? []);
+  for (const k of columns) claim(cells[k]);
   if (next === undefined || !isSeparatorRow(tableCells(next))) {
     for (let k = 0; k + 1 < cells.length; k++) {
-      if (isLabelCell(cells[k]!.text) && !state.columns?.includes(k + 1)) claim(cells[k + 1]);
+      if (isLabelCell(cells[k]!.text) && !columns.has(k + 1)) claim(cells[k + 1]);
     }
   }
   return out;
