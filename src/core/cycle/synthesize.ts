@@ -96,6 +96,7 @@ import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, readVerifyEpoch, loadChildWriteEpochs, isDreamOwnedPage, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
 import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 import { resolveTriageDecide, type TriageDecide, type TriageDecideStats } from './triage-decide.ts';
+import { OperationError } from '../ops/contract.ts';
 import { backoffUntil, recordUnreliableTriage, responseDiagnostic, triageBackoffDetails, TRIAGE_UNRELIABLE_BACKOFF, type TriageDiagnostic } from './triage-backoff.ts';
 import { resolveGroundingDecide } from './grounding-decide.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
@@ -1420,8 +1421,8 @@ async function runPhaseSynthesizeInner(
       },
     }));
   } catch (e) {
-    return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL',
-      e instanceof Error ? (e.message || 'synthesize phase threw') : String(e)));
+    return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL', e instanceof Error ? (e.message || 'synthesize phase threw') : String(e),
+      e instanceof OperationError ? e.suggestion : undefined), e instanceof OperationError ? { error_code: e.code } : {});
   } finally {
     if (ownedPrivateQueue) {
       try {
