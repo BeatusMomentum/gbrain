@@ -224,7 +224,7 @@ test('preview lists every tier with its cost and calls no model; the printed app
   const receipts = await engine.executeRaw<{ outcome: Record<string, any> }>("SELECT outcome FROM persistence_requests WHERE source_id=$1 AND outcome ? 'fence_repair' ORDER BY sequence", [s.id]);
   expect(receipts.map(r => r.outcome.fence_repair.tier).sort()).toEqual(['deterministic', 'llm', 'resolver']);
   const llmReceipt = receipts.find(r => r.outcome.fence_repair.tier === 'llm')!.outcome.fence_repair;
-  expect(llmReceipt).toMatchObject({ actor: 'fence-repair', classes: ['no_header'], model: 'anthropic:claude-fable-5-1' });
+  expect(llmReceipt).toMatchObject({ actor: 'fence-repair', classes: ['no_header'], model: 'anthropic:claude-opus-5-5' });
   expect(llmReceipt.cost_usd).toBeGreaterThan(0);
   expectNoSecrets([holds, receipts.map(r => r.outcome.fence_repair), surfaceOf(applied), git(s.root, 'log', '--format=%B')]);
 }), 240_000);
@@ -483,11 +483,11 @@ test('models.fence_repair: unset, the first measured model with a key (else none
     try { await runModels(engine, ['--json']); } finally { process.stdout.write = write; }
     return JSON.parse(chunks.join('')) as { per_task: Array<{ key: string; tier: string; resolved: string; source: string }> };
   };
-  expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k' })).toBe('anthropic:claude-fable-5-1');
+  expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k' })).toBe('anthropic:claude-opus-5-5');
   expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' })).toBe('openai:gpt-6.1-sol');
   expect(await resolveFenceRepairModel(engine, { GEMINI_API_KEY: 'k' })).toBeNull();
   const before = (await report()).per_task.find(row => row.key === 'models.fence_repair')!;
-  expect(before).toMatchObject({ tier: 'deep', resolved: 'anthropic:claude-fable-5-1', source: 'measured default' });
+  expect(before).toMatchObject({ tier: 'deep', resolved: 'anthropic:claude-opus-5-5', source: 'measured default' });
   await engine.setConfig('models.fence_repair', 'anthropic:claude-sonnet-5-5');
   const after = (await report()).per_task.find(row => row.key === 'models.fence_repair')!;
   expect(after).toMatchObject({ resolved: 'anthropic:claude-sonnet-5-5', source: 'config: models.fence_repair' });

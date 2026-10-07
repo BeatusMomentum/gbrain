@@ -182,8 +182,9 @@ is free.
 
 - **Model.** `models.fence_repair` when set (any model, priced or not, always
   runs). Unset, the first model the fence-repair eval measured as accurate
-  enough whose provider key the brain has: `openai:gpt-6.1-sol`, then
-  `anthropic:claude-fable-5-1`. With neither key, model repair is off by
+  enough whose provider key the brain has: `openai:gpt-6.1-sol` with an
+  OpenAI key, else `anthropic:claude-opus-5-5` with an Anthropic key
+  (`anthropic:claude-fable-5-1` also met the bar). With neither key, model repair is off by
   default and those fences wait as `no_measured_model`; choosing a model is
   the user's call.
 
@@ -199,9 +200,10 @@ is free.
   `config set`; `0` means no model spend. A call's estimate is its worst
   case: the prompt plus the full output ceiling, which leaves a reasoning
   model 2,048 tokens to think before it writes the table. The per-page
-  default covers `anthropic:claude-fable-5-1`'s worst case for the largest
-  page in the eval (two fences, $0.27); measured spend was about $0.02 per
-  repair. A page over either cap waits as
+  default covers the worst case of every measured model for the largest
+  page in the eval (`anthropic:claude-fable-5-1`, two fences, $0.27); measured
+  spend per model repair was about $0.003 (`openai:gpt-6.1-sol`), $0.008
+  (`anthropic:claude-opus-5-5`) and $0.02 (`anthropic:claude-fable-5-1`). A page over either cap waits as
   `budget_exhausted`; `gbrain repair fences --apply` stops with exit 1,
   naming the spend, the cap, the reset time (next 00:00 UTC) and the pages
   waiting. Raising a cap is the user's call.

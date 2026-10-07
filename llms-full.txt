@@ -11857,9 +11857,18 @@ sent again until the file, the model or the rules change.
 
 The repair model is `models.fence_repair` when set. Unset, it is the first
 model the fence-repair eval measured as accurate enough whose provider key the
-brain has: `openai:gpt-6.1-sol`, then `anthropic:claude-fable-5-1`. With
-neither key, model-tier fences wait as `no_measured_model` until the user
-picks a model.
+brain has: `openai:gpt-6.1-sol` with an OpenAI key, else
+`anthropic:claude-opus-5-5` with an Anthropic key (`anthropic:claude-fable-5-1`
+also met the bar). With neither key, model-tier fences wait as
+`no_measured_model` until the user picks a model.
+
+The gates check that no text is lost or rewritten; they cannot tell which of two
+free-text columns a moved cell belongs in, which is why only measured models
+are defaults. On 40 held-out synthetic malformed fences over three runs
+(`evals/fence-repair-tier3`), `openai:gpt-6.1-sol` and
+`anthropic:claude-opus-5-5` each repaired 95 of the 99 attempts that reached
+the model, none with a cell in the wrong column, and answered HOLD on the
+other 4; rows with stray empty cells were lined up by the free rule instead.
 
 The session below is real output (volatile ids, hashes and times shown as
 `<id>`, `<hash>`, `<time>`; `test/fence-walkthrough.test.ts` runs these
@@ -12018,7 +12027,7 @@ the next maintenance run, so pause first if you want to keep the original.
 | `fences.repair.llm` | `true` | `false` keeps every repair to the free tiers; model-tier holds stay `llm_disabled`. |
 | `fences.repair.max_usd_per_page` | `0.30` | The most one page may spend on the model, checked against each call's worst case (the prompt plus the full output ceiling, with 2,048 tokens for a reasoning model to think). `0` means no model spend. |
 | `fences.repair.max_usd_per_day` | `1.00` | The most all processes together spend per UTC day, through a durable ledger. `0` means no model spend. |
-| `models.fence_repair` | unset: the first measured model with a key (`openai:gpt-6.1-sol`, then `anthropic:claude-fable-5-1`), else none | The model Tier 3 calls (`gbrain models` shows it). A model you set always runs; one gbrain has no price for runs under the default caps at an estimated ceiling (the highest chat rate gbrain knows; `gbrain pricing set` makes it exact) and waits for its price under a cap you set. |
+| `models.fence_repair` | unset: the first measured model with a key (`openai:gpt-6.1-sol` with an OpenAI key, else `anthropic:claude-opus-5-5` with an Anthropic key), else none | The model Tier 3 calls (`gbrain models` shows it). A model you set always runs; one gbrain has no price for runs under the default caps at an estimated ceiling (the highest chat rate gbrain knows; `gbrain pricing set` makes it exact) and waits for its price under a cap you set. |
 | `fences.normalize` | `true` | `false` stops the inline rewrite on writes and syncs: a fixable fence is held or refused like any other. |
 
 ## Resume

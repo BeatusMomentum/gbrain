@@ -9,17 +9,19 @@
  * not count; any moved, dropped or changed text does. `exact` is the
  * stricter byte-for-byte comparison, reported alongside.
  *
- * Metrics (preregistered in gbrain-evals, docs/benchmarks/2026-10-06-fence-repair-tier3-preregistration.md):
- * - gate-pass rate: repairable items repaired on the production path (by the
- *   free tiers or by a Tier 3 repair that passed every gate), over repairable
- *   items run.
- * - false-accept rate: repairable items repaired but not matching their
- *   ground truth, over repairable items run.
- * `repairable.tier3` restricts both to the items that reached the model;
- * `tier1_repaired` and `held_before_model` count the free tiers' share, and
- * `declined` counts HOLD answers (`llm_declined`, prompt v2).
- * - held correctly: adversarial items that stayed held, over adversarial
- *   items run.
+ * Metrics (preregistered in gbrain-evals, docs/benchmarks/2026-10-06-fence-repair-tier3-preregistration.md,
+ * amended for round 2 in 2026-10-06-fence-repair-tier3-amendment-1.md):
+ * - gate-pass rate: repairable items that reached Tier 3 and whose Tier 3
+ *   repair passed every gate, over repairable items that reached Tier 3.
+ * - false-accept rate: of those, repaired but not matching the ground truth,
+ *   over repairable items that reached Tier 3.
+ * - end to end: every repairable item whatever tier settled it (a Tier 1
+ *   repair, a hold before Tier 3), with wrong writes per tier.
+ * - whole path: gate-pass and false-accept over every repairable item, a
+ *   free-tier repair counting as repaired (scorer v2's definition), reported
+ *   beside the preregistered Tier 3 rates; `declined` counts HOLD answers.
+ * - held correctly: adversarial items that stayed held by any tier, over
+ *   adversarial items run, with how they were held.
  * - USD per repair: ledger-priced spend on repairable items over repairs.
  * - latency p50/p95: wall time of the Tier 3 step per item that made a call.
  */
@@ -27,7 +29,7 @@ import { extractRawRows, primaryFence } from '../../src/core/fence-repair/raw-ro
 import { collapse } from '../../src/core/fence-repair/schema.ts';
 import type { FencePageText } from './generate-fixtures.ts';
 
-export const SCORER_VERSION = 2;
+export const SCORER_VERSION = 3;
 
 type Section = 'compiled_truth' | 'timeline';
 
@@ -65,11 +67,13 @@ export interface ResultRow {
   run: number;
   id: string;
   set: 'repairable' | 'adversarial' | 'gate_limited';
-  adversarial: 'ambiguous' | 'unrecoverable' | null;
+  adversarial: 'ambiguous' | 'unrecoverable' | 'split_claim' | null;
   cls: string;
   kind: string;
   tags: string[];
   tier1: string;
+  /** The tier that produced the outcome (round 2 rows; round 1 rows all reached Tier 3). */
+  tier?: string | null;
   /** Model requests (fences) the page sent; more calls than this means a corrective re-ask ran. */
   requests: number;
   outcome: 'repaired' | 'held' | 'not_sent';
@@ -115,9 +119,11 @@ export interface ModelSummary {
   model: string;
   runs: number;
   repairable: { n: number; repaired: number; gate_pass: number; gate_pass_ci: [number, number] | null; false_accepts: number; false_accept: number; false_accept_ci: [number, number] | null;
-    exact_matches: number; per_run_gate_pass: number[]; reask_used: number; reask_rescued: number; held_by: Record<string, number>;
-    tier1_repaired: number; held_before_model: number; declined: number; tier3: { n: number; repaired: number; false_accepts: number } };
-  adversarial: { n: number; held: number; held_rate: number; ambiguous_n: number; ambiguous_held: number; unrecoverable_n: number; unrecoverable_held: number; declined: number; accepted_ids: string[] };
+    exact_matches: number; per_run_gate_pass: number[]; reask_used: number; reask_rescued: number; held_by: Record<string, number>; declined: number };
+  whole_path: { n: number; repaired: number; gate_pass: number; false_accepts: number; false_accept: number };
+  end_to_end: { n: number; repaired: number; wrong_writes: number; by_tier: Record<string, { runs: number; repaired: number; wrong_writes: number }> };
+  adversarial: { n: number; held: number; held_rate: number; ambiguous_n: number; ambiguous_held: number; unrecoverable_n: number; unrecoverable_held: number;
+    split_claim_n: number; split_claim_held: number; held_how: Record<string, number>; accepted_ids: string[] };
   gate_limited: { n: number; held: number; accepted_ids: string[] };
   cost: { usd_total: number; usd_repairable: number; usd_per_repair: number | null; usd_per_item: number; usd_unregistered_per_repair: number | null; input_tokens: number; output_tokens: number; calls: number };
   latency_ms: { p50: number | null; p95: number | null };
@@ -127,7 +133,8 @@ export function summarize(rows: readonly ResultRow[]): ModelSummary[] {
   const models = [...new Set(rows.map(r => r.model))];
   return models.map(model => {
     const mine = rows.filter(r => r.model === model);
-    const rep = mine.filter(r => r.set === 'repairable');
+    const allRep = mine.filter(r => r.set === 'repairable');
+    const rep = allRep.filter(r => r.tier1 === 'llm');
     const adv = mine.filter(r => r.set === 'adversarial');
     const gl = mine.filter(r => r.set === 'gate_limited');
     const repaired = rep.filter(r => r.outcome === 'repaired');
@@ -138,6 +145,18 @@ export function summarize(rows: readonly ResultRow[]): ModelSummary[] {
     const reask = rep.filter(r => r.calls.length > r.requests);
     const amb = adv.filter(r => r.adversarial === 'ambiguous');
     const unr = adv.filter(r => r.adversarial === 'unrecoverable');
+    const spl = adv.filter(r => r.adversarial === 'split_claim');
+    const byTier: Record<string, { runs: number; repaired: number; wrong_writes: number }> = {};
+    for (const r of allRep) {
+      const t = byTier[r.tier ?? 'llm'] ??= { runs: 0, repaired: 0, wrong_writes: 0 };
+      t.runs++;
+      if (r.outcome === 'repaired') { t.repaired++; if (r.match_cells === false) t.wrong_writes++; }
+    }
+    const heldHow: Record<string, number> = {};
+    for (const r of adv.filter(r => r.outcome !== 'repaired')) {
+      const how = r.tier === 'manual' ? 'before_tier3' : r.gate ? 'gate' : r.reason === 'llm_declined' ? 'declined' : r.reason === 'llm_empty' || r.reason === 'llm_truncated' ? 'output_budget' : r.reason ?? 'other';
+      heldHow[how] = (heldHow[how] ?? 0) + 1;
+    }
     const usdRep = rep.reduce((s, r) => s + r.spent_usd, 0);
     const unregistered = rep.every(r => r.usd_unregistered !== null) ? rep.reduce((s, r) => s + (r.usd_unregistered ?? 0), 0) : null;
     const allCalls = mine.flatMap(r => r.calls);
@@ -150,14 +169,15 @@ export function summarize(rows: readonly ResultRow[]): ModelSummary[] {
         exact_matches: repaired.filter(r => r.match_exact).length,
         per_run_gate_pass: runs.map(run => { const x = rep.filter(r => r.run === run); return x.length ? x.filter(r => r.outcome === 'repaired').length / x.length : 0; }),
         reask_used: reask.length, reask_rescued: reask.filter(r => r.outcome === 'repaired').length, held_by: heldBy,
-        tier1_repaired: rep.filter(r => r.tier1 === 'proposal').length, held_before_model: rep.filter(r => r.tier1 === 'manual').length,
         declined: rep.filter(r => r.reason === 'llm_declined').length,
-        tier3: { n: rep.filter(r => r.tier1 === 'llm').length, repaired: repaired.filter(r => r.tier1 === 'llm').length, false_accepts: falseAccepts.filter(r => r.tier1 === 'llm').length },
       },
+      whole_path: wholePath(allRep),
+      end_to_end: { n: allRep.length, repaired: allRep.filter(r => r.outcome === 'repaired').length, wrong_writes: allRep.filter(r => r.outcome === 'repaired' && r.match_cells === false).length, by_tier: byTier },
       adversarial: {
         n: adv.length, held: adv.filter(r => r.outcome !== 'repaired').length, held_rate: adv.length ? adv.filter(r => r.outcome !== 'repaired').length / adv.length : 0,
         ambiguous_n: amb.length, ambiguous_held: amb.filter(r => r.outcome !== 'repaired').length,
-        unrecoverable_n: unr.length, unrecoverable_held: unr.filter(r => r.outcome !== 'repaired').length, declined: adv.filter(r => r.reason === 'llm_declined').length,
+        unrecoverable_n: unr.length, unrecoverable_held: unr.filter(r => r.outcome !== 'repaired').length,
+        split_claim_n: spl.length, split_claim_held: spl.filter(r => r.outcome !== 'repaired').length, held_how: heldHow,
         accepted_ids: [...new Set(adv.filter(r => r.outcome === 'repaired').map(r => r.id))].sort(),
       },
       gate_limited: { n: gl.length, held: gl.filter(r => r.outcome !== 'repaired').length, accepted_ids: [...new Set(gl.filter(r => r.outcome === 'repaired').map(r => r.id))].sort() },
@@ -172,7 +192,13 @@ export function summarize(rows: readonly ResultRow[]): ModelSummary[] {
   });
 }
 
-/** The preregistered decision rule for one model's summary. */
+function wholePath(rows: readonly ResultRow[]): ModelSummary['whole_path'] {
+  const repaired = rows.filter(r => r.outcome === 'repaired').length;
+  const falseAccepts = rows.filter(r => r.outcome === 'repaired' && r.match_cells === false).length;
+  return { n: rows.length, repaired, gate_pass: rows.length ? repaired / rows.length : 0, false_accepts: falseAccepts, false_accept: rows.length ? falseAccepts / rows.length : 0 };
+}
+
+/** The preregistered decision rule for one model's summary (Tier 3 rates). */
 export const DECISION = { minGatePass: 0.8, maxFalseAccept: 0.01 } as const;
 export function meetsRule(s: ModelSummary): boolean {
   return s.repairable.gate_pass >= DECISION.minGatePass && s.repairable.false_accept <= DECISION.maxFalseAccept;
