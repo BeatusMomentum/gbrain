@@ -93,7 +93,9 @@ test('the unbound-source hint on a classic brain names the file and classic sync
   const classic = unboundSourceError('notes-example', '/srv/notes', 'file_backed', true).suggestion!;
   expect(classic).toContain('gbrain sync --source notes-example');
   expect(classic).toContain('gbrain sources writer deactivate');
-  expect(classic).not.toContain('gbrain sources writer claim notes-example --path');
+  // A claim is offered only together with activation, never alone, and after the classic edit-and-sync path.
+  expect(classic).toContain('gbrain sources writer activate --confirm-quiesced --dry-run --json');
+  expect(classic.indexOf('gbrain sync --source notes-example')).toBeLessThan(classic.indexOf('gbrain sources writer claim notes-example'));
   const managed = unboundSourceError('notes-example', '/srv/notes', 'file_backed').suggestion!;
   expect(managed).toContain('gbrain sources writer claim notes-example --path /srv/notes');
 });
