@@ -32,7 +32,7 @@ describe.skipIf(!url)('Postgres wanted pages: source registration race (#6225)',
       await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('archive', 'archive')");
       await engine.putPage('notes/origin', { type: 'note', title: 'Origin', compiled_truth: 'Origin.', timeline: '' });
       const [origin] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug = 'notes/origin'");
-      let deleteError: { code?: string } | null = null;
+      let deleteError = null as { code?: string } | null;
       await engine.transaction(async tx => {
         await replaceWantedLinks(tx, { pageId: Number(origin.id), sourceId: 'default' }, { producers: ['body'], rows: [
           { producer: 'body', ref_kind: 'name', target_source_id: 'archive', target_ref: 'erin-example', link_type: 'mentions', context: '' }] });
