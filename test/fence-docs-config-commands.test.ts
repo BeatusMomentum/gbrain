@@ -2,7 +2,7 @@
  * Printed fence settings commands are real (#6188 D29).
  *
  * Protects: every `gbrain config set fences.* <value>` command that the fence
- * docs, the v0.60.101.0 migration note, the behavior-change rows and the fence
+ * docs, the v0.60.102.0 migration note, the behavior-change rows and the fence
  * reason fixes print names a registered key with a value `config set`
  * accepts, and the three opt-outs (`fences.normalize`, `fences.repair.enabled`,
  * `fences.repair.llm` set false) are printed where an agent upgrading a brain
@@ -22,7 +22,7 @@ import { FENCE_CONFIG_KEYS, validateFenceConfigValue } from '../src/core/fence-r
 import { FENCE_REASON_CODES, FENCE_REASONS } from '../src/core/fence-repair/reasons.ts';
 
 const ROOT = join(import.meta.dir, '..');
-const MIGRATION_NOTE = 'skills/migrations/v0.60.101.0.md';
+const MIGRATION_NOTE = 'skills/migrations/v0.60.102.0.md';
 const DOCS = [
   'AGENTS.md', MIGRATION_NOTE, 'docs/guides/fence-format.md', 'docs/guides/write-refusals.md', 'docs/guides/live-sync.md',
   'docs/guides/troubleshooting.md', 'docs/guides/repair.md', 'docs/operations/spend-controls.md',
