@@ -118,33 +118,13 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
   // sole owner. "Enabled" is a CONFIG signal, not a health signal — the row
   // says so. Fail-soft like every probe in this group.
   try {
-    const {
-      codexPluginProvidesName,
-      claudePluginProvidesName,
-      codexAnyRegistrationExists,
-      claudeAnyRegistrationExists,
-    } = await import('../../core/bootstrap/harness.ts');
-    const { codexConfigPath, claudeUserSettingsPath, claudeUserMcpConfigPath } = await import('../../core/bootstrap/host-specs.ts');
-    const claudeUserMcpConfig = claudeUserMcpConfigPath();
-    const lanes: Array<{ harness: string; plugin: string; dup: boolean; disambiguate: string }> = [];
-    const codexPlugin = codexPluginProvidesName(codexConfigPath(), 'gbrain');
-    if (codexPlugin) {
-      lanes.push({
-        harness: 'codex',
-        plugin: codexPlugin,
-        dup: codexAnyRegistrationExists(codexConfigPath(), 'gbrain'),
-        disambiguate: 'keep one owner: `codex mcp remove gbrain` (drop the hand-wired entry) or `codex plugin remove gbrain@gbrain` (drop the plugin)',
-      });
-    }
-    const claudePlugin = claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain');
-    if (claudePlugin) {
-      lanes.push({
-        harness: 'claude-code',
-        plugin: claudePlugin,
-        dup: claudeAnyRegistrationExists(claudeUserMcpConfig, 'gbrain', process.cwd()),
-        disambiguate: 'keep one owner: `claude mcp remove gbrain` (drop the hand-wired entry) or disable the plugin in Claude Code',
-      });
-    }
+    const { enabledPluginLanes, codexAnyRegistrationExists, claudeAnyRegistrationExists } = await import('../../core/bootstrap/plugin-lanes.ts');
+    const { codexConfigPath, claudeUserMcpConfigPath } = await import('../../core/bootstrap/host-specs.ts');
+    const lanes = enabledPluginLanes('gbrain').map((lane) => lane.harness === 'codex'
+      ? { ...lane, dup: codexAnyRegistrationExists(codexConfigPath(), 'gbrain'),
+          disambiguate: 'keep one owner: `codex mcp remove gbrain` (drop the hand-wired entry) or `codex plugin remove gbrain@gbrain` (drop the plugin)' }
+      : { ...lane, dup: claudeAnyRegistrationExists(claudeUserMcpConfigPath(), 'gbrain', process.cwd()),
+          disambiguate: 'keep one owner: `claude mcp remove gbrain` (drop the hand-wired entry) or disable the plugin in Claude Code' });
     for (const lane of lanes) {
       checks.push(
         lane.dup
