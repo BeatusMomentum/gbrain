@@ -8,7 +8,7 @@ import type { RegistryCode } from '../error-registry.ts';
 import { currentSourceFilesystemSignal } from '../minions/source-filesystem.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { digest, sha256 } from './digest.ts';
-import { getWriteRequest, admitWriteInTransaction, receiptFor } from './journal.ts';
+import { getWriteRequest, admitWriteInTransaction, intentDigest, receiptFor } from './journal.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncContent, readSyncFile, syncGit, type SyncDiscovery } from './sync-discovery.ts';
@@ -536,8 +536,17 @@ async function formGroup(engine: BrainEngine, head: Cursor, pending: Pending, ke
   if (!followers.length) return head;
   // Members name their group (the head's request ID), so a consumer can claim them together.
   const lane = laneRunOf(head, bulk);
-  const members = [pending, ...followers].map(member => ({ ...member, intent: { ...member.intent, group: pending.requestId, ...(lane ? { lane } : {}) } }));
+  const members = [pending, ...followers].map(member => ({ ...member, intent: groupedIntent(member.intent, pending.requestId, lane) }));
   return saveCursor(engine, key, head, { ...head, pending: members[0], group: members }, false, assertActive);
+}
+/** The keys formGroup adds to a frozen intent; `ungroupedIntent` removes exactly these. */
+function groupedIntent(intent: SyncIntent, group: string, lane: string | null): SyncIntent {
+  return { ...intent, group, ...(lane ? { lane } : {}) };
+}
+/** #6075: the intent a head carried before formGroup named its group, as a single-path pass admits it. */
+function ungroupedIntent(intent: SyncIntent): SyncIntent {
+  const { group: _group, lane: _lane, ...single } = intent;
+  return single;
 }
 
 /** #5984 lanes: the drain's lane run, opened for this cursor's worktree on first use; null when lanes are off. */
@@ -618,6 +627,15 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
   let rows = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
     [principal.kind, principal.id, members.map(member => member.requestId)]);
   if (rows.length < members.length) {
+    // #6075: a pass that froze the head before it was grouped may have admitted it on the single path. The group is
+    // dropped and the single path takes that request; the followers were never admitted (a group admits in one
+    // transaction) and are frozen again. Any other intent under the head's request ID stays an idempotency_conflict.
+    const head = members[0]!, single = ungroupedIntent(head.intent);
+    const prior = rows.find(row => row.request_id === head.requestId);
+    if (prior && !cursor.window && prior.digest === intentDigest({ operation: 'submit_job', sourceId: cursor.sourceId, slug: head.slug, callerIntent: single })) {
+      const next: Cursor = { ...cursor, pending: { ...head, intent: single } }; delete next.group;
+      return { cursor: await saveCursor(engine, key, cursor, next) };
+    }
     const admitted = await admitGroup(engine, members, cursor, async tx => {
       const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
       return held?.request_id === members[0]!.requestId;
@@ -935,13 +953,22 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
           sourceId: admitting.sourceId, sourceIncarnation: admitting.incarnation, slug: pending.slug, pageId: pending.pageId,
           worktreeId: admitting.binding.worktree_id, topologyGeneration: admitting.binding.topology_generation,
           principal: admitting.authority.writer.principal, authority: admitting.authority.writer, callerIntent: pending.intent, intent: pending.intent });
-        // ENG-A7: after the counter locks (the publication lock order), admit only while the cursor still holds this entry.
-        const [held] = await tx.executeRaw<{ request_id: string | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id
-          FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key]);
-        if (held?.request_id !== pending.requestId) throw new CursorMoved();
+        // ENG-A7: after the counter locks (the publication lock order), admit only while the cursor still holds this entry
+        // with this intent (#6075: a bulk pass may have grouped the head since this pass read it).
+        const [held] = await tx.executeRaw<{ request_id: string | null; same: boolean | null }>(`SELECT completed_keys->0->'pending'->>'requestId' AS request_id,
+          completed_keys->0->'pending'->'intent' = $3::text::jsonb AS same FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 FOR SHARE`, [OP, key, JSON.stringify(pending.intent)]);
+        if (held?.request_id !== pending.requestId || held.same !== true) throw new CursorMoved();
         assertActive();
         return accepted;
-      })).catch(error => { if (error instanceof CursorMoved) return null; throw error; });
+      })).catch(async error => {
+        if (error instanceof CursorMoved) return null;
+        // #6075: the group admitted this request first with its grouped intent; re-read the cursor instead of failing the pass.
+        if (error instanceof OperationError && error.code === 'idempotency_conflict') {
+          const current = await readCursor(engine, key, admitting);
+          if (current?.pending?.requestId === pending.requestId && digest(current.pending.intent) !== digest(pending.intent)) return null;
+        }
+        throw error;
+      });
       if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();
