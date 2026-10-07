@@ -245,13 +245,7 @@ report the regression:
 5. Remove it once the regression is fixed: `gbrain config set
    search.vector_legacy_guard false` (or unset the variable) and restart again.
 
-**Filtered vector results changed after upgrading (#6132).** Iterative HNSW
-scans now run in `relaxed_order`, which returns more of a filtered query's
-true neighbours. To restore the previous ordering mode, run
-`gbrain config set search.hnsw_iterative_scan strict_order` (or export
-`GBRAIN_HNSW_ITERATIVE_SCAN=strict_order`) and restart `gbrain serve` and
-autopilot; `off` disables iterative scanning. Verify with
-`gbrain config get search.hnsw_iterative_scan`.
+**Filtered vector results changed (#6132).** HNSW scans use `relaxed_order`; restore with `gbrain config set search.hnsw_iterative_scan strict_order`, then restart serve.
 
 The guard is temporary. The release that retires it prints a one-time notice
 when the inert setting is still present.
