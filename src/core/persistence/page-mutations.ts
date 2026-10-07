@@ -31,6 +31,8 @@ import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
+  // #5994: a failed-writes replay is admitted under the original writer.
+  if (ctx.replayAuthority) return { ...ctx.replayAuthority.principal };
   if (ctx.auth?.principal) return { ...ctx.auth.principal };
   const verified = currentVerifiedLocalWriter();
   if (verified) return verified.principal;

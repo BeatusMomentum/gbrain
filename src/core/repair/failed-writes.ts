@@ -193,11 +193,28 @@ export const failedWritesRepair: RepairHandler = {
   },
 };
 
-/** The original caller's trust lane: a remote caller's write is prepared as a remote write, within its holder and namespace limits. */
+/** The subagent job a stored restricted authority names: wave 10's delegatedJobId, else a legacy `wiki/agents/<id>/*` namespace. */
+function recordedSubagentId(authority: WriteAuthority): number | undefined {
+  if (authority.delegatedJobId !== undefined) return authority.delegatedJobId;
+  const [only, ...rest] = authority.delegatedPrefixes ?? [];
+  const id = rest.length ? undefined : /^wiki\/agents\/([1-9]\d*)\/\*$/.exec(only ?? '')?.[1];
+  return id && Number.isSafeInteger(Number(id)) ? Number(id) : undefined;
+}
+
+/**
+ * The original caller's trust lane: a remote caller's write is prepared as a
+ * remote write, within its holder and namespace limits, under its stored
+ * authority (#5994: `replayAuthority`, re-authorized live). A restricted
+ * write gets back the subagent identity it recorded; a legacy sandboxed
+ * subagent write (no allow-list) replays on the legacy namespace path.
+ */
 function laneContext(ctx: OperationContext, authority: WriteAuthority): OperationContext {
-  if (!authority.remote) return { ...ctx, remote: false };
-  return { ...ctx, remote: true, takesHoldersAllowList: authority.takesHolders ? [...authority.takesHolders] : ['world'],
-    ...(authority.restrictedNamespace ? { viaSubagent: true, allowedSlugPrefixes: [...(authority.delegatedPrefixes ?? [])] } : {}) };
+  if (!authority.remote) return { ...ctx, remote: false, replayAuthority: authority };
+  const lane: OperationContext = { ...ctx, remote: true, replayAuthority: authority, takesHoldersAllowList: authority.takesHolders ? [...authority.takesHolders] : ['world'] };
+  if (!authority.restrictedNamespace) return lane;
+  const subagentId = recordedSubagentId(authority);
+  if (authority.databaseOnlyReason === 'subagent_sandbox' && subagentId !== undefined) return { ...lane, viaSubagent: true, subagentId };
+  return { ...lane, viaSubagent: true, allowedSlugPrefixes: [...(authority.delegatedPrefixes ?? [])], ...(subagentId === undefined ? {} : { subagentId }) };
 }
 
 /** The caller's params, without what preparation added, bound to the previewed page revision. */

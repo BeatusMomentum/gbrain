@@ -587,16 +587,25 @@ and its original caller's authority is checked again first: a write that
 changed class since the preview reports `changed_since_preview`, and one whose
 caller lost its grant or whose source was re-created reports
 `authority_revoked`; both are kept. A replay goes through the operation's
-normal path on the original caller's trust lane: a write an agent sent over MCP
-is prepared as a remote write again, with its take-holder and delegated
-namespace limits, so it can do no more than the original could. A `put_page`
+normal path on the original caller's trust lane and under its stored authority:
+the same writer (an OAuth client stays that client), delegation, scopes,
+take-holder and delegated namespace limits and link trust, for the same source
+incarnation, checked against the live grant at admission and again at
+publication. A write an agent sent over MCP is prepared as a remote write
+again, so it can do no more than the original could; a grant revoked or
+narrowed between admission and publication refuses the replay at publication.
+A subagent or restricted-namespace write gets back the identity it recorded
+(the job id of an OAuth-delegated job, or the `wiki/agents/<id>/` namespace of
+a legacy subagent, which stays database-only); one that recorded neither is
+confined to exactly its stored namespace allow-list. Live subagent dispatches
+without a job id are still refused. A `put_page`
 replay is bound to the page revision the preview saw (an original `force: true`
 is dropped), so a page changed since the preview reports `changed_since_preview`
 or `conflict` instead of being overwritten. A `remember` replay targets the
 subject the original resolved. Each replay uses a new request id derived from
 the failed one, so a rerun after a crash resumes the same request and a second
 apply never writes it twice (`pending_elsewhere` when another writer holds that
-request). Attribution names the local owner's writer for that lane. A replay the
+request). Attribution names the original writer. A replay the
 brain refuses reports `refused` with the code. The failed receipts stay as
 history.
 
