@@ -21,6 +21,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { loadConfig } from '../config.ts';
+import { currentCliWriteWait } from '../persistence/write-wait.ts';
 import { REPAIR_KINDS, runRepair, type RepairHandler, type RepairKind, type RepairResult, type RepairScope } from './core.ts';
 import { timelineRepair } from './timeline.ts';
 import { visibilityRepair } from './visibility.ts';
@@ -236,6 +237,10 @@ export function repairApplyCommand(kind: RepairKind, opts: { source?: string; no
  * so a kind previews and applies identically from either entry point.
  */
 export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; noEmbed?: boolean; logger?: OperationContext['logger'] }) {
+  // #6185: an apply waits for each publication like every other CLI write (`--wait`, GBRAIN_WRITE_WAIT_MS,
+  // persistence.write_wait_ms, else 30 s). Resolved before any kind runs, so a malformed value refuses before
+  // a checkpoint is written; a preview never publishes and never reads it.
+  const writeWaitMs = opts.apply ? currentCliWriteWait().waitMs : undefined;
   const config = loadConfig() ?? { engine: engine.kind };
   let embeddingModel: string | undefined;
   try { embeddingModel = config.embedding_disabled ? undefined : (await import('../ai/gateway.ts')).getEmbeddingModel(); } catch { embeddingModel = undefined; }
@@ -244,7 +249,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
     embeddingModel,
     /** `explicit`: the operator named `kind`; required for explicit-only kinds. */
     async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[] } = {}): Promise<RepairResult> {
-      const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0] } as OperationContext;
+      const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag,
         embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : [],
