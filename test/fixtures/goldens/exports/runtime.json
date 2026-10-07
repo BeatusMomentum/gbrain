@@ -689,7 +689,8 @@
         "resolveSourceLocalFilePath",
         "serializeMarkdown",
         "serializePageToMarkdown",
-        "splitBody"
+        "splitBody",
+        "yamlBlockError"
       ],
       "./minions": [
         "MinionQueue",
