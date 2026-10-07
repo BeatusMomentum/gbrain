@@ -10,6 +10,54 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.101.0] - 2026-10-07
+
+**Broken facts and takes tables in your notes now get repaired by themselves.**
+
+The last three releases stopped a broken table from blocking a sync, fixed the ones with only one possible meaning, and made `gbrain doctor` count the rest. This release repairs the rest. The background maintenance run now works through every broken table it finds, each with the cheapest method that is exactly right: fixed rules first, then holder names checked against your own people and company pages, and only for a table whose columns are scrambled, the chat model you configured. The model sees only that table's header and the rows it has to move, never the rest of the page, and it may move cells but never change what they say. Model spend has a hard cap of $0.05 per page and $1.00 per day. Every repair is committed with a message naming the file, so `git revert` undoes it.
+
+### How to use it
+
+```bash
+gbrain doctor --only fence_integrity          # how many broken tables per source, and what would fix each
+gbrain repair fences --source <id>            # preview: read-only, no model call, prints the apply command
+gbrain repair fences --source <id> --apply --expect <hash>   # apply exactly what the preview showed
+gbrain config set fences.repair.enabled false # pause the automatic repair
+gbrain config set fences.repair.llm false     # keep table rows away from the model; the free fixes keep running
+```
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Maintenance run | A new `fence_repair` step runs right after sync, on the computer that owns the source. Its first run after upgrading repairs every broken table it finds in each source. |
+| `gbrain repair fences` | The preview shows one sample diff per fix method (`--diff` shows all), what the model would cost against what is left of today's cap, and an apply command bound to exactly that plan. Applying skips anything that changed since the preview. `--only`/`--skip` pick files, `--slug` picks stored pages, `--no-llm` stays free, `--max-usd` lowers the cap for one run. The result says what was repaired and what is left, and why. |
+| Managed sources | Each repaired file is committed as `gbrain: repair fence in <path> (<classes>)`. |
+| Other sources | The original file is backed up under `~/.gbrain/backups/fences/` before the write, and `gbrain sources status` plus doctor show the repair until you commit it. |
+| Held files | Every `invalid_fence` hold and the doctor `fence_integrity` fix point at the `gbrain repair fences` preview (`--only <path>` for one file). A table only a person can decide still names the exact edit. |
+| Model choice | `models.fence_repair` picks the model (listed in `gbrain models`). |
+
+### Things to watch
+
+- How often the model's rewrites pass the checks is not measured yet.
+- A model gbrain has no price for still runs under the default caps, metered at the highest chat rate gbrain knows; under a cap you set, it waits until you register its price with `gbrain pricing set`.
+- When the daily cap runs out, repair stops and the remaining tables wait until 00:00 UTC; the run says when and how many.
+- Turning the settings off stops future repairs and does not undo past ones. A broken table you restore is held again on the next sync and repaired again by the next maintenance run, so pause first if you want to keep it.
+
+### Itemized changes
+
+- `src/core/repair/fences.ts`: the `fences` repair kind (preview-bound, `spends: 'llm'`). Candidates come from the fence census after a bounded scan (`GBRAIN_FENCE_REPAIR_SCAN_MS`, default 10 s); `--only`, `--skip` and `--slug` also reach files and pages the census has not judged yet. A candidate whose source is owned by another host (`owner_unavailable`) or mid-sync (`sync_in_progress`) is skipped, and every candidate is re-read before any fix runs.
+- Holder names (`src/core/fence-repair/repair-tiers.ts`) resolve strictly, without same-name guessing, only to `people/` and `companies/` pages, and never to a private page from a world-visible one. A model repair claims the attempt memo, checks the per-page cap and the run's allowance, reserves on the daily ledger before each call and settles the real tokens after; a rewrite the checks rejected for unchanged bytes is never paid for again. The call (`src/core/fence-repair/llm.ts`) uses no tools, no fallback model and no temperature, and gets at most one corrective re-ask.
+- Every rewrite passes the same validation gates as the inline repair, plus a fixed-point check, before it is written. A misaligned cell whose text is unchanged is now moved to the column it belongs to rather than rejected.
+- Write-back (`src/core/fence-repair/repair-io.ts`): managed sources go through `managed_file_repair` with a location-only `fence_repair` receipt checked at submission and again when prepared (remote callers are refused); other checkouts are confined, re-hashed (`changed_since_read`), backed up, written and imported, with the backup restored if the import refuses; database-only pages and mirrors get a revision-bound write.
+- Repair kinds can carry a per-item model cost (the preview estimate follows `--limit`, and an apply stops before an item it cannot afford), a deadline and an early stop. `--expect` works for every preview-bound kind; `--max-usd` only for kinds that call a paid model, and only lowers the cap.
+- The `fence_repair` cycle phase (`src/core/cycle/fence-repair.ts`) runs after `sync` within min(300 s, a third of the job's remaining time), honors both switches and reports what it verified.
+- Holds carry the fence location and the last repair state; `docs/guides/fence-format.md` is generated from the parser's own tables, and `docs/guides/repair.md#fences` walks through a real run.
+
+### For contributors
+
+- `test/repair-fences.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`) covers preview then the printed apply across all three fix methods, rejected rewrites never paid twice, transient errors, `--no-llm`, unpriced models under default and user caps, the budget stop, every skip reason, mirrors, remote refusal, backups and the uncommitted notice, doctor remediation budgets, the time budget, two concurrent appliers at the cap and the cycle phase across ticks, with a privacy sentinel throughout. `test/fence-repair-llm.test.ts` pins the prompt bytes; `test/fence-walkthrough.test.ts` checks the guide's walkthrough line by line against a local provider stand-in.
+
 ## [0.60.100.0] - 2026-10-07
 
 **`gbrain doctor` now counts every broken facts or takes table still waiting in your brain, and says what would fix each one.**
