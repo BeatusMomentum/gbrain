@@ -40,6 +40,11 @@ Integrator notes for the release PR (no version stamped).
 
 ## Notes
 
+- Approved pages apply in batches of up to 25 (one request and one receipt
+  per batch on a managed brain, one transaction per batch otherwise), each
+  page rechecked on its own under its lock; the apply reports one `retired`
+  outcome per batch with per-page outcomes in its detail.
+
 - Under a live `gbrain serve` on PGLite the lock refusal is already immediate
   (`acquireLock` throws `LiveServeLockError` without waiting), and the fatal
   CLI seam's fix is the stop → rerun → restart plan; the test pins it for this

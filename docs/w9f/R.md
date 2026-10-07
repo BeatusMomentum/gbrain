@@ -7,12 +7,15 @@ lines below when the PR is next to merge.
 ## CHANGELOG lines
 
 - Managed brains now publish conversation facts through receipted maintenance
-  requests (`managed_maintenance_conversation_facts`). Each page's facts and
-  its outcome row commit in one transaction with their receipt. A crash after
-  the request was accepted replays the stored batch on the next run without
-  calling the model again; a request that fails the same way every time
-  blocks that page version (no more model calls until the page changes); at
-  most three requests are admitted per page version.
+  requests (`managed_maintenance_conversation_facts`), batched across pages:
+  one request carries up to 25 pages (at most 10 with extracted facts, at
+  most 8 MiB), and every page's facts and outcome row commit in the same
+  transaction as that receipt. A page that changed while the batch was being
+  built is skipped and reported inside the batch; the rest publish. A crash
+  after the request was accepted replays the stored batch on the next run
+  without calling the model again; a failed batch is resubmitted from its
+  stored pages; a page whose rows can never publish, or that sat in three
+  failed batches, is blocked until it changes.
 - Managed brains now extract facts from email threads, and record single
   emails, prose meeting notes and undated pages as "not extractable" for good
   instead of rescanning them every run.
@@ -51,45 +54,45 @@ measurement.
 - A request still pending after the job's wait is reported (`pages_pending`)
   and replayed on the next run with no model call.
 
-## Decision 9: measured request volume
+## Decision 9: measured request volume (batched; Garry chose batching, no migration)
 
-Run: 200 managed conversation pages on PGLite (a quarter each of two-segment
-transcripts, one-segment transcripts, short transcripts and prose notes),
-three facts per segment with 1536-dimension vectors, injected extractor (no
-model calls). Script: `~/.capy/work/w9f-r/scratch/measure-d9.test.ts`
-(not committed); output `~/.capy/work/w9f-r/out/d9-measure.json`.
+Run: 200 managed conversation pages on PGLite, three facts per segment with
+1536-dimension vectors, injected extractor (no model calls), default caps
+(25 pages, 10 fact pages, 8 MiB per request), receipts then force-compacted.
+Script: `~/.capy/work/w9f-r/scratch/measure-d9c.test.ts` (not committed);
+outputs `~/.capy/work/w9f-r/out/d9-batched-1.json` (25% outcome-only) and
+`d9-batched-3.json` (75% outcome-only). The 50k column scales the 200-page
+run linearly.
 
-| Measure | Per request | Per 1k pages | 50k pages | Share of default limit |
-|---|---|---|---|---|
-| Permanent request ids | 1 | 1,000 | 50,000 | 20% of `principalLifetimeIds` (250,000) |
-| Intent bytes (transient; released when the request settles, stored intent dropped at compaction) | fact batch avg 128 KB (5 rows, 1536-dim vectors), outcome-only 1.5 KB | - | - | per request well under `principalIntentBytes` (32 MiB) |
-| Reserved receipt bytes (until compaction, 30-day window) | 16,384 B flat, whatever the payload | 16 MiB | 781 MiB | 51% of `principalTerminalBytes` (1,536 MiB) |
-| Retained receipt bytes (after compaction) | about 1.75 KB (1,743 B outcome-only, 1,754 B fact batch) | 1.7 MB | 87 MB | about 5.5% of `principalTerminalBytes`, long-term |
+| 50k pages | Before batching (one request per page) | Batched, 25% outcome-only | Batched, 75% outcome-only |
+|---|---|---|---|
+| Requests (permanent request ids) | 50,000 (20% of `principalLifetimeIds`) | 3,750 (1.5%) | 2,000 (0.8%) |
+| Reserved receipt bytes, 30-day window | 781 MiB (51% of `principalTerminalBytes`) | 61 MB (3.8%) | 33 MB (2.0%) |
+| Retained receipt bytes after compaction | 87 MB (5.5%) | 17 MB (1.1%) | 14 MB (0.9%) |
+| Intent per request | 128 KB fact page, 1.5 KB outcome-only | avg 1.6 MB, max 1.6 MB | avg 1.2 MB, max 1.4 MB |
 
-Breakdown (second run, same corpus, receipts force-compacted;
-`~/.capy/work/w9f-r/scratch/measure-d9b.test.ts`, output
-`~/.capy/work/w9f-r/out/d9-breakdown.json`): 50 of the 200 requests (25%)
-were outcome-only (prose; no vectors) and 150 (75%) carried fact batches.
-Request ids and reserved receipt bytes are charged per request, not per
-payload byte, so each request type's share of the 20% and the 51% equals its
-share of requests. Vectors only affect intent bytes.
+The fact-page cap (10 per request) sets the request count: 150 fact pages
+made 15 requests in the 25% run, 50 fact pages and 150 outcome-only pages
+made 8 in the 75% run. A batch receipt keeps one result per member
+(about 150 bytes each), so a compacted batch receipt keeps about 4.6 KB.
+Both mixes are now well under Decision 9's 10% switch threshold. The
+`maintenance_backpressure` stop at 80% of reserved receipt bytes and request
+ids stays, and the up-front check counts the run's planned batches (pages
+over 10).
 
-One request id per page per extraction generation (each later page edit adds
-one). At 50k pages the backfill alone uses 20% of the writer's permanent
-request ids, above Decision 9's 10% switch threshold, and reserves half of
-its receipt bytes for the retention window. The writer is the local CLI
-principal the user's own CLI writes share, and outcome-only pages cost $0, so
-no spend cap limits them; `maintenance_backpressure` therefore also stops at
-80% of reserved receipt bytes and request ids. Per Decision 9 (A) this wave
-keeps outcomes as receipted facts rows; the threshold is crossed, so batching
-vs 9B (a non-guarded outcome side table) is Garry's call.
+Before batching, for the record: request ids and reserved receipt bytes were
+charged per request (16,384 B flat), so each request type's share of the 20%
+and 51% equalled its share of pages; a compacted per-page receipt kept about
+1.75 KB.
 
 ## Functions touched in GBRA-52's file (`src/commands/extract-conversation-facts.ts`)
 
 `ExtractConversationFactsResult` (two optional counters), `ExtractCoreState`
 (`managed` is now the publisher or null), `processPage` (three managed call
-sites), `runExtractConversationFactsCore` (preflight line, run-stop errors in
-the two page loops), `runExtractConversationFacts` (aggregate and print the
+sites; a managed page is enqueued and counted when its batch publishes),
+`runExtractConversationFactsCore` (preflight line, run-stop errors in the two
+page loops, the final batch flush before the checkpoint and on the error
+path), `runExtractConversationFacts` (aggregate and print the
 two counters), `terminalAuditFact`/`nonExtractableAuditFact` (version
 stamp); new `currentConversationVersionToken`; removed `replacePageFacts`.
 The managed logic lives in `src/core/facts/conversation-publication.ts`.

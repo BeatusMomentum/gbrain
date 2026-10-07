@@ -530,9 +530,11 @@ Retired facts are expired, not deleted: each keeps its id and gains
 `retired: conversation-labels <hash>` in its context, recall stops returning
 it, and a later extraction, its orphan cleanup and `gbrain repair
 extractor-facts` leave it alone. To bring a page's facts back, re-extract the
-page with the commands above. On a managed brain each page publishes one
-database-only `managed_maintenance_conversation_label_retire` request; a rerun
-after a crash skips pages whose request already committed. A non-interactive
+page with the commands above. Pages apply in batches of up to 25: on a
+managed brain each batch publishes one database-only
+`managed_maintenance_conversation_label_retire` request (one receipt for the
+batch, each page rechecked on its own), and a rerun after a crash skips
+batches whose request already committed. A non-interactive
 apply without `--yes` exits 3 with the consent payload and changes nothing;
 `preview_changed` means the hash names no saved preview, the preview is older
 than 7 days, or the apply's `--source` or `--include-ambiguous` differs from

@@ -77,7 +77,7 @@ import {
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { clearConversationFacts, managedConversationPublisher, publishManagedBatch, startManagedPage, stopsRun, type ManagedConversationPublisher } from '../core/facts/conversation-publication.ts';
+import { clearConversationFacts, enqueueManagedPage, flushManagedBatch, managedConversationPublisher, startManagedPage, stopsRun, type ManagedConversationPublisher } from '../core/facts/conversation-publication.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingMessage } from '../core/budget/no-pricing.ts';
 import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
@@ -1063,9 +1063,10 @@ async function processPage(
         : 'fewer than two eligible messages');
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
         if (state.managed) {
+          // Counted when its batch publishes.
           const managed = await startManagedPage(state, snapshot, sinceIso, 0);
-          if ('done' in managed) return managed.done;
-          if (await publishManagedBatch(state, snapshot, managed.start, [nonExtractableAuditFact(page.slug, 0, snapshot.versionToken, reason)], null) === null) return { newEndIso: null };
+          if ('start' in managed) await enqueueManagedPage(state, snapshot, managed.start, [nonExtractableAuditFact(page.slug, 0, snapshot.versionToken, reason)], null);
+          return { newEndIso: null };
         } else {
           state.result.orphan_facts_cleaned += await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
           const rowNum = await peekRowNumStart(state.engine, state.sourceId, page.slug);
@@ -1239,11 +1240,8 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  if (managed && newestEnd !== null) {
-    const inserted = await publishManagedBatch(state, snapshot, managed.start, managedRows, newestEnd);
-    if (inserted === null) return { newEndIso: null };
-    state.result.facts_inserted += pageInsertedTotal = inserted;
-  }
+  // A managed page is counted, and its checkpoint set, when its batch publishes.
+  if (managed && newestEnd !== null) { await enqueueManagedPage(state, snapshot, managed.start, managedRows, newestEnd); return { newEndIso: null }; }
 
   if (newestEnd !== null) {
     // v0.41.15.0 (codex #5/#6): per-page atomic checkpoint write. Mutate
@@ -1616,7 +1614,8 @@ export async function runExtractConversationFactsCore(
       }
     }
 
-    // Final checkpoint flush.
+    // The last partial batch publishes before the final checkpoint flush.
+    await flushManagedBatch(state);
     if (!dryRun) {
       await recordCompleted(engine, checkpointKey(sourceId), cpMapToEntries(state.cpMap));
     }
@@ -1643,6 +1642,7 @@ export async function runExtractConversationFactsCore(
       }
     }
   } catch (err) {
+    await flushManagedBatch(state, { afterError: true }); // spent model work still publishes
     if (err instanceof BudgetExhausted) {
       Object.assign(result, { budget_exhausted: true, budget_reason: err.reason, budget_model: err.modelId });
       if (err.pricing) result.budget_pricing = err.pricing;

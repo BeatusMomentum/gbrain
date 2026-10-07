@@ -1,37 +1,51 @@
 /**
- * Receipted publication of one conversation page's derived facts on a managed
- * brain (wave 9 follow-ups, item 1).
+ * Receipted publication of conversation pages' derived facts on a managed
+ * brain (wave 9 follow-ups, item 1), batched across pages (Decision 9:
+ * batching, no migration).
  *
  * `gbrain extract-conversation-facts` replaces a page's
  * `cli:extract-conversation-facts*` rows with a fresh batch: the facts the
  * model extracted plus the page outcome (EXTRACTION_COMPLETE or
- * EXTRACTION_NOT_APPLICABLE). On a managed brain that batch is frozen into a
- * database-only `managed_maintenance_conversation_facts` request, so every
- * row change commits in the same transaction as its receipt.
+ * EXTRACTION_NOT_APPLICABLE). On a managed brain each page's batch is frozen
+ * into a page entry, and one database-only `managed_maintenance_conversation_facts`
+ * request carries the entries of up to BATCH_CAPS.pages pages (at most
+ * BATCH_CAPS.factPages with extracted facts, at most BATCH_CAPS.bytes of
+ * intent), so every row change commits in the same transaction as its
+ * receipt while one request id and one receipt reservation cover many pages.
+ * The request sits on ANCHOR_SLUG, a slug no page can hold (a dot-led
+ * segment), so no single member page's revision gates the whole batch; the
+ * member pages' keys are locked with it.
  *
- * Generation identity. A request belongs to one logical extraction
+ * Generation identity. A page entry belongs to one logical extraction
  * generation, keyed by the intent protocol, the source incarnation, the page
  * id, its revision and parser-input version token (sidecar bytes included),
  * the extractor version (`CONVERSATION_EXTRACTOR_VERSION`), the selectors
  * (`--since`, `--segment-limit`) and the page's newest extractor row id (so
  * every committed batch, an approved repair or `--force` after a commit
- * starts the next generation). Request ids are `(generation, attempt)`
- * digests under the caller's principal, so:
- *   - a crash after admission replays the stored batch: the rerun finds the
- *     accepted request and waits for it, with zero model calls;
- *   - a retryable failure (lock, claim loss, owner change) resubmits the
- *     stored batch under the next attempt, still with zero model calls;
- *   - a deterministic failure (validation, authorization, size) blocks the
- *     generation: no model call until the page changes;
- *   - at most MAX_GENERATION_ATTEMPTS requests are admitted per generation.
- * A committed batch without an outcome row (a `--segment-limit` run that did
- * not reach the last segment) is not a completed page.
+ * starts the next generation). A batch's request id is the digest of its
+ * members' (generation, attempt) pairs. Before a page's model work the run
+ * consults the writer's unsettled and failed batch requests (loaded once per
+ * run; compacted ones drop out):
+ *   - a member of a still-unsettled batch (a crash after admission) waits for
+ *     it and replays its receipt, with zero model calls;
+ *   - a member of a batch that failed retryably is resubmitted from the stored
+ *     entry in the next batch, still with zero model calls;
+ *   - a member of a batch that failed deterministically (validation,
+ *     authorization, size), or of MAX_GENERATION_ATTEMPTS failed batches, is
+ *     blocked: no model call until the page changes.
+ * Under the lock each member is rechecked on its own: a page that was
+ * deleted, replaced, or whose revision or version token moved is skipped and
+ * reported in the receipt (the next run extracts it again); a page whose rows
+ * fail validation is blocked by a durable not-extractable outcome naming the
+ * reason. Neither fails the batch. A committed partial entry (no outcome row)
+ * is not a completed page.
  *
  * Apply re-pins source, page slug, source prefix and visibility from the
  * request, rechecks authority, page identity, revision and version token,
- * the embedding signature and entity merges (a slug that became an alias
- * moves to its canonical page), allocates row numbers under the page lock,
- * and fails the request when an insert is lost.
+ * the embedding signature (vectors under another signature are dropped, the
+ * rows embedded later like any unembedded fact) and entity merges, allocates
+ * row numbers under the page lock, and fails the request when an insert is
+ * lost.
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -46,25 +60,36 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { authorizeStoredRequest, authorizeWrite } from '../persistence/authority.ts';
 import { digest, jsonBytes } from '../persistence/digest.ts';
-import { getWriteRequest } from '../persistence/journal.ts';
+import { getWriteRequestById } from '../persistence/journal.ts';
 import { readJournalLimits } from '../persistence/limits.ts';
 import { principalKey } from '../persistence/model.ts';
 import { PERSISTENCE_IPC_MAX_BYTES } from '../persistence/ipc.ts';
-import { assertManagedFactsEmbedding, resolveManagedFactsEmbedding } from '../persistence/facts-maintenance.ts';
+import { resolveManagedFactsEmbedding } from '../persistence/facts-maintenance.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadConfig } from '../config.ts';
-import { waitForWrite, writeResponse } from '../persistence/service.ts';
+import { waitForWrite } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE } from './audit-sources.ts';
+import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
 export const CONVERSATION_FACTS_SOURCE_PREFIX = 'cli:extract-conversation-facts';
+/** The request slug of every conversation-facts batch: a dot-led segment, which no page slug may have. */
+export const ANCHOR_SLUG = '.maintenance/conversation-facts';
 export const MAX_GENERATION_ATTEMPTS = 3;
 /** Admission stops once the principal's outstanding requests, reserved receipt bytes or request ids reach this share of their limit. */
 export const OUTSTANDING_ADMISSION_SHARE = 0.8;
+/** Pages per batch request: at most `pages`, at most `factPages` carrying extracted facts, at most `bytes` of intent. */
+export const DEFAULT_BATCH_CAPS = Object.freeze({ pages: 25, factPages: 10, bytes: 8 * 1024 * 1024 });
+let batchCaps: { pages: number; factPages: number; bytes: number } = { ...DEFAULT_BATCH_CAPS };
+/** Test seam: smaller batch caps (null restores the defaults). Returns the restore function. */
+export function __setConversationBatchCapsForTests(caps: Partial<{ pages: number; factPages: number; bytes: number }> | null): () => void {
+  const previous = batchCaps;
+  batchCaps = caps ? { ...DEFAULT_BATCH_CAPS, ...caps } : { ...DEFAULT_BATCH_CAPS };
+  return () => { batchCaps = previous; };
+}
 /** Facts per segment the extractor returns at most (extractFactsFromTurn's default maxFactsPerTurn). */
 const MAX_FACTS_PER_SEGMENT = 10;
 /** Upper bound for one frozen row without its vector: claim, context, provenance and JSON overhead. */
@@ -72,26 +97,27 @@ const ROW_BYTES = 4096;
 /** One embedding dimension as JSON text ("-0.012345678901234567,"). */
 const DIMENSION_BYTES = 24;
 
-/** Request error codes that fail the same way on every retry of one generation. */
+/** Request error codes that fail the same way on every retry. */
 const DETERMINISTIC_CODES = new Set(['invalid_params', 'permission_denied', 'request_too_large', 'payload_too_large']);
-/** Retryable codes whose stored batch is stale: the next attempt extracts again. */
+/** Retryable codes whose stored entries are stale: the next attempt extracts again. */
 const REEXTRACT_CODES = new Set(['embedding_configuration', 'revision_conflict', 'page_identity_changed', 'page_not_found']);
 const OUTCOME_SOURCES = new Set([TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
 
 export type ConversationFactRow = NewFact & { row_num: number; source_markdown_slug: string };
-/** A frozen row: no source, page or row number (the request pins them) and no visibility (one per batch). */
+/** A frozen row: no source, page or row number (the request pins them) and no visibility (one per entry). */
 export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'>;
 
-export interface ConversationFactsIntent extends Record<string, unknown> {
-  kind: typeof CONVERSATION_FACTS_INTENT;
-  protocol: number;
-  expected_revision: string;
+/** One page's frozen batch inside a batch request. */
+export interface ConversationPageEntry {
+  slug: string;
   page_id: number;
+  expected_revision: string;
   version_token: string;
   extractor_version: number;
   generation: string;
+  attempt: number;
   selectors: { since: string | null; segment_limit: number };
-  /** True when the batch carries the page outcome (EXTRACTION_COMPLETE / EXTRACTION_NOT_APPLICABLE). */
+  /** True when the entry carries the page outcome (EXTRACTION_COMPLETE / EXTRACTION_NOT_APPLICABLE). */
   complete: boolean;
   /** The checkpoint end of the newest extracted segment, echoed in the receipt. */
   newest_end: string | null;
@@ -100,43 +126,33 @@ export interface ConversationFactsIntent extends Record<string, unknown> {
   rows: FrozenConversationFact[];
 }
 
-export interface ConversationGenerationInput {
+export interface ConversationFactsIntent extends Record<string, unknown> {
+  kind: typeof CONVERSATION_FACTS_INTENT;
+  protocol: number;
+  expected_revision: null;
+  pages: ConversationPageEntry[];
+}
+
+/** One member's result in a committed batch receipt. */
+export interface ConversationPageResult {
   slug: string;
-  page: Page;
-  versionToken: string;
-  since: string | null;
-  segmentLimit: number;
+  generation: string;
+  status: 'committed' | 'skipped' | 'blocked';
+  reason?: string;
+  deleted: number;
+  facts_inserted: number;
+  page_outcome: 'complete' | 'non_extractable' | null;
+  newest_end: string | null;
 }
 
-interface Generation { key: string; revision: string; pageId: number; input: ConversationGenerationInput }
-
-export type GenerationStart =
-  /** No admitted request for this generation yet (or a retry that must extract again): model work runs. */
-  | { kind: 'extract'; generation: Generation; attempt: number }
-  /** A retryable failure left a stored batch: resubmit it under `attempt`, with no model call. */
-  | { kind: 'resubmit'; generation: Generation; attempt: number; intent: ConversationFactsIntent }
-  /** An admitted request already settled (committed, or replayed after a crash): no model call. */
-  | { kind: 'settled'; receipt: Record<string, unknown> }
-  /** Still pending after the job's wait: unfinished, retried next run. */
-  | { kind: 'pending'; requestId: string }
-  /** A deterministic failure or the attempt cap: no model call until the page changes. */
-  | { kind: 'blocked'; requestId: string; code: string; message: string };
-
-function requestIdFor(generationKey: string, attempt: number): string {
-  const h = digest([generationKey, attempt]);
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
+export interface Generation { key: string; revision: string; pageId: number }
 
 const receiptFix = (requestId: string) => readFix('Reads the conversation facts request\'s durable receipt: its state, outcome and recorded error, read-only.',
   { argv: ['gbrain', 'write-request', '--', requestId] });
 
-/**
- * Before any model work for one page: resolve its generation and find what
- * this principal already admitted for it. Throws `revision_conflict` when the
- * page moved since the caller read it.
- */
-export async function startConversationGeneration(engine: BrainEngine, authority: MaintenanceAuthority,
-  config: GBrainConfig, input: ConversationGenerationInput): Promise<GenerationStart> {
+/** The page's generation as it is now; throws `revision_conflict` when it moved since the caller read it. */
+export async function conversationGeneration(engine: BrainEngine, authority: MaintenanceAuthority,
+  input: { slug: string; page: Page; versionToken: string; since: string | null; segmentLimit: number }): Promise<Generation> {
   const sourceId = authority.writer.sourceId;
   const snapshot = await engine.readPageSnapshot(input.slug, { sourceId });
   if (!snapshot || snapshot.page.id !== input.page.id || snapshot.page.knowledge_revision !== input.page.knowledge_revision) {
@@ -149,48 +165,55 @@ export async function startConversationGeneration(engine: BrainEngine, authority
   const key = digest(['conversation-facts', CONVERSATION_FACTS_PROTOCOL, authority.writer.sourceIncarnation, snapshot.page.id,
     snapshot.revision, input.versionToken, CONVERSATION_EXTRACTOR_VERSION, input.since, input.segmentLimit,
     base?.id == null ? null : Number(base.id)]);
-  const generation: Generation = { key, revision: snapshot.revision, pageId: snapshot.page.id, input };
-  let reuse: ConversationFactsIntent | null = null;
-  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
-    const requestId = requestIdFor(key, attempt);
-    const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
-    if (!prior) return reuse ? { kind: 'resubmit', generation, attempt, intent: reuse } : { kind: 'extract', generation, attempt };
-    if (!isTerminal(prior)) {
-      await authorizeStoredRequest(engine, prior);
-      const wait = authority.wait!;
-      const row = wait.observe(await waitForWrite(engine, prior, config, wait.ms()));
-      if (!isTerminal(row)) return { kind: 'pending', requestId };
-      if (row.state === 'committed') return { kind: 'settled', receipt: writeResponse(row) };
-      reuse = null;
-      if (!classifyFailure(row, attempt)) return blocked(row, requestId);
-      if (!REEXTRACT_CODES.has(row.error_code ?? '')) reuse = storedIntent(row);
-      continue;
+  return { key, revision: snapshot.revision, pageId: snapshot.page.id };
+}
+
+function batchRequestId(sourceIncarnation: string, pages: ReadonlyArray<Pick<ConversationPageEntry, 'generation' | 'attempt'>>): string {
+  const h = digest(['conversation-facts-batch-v1', sourceIncarnation, pages.map(p => `${p.generation}:${p.attempt}`).sort()]);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+/** What this writer's unsettled and failed batch requests say about one generation. */
+interface GenerationHistory {
+  /** An admitted batch that has not settled yet. */
+  pending: { id: string; attempt: number } | null;
+  /** Failed batches holding this generation: their row id, error code and the member's attempt. */
+  failed: Array<{ id: string; requestId: string; code: string; attempt: number }>;
+}
+
+/**
+ * The writer's unsettled and failed (not yet compacted) conversation-facts
+ * batches of this source, by member generation. One read per run: the
+ * request slug is the anchor, so only these batches are read, and only their
+ * members' keys leave the database.
+ */
+export async function loadGenerationIndex(engine: BrainEngine, authority: MaintenanceAuthority): Promise<Map<string, GenerationHistory>> {
+  const rows = await engine.executeRaw<{ id: string; request_id: string; state: string; error_code: string | null; members: Array<{ generation: string; attempt: number }> | null }>(
+    `SELECT r.id::text AS id, r.request_id::text AS request_id, r.state, r.error_code,
+            (SELECT jsonb_agg(jsonb_build_object('generation', p->>'generation', 'attempt', (p->>'attempt')::int)) FROM jsonb_array_elements(r.intent->'pages') p) AS members
+       FROM persistence_requests r
+      WHERE r.principal_kind=$1 AND r.principal_id=$2 AND r.source_id=$3 AND r.slug=$4 AND r.operation='submit_job'
+        AND r.state<>'committed' AND NOT r.compacted
+      ORDER BY r.sequence`,
+  [authority.writer.principal.kind, authority.writer.principal.id, authority.writer.sourceId, ANCHOR_SLUG]);
+  const index = new Map<string, GenerationHistory>();
+  for (const row of rows) {
+    for (const member of row.members ?? []) {
+      const history = index.get(member.generation) ?? { pending: null, failed: [] };
+      if (!isTerminal(row as unknown as WriteRequest)) history.pending = { id: row.id, attempt: Number(member.attempt) };
+      else history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt: Number(member.attempt) });
+      index.set(member.generation, history);
     }
-    if (prior.state === 'committed') return { kind: 'settled', receipt: writeResponse(prior) };
-    if (!classifyFailure(prior, attempt)) return blocked(prior, requestId);
-    reuse = REEXTRACT_CODES.has(prior.error_code ?? '') ? null : storedIntent(prior);
   }
-  const last = requestIdFor(key, MAX_GENERATION_ATTEMPTS - 1);
-  return { kind: 'blocked', requestId: last, code: 'attempts_exhausted',
-    message: `${MAX_GENERATION_ATTEMPTS} requests for this page generation ended without committing; no model call runs again until the page changes. Read the last receipt: gbrain write-request -- ${last}` };
+  return index;
 }
 
-/** True when the failed request may be retried under the next attempt. */
-function classifyFailure(row: WriteRequest, attempt: number): boolean {
-  return attempt + 1 < MAX_GENERATION_ATTEMPTS && !DETERMINISTIC_CODES.has(row.error_code ?? '');
+/** The stored entry of `generation` in the failed batch `id`, for a resubmission without model work. */
+async function storedEntry(engine: BrainEngine, id: string, generation: string): Promise<ConversationPageEntry | null> {
+  const [row] = await engine.executeRaw<{ entry: ConversationPageEntry | null }>(`SELECT p AS entry FROM persistence_requests r, jsonb_array_elements(r.intent->'pages') p
+    WHERE r.id=$1::uuid AND NOT r.compacted AND p->>'generation'=$2 LIMIT 1`, [id, generation]);
+  return row?.entry && Array.isArray(row.entry.rows) ? row.entry : null;
 }
-
-function blocked(row: WriteRequest, requestId: string): GenerationStart {
-  const code = row.error_code ?? row.state;
-  return { kind: 'blocked', requestId, code,
-    message: `request ${requestId} ended ${row.state} (${code}) for this page generation, so no model call runs again until the page changes. Read the receipt: gbrain write-request -- ${requestId}` };
-}
-
-function storedIntent(row: WriteRequest): ConversationFactsIntent | null {
-  const intent = row.intent as ConversationFactsIntent | null;
-  return !row.compacted && intent?.kind === CONVERSATION_FACTS_INTENT && Array.isArray(intent.rows) ? intent : null;
-}
-
 /** The largest frozen batch `segments` segments can produce, in intent bytes. */
 export function estimateConversationIntentBytes(segments: number, embedding: FactEmbeddingSignature | null): number {
   const perRow = ROW_BYTES + (embedding ? embedding.dimensions * DIMENSION_BYTES : 0);
@@ -209,8 +232,8 @@ export async function conversationIntentByteLimit(engine: BrainEngine): Promise<
  * OUTSTANDING_ADMISSION_SHARE of their limit. The writer is the local CLI
  * principal the user's own CLI writes share, so the last 20% stays theirs:
  * reserved receipt bytes free only when receipts compact (after the retention
- * window), request ids never. `needed` is the run's planned admissions up
- * front, 1 before each page.
+ * window), request ids never. `needed` is the run's planned batch requests
+ * up front, 1 before each new batch; the suggested `--limit` is in pages.
  */
 export async function assertConversationAdmissionHeadroom(engine: BrainEngine, authority: MaintenanceAuthority, needed = 1): Promise<void> {
   const limits = await readJournalLimits(engine);
@@ -235,7 +258,7 @@ export async function assertConversationAdmissionHeadroom(engine: BrainEngine, a
   for (const r of cumulative) {
     const ceiling = share(r.limit);
     if (r.used + needed * r.per <= ceiling) continue;
-    const room = Math.max(0, Math.floor((ceiling - r.used) / r.per));
+    const room = Math.max(0, Math.floor((ceiling - r.used) / r.per)) * batchCaps.factPages;
     const planned = needed > 1 ? `${needed} planned` : 'the next';
     throw catalogueError('maintenance_backpressure',
       `Conversation fact extraction stopped before admitting ${planned} request(s): this writer's ${r.resource} would pass 80% of its limit (${r.used} used of ${r.limit}).`,
@@ -245,13 +268,15 @@ export async function assertConversationAdmissionHeadroom(engine: BrainEngine, a
 }
 
 /**
- * The admissions a run plans: the named pages, or every page of the
- * conversation types (`opts.types`, else all) that has no active outcome yet
- * (`--force`: every such page), capped by `--limit`.
+ * The batch requests a run plans: its pages (the named pages, or every page
+ * of the conversation types, `opts.types` else all, that has no active
+ * outcome yet; `--force`: every such page; capped by `--limit`), counted as
+ * fact pages, BATCH_CAPS.factPages per request.
  */
 async function plannedAdmissions(engine: BrainEngine, sourceId: string,
   opts: { slugs?: string[]; slug?: string; limit?: number; force?: boolean; types?: readonly AllowedType[] }): Promise<number> {
-  if (opts.slugs) return opts.slugs.length;
+  const requests = (pages: number) => Math.max(1, Math.ceil(pages / batchCaps.factPages));
+  if (opts.slugs) return requests(opts.slugs.length);
   if (opts.slug) return 1;
   const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM pages p
     WHERE p.source_id=$1 AND p.deleted_at IS NULL AND p.type=ANY($2::text[])
@@ -259,7 +284,7 @@ async function plannedAdmissions(engine: BrainEngine, sourceId: string,
         AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.source IN ($4,$5) AND f.expired_at IS NULL))`,
   [sourceId, pageTypesForAllowed(opts.types ?? ALLOWED_TYPES), opts.force === true, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
   const backlog = Number(row?.n ?? 0);
-  return Math.max(1, opts.limit ? Math.min(opts.limit, backlog) : backlog);
+  return requests(opts.limit ? Math.min(opts.limit, backlog) : backlog);
 }
 
 function freezeRow(row: ConversationFactRow): FrozenConversationFact {
@@ -274,65 +299,78 @@ function freezeRow(row: ConversationFactRow): FrozenConversationFact {
   };
 }
 
-/** Builds the frozen intent for one generation attempt. */
-export async function buildConversationIntent(engine: BrainEngine, config: GBrainConfig, start: { generation: Generation },
-  rows: ConversationFactRow[], opts: { complete: boolean; newestEnd: string | null; visibility: 'private' | 'world' }): Promise<ConversationFactsIntent> {
-  const { generation } = start;
+
+/** Freezes one page's rows into its entry for one generation attempt. */
+export async function buildConversationPage(engine: BrainEngine, config: GBrainConfig,
+  input: { slug: string; generation: Generation; attempt: number; versionToken: string; since: string | null; segmentLimit: number },
+  rows: ConversationFactRow[], opts: { newestEnd: string | null; visibility: 'private' | 'world' }): Promise<ConversationPageEntry> {
   // Vectors freeze only under the brain's current facts embedding signature; any other
   // vector is dropped and its row is embedded later, as an unembedded fact is.
   const signature = rows.some(row => row.embedding) ? await resolveManagedFactsEmbedding(engine, config) : null;
   const keep = (row: ConversationFactRow) => !!signature && !!row.embedding && row.embedding.length === signature.dimensions
     && (!row.embedding_model || row.embedding_model === signature.model);
   return {
-    kind: CONVERSATION_FACTS_INTENT, protocol: CONVERSATION_FACTS_PROTOCOL, expected_revision: generation.revision,
-    page_id: generation.pageId, version_token: generation.input.versionToken, extractor_version: CONVERSATION_EXTRACTOR_VERSION,
-    generation: generation.key, selectors: { since: generation.input.since, segment_limit: generation.input.segmentLimit },
-    complete: opts.complete, newest_end: opts.newestEnd, visibility: opts.visibility,
-    embedding: signature, rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null })),
+    slug: input.slug, page_id: input.generation.pageId, expected_revision: input.generation.revision, version_token: input.versionToken,
+    extractor_version: CONVERSATION_EXTRACTOR_VERSION, generation: input.generation.key, attempt: input.attempt,
+    selectors: { since: input.since, segment_limit: input.segmentLimit }, complete: rows.some(row => OUTCOME_SOURCES.has(row.source)),
+    newest_end: opts.newestEnd, visibility: opts.visibility, embedding: signature,
+    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null })),
   };
 }
 
 /**
- * Submits one generation attempt and returns its committed receipt. A
- * request still pending after the job's wait throws `write_pending`.
+ * Submits one batch request carrying `pages` and returns its committed
+ * receipt (`pages`: one ConversationPageResult per member). A request still
+ * pending after the job's wait throws `write_pending`.
  */
-export async function submitConversationIntent(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  start: { generation: Generation; attempt: number }, intent: ConversationFactsIntent): Promise<Record<string, unknown>> {
+export async function submitConversationPages(engine: BrainEngine, authority: MaintenanceAuthority, pages: ConversationPageEntry[]): Promise<Record<string, unknown>> {
+  const intent: ConversationFactsIntent = { kind: CONVERSATION_FACTS_INTENT, protocol: CONVERSATION_FACTS_PROTOCOL, expected_revision: null, pages };
   const limit = await conversationIntentByteLimit(engine);
   const bytes = jsonBytes(intent);
   if (bytes > limit) {
-    throw opError('request_too_large', 'The page\'s frozen fact batch exceeds the request size limit; its prior facts were kept.',
-      `Page ${slug} produced a ${bytes}-byte batch, over the ${limit}-byte limit for one request, so nothing was submitted and the batch was not split. Narrow the run with --segment-limit, or raise persistence.limits.principal_intent_bytes (the user's call).`);
+    throw opError('request_too_large', 'The frozen fact batch exceeds the request size limit; the pages\' prior facts were kept.',
+      `The batch of ${pages.map(p => p.slug).join(', ')} is ${bytes} bytes, over the ${limit}-byte limit for one request, so nothing was submitted. Narrow the run with --segment-limit, or raise persistence.limits.principal_intent_bytes (the user's call).`);
   }
-  return submitDatabaseMaintenanceIntent(engine, authority, slug, intent, requestIdFor(start.generation.key, start.attempt));
+  return submitDatabaseMaintenanceIntent(engine, authority, ANCHOR_SLUG, intent, batchRequestId(authority.writer.sourceIncarnation, pages));
 }
 
 function invalid(row: WriteRequest, cause: string): OperationError {
   return opError('invalid_params', 'The conversation facts request is malformed.',
-    `Request ${row.request_id} for ${row.slug} in source ${row.source_id} ${cause}, so nothing changed. Run gbrain extract-conversation-facts --source-id ${row.source_id} --slug ${row.slug} again; a new page generation submits a fresh batch.`,
+    `Request ${row.request_id} in source ${row.source_id} ${cause}, so nothing changed. Run gbrain extract-conversation-facts --source-id ${row.source_id} again; its pages submit fresh batches.`,
     { fix: receiptFix(row.request_id) });
 }
 
+/** The batch envelope; a malformed envelope fails the whole request (deterministic). */
 function validateIntent(row: WriteRequest): ConversationFactsIntent {
   const p = row.intent as ConversationFactsIntent | null;
   if (!p || p.kind !== CONVERSATION_FACTS_INTENT || p.protocol !== CONVERSATION_FACTS_PROTOCOL) throw invalid(row, 'carries a protocol this gbrain version does not publish (likely queued by another release)');
-  if (!Array.isArray(p.rows) || typeof p.version_token !== 'string' || typeof p.generation !== 'string' || Number(p.page_id) !== Number(row.page_id)) {
-    throw invalid(row, 'does not name its page, version and rows');
-  }
-  if (p.visibility !== 'private' && p.visibility !== 'world') throw invalid(row, 'names an unknown fact visibility');
-  const outcomes = p.rows.filter(fact => OUTCOME_SOURCES.has(fact.source));
-  if (outcomes.length !== (p.complete ? 1 : 0)) throw invalid(row, p.complete ? 'does not carry exactly one page outcome' : 'carries a page outcome in a partial batch');
-  for (const fact of p.rows) {
-    if (typeof fact.fact !== 'string' || !fact.fact.trim() || typeof fact.source !== 'string' || !fact.source.startsWith(CONVERSATION_FACTS_SOURCE_PREFIX)
-      || !ALL_FACT_KINDS.includes((fact.kind ?? 'fact') as never) || (fact.source_session != null && !String(fact.source_session).startsWith(CONVERSATION_FACTS_SOURCE_PREFIX))
-      || Number.isNaN(Date.parse(fact.valid_from)) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
-      throw invalid(row, 'carries a row outside the conversation extractor\'s provenance');
-    }
-    if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${row.slug}:${p.version_token}`) throw invalid(row, 'carries an outcome for another page version');
-  }
+  if (row.slug !== ANCHOR_SLUG || row.page_id !== null || !Array.isArray(p.pages) || !p.pages.length) throw invalid(row, 'does not carry a batch of pages');
+  const slugs = p.pages.map(entry => entry?.slug);
+  if (slugs.some(slug => typeof slug !== 'string' || !slug || slug === ANCHOR_SLUG) || new Set(slugs).size !== slugs.length) throw invalid(row, 'names a page twice or names no page');
   return p;
 }
 
+/** Why one member's frozen rows cannot be published, or null when they can. Deterministic: a retry fails the same way. */
+function entryProblem(entry: ConversationPageEntry): string | null {
+  if (!Array.isArray(entry.rows) || typeof entry.version_token !== 'string' || typeof entry.generation !== 'string' || !Number.isSafeInteger(Number(entry.page_id))) {
+    return 'the entry does not name its page, version and rows';
+  }
+  if (entry.visibility !== 'private' && entry.visibility !== 'world') return 'it names an unknown fact visibility';
+  const outcomes = entry.rows.filter(fact => OUTCOME_SOURCES.has(fact.source));
+  if (outcomes.length !== (entry.complete ? 1 : 0)) return entry.complete ? 'it does not carry exactly one page outcome' : 'it carries a page outcome in a partial batch';
+  for (const fact of entry.rows) {
+    if (typeof fact.fact !== 'string' || !fact.fact.trim() || typeof fact.source !== 'string' || !fact.source.startsWith(CONVERSATION_FACTS_SOURCE_PREFIX)
+      || !ALL_FACT_KINDS.includes((fact.kind ?? 'fact') as never) || (fact.source_session != null && !String(fact.source_session).startsWith(CONVERSATION_FACTS_SOURCE_PREFIX))
+      || Number.isNaN(Date.parse(fact.valid_from)) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
+      return 'a row falls outside the conversation extractor\'s provenance or fact kinds';
+    }
+    if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
+    if (fact.embedding && (!entry.embedding || fact.embedding.length !== entry.embedding.dimensions || !fact.embedding.every(Number.isFinite))) {
+      return 'a vector does not match its embedding signature';
+    }
+  }
+  return null;
+}
 /** Canonical slugs for entity slugs that became aliases of a live page since extraction. */
 async function mergedEntities(tx: BrainEngine, sourceId: string, slugs: string[]): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
@@ -385,47 +423,73 @@ export async function clearConversationFacts(db: BrainEngine, sourceId: string, 
   return Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
 }
 
-/** Preparer for `managed_maintenance_conversation_facts`: a database-only publication on the page key. */
+
+type VersionTokenOf = (db: BrainEngine, page: Page) => Promise<string>;
+
+/**
+ * Under the lock, one member on its own: skipped when its page was deleted,
+ * replaced or moved; blocked (a durable not-extractable outcome naming the
+ * reason, prior facts kept) when its rows cannot be published; replaced
+ * otherwise. Never throws for one member's state.
+ */
+async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: ConversationPageEntry, signature: FactEmbeddingSignature | null,
+  versionTokenOf: VersionTokenOf): Promise<ConversationPageResult & { vectors_dropped: number }> {
+  const base = { slug: entry.slug, generation: entry.generation, deleted: 0, facts_inserted: 0, page_outcome: null, newest_end: null, vectors_dropped: 0 };
+  const page = await tx.getPage(entry.slug, { sourceId: row.source_id });
+  if (!page || page.id !== Number(entry.page_id)) return { ...base, status: 'skipped', reason: 'page_identity_changed' };
+  const token = await versionTokenOf(tx, page);
+  if (page.knowledge_revision !== entry.expected_revision || token !== entry.version_token) return { ...base, status: 'skipped', reason: 'revision_conflict' };
+  const problem = entryProblem(entry);
+  if (problem) {
+    const [top] = await tx.executeRaw<{ n: number | string | null }>('SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, entry.slug]);
+    const blocked: ConversationFactRow = { fact: 'EXTRACTION_NOT_APPLICABLE', kind: 'fact', entity_slug: null, source: NON_EXTRACTABLE_AUDIT_SOURCE,
+      source_session: `${NON_EXTRACTABLE_AUDIT_SOURCE}:${entry.slug}:${token}`, confidence: 1.0, notability: 'low',
+      context: stampExtractorVersion(`scanned, not extractable: blocked: ${problem} (request ${row.request_id})`),
+      row_num: top?.n == null ? 0 : Number(top.n) + 1, source_markdown_slug: entry.slug };
+    const { inserted } = await tx.insertFacts([blocked], { source_id: row.source_id }); // gbrain-allow-direct-insert: the durable blocked outcome of a conversation page whose frozen rows failed validation, inside its receipted batch publication
+    if (inserted !== 1) throw opError('storage_error', 'A blocked conversation outcome was not written; the batch rolled back.',
+      `Request ${row.request_id} could not record that ${entry.slug} in source ${row.source_id} is blocked, so none of its pages changed. Run the extraction again; report this if it repeats.`,
+      { fix: receiptFix(row.request_id) });
+    return { ...base, status: 'blocked', reason: problem, page_outcome: 'non_extractable' };
+  }
+  const vectors = !!signature && !!entry.embedding && signature.model === entry.embedding.model && signature.dimensions === entry.embedding.dimensions;
+  const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
+  const rows = entry.rows.map(fact => ({
+    ...fact, visibility: entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
+    valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
+    embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
+    embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
+  }));
+  const { deleted } = await replaceConversationFacts(tx, row.source_id, entry.slug, rows);
+  const outcome = entry.rows.find(fact => OUTCOME_SOURCES.has(fact.source));
+  return { ...base, status: 'committed', deleted, facts_inserted: rows.filter(fact => !OUTCOME_SOURCES.has(fact.source)).length,
+    page_outcome: outcome ? (outcome.source === TERMINAL_AUDIT_SOURCE ? 'complete' : 'non_extractable') : null, newest_end: entry.newest_end,
+    vectors_dropped: vectors ? 0 : entry.rows.filter(fact => fact.embedding).length };
+}
+
+/** Preparer for `managed_maintenance_conversation_facts`: a database-only batch publication holding every member's page key. */
 export async function prepareConversationFactsPublication(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const p = validateIntent(row);
   const { currentConversationVersionToken } = await import('../../commands/extract-conversation-facts.ts');
-  const pageChanged = (message: string) => opError('page_identity_changed', message,
-    `Page ${row.slug} in source ${row.source_id} changed before its conversation facts were published, so request ${row.request_id} wrote nothing and the prior facts stay. The next extraction run reads the current page.`,
-    { fix: readFix(`Shows which page holds ${row.slug} now and its revision.`, { argv: ['gbrain', 'get', '--source', row.source_id, '--', row.slug] }) });
-  const check = async (db: BrainEngine, lock: boolean) => {
+  const authorize = async (db: BrainEngine) => {
     await authorizeWrite(db, row.authority, 'submit_job', row.slug);
-    const page = await db.getPage(row.slug, { sourceId: row.source_id });
-    if (!page || page.id !== Number(row.page_id)) throw pageChanged('The conversation page was deleted or replaced before its facts were published.');
-    if (page.knowledge_revision !== p.expected_revision || await currentConversationVersionToken(db, page) !== p.version_token) {
-      throw opError('revision_conflict', 'The conversation page changed during fact extraction; its prior facts were kept.',
-        `Page ${row.slug} in source ${row.source_id} changed after its facts were extracted (request ${row.request_id}), so its prior facts were kept. The next extraction run extracts from the current page.`,
-        { fix: receiptFix(row.request_id) });
-    }
-    if (p.rows.some(fact => fact.embedding)) {
-      await assertManagedFactsEmbedding(db, config, p.embedding, lock);
-      if (p.rows.some(fact => fact.embedding && (fact.embedding.length !== p.embedding!.dimensions || !fact.embedding.every(Number.isFinite)))) {
-        throw opError('embedding_configuration', 'Frozen conversation fact vectors do not match their embedding signature.',
-          `A vector in request ${row.request_id} is not a finite ${p.embedding!.dimensions}-dimension vector of ${p.embedding!.model}, so none of the page's facts were published. The next extraction run embeds under the current model.`,
-          { fix: receiptFix(row.request_id) });
-      }
-    }
+    for (const entry of p.pages) await authorizeWrite(db, row.authority, 'submit_job', entry.slug);
   };
-  await check(engine, false);
-  return { observedRevision: p.expected_revision, noop: true,
-    validate: tx => check(tx, true),
+  await authorize(engine);
+  return { observedRevision: null, noop: true, additionalPageKeys: p.pages.map(entry => ({ sourceId: row.source_id, slug: entry.slug })),
+    validate: authorize,
     apply: async tx => {
-      const merges = await mergedEntities(tx, row.source_id, p.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
-      const rows = p.rows.map(fact => ({
-        ...fact, visibility: p.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
-        valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
-        embedding: fact.embedding ? new Float32Array(fact.embedding) : null,
-        embedding_model: fact.embedding ? p.embedding?.model ?? null : null,
-      }));
-      const { deleted, inserted } = await replaceConversationFacts(tx, row.source_id, row.slug, rows);
-      const outcome = p.rows.find(fact => OUTCOME_SOURCES.has(fact.source));
-      return { status: 'completed', deleted, inserted, facts_inserted: rows.filter(fact => !OUTCOME_SOURCES.has(fact.source)).length,
-        complete: p.complete, page_outcome: outcome ? (outcome.source === TERMINAL_AUDIT_SOURCE ? 'complete' : 'non_extractable') : null,
-        newest_end: p.newest_end, extractor_version: p.extractor_version, generation: p.generation, entities_merged: merges.size };
+      const signature = p.pages.some(entry => entry.rows?.some(fact => fact.embedding)) ? await resolveManagedFactsEmbedding(tx, config, true) : null;
+      const pages: ConversationPageResult[] = [];
+      let dropped = 0;
+      for (const entry of p.pages) {
+        const { vectors_dropped, ...result } = await applyEntry(tx, row, entry, signature, currentConversationVersionToken);
+        dropped += vectors_dropped;
+        pages.push(result);
+      }
+      const count = (status: ConversationPageResult['status']) => pages.filter(page => page.status === status).length;
+      return { status: 'completed', pages, committed: count('committed'), skipped: count('skipped'), blocked: count('blocked'),
+        facts_inserted: pages.reduce((n, page) => n + page.facts_inserted, 0), ...(dropped ? { vectors_dropped: dropped } : {}) };
     } };
 }
 
@@ -434,30 +498,44 @@ export interface ManagedConversationPublisher {
   engine: BrainEngine;
   authority: MaintenanceAuthority;
   config: GBrainConfig;
-  /** The facts embedding signature frozen batches carry (null: no vectors). */
+  /** The facts embedding signature frozen entries carry (null: no vectors). */
   embedding: FactEmbeddingSignature | null;
+  /** The writer's unsettled and failed batches by member generation, read once per run. */
+  index: Map<string, GenerationHistory>;
+  /** Unsettled batches this run already waited for, by request row id. */
+  settled: Map<string, WriteRequest>;
+  /** The batch being filled, and its entries' intent bytes. */
+  batch: ConversationPageEntry[];
+  bytes: number;
 }
 
-/** The run counters a managed page publication books into. */
+/** The run counters a managed batch publication books into. */
 export interface ManagedRunCounters {
-  pages_processed: number; pages_marked_non_extractable: number; pages_skipped_too_large: number;
+  pages_processed: number; pages_marked_non_extractable: number; pages_skipped_too_large: number; pages_failed: number;
   orphan_facts_cleaned: number; facts_inserted: number; pages_pending?: number; pages_blocked?: number;
 }
 
 interface ManagedRunState {
   managed: ManagedConversationPublisher | null;
+  sourceId: string;
   segmentLimit: number;
   factVisibility: 'private' | 'world';
   result: ManagedRunCounters;
+  /** The run's per-page checkpoint ends, keyed `${sourceId}|${slug}`. */
+  cpMap: Map<string, string>;
 }
 
 interface PageSnapshot { page: Page; versionToken: string }
+export interface ManagedPageStart { generation: Generation; attempt: number; since: string | null }
+
+const log = (line: string) => process.stderr.write(`[extract-conversation-facts] ${line}\n`);
 
 /**
  * Once per run, before any model work: on a managed brain (not a dry run,
  * which writes and registers nothing) preflight the maintenance authority,
- * resolve the facts embedding signature and check that the planned
- * admissions fit the writer's request capacity.
+ * resolve the facts embedding signature, check that the planned batch
+ * requests fit the writer's request capacity, and read its unsettled and
+ * failed batches.
  */
 export async function managedConversationPublisher(engine: BrainEngine, sourceId: string,
   opts: { dryRun?: boolean; slugs?: string[]; slug?: string; limit?: number; force?: boolean; types?: readonly AllowedType[] }): Promise<ManagedConversationPublisher | null> {
@@ -465,89 +543,149 @@ export async function managedConversationPublisher(engine: BrainEngine, sourceId
   const authority = (await maintenancePreflight(engine, sourceId))!;
   const config = loadConfig() ?? { engine: engine.kind };
   await assertConversationAdmissionHeadroom(engine, authority, await plannedAdmissions(engine, sourceId, opts));
-  return { engine, authority, config, embedding: await resolveManagedFactsEmbedding(engine, config) };
+  return { engine, authority, config, embedding: await resolveManagedFactsEmbedding(engine, config),
+    index: await loadGenerationIndex(engine, authority), settled: new Map(), batch: [], bytes: 0 };
+}
+
+async function settledRequest(m: ManagedConversationPublisher, id: string): Promise<WriteRequest> {
+  const cached = m.settled.get(id);
+  if (cached) return cached;
+  const prior = (await getWriteRequestById(m.engine, id))!;
+  await authorizeStoredRequest(m.engine, prior);
+  const wait = m.authority.wait!;
+  const row = wait.observe(await waitForWrite(m.engine, prior, m.config, wait.ms()));
+  m.settled.set(id, row);
+  return row;
 }
 
 /**
  * Before any model work for one page: resolve its generation and settle it
- * without the model when this writer already admitted a request for it
+ * without the model when this writer already admitted it in a batch
  * (replayed, resubmitted, pending or blocked), or when its largest possible
- * batch cannot fit one request. Returns the generation to extract into
+ * entry cannot fit one request. Returns the generation to extract into
  * otherwise.
  */
 export async function startManagedPage(state: ManagedRunState, snapshot: PageSnapshot, sinceIso: string | undefined, segments: number,
-): Promise<{ done: { newEndIso: string | null } } | { start: Extract<GenerationStart, { kind: 'extract' }> }> {
-  const { engine, authority, config, embedding } = state.managed!;
+): Promise<{ done: { newEndIso: null } } | { start: ManagedPageStart }> {
+  const m = state.managed!;
   const { page } = snapshot;
-  const start = await startConversationGeneration(engine, authority, config, {
+  const done = { done: { newEndIso: null } } as const;
+  const generation = await conversationGeneration(m.engine, m.authority, {
     slug: page.slug, page, versionToken: snapshot.versionToken, since: sinceIso ?? null, segmentLimit: state.segmentLimit,
   });
-  const log = (line: string) => process.stderr.write(`[extract-conversation-facts] ${line}\n`);
-  if (start.kind === 'extract') {
-    const planned = state.segmentLimit > 0 ? Math.min(segments, state.segmentLimit) : segments;
-    const estimate = estimateConversationIntentBytes(planned, embedding);
-    const limit = await conversationIntentByteLimit(engine);
-    if (estimate > limit) {
-      state.result.pages_skipped_too_large++;
-      log(`SKIP ${page.slug}: up to ${planned} segment(s) could freeze a ${estimate}-byte batch, over the ${limit}-byte request limit; its prior facts were kept and no model call ran. Narrow it with --slug ${page.slug} --segment-limit <n>`);
-      return { done: { newEndIso: null } };
+  const history = m.index.get(generation.key) ?? { pending: null, failed: [] };
+  if (history.pending) {
+    const row = await settledRequest(m, history.pending.id);
+    if (!isTerminal(row)) {
+      state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
+      log(`${page.slug}: its batch request ${row.request_id} is accepted and still pending; rerun to confirm (no model call)`);
+      return done;
     }
-    await assertConversationAdmissionHeadroom(engine, authority);
-    return { start };
+    const result = row.state === 'committed' ? ((row.outcome?.pages ?? []) as ConversationPageResult[]).find(r => r.generation === generation.key) : undefined;
+    if (result) {
+      log(`${page.slug}: replaying its committed batch request ${row.request_id}; no model call`);
+      bookPage(state, result);
+      return done;
+    }
+    if (row.state !== 'committed') history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt: history.pending.attempt });
+    history.pending = null;
   }
-  if (start.kind === 'resubmit') {
-    log(`${page.slug}: resubmitting the stored batch of this page generation (attempt ${start.attempt + 1}); no model call`);
-    await assertConversationAdmissionHeadroom(engine, authority);
-    return { done: settleManagedReceipt(state, await submitConversationIntent(engine, authority, page.slug, start, start.intent)) };
+  const deterministic = history.failed.find(f => DETERMINISTIC_CODES.has(f.code));
+  if (deterministic || history.failed.length >= MAX_GENERATION_ATTEMPTS) {
+    const last = deterministic ?? history.failed.at(-1)!;
+    state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
+    log(`SKIP ${page.slug}: ${deterministic ? `its batch request ${last.requestId} failed (${last.code})` : `${MAX_GENERATION_ATTEMPTS} batch requests holding it failed`} at this page version, so no model call runs again until the page changes. Read the receipt: gbrain write-request -- ${last.requestId}`);
+    return done;
   }
-  if (start.kind === 'settled') {
-    log(`${page.slug}: this page generation was already published; replaying its receipt, no model call`);
-    return { done: settleManagedReceipt(state, start.receipt) };
+  const attempt = history.failed.length ? Math.max(...history.failed.map(f => f.attempt)) + 1 : 0;
+  const last = history.failed.at(-1);
+  const stored = last && !REEXTRACT_CODES.has(last.code) ? await storedEntry(m.engine, last.id, generation.key) : null;
+  if (!m.batch.length) await assertConversationAdmissionHeadroom(m.engine, m.authority);
+  if (stored) {
+    log(`${page.slug}: resubmitting its stored entry from failed batch request ${last!.requestId} (attempt ${attempt + 1}); no model call`);
+    await enqueueEntry(state, { ...stored, attempt });
+    return done;
   }
-  if (start.kind === 'pending') {
-    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
-    log(`${page.slug}: request ${start.requestId} for this page is accepted and still pending; rerun to confirm (no model call)`);
-    return { done: { newEndIso: null } };
+  const planned = state.segmentLimit > 0 ? Math.min(segments, state.segmentLimit) : segments;
+  const estimate = estimateConversationIntentBytes(planned, m.embedding);
+  const limit = await conversationIntentByteLimit(m.engine);
+  if (estimate > limit) {
+    state.result.pages_skipped_too_large++;
+    log(`SKIP ${page.slug}: up to ${planned} segment(s) could freeze a ${estimate}-byte batch, over the ${limit}-byte request limit; its prior facts were kept and no model call ran. Narrow it with --slug ${page.slug} --segment-limit <n>`);
+    return done;
   }
-  state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
-  log(`SKIP ${page.slug}: ${start.message}`);
-  return { done: { newEndIso: null } };
+  return { start: { generation, attempt, since: sinceIso ?? null } };
 }
 
-/** Books a committed receipt into the run's counters. */
-function settleManagedReceipt(state: ManagedRunState, receipt: Record<string, unknown>): { newEndIso: string | null } {
-  state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
-  state.result.facts_inserted += Number(receipt.facts_inserted ?? 0);
-  if (receipt.page_outcome === 'non_extractable') {
-    state.result.pages_marked_non_extractable++;
-    return { newEndIso: null };
+/** Freezes one extracted page into the run's batch; the batch publishes once a cap is reached (and at the end of the run). */
+export async function enqueueManagedPage(state: ManagedRunState, snapshot: PageSnapshot, start: ManagedPageStart,
+  rows: ConversationFactRow[], newestEnd: string | null): Promise<void> {
+  const m = state.managed!;
+  await enqueueEntry(state, await buildConversationPage(m.engine, m.config, { slug: snapshot.page.slug, generation: start.generation, attempt: start.attempt,
+    versionToken: snapshot.versionToken, since: start.since, segmentLimit: state.segmentLimit }, rows, { newestEnd, visibility: state.factVisibility }));
+}
+
+async function enqueueEntry(state: ManagedRunState, entry: ConversationPageEntry): Promise<void> {
+  const m = state.managed!;
+  const bytes = jsonBytes(entry);
+  const cap = Math.min(batchCaps.bytes, await conversationIntentByteLimit(m.engine) - 65_536);
+  if (m.batch.length && m.bytes + bytes > cap) await flushManagedBatch(state);
+  m.batch.push(entry);
+  m.bytes += bytes;
+  const factPages = m.batch.filter(e => e.rows.some(fact => !OUTCOME_SOURCES.has(fact.source))).length;
+  if (m.batch.length >= batchCaps.pages || factPages >= batchCaps.factPages || m.bytes >= cap) await flushManagedBatch(state);
+}
+
+/** Books one member's committed-batch result into the run's counters. */
+function bookPage(state: ManagedRunState, result: ConversationPageResult): void {
+  state.result.orphan_facts_cleaned += Number(result.deleted ?? 0);
+  state.result.facts_inserted += Number(result.facts_inserted ?? 0);
+  if (result.status === 'skipped') {
+    state.result.pages_failed++;
+    log(`${result.slug} changed during extraction (${result.reason}); its prior facts were kept and it stays unfinished for the next run`);
+    return;
   }
+  if (result.status === 'blocked') {
+    state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
+    log(`SKIP ${result.slug}: blocked at this page version (${result.reason}); no model call runs again until the page changes`);
+    return;
+  }
+  if (result.page_outcome === 'non_extractable') { state.result.pages_marked_non_extractable++; return; }
   state.result.pages_processed++;
-  return { newEndIso: typeof receipt.newest_end === 'string' ? receipt.newest_end : null };
+  if (result.newest_end) state.cpMap.set(`${state.sourceId}|${result.slug}`, result.newest_end);
 }
 
 /**
- * Publishes one page's frozen batch as a receipted request. Returns the fact
- * rows inserted, or null when the request is accepted but still pending after
- * the job's wait (the page stays unfinished; the rerun replays it).
+ * Publishes the run's current batch as one request and books each member.
+ * A batch still pending after the job's wait leaves its pages pending (the
+ * next run replays it, no model call); a failed batch leaves them unfinished
+ * (the next run resubmits or blocks them from the stored request).
  */
-export async function publishManagedBatch(state: ManagedRunState, snapshot: PageSnapshot,
-  start: Extract<GenerationStart, { kind: 'extract' }>, rows: ConversationFactRow[], newestEnd: string | null): Promise<number | null> {
-  const { engine, authority, config } = state.managed!;
-  const complete = rows.some(row => OUTCOME_SOURCES.has(row.source));
-  const intent = await buildConversationIntent(engine, config, start, rows, { complete, newestEnd, visibility: state.factVisibility });
+export async function flushManagedBatch(state: ManagedRunState, opts: { afterError?: boolean } = {}): Promise<void> {
+  const m = state.managed;
+  if (!m || !m.batch.length) return;
+  // After a run-ending error the run's own error is the one reported; a flush failure only leaves the batch's pages unfinished.
+  if (opts.afterError) return flushManagedBatch(state).catch((error: unknown) => {
+    log(`the run's last batch did not publish (${error instanceof Error ? error.message : String(error)}); its pages stay unfinished`);
+  });
+  const pages = m.batch.splice(0);
+  m.bytes = 0;
   try {
-    const receipt = await submitConversationIntent(engine, authority, snapshot.page.slug, start, intent);
-    state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
-    return Number(receipt.facts_inserted ?? 0);
+    const receipt = await submitConversationPages(m.engine, m.authority, pages);
+    for (const result of receipt.pages as ConversationPageResult[]) bookPage(state, result);
+    log(`published ${pages.length} page(s) in batch request ${String(receipt.request_id)} (${Number(receipt.committed ?? 0)} committed, ${Number(receipt.skipped ?? 0)} skipped, ${Number(receipt.blocked ?? 0)} blocked)`);
   } catch (error) {
-    if (!(error instanceof OperationError) || error.code !== 'write_pending') throw error;
-    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
-    process.stderr.write(`[extract-conversation-facts] ${snapshot.page.slug}: its facts were accepted and are still pending; rerun to confirm (the rerun replays them, no model call)\n`);
-    return null;
+    if (!(error instanceof OperationError) || stopsRun(error)) throw error;
+    const requestId = error.writeRequest?.request_id;
+    if (error.code === 'write_pending') {
+      state.result.pages_pending = (state.result.pages_pending ?? 0) + pages.length;
+      log(`batch request ${requestId ?? ''} with ${pages.length} page(s) is accepted and still pending; rerun to confirm (the rerun replays it, no model call)`);
+      return;
+    }
+    state.result.pages_failed += pages.length;
+    log(`batch request ${requestId ?? ''} with ${pages.length} page(s) failed (${error.code}): ${error.message}; the next run ${DETERMINISTIC_CODES.has(error.code) ? 'blocks them until they change' : 'resubmits their stored entries without model calls'}`);
   }
 }
-
 /** Managed admission backpressure and exhausted request ids stop the whole run, not one page. */
 export function stopsRun(err: unknown): boolean {
   return err instanceof OperationError && (err.code === 'maintenance_backpressure' || err.code === 'queue_capacity');

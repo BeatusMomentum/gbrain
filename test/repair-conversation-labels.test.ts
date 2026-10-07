@@ -79,7 +79,7 @@ async function seed(engine: BrainEngine): Promise<Seeded> {
 }
 
 interface RepairJson { results: Array<{ affected: number; residuals: Record<string, number>; apply_command: string; applied: number; warnings?: string[];
-  listing?: Array<{ item: string; class: string }>; outcomes?: Record<string, number>; details?: { handoff?: string[]; pages?: Array<{ slug: string; outcome: string }> } }> }
+  listing?: Array<{ item: string; class: string }>; outcomes?: Record<string, number>; outcome_items?: Array<{ item: string; outcome: string; detail?: Record<string, unknown> }>; details?: { handoff?: string[]; pages?: Array<{ slug: string; outcome: string }> } }> }
 
 async function capture(run: () => Promise<unknown>): Promise<{ out: string; exitCode: number | string | undefined }> {
   const lines: string[] = [];
@@ -138,7 +138,9 @@ async function exercise(engine: BrainEngine, managed: boolean, seeded: Seeded): 
   expect(await active(engine, seeded.evidenced)).toEqual(sorted(seeded.evidenced));
   // Approved apply: no model call, approved rows expired with the marker, markers expired, prose outcome written.
   const applied = await repair(engine, ['--apply', '--expect', hash, '--yes']);
-  expect(applied.results[0]!.outcomes).toEqual({ non_extractable: 1, awaiting_reextraction: 1 });
+  // Both pages apply in one batch (one request, one receipt) with their own outcomes.
+  expect(applied.results[0]!.outcomes).toEqual({ retired: 1 });
+  expect(applied.results[0]!.outcome_items![0]!.detail).toMatchObject({ retired: 3, pages: { [PROSE]: 'non_extractable', [DATED]: 'awaiting_reextraction' } });
   expect(await active(engine, seeded.evidenced)).toEqual([]);
   expect(await active(engine, [...seeded.ambiguous, ...seeded.excluded])).toEqual(sorted([...seeded.ambiguous, ...seeded.excluded]));
   const [retired] = await engine.executeRaw<{ context: string }>('SELECT context FROM facts WHERE id=$1', [seeded.evidenced[0]]);
@@ -149,7 +151,7 @@ async function exercise(engine: BrainEngine, managed: boolean, seeded: Seeded): 
   expect(outcomeExtractorVersion(outcomes[1]!.context)).toBe(1);
   if (managed) {
     const requests = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE intent->>'kind'=$1", [CONVERSATION_LABELS_INTENT]);
-    expect(requests.map(r => r.state)).toEqual(['committed', 'committed']);
+    expect(requests.map(r => r.state)).toEqual(['committed']);
   }
   expect((await conversationLabelFactsCheck(engine, ['default'])).status).toBe('ok');
   // Lifecycle: ordinary extraction re-extracts only the dated page; replacement keeps retired and referenced rows.

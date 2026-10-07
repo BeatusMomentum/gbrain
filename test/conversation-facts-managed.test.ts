@@ -2,25 +2,27 @@
  * Wave 9 follow-ups, item 1: managed conversation facts publish as receipted
  * `managed_maintenance_conversation_facts` requests with a generation identity.
  *
- * Protects: a crash after admission replays the stored batch with zero model
- * calls; a deterministic failure blocks the page generation (one model call
- * across three runs); --force and a partial-then-full run start a new
- * generation; the frozen batch round-trips every column through JSONB; an
- * embedding model change without a dimension change is refused, and the
- * retry extracts again; a recreated page refuses the stale batch; a lost
- * insert fails the publication; the intent-bytes, outstanding-request and
- * lifetime-id bounds stop before any model call. Runs on PGLite, and on
+ * Protects: pages publish in batch requests (caps split a run into several);
+ * a crash after admission replays the stored batch with zero model calls; a
+ * page whose rows fail validation is blocked inside its batch (one model
+ * call across three runs); a page that moved or was recreated is skipped
+ * inside its batch while the rest publish; --force and a partial-then-full
+ * run start a new generation; the frozen batch round-trips every column
+ * through JSONB; an embedding model change drops stale vectors, never the
+ * batch; a lost insert fails the publication; the intent-bytes,
+ * outstanding-request, receipt-byte and lifetime-id bounds stop before any
+ * model call. Runs on PGLite, and on
  * Postgres through test/e2e/conversation-facts-managed-postgres.test.ts.
  * Seams: the Core's injected extractor (no gateway), the persistence fault
- * hook (to stall publication) and the maintenance wait test seam.
+ * hook (to stall publication), the maintenance wait and batch-cap test seams.
  */
 import { afterEach, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ExtractedFact } from '../src/core/facts/extract.ts';
 import { runExtractConversationFactsCore, currentConversationVersionToken } from '../src/commands/extract-conversation-facts.ts';
-import { CONVERSATION_FACTS_INTENT, buildConversationIntent, replaceConversationFacts, startConversationGeneration,
-  submitConversationIntent } from '../src/core/facts/conversation-publication.ts';
+import { CONVERSATION_FACTS_INTENT, DEFAULT_BATCH_CAPS, __setConversationBatchCapsForTests, buildConversationPage, conversationGeneration,
+  replaceConversationFacts, submitConversationPages } from '../src/core/facts/conversation-publication.ts';
 import { CONVERSATION_EXTRACTOR_VERSION, outcomeExtractorVersion } from '../src/core/facts/audit-sources.ts';
 import { maintenancePreflight } from '../src/core/persistence/prepared-maintenance.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
@@ -41,7 +43,7 @@ const transcript = (extra = '') => [
   `**Owner Example:** I will flag any launch date changes in the summary.${extra}`, '',
 ].join('\n');
 
-afterEach(() => { installFaultHook(undefined); });
+afterEach(() => { installFaultHook(undefined); __setConversationBatchCapsForTests(null); });
 
 async function putPage(brain: ManagedBrain, content: string, slug = SLUG): Promise<void> {
   const current = await brain.engine.readPageSnapshot(slug, { sourceId: 'default' });
@@ -52,11 +54,13 @@ async function putPage(brain: ManagedBrain, content: string, slug = SLUG): Promi
 }
 
 /** One extraction run on the page with a counting extractor; `fact` shapes the returned fact. */
-async function extract(engine: BrainEngine, calls: { n: number }, opts: { force?: boolean; segmentLimit?: number; fact?: Partial<ExtractedFact> } = {}) {
-  return runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: [SLUG], sleepMs: 0, overrideDisabled: true,
+async function extract(engine: BrainEngine, calls: { n: number }, opts: { force?: boolean; segmentLimit?: number; fact?: Partial<ExtractedFact>;
+  slugs?: string[]; onCall?: (turnText: string) => Promise<void> } = {}) {
+  return runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: opts.slugs ?? [SLUG], sleepMs: 0, overrideDisabled: true,
     force: opts.force, segmentLimit: opts.segmentLimit,
-    extractor: async () => {
+    extractor: async ({ turnText }) => {
       calls.n++;
+      await opts.onCall?.(turnText);
       return [{ fact: 'Owner Example sends the quarterly plan on Thursday', kind: 'commitment', confidence: 0.9, entity_slug: null,
         source: 'test', notability: 'high', ...opts.fact } as ExtractedFact];
     } });
@@ -66,6 +70,15 @@ async function extractorRows(engine: BrainEngine) {
   return engine.executeRaw<Record<string, any>>(`SELECT id, fact, kind, source, source_session, context, row_num, visibility, notability, confidence,
       claim_metric, claim_value, claim_unit, claim_period, event_type, attributed_to, valid_from, embedding_model, embedding IS NOT NULL AS embedded
     FROM facts WHERE source_id='default' AND source_markdown_slug=$1 AND source LIKE 'cli:extract-conversation-facts%' ORDER BY row_num`, [SLUG]);
+}
+
+const PROSE = (title: string) => ['---', `title: ${title}`, 'type: meeting', 'date: 2026-09-28', '---',
+  '**Date:** 2026-09-28', '**Attendees:** Alice Example, Owner Example', '', '## Notes', 'Hiring, the support backlog and the launch dates.', ''].join('\n');
+const titled = (title: string) => transcript().replace('title: Plan sync', `title: ${title}`);
+
+async function factsOf(engine: BrainEngine, slug: string) {
+  return (await engine.executeRaw<{ fact: string }>(`SELECT fact FROM facts WHERE source_id='default' AND source_markdown_slug=$1
+    AND source LIKE 'cli:extract-conversation-facts%' AND expired_at IS NULL ORDER BY row_num`, [slug])).map(r => r.fact);
 }
 
 async function requests(engine: BrainEngine) {
@@ -108,50 +121,64 @@ for (const backend of testBackends()) {
   test(`${backend}: a crash after admission replays the stored batch with zero model calls`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
+      const OTHER = 'meetings/2026-09-29-plan-sync';
       await putPage(brain, transcript());
+      await putPage(brain, titled('Plan sync two'), OTHER);
       let release!: () => void;
       const stalled = new Promise<void>(resolve => { release = resolve; });
       installFaultHook(async point => { if (point === 'consumer:prepared') await stalled; });
       const restore = __setMaintenanceWriteWaitForTests(300);
       const calls = { n: 0 };
       try {
-        const first = await extract(engine, calls);
-        expect(first).toMatchObject({ pages_pending: 1, facts_inserted: 0 });
-        expect(calls.n).toBe(1);
+        const first = await extract(engine, calls, { slugs: [SLUG, OTHER] });
+        expect(first).toMatchObject({ pages_pending: 2, facts_inserted: 0 });
+        expect(calls.n).toBe(2);
         __setMaintenanceWriteWaitForTests(20_000);
         setTimeout(release, 300);
-        const second = await extract(engine, calls);
-        expect(second).toMatchObject({ pages_processed: 1, facts_inserted: 1 });
-        expect(calls.n).toBe(1);
+        // The first page waits for the batch and replays its receipt; the second is then complete already.
+        const second = await extract(engine, calls, { slugs: [SLUG, OTHER] });
+        expect(second).toMatchObject({ pages_processed: 1, pages_skipped_completed: 1, facts_inserted: 1 });
+        expect(calls.n).toBe(2);
       } finally { release(); restore(); }
-      expect((await extractorRows(engine)).map(r => r.fact)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
+      expect(await factsOf(engine, SLUG)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
+      expect(await factsOf(engine, OTHER)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
       expect((await requests(engine)).map(r => r.state)).toEqual(['committed']);
-      const third = await extract(engine, calls);
-      expect(third).toMatchObject({ pages_skipped_completed: 1 });
-      expect(calls.n).toBe(1);
+      const third = await extract(engine, calls, { slugs: [SLUG, OTHER] });
+      expect(third).toMatchObject({ pages_skipped_completed: 2 });
+      expect(calls.n).toBe(2);
     }, { databaseUrl });
   }, 120_000);
 
-  test(`${backend}: a deterministic apply failure makes exactly one model call across three runs`, async () => {
+  test(`${backend}: a page whose rows fail validation is blocked inside its batch: one model call across three runs`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
+      const GOOD = 'meetings/2026-09-29-plan-sync';
       await putPage(brain, transcript());
+      await putPage(brain, titled('Plan sync two'), GOOD);
       const calls = { n: 0 };
-      const bad = { kind: 'not-a-kind' } as unknown as Partial<ExtractedFact>;
-      const first = await extract(engine, calls, { fact: bad });
-      expect(first.pages_failed).toBe(1);
-      const second = await extract(engine, calls, { fact: bad });
-      const third = await extract(engine, calls, { fact: bad });
-      expect(calls.n).toBe(1);
-      expect(second).toMatchObject({ pages_blocked: 1, pages_failed: 0 });
-      expect(third).toMatchObject({ pages_blocked: 1 });
-      expect(await requests(engine)).toEqual([{ state: 'failed', error_code: 'invalid_params' }]);
-      expect(await extractorRows(engine)).toEqual([]);
-      // The page changes: a new generation extracts again.
-      await putPage(brain, transcript(' Thanks.'));
-      const fourth = await extract(engine, calls);
-      expect(fourth).toMatchObject({ pages_processed: 1, facts_inserted: 1 });
+      let bad = true;
+      const run = () => runExtractConversationFactsCore(engine, { sourceId: 'default', slugs: [SLUG, GOOD], sleepMs: 0, overrideDisabled: true,
+        extractor: async ({ turnText }) => {
+          calls.n++;
+          const kind = bad && !turnText.includes('Plan sync two') ? 'not-a-kind' : 'commitment';
+          return [{ fact: 'Owner Example sends the quarterly plan on Thursday', kind, confidence: 0.9, entity_slug: null, source: 'test' } as unknown as ExtractedFact];
+        } });
+      const first = await run();
+      expect(first).toMatchObject({ pages_blocked: 1, pages_processed: 1, pages_failed: 0 });
+      const second = await run();
+      const third = await run();
       expect(calls.n).toBe(2);
+      expect(second).toMatchObject({ pages_skipped_non_extractable: 1, pages_skipped_completed: 1 });
+      expect(third).toMatchObject({ pages_skipped_non_extractable: 1, pages_skipped_completed: 1 });
+      expect(await requests(engine)).toEqual([{ state: 'committed', error_code: null }]);
+      expect(await factsOf(engine, SLUG)).toEqual(['EXTRACTION_NOT_APPLICABLE']);
+      expect((await extractorRows(engine))[0]!.context).toContain('blocked:');
+      // The page changes: a new generation extracts again.
+      bad = false;
+      await putPage(brain, transcript(' Thanks.'));
+      const fourth = await run();
+      expect(fourth).toMatchObject({ pages_processed: 1, facts_inserted: 1 });
+      expect(calls.n).toBe(3);
     }, { databaseUrl });
   }, 120_000);
 
@@ -180,7 +207,7 @@ for (const backend of testBackends()) {
     }, { databaseUrl });
   }, 120_000);
 
-  test(`${backend}: an embedding model change without a dimension change is refused, and the retry extracts again`, async () => {
+  test(`${backend}: an embedding model change without a dimension change drops the stale vectors, never the batch`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
       await putPage(brain, transcript());
@@ -188,36 +215,32 @@ for (const backend of testBackends()) {
       const authority = (await maintenancePreflight(engine, 'default'))!;
       const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
       const versionToken = await currentConversationVersionToken(engine, page);
-      const start = await startConversationGeneration(engine, authority, brain.ctx.config, { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 });
-      if (start.kind !== 'extract') throw new Error(`unexpected generation state ${start.kind}`);
+      const generation = await conversationGeneration(engine, authority, { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 });
       const dims = Number(await engine.getConfig('embedding_dimensions') ?? 1536);
-      const intent = await buildConversationIntent(engine, { engine: engine.kind }, start, [{ fact: 'A vector claim', kind: 'fact',
-        source: 'cli:extract-conversation-facts', row_num: 0, source_markdown_slug: SLUG, embedding: new Float32Array(dims).fill(0.1) }],
-      { complete: false, newestEnd: null, visibility: 'private' });
-      expect(intent.embedding).toMatchObject({ dimensions: dims });
+      const entry = await buildConversationPage(engine, { engine: engine.kind }, { slug: SLUG, generation, attempt: 0, versionToken, since: null, segmentLimit: 0 },
+        [{ fact: 'A vector claim', kind: 'fact', source: 'cli:extract-conversation-facts', row_num: 0, source_markdown_slug: SLUG, embedding: new Float32Array(dims).fill(0.1) }],
+        { newestEnd: null, visibility: 'private' });
+      expect(entry.embedding).toMatchObject({ dimensions: dims });
       const model = await engine.getConfig('embedding_model');
       await engine.setConfig('embedding_model', 'openai:text-embedding-other-example');
-      try {
-        const error = await submitConversationIntent(engine, authority, SLUG, start, intent).then(() => null, (e: Error & { code?: string }) => e);
-        expect(error?.code).toBe('embedding_configuration');
-      } finally { await engine.setConfig('embedding_model', model!); }
-      const retry = await startConversationGeneration(engine, authority, brain.ctx.config, { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 });
-      expect(retry).toMatchObject({ kind: 'extract', attempt: 1 });
-      expect(await extractorRows(engine)).toEqual([]);
+      let receipt: Record<string, unknown>;
+      try { receipt = await submitConversationPages(engine, authority, [entry]); }
+      finally { await engine.setConfig('embedding_model', model!); }
+      expect(receipt).toMatchObject({ state: 'committed', committed: 1, vectors_dropped: 1 });
+      expect((await extractorRows(engine)).map(r => [r.fact, r.embedded])).toEqual([['A vector claim', false]]);
     }, { databaseUrl });
   }, 120_000);
 
-  test(`${backend}: a page recreated at the same slug refuses the stale batch`, async () => {
+  test(`${backend}: a page recreated at the same slug is skipped inside its batch`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;
       await putPage(brain, transcript());
       const authority = (await maintenancePreflight(engine, 'default'))!;
       const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
       const versionToken = await currentConversationVersionToken(engine, page);
-      const start = await startConversationGeneration(engine, authority, brain.ctx.config, { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 });
-      if (start.kind !== 'extract') throw new Error(`unexpected generation state ${start.kind}`);
-      const intent = await buildConversationIntent(engine, { engine: engine.kind }, start, [{ fact: 'A stale claim', kind: 'fact',
-        source: 'cli:extract-conversation-facts', row_num: 0, source_markdown_slug: SLUG }], { complete: false, newestEnd: null, visibility: 'private' });
+      const generation = await conversationGeneration(engine, authority, { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 });
+      const entry = await buildConversationPage(engine, { engine: engine.kind }, { slug: SLUG, generation, attempt: 0, versionToken, since: null, segmentLimit: 0 },
+        [{ fact: 'A stale claim', kind: 'fact', source: 'cli:extract-conversation-facts', row_num: 0, source_markdown_slug: SLUG }], { newestEnd: null, visibility: 'private' });
       const live = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
       await submitPageMutation(brain.ctx, { operation: 'delete_page', params: { slug: SLUG, expected_revision: live.revision, request_id: randomUUID() } });
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
@@ -225,9 +248,75 @@ for (const backend of testBackends()) {
       await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
       await disposePersistenceConsumer(engine);
       await putPage(brain, transcript());
-      const error = await submitConversationIntent(engine, authority, SLUG, start, intent).then(() => null, (e: Error & { code?: string }) => e);
-      expect(['revision_conflict', 'page_identity_changed']).toContain(error?.code ?? 'none');
+      const receipt = await submitConversationPages(engine, authority, [entry]);
+      expect(receipt).toMatchObject({ state: 'committed', committed: 0, skipped: 1 });
+      expect((receipt.pages as Array<{ reason: string }>)[0]!.reason).toBe('page_identity_changed');
       expect(await extractorRows(engine)).toEqual([]);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: a mixed batch publishes every page but the one that moved, which is skipped and re-extracted next run`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      const MOVED = 'meetings/2026-09-29-plan-sync', LAST = 'meetings/2026-09-30-plan-sync', NOTES = 'meetings/2026-09-28-notes';
+      await putPage(brain, transcript());
+      await putPage(brain, titled('Plan sync two'), MOVED);
+      await putPage(brain, PROSE('Planning notes'), NOTES);
+      await putPage(brain, titled('Plan sync three'), LAST);
+      const calls = { n: 0 };
+      let edited = false;
+      const first = await extract(engine, calls, { slugs: [SLUG, MOVED, NOTES, LAST], onCall: async text => {
+        // MOVED's entry is already in the batch when LAST is extracted; edit it before the batch publishes.
+        if (!edited && text.includes('Plan sync three')) { edited = true; await putPage(brain, titled('Plan sync two').replace('Thursday', 'Friday'), MOVED); }
+      } });
+      expect(edited).toBe(true);
+      expect(calls.n).toBe(3);
+      expect(first).toMatchObject({ pages_processed: 2, pages_marked_non_extractable: 1, pages_failed: 1, facts_inserted: 2 });
+      expect((await requests(engine)).map(r => r.state)).toEqual(['committed']);
+      expect(await factsOf(engine, MOVED)).toEqual([]);
+      expect(await factsOf(engine, NOTES)).toEqual(['EXTRACTION_NOT_APPLICABLE']);
+      const second = await extract(engine, calls, { slugs: [SLUG, MOVED, NOTES, LAST] });
+      expect(second).toMatchObject({ pages_processed: 1, pages_skipped_completed: 2, pages_skipped_non_extractable: 1 });
+      expect(calls.n).toBe(4);
+      expect(await factsOf(engine, MOVED)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: a batch that failed retryably is resubmitted from its stored entries with zero model calls`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await putPage(brain, transcript());
+      let fail = true;
+      installFaultHook(async point => { if (point === 'consumer:prepared' && fail) { fail = false; throw Object.assign(new Error('simulated owner crash'), { code: 'storage_error' }); } });
+      const calls = { n: 0 };
+      const first = await extract(engine, calls);
+      expect(first.pages_processed).toBe(0);
+      expect(calls.n).toBe(1);
+      const failed = await requests(engine);
+      expect(failed.map(r => r.state)).toEqual(['failed']);
+      const second = await extract(engine, calls);
+      expect(second).toMatchObject({ pages_processed: 1, facts_inserted: 1 });
+      expect(calls.n).toBe(1);
+      expect((await requests(engine)).map(r => r.state)).toEqual(['failed', 'committed']);
+      expect(await factsOf(engine, SLUG)).toEqual(['Owner Example sends the quarterly plan on Thursday', 'EXTRACTION_COMPLETE']);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: the batch caps split a run into several requests`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      expect(DEFAULT_BATCH_CAPS).toEqual({ pages: 25, factPages: 10, bytes: 8 * 1024 * 1024 });
+      const slugs = ['meetings/t1', 'meetings/p1', 'meetings/t2', 'meetings/p2', 'meetings/p3'];
+      for (const slug of slugs) await putPage(brain, slug.includes('/t') ? titled(`Sync ${slug}`) : PROSE(`Notes ${slug}`), slug);
+      __setConversationBatchCapsForTests({ pages: 2, factPages: 1 });
+      const calls = { n: 0 };
+      const result = await extract(engine, calls, { slugs });
+      // [t1] (fact-page cap), [p1, t2] (page cap), [p2, p3] (page cap).
+      expect(result).toMatchObject({ pages_processed: 2, pages_marked_non_extractable: 3, pages_failed: 0 });
+      expect((await requests(engine)).map(r => r.state)).toEqual(['committed', 'committed', 'committed']);
+      const members = await engine.executeRaw<{ n: number }>(`SELECT jsonb_array_length(intent->'pages')::int AS n FROM persistence_requests
+        WHERE intent->>'kind'=$1 ORDER BY sequence`, [CONVERSATION_FACTS_INTENT]);
+      expect(members.map(r => r.n)).toEqual([1, 2, 2]);
     }, { databaseUrl });
   }, 120_000);
 
@@ -308,6 +397,7 @@ for (const backend of testBackends()) {
     await managedBrain(async brain => {
       const { engine } = brain;
       for (const day of ['28', '29', '30']) await putPage(brain, transcript().replace('Plan sync', `Plan sync ${day}`), `meetings/2026-09-${day}-plan-sync`);
+      __setConversationBatchCapsForTests({ factPages: 1 });
       await maintenancePreflight(engine, 'default');
       const [{ used }] = await engine.executeRaw<{ used: number }>("SELECT COALESCE(max(lifetime_ids),0)::int AS used FROM persistence_counters WHERE key LIKE 'principal:local_cli:%'");
       // 80% of the limit leaves room for one admission, not the three the run plans.

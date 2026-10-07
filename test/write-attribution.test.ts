@@ -27,7 +27,7 @@ import { getWriteRequest } from '../src/core/persistence/journal.ts';
 import { submitRememberMutation, submitForgetMutation } from '../src/core/persistence/memory-mutations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { maintenancePreflight } from '../src/core/persistence/prepared-maintenance.ts';
-import { buildConversationIntent, startConversationGeneration, submitConversationIntent } from '../src/core/facts/conversation-publication.ts';
+import { buildConversationPage, conversationGeneration, submitConversationPages } from '../src/core/facts/conversation-publication.ts';
 import { currentConversationVersionToken } from '../src/commands/extract-conversation-facts.ts';
 import type { Principal } from '../src/core/persistence/model.ts';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
@@ -288,11 +288,11 @@ describe('write attribution on a managed brain', () => {
       const authority = (await maintenancePreflight(engine, brain.sourceId))!;
       const current = (await engine.getPage(slug, { sourceId: brain.sourceId }))!;
       const versionToken = await currentConversationVersionToken(engine, current);
-      const start = await startConversationGeneration(engine, authority, brain.local.config, { slug, page: current, versionToken, since: null, segmentLimit: 0 });
-      if (start.kind !== 'extract') throw new Error(`unexpected generation state ${start.kind}`);
-      const intent = await buildConversationIntent(engine, brain.local.config, start, [{ fact: 'Derived example claim', kind: 'fact', notability: 'medium',
-        source: 'cli:extract-conversation-facts', entity_slug: slug, row_num: 0, source_markdown_slug: slug }], { complete: false, newestEnd: null, visibility: 'world' });
-      const receipt = await submitConversationIntent(engine, authority, slug, start, intent);
+      const generation = await conversationGeneration(engine, authority, { slug, page: current, versionToken, since: null, segmentLimit: 0 });
+      const entry = await buildConversationPage(engine, brain.local.config, { slug, generation, attempt: 0, versionToken, since: null, segmentLimit: 0 },
+        [{ fact: 'Derived example claim', kind: 'fact', notability: 'medium', source: 'cli:extract-conversation-facts', entity_slug: slug, row_num: 0, source_markdown_slug: slug }],
+        { newestEnd: null, visibility: 'world' });
+      const receipt = await submitConversationPages(engine, authority, [entry]);
       const rows = await engine.executeRaw<RowActors>(`SELECT ${ROW_COLUMNS} FROM facts WHERE source_id=$1 AND fact='Derived example claim'`, [brain.sourceId]);
       expect(rows).toHaveLength(1);
       expect(created(rows[0])).toEqual(actor(await requestRow(brain, brain.local, receipt), brain.principals.local));

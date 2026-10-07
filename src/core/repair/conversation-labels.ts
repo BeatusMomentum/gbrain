@@ -59,6 +59,10 @@ import { LEGACY_TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AU
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 export const CONVERSATION_LABELS_INTENT = 'managed_maintenance_conversation_label_retire';
+/** The request slug of every label-retire batch: a dot-led segment, which no page slug may have. */
+export const LABELS_ANCHOR_SLUG = '.maintenance/conversation-labels';
+/** Pages per label-retire batch request (one receipt, one request id). */
+export const LABEL_BATCH_PAGES = 25;
 const SEGMENT_SOURCE = 'cli:extract-conversation-facts';
 /** The default context the pre-fix extractor wrote for an undated page's segment. */
 export const EPOCH_SEGMENT_MARKER = 'segment 1970-01-01';
@@ -86,7 +90,6 @@ export interface LabelPage {
   source_id: string;
   slug: string;
   page_id: number;
-  request_id: string;
   include_ambiguous: boolean;
   scope: string[];
   facts: Array<Pick<LabelFactCandidate, 'id' | 'class' | 'reason' | 'fact_hash'>>;
@@ -97,7 +100,7 @@ export interface LabelPage {
   segments: number;
 }
 
-interface PageItem extends RepairItem { page: LabelPage; hash: string; last: boolean }
+interface BatchItem extends RepairItem { pages: LabelPage[]; request_id: string; hash: string; last: boolean }
 
 interface CandidateRow {
   id: number | string; source_id: string; slug: string; fact: string; context: string | null; entity_slug: string | null; visibility: string;
@@ -166,8 +169,8 @@ async function activeMarker(db: BrainEngine, sourceId: string, slug: string): Pr
   return rows.length > 0;
 }
 
-function requestIdFor(hash: string, page: Pick<LabelPage, 'source_id' | 'slug'>, attempt: number): string {
-  const h = digest(['conversation-labels-request-v1', hash, page.source_id, page.slug, attempt]);
+function requestIdFor(hash: string, pages: Array<Pick<LabelPage, 'source_id' | 'slug'>>, attempt: number): string {
+  const h = digest(['conversation-labels-batch-v1', hash, pages.map(p => `${p.source_id}\u0000${p.slug}`), attempt]);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
@@ -195,21 +198,26 @@ export function handoffCommands(pages: Array<Pick<LabelPage, 'source_id' | 'slug
   return commands;
 }
 
-function pageItem(page: LabelPage, hash: string, index: number, last: boolean): PageItem {
-  return { cursor: { phase: 0, id: index + 1 }, source_id: page.source_id, slug: page.slug, chars: 0,
-    action: `retire ${page.facts.length} label-misattributed fact(s); ${page.outcome.replaceAll('_', ' ')}`, page, hash, last };
+/** The approved pages as batch items: up to LABEL_BATCH_PAGES pages of one source per item, in approved order. */
+function batchItems(pages: LabelPage[], hash: string): BatchItem[] {
+  const batches: LabelPage[][] = [];
+  for (const page of pages) {
+    const open = batches.at(-1);
+    if (open && open.length < LABEL_BATCH_PAGES && open[0]!.source_id === page.source_id) open.push(page); else batches.push([page]);
+  }
+  return batches.map((batch, index) => ({ cursor: { phase: 0, id: index + 1 }, source_id: batch[0]!.source_id, slug: batch[0]!.slug, chars: 0,
+    action: `retire ${batch.reduce((n, p) => n + p.facts.length, 0)} label-misattributed fact(s) on ${batch.length} page(s)`,
+    pages: batch, request_id: requestIdFor(hash, batch, 0), hash, last: index === batches.length - 1 }));
 }
 
-/** Pages of an approved set whose retirement already committed (or whose facts are all expired already). */
-async function finishedPages(engine: BrainEngine, hash: string, pages: LabelPage[]): Promise<Set<string>> {
-  if (!pages.length) return new Set();
-  const committed = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT DISTINCT source_id, slug FROM persistence_requests
-    WHERE state='committed' AND operation='submit_job' AND request_id=ANY($1::uuid[])`, [pages.map(p => p.request_id)]);
+/** Batches of an approved set whose retirement already committed (or whose facts are all expired already). */
+async function finishedBatches(engine: BrainEngine, items: BatchItem[]): Promise<Set<string>> {
+  if (!items.length) return new Set();
+  const committed = new Set((await engine.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests
+    WHERE state='committed' AND operation='submit_job' AND request_id=ANY($1::uuid[])`, [items.map(item => item.request_id)])).map(row => row.request_id));
   const active = new Set((await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE id=ANY($1::bigint[]) AND expired_at IS NULL',
-    [pages.flatMap(p => p.facts.map(f => f.id))])).map(row => Number(row.id)));
-  const done = new Set(committed.map(row => `${row.source_id}\u0000${row.slug}`));
-  for (const page of pages) if (page.facts.every(f => !active.has(f.id))) done.add(`${page.source_id}\u0000${page.slug}`);
-  return done;
+    [items.flatMap(item => item.pages.flatMap(p => p.facts.map(f => f.id)))])).map(row => Number(row.id)));
+  return new Set(items.filter(item => committed.has(item.request_id) || item.pages.every(p => p.facts.every(f => !active.has(f.id)))).map(item => item.request_id));
 }
 
 export const conversationLabelsRepair: RepairHandler = {
@@ -229,11 +237,11 @@ export const conversationLabelsRepair: RepairHandler = {
       if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
         throw previewChangedError(opts.expect, command);
       }
-      const done = await finishedPages(engine, opts.expect, approved.items);
-      const items = approved.items.map((page, index) => pageItem(page, opts.expect!, index, index === approved.items.length - 1))
-        .filter(item => afterCursor(item.cursor, after) && !done.has(`${item.source_id}\u0000${item.slug}`));
+      const all = batchItems(approved.items, opts.expect);
+      const done = await finishedBatches(engine, all);
+      const items = all.filter(item => afterCursor(item.cursor, after) && !done.has(item.request_id));
       if (!items.length) await clearApprovedSet(engine, { command: 'conversation-labels', hash: opts.expect });
-      return { items, preview_hash: opts.expect, residuals: { already_retired_pages: approved.items.length - items.length },
+      return { items, preview_hash: opts.expect, residuals: { already_retired_pages: all.filter(item => done.has(item.request_id)).reduce((n, item) => n + item.pages.length, 0) },
         details: { handoff: handoffCommands(approved.items) } };
     }
     const facts = await classifyLabelFacts(engine, scope.source_ids);
@@ -245,7 +253,7 @@ export const conversationLabelsRepair: RepairHandler = {
       if (!page) {
         const current = (await engine.getPage(fact.slug, { sourceId: fact.source_id }))!;
         const decided = await currentOutcome(engine, current);
-        page = { source_id: fact.source_id, slug: fact.slug, page_id: current.id, request_id: '', include_ambiguous: includeAmbiguous, scope: scope.source_ids,
+        page = { source_id: fact.source_id, slug: fact.slug, page_id: current.id, include_ambiguous: includeAmbiguous, scope: scope.source_ids,
           facts: [], outcome: decided.reason ? 'non_extractable' : await activeMarker(engine, fact.source_id, fact.slug) ? 'awaiting_reextraction' : 'cleaned',
           non_extractable_reason: decided.reason, version_token: decided.versionToken, segments: decided.segments };
         pages.set(key, page);
@@ -255,15 +263,15 @@ export const conversationLabelsRepair: RepairHandler = {
     const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
       'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
     const hash = previewHash({ kind: 'conversation-labels-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous },
-      facts, pages: [...pages.values()].map(({ request_id: _r, ...page }) => page) });
-    const approved = [...pages.values()].map(page => ({ ...page, request_id: requestIdFor(hash, page, 0) }));
+      facts, pages: [...pages.values()] });
+    const approved = [...pages.values()];
     if (approved.length) await saveApprovedSet(engine, { command: 'conversation-labels', hash }, approved);
     const count = (klass: LabelFactClass) => facts.filter(f => f.class === klass).length;
     const awaiting = approved.filter(p => p.outcome === 'awaiting_reextraction');
     const listing: RepairListing[] = facts.map(fact => ({ item: `${fact.source_id}:${fact.slug}#${fact.id}`,
       class: fact.class === 'excluded' ? `excluded:${fact.reason}` : fact.class, detail: DETAILS[fact.reason] ?? fact.reason }));
     return {
-      items: approved.map((page, index) => pageItem(page, hash, index, index === approved.length - 1)), preview_hash: hash, listing,
+      items: batchItems(approved, hash), preview_hash: hash, listing,
       residuals: { evidenced: count('evidenced'), ambiguous: count('ambiguous'), excluded: count('excluded'),
         non_extractable_pages: approved.filter(p => p.outcome === 'non_extractable').length, awaiting_reextraction_pages: awaiting.length,
         awaiting_segments: awaiting.reduce((n, p) => n + p.segments, 0) },
@@ -274,16 +282,16 @@ export const conversationLabelsRepair: RepairHandler = {
     };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
-    const { page, hash, last } = entry as PageItem;
+    const item = entry as BatchItem;
     const result = await managedPersistenceEnabled(ctx.engine)
-      ? await retireManaged(ctx.engine, ctx.config, page, hash)
+      ? await retireManaged(ctx.engine, ctx.config, item)
       : await maintenanceTransaction(ctx.engine, async tx => {
-        await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
-        return retirePageFacts(tx, page, hash);
+        await tx.lockPageKeys(item.pages.map(page => ({ sourceId: page.source_id, slug: page.slug })));
+        return retireBatch(tx, item.pages, item.hash);
       });
-    if (last) await clearApprovedSet(ctx.engine, { command: 'conversation-labels', hash });
+    if (item.last) await clearApprovedSet(ctx.engine, { command: 'conversation-labels', hash: item.hash });
     if (!result.retired.length) return { applied: false, outcome: 'changed_since_preview', reason: 'every approved fact changed since the preview' };
-    return { applied: true, outcome: result.outcome, detail: { retired: result.retired.length,
+    return { applied: true, outcome: 'retired', detail: { retired: result.retired.length, pages: result.pages,
       ...(result.changed.length ? { changed_since_preview: result.changed } : {}) } };
   },
   render(details) {
@@ -302,31 +310,36 @@ export const conversationLabelsRepair: RepairHandler = {
 };
 
 interface RetireResult { retired: number[]; changed: number[]; outcome: LabelPageOutcome }
+interface BatchResult { retired: number[]; changed: number[]; pages: Record<string, LabelPageOutcome | 'changed_since_preview'> }
 
-async function retireManaged(engine: BrainEngine, config: Parameters<typeof waitForWrite>[2], page: LabelPage, hash: string): Promise<RetireResult> {
-  const unchanged: RetireResult = { retired: [], changed: page.facts.map(f => f.id), outcome: page.outcome };
-  const authority = (await maintenancePreflight(engine, page.source_id))!;
+/** Every page of one batch under its lock (the caller holds every page key). */
+async function retireBatch(tx: BrainEngine, pages: LabelPage[], hash: string): Promise<BatchResult> {
+  const result: BatchResult = { retired: [], changed: [], pages: {} };
+  for (const page of pages) {
+    const one = await retirePageFacts(tx, page, hash);
+    result.retired.push(...one.retired);
+    result.changed.push(...one.changed);
+    result.pages[page.slug] = one.retired.length ? one.outcome : 'changed_since_preview';
+  }
+  return result;
+}
+
+async function retireManaged(engine: BrainEngine, config: Parameters<typeof waitForWrite>[2], item: BatchItem): Promise<BatchResult> {
+  const authority = (await maintenancePreflight(engine, item.source_id))!;
   for (let attempt = 0; ; attempt++) {
-    const requestId = attempt === 0 ? page.request_id : requestIdFor(hash, page, attempt);
+    const requestId = attempt === 0 ? item.request_id : requestIdFor(item.hash, item.pages, attempt);
     const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
     if (prior && isTerminal(prior) && prior.state !== 'committed') continue;
-    try {
-      let receipt: Record<string, unknown>;
-      if (prior) {
-        await authorizeStoredRequest(engine, prior);
-        receipt = writeResponse(await waitForWrite(engine, prior, config));
-      } else {
-        const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-        if (!snapshot || snapshot.page.id !== page.page_id) return unchanged;
-        receipt = await submitDatabaseMaintenanceIntent(engine, authority, page.slug,
-          { kind: CONVERSATION_LABELS_INTENT, expected_revision: snapshot.revision, preview_hash: hash, page }, requestId);
-      }
-      return { retired: (receipt.retired as number[] | undefined) ?? [], changed: (receipt.changed_since_preview as number[] | undefined) ?? [],
-        outcome: (receipt.page_outcome as LabelPageOutcome | undefined) ?? page.outcome };
-    } catch (error) {
-      if (error instanceof OperationError && ['revision_conflict', 'page_not_found', 'page_identity_changed'].includes(error.code)) return unchanged;
-      throw error;
+    let receipt: Record<string, unknown>;
+    if (prior) {
+      await authorizeStoredRequest(engine, prior);
+      receipt = writeResponse(await waitForWrite(engine, prior, config));
+    } else {
+      receipt = await submitDatabaseMaintenanceIntent(engine, authority, LABELS_ANCHOR_SLUG,
+        { kind: CONVERSATION_LABELS_INTENT, expected_revision: null, preview_hash: item.hash, pages: item.pages }, requestId);
     }
+    return { retired: (receipt.retired as number[] | undefined) ?? [], changed: (receipt.changed_since_preview as number[] | undefined) ?? [],
+      pages: (receipt.pages as BatchResult['pages'] | undefined) ?? {} };
   }
 }
 
@@ -368,28 +381,27 @@ async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): 
   return result;
 }
 
-/** Preparer for `managed_maintenance_conversation_label_retire`: a database-only publication on the page key. */
+/** Preparer for `managed_maintenance_conversation_label_retire`: a database-only batch publication holding every page's key. */
 export async function prepareConversationLabelRetirement(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
-  const intent = row.intent as { page?: LabelPage; preview_hash?: unknown } | null;
-  const page = intent?.page;
-  if (!page || page.source_id !== row.source_id || page.slug !== row.slug || typeof intent?.preview_hash !== 'string' || !Array.isArray(page.facts)) {
-    throw opError('invalid_params', 'The conversation-labels intent does not name its page.',
-      `Request ${row.request_id} for ${row.slug} in source ${row.source_id} does not name the page and preview it retires, so nothing changed. Preview the repair again and apply the new preview after the user approves.`,
+  const intent = row.intent as { pages?: LabelPage[]; preview_hash?: unknown } | null;
+  const pages = intent?.pages;
+  if (row.slug !== LABELS_ANCHOR_SLUG || !Array.isArray(pages) || !pages.length || typeof intent?.preview_hash !== 'string'
+    || pages.some(page => page?.source_id !== row.source_id || typeof page.slug !== 'string' || !Array.isArray(page.facts))) {
+    throw opError('invalid_params', 'The conversation-labels intent does not name its pages.',
+      `Request ${row.request_id} in source ${row.source_id} does not name the pages and preview it retires, so nothing changed. Preview the repair again and apply the new preview after the user approves.`,
       { fix: previewFix(row.source_id) });
   }
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
-  if (!snapshot || snapshot.page.id !== Number(row.page_id)) {
-    throw opError('page_identity_changed', 'The conversation page was deleted or replaced before its label facts were retired.',
-      `Conversation page ${row.slug} in source ${row.source_id} was deleted or replaced after the preview, so request ${row.request_id} retired nothing. Preview the repair again.`,
-      { fix: previewFix(row.source_id) });
-  }
-  await authorizeWrite(engine, row.authority, 'submit_job', row.slug);
+  const authorize = async (db: BrainEngine) => {
+    await authorizeWrite(db, row.authority, 'submit_job', row.slug);
+    for (const page of pages) await authorizeWrite(db, row.authority, 'submit_job', page.slug);
+  };
+  await authorize(engine);
   const hash = intent!.preview_hash as string;
-  return { observedRevision: snapshot.revision, noop: true,
-    validate: async tx => { await authorizeWrite(tx, row.authority, 'submit_job', row.slug); },
+  return { observedRevision: null, noop: true, additionalPageKeys: pages.map(page => ({ sourceId: row.source_id, slug: page.slug })),
+    validate: authorize,
     apply: async tx => {
-      const result = await retirePageFacts(tx, page, hash);
-      return { status: 'completed', preview_hash: hash, retired: result.retired, changed_since_preview: result.changed, page_outcome: result.outcome };
+      const result = await retireBatch(tx, pages, hash);
+      return { status: 'completed', preview_hash: hash, retired: result.retired, changed_since_preview: result.changed, pages: result.pages };
     } };
 }
 
