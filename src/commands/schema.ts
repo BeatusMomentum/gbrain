@@ -1141,37 +1141,24 @@ function runReloadCmd(args: string[]): void {
 
 async function runAddTypeCmd(args: string[]): Promise<void> {
   const { json } = parseFlags(args);
+  const { parseAddTypeArgs, NO_PREFIX_NOTE } = await import('./schema-add-type.ts');
+  let parsed: import('./schema-add-type.ts').AddTypeArgs;
+  try {
+    parsed = parseAddTypeArgs(args);
+  } catch (e) {
+    const { writeCliRefusal } = await import('../cli/cli-error.ts');
+    const err = e as import('../core/ops/contract.ts').OperationError;
+    process.exit(writeCliRefusal(err, 'schema', { json, human: `${err.message}\n  ${err.suggestion}` }));
+  }
   const packName = pickPackName({}, args);
-  const positional = args.filter((a) => !a.startsWith('--'));
-  const name = positional[0];
-  if (!name) { console.error('Usage: gbrain schema add-type <name> --primitive <p> --prefix <dir/>'); process.exit(2); }
-  let primitive: string | undefined;
-  let prefix: string | undefined;
-  let extractable = false;
-  let expert = false;
-  const aliases: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--primitive') primitive = args[++i];
-    else if (a?.startsWith('--primitive=')) primitive = a.slice('--primitive='.length);
-    else if (a === '--prefix') prefix = args[++i];
-    else if (a?.startsWith('--prefix=')) prefix = a.slice('--prefix='.length);
-    else if (a === '--extractable') extractable = true;
-    else if (a === '--expert' || a === '--expert-routing') expert = true;
-    else if (a === '--alias') aliases.push(args[++i]!);
-    else if (a?.startsWith('--alias=')) aliases.push(a.slice('--alias='.length));
-  }
-  if (!primitive || !PACK_PRIMITIVES.includes(primitive as PackPrimitive)) {
-    console.error(`--primitive must be one of ${PACK_PRIMITIVES.join('|')}`);
-    process.exit(2);
-  }
-  if (!prefix) { console.error('--prefix is required (e.g. --prefix people/researchers/)'); process.exit(2); }
   try {
     const result = await addTypeToPack(packName, {
-      name, primitive: primitive as PackPrimitive, prefix,
-      extractable, expertRouting: expert, aliases,
+      name: parsed.name, primitive: parsed.primitive, prefix: parsed.prefix, noPrefix: parsed.noPrefix,
+      extractable: parsed.extractable, expertRouting: parsed.expert, aliases: parsed.aliases,
     });
-    emitMutateResult(result, json);
+    const output: typeof result & { note?: string } = parsed.noPrefix ? { ...result, note: NO_PREFIX_NOTE } : result;
+    emitMutateResult(output, json);
+    if (parsed.noPrefix && !json) console.log(`Note: ${NO_PREFIX_NOTE}`);
   } catch (e) { handleMutationError(e); }
 }
 

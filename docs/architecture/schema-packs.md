@@ -137,7 +137,7 @@ classification as `schema lint --with-db`'s `stored_type_undeclared`:
   undeclared type, per source against that source's pack.
 
 Fix one by declaring it (`gbrain schema add-type <type> --primitive <p>
---prefix <dir/>`) or by rewriting the pages with a declared type. On a managed
+--prefix <dir/>`, or `--no-prefix` for a type set by frontmatter only) or by rewriting the pages with a declared type. On a managed
 brain the `unify-types` job cannot apply yet, so rewrite the page with
 `put_page` (read it with `get_page include_content:true`, change `type:`, put it
 back). gbrain's own outputs use declared types: `gbrain report` and the dream
