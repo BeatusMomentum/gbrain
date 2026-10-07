@@ -51,7 +51,9 @@ import { readJournalLimits } from '../persistence/limits.ts';
 import { principalKey } from '../persistence/model.ts';
 import { PERSISTENCE_IPC_MAX_BYTES } from '../persistence/ipc.ts';
 import { assertManagedFactsEmbedding, resolveManagedFactsEmbedding } from '../persistence/facts-maintenance.ts';
-import { submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { loadConfig } from '../config.ts';
 import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE } from './audit-sources.ts';
@@ -235,13 +237,17 @@ function freezeRow(row: ConversationFactRow): FrozenConversationFact {
 export async function buildConversationIntent(engine: BrainEngine, config: GBrainConfig, start: { generation: Generation },
   rows: ConversationFactRow[], opts: { complete: boolean; newestEnd: string | null; visibility: 'private' | 'world' }): Promise<ConversationFactsIntent> {
   const { generation } = start;
-  const embedded = rows.some(row => row.embedding);
+  // Vectors freeze only under the brain's current facts embedding signature; any other
+  // vector is dropped and its row is embedded later, as an unembedded fact is.
+  const signature = rows.some(row => row.embedding) ? await resolveManagedFactsEmbedding(engine, config) : null;
+  const keep = (row: ConversationFactRow) => !!signature && !!row.embedding && row.embedding.length === signature.dimensions
+    && (!row.embedding_model || row.embedding_model === signature.model);
   return {
     kind: CONVERSATION_FACTS_INTENT, protocol: CONVERSATION_FACTS_PROTOCOL, expected_revision: generation.revision,
     page_id: generation.pageId, version_token: generation.input.versionToken, extractor_version: CONVERSATION_EXTRACTOR_VERSION,
     generation: generation.key, selectors: { since: generation.input.since, segment_limit: generation.input.segmentLimit },
     complete: opts.complete, newest_end: opts.newestEnd, visibility: opts.visibility,
-    embedding: embedded ? await resolveManagedFactsEmbedding(engine, config) : null, rows: rows.map(freezeRow),
+    embedding: signature, rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null })),
   };
 }
 
@@ -255,7 +261,7 @@ export async function submitConversationIntent(engine: BrainEngine, authority: M
   const bytes = jsonBytes(intent);
   if (bytes > limit) {
     throw opError('request_too_large', 'The page\'s frozen fact batch exceeds the request size limit; its prior facts were kept.',
-      `Page ${slug} produced a ${bytes}-byte batch, over the ${limit}-byte limit for one request, so nothing was submitted and the batch was not split. Narrow the run with --segment-limit, or raise persistence.limits.principalIntentBytes (the user's call).`);
+      `Page ${slug} produced a ${bytes}-byte batch, over the ${limit}-byte limit for one request, so nothing was submitted and the batch was not split. Narrow the run with --segment-limit, or raise persistence.limits.principal_intent_bytes (the user's call).`);
   }
   return submitDatabaseMaintenanceIntent(engine, authority, slug, intent, requestIdFor(start.generation.key, start.attempt));
 }
@@ -360,4 +366,128 @@ export async function prepareConversationFactsPublication(engine: BrainEngine, r
         complete: p.complete, page_outcome: outcome ? (outcome.source === TERMINAL_AUDIT_SOURCE ? 'complete' : 'non_extractable') : null,
         newest_end: p.newest_end, extractor_version: p.extractor_version, generation: p.generation, entities_merged: merges.size };
     } };
+}
+
+/** A managed extraction run's publication context; null on an unmanaged brain or a dry run. */
+export interface ManagedConversationPublisher {
+  engine: BrainEngine;
+  authority: MaintenanceAuthority;
+  config: GBrainConfig;
+  /** The facts embedding signature frozen batches carry (null: no vectors). */
+  embedding: FactEmbeddingSignature | null;
+}
+
+/** The run counters a managed page publication books into. */
+export interface ManagedRunCounters {
+  pages_processed: number; pages_marked_non_extractable: number; pages_skipped_too_large: number;
+  orphan_facts_cleaned: number; facts_inserted: number; pages_pending?: number; pages_blocked?: number;
+}
+
+interface ManagedRunState {
+  managed: ManagedConversationPublisher | null;
+  segmentLimit: number;
+  factVisibility: 'private' | 'world';
+  result: ManagedRunCounters;
+}
+
+interface PageSnapshot { page: Page; versionToken: string }
+
+/**
+ * Once per run, before any model work: on a managed brain (not a dry run,
+ * which writes and registers nothing) preflight the maintenance authority,
+ * resolve the facts embedding signature and check that the planned
+ * admissions fit the writer's request capacity.
+ */
+export async function managedConversationPublisher(engine: BrainEngine, sourceId: string,
+  opts: { dryRun?: boolean; slugs?: string[]; slug?: string; limit?: number }): Promise<ManagedConversationPublisher | null> {
+  if (opts.dryRun || !await managedPersistenceEnabled(engine)) return null;
+  const authority = (await maintenancePreflight(engine, sourceId))!;
+  const config = loadConfig() ?? { engine: engine.kind };
+  await assertConversationAdmissionHeadroom(engine, authority, opts.slugs?.length ?? (opts.slug ? 1 : opts.limit ?? 1));
+  return { engine, authority, config, embedding: await resolveManagedFactsEmbedding(engine, config) };
+}
+
+/**
+ * Before any model work for one page: resolve its generation and settle it
+ * without the model when this writer already admitted a request for it
+ * (replayed, resubmitted, pending or blocked), or when its largest possible
+ * batch cannot fit one request. Returns the generation to extract into
+ * otherwise.
+ */
+export async function startManagedPage(state: ManagedRunState, snapshot: PageSnapshot, sinceIso: string | undefined, segments: number,
+): Promise<{ done: { newEndIso: string | null } } | { start: Extract<GenerationStart, { kind: 'extract' }> }> {
+  const { engine, authority, config, embedding } = state.managed!;
+  const { page } = snapshot;
+  const start = await startConversationGeneration(engine, authority, config, {
+    slug: page.slug, page, versionToken: snapshot.versionToken, since: sinceIso ?? null, segmentLimit: state.segmentLimit,
+  });
+  const log = (line: string) => process.stderr.write(`[extract-conversation-facts] ${line}\n`);
+  if (start.kind === 'extract') {
+    const planned = state.segmentLimit > 0 ? Math.min(segments, state.segmentLimit) : segments;
+    const estimate = estimateConversationIntentBytes(planned, embedding);
+    const limit = await conversationIntentByteLimit(engine);
+    if (estimate > limit) {
+      state.result.pages_skipped_too_large++;
+      log(`SKIP ${page.slug}: up to ${planned} segment(s) could freeze a ${estimate}-byte batch, over the ${limit}-byte request limit; its prior facts were kept and no model call ran. Narrow it with --slug ${page.slug} --segment-limit <n>`);
+      return { done: { newEndIso: null } };
+    }
+    await assertConversationAdmissionHeadroom(engine, authority);
+    return { start };
+  }
+  if (start.kind === 'resubmit') {
+    log(`${page.slug}: resubmitting the stored batch of this page generation (attempt ${start.attempt + 1}); no model call`);
+    await assertConversationAdmissionHeadroom(engine, authority);
+    return { done: settleManagedReceipt(state, await submitConversationIntent(engine, authority, page.slug, start, start.intent)) };
+  }
+  if (start.kind === 'settled') {
+    log(`${page.slug}: this page generation was already published; replaying its receipt, no model call`);
+    return { done: settleManagedReceipt(state, start.receipt) };
+  }
+  if (start.kind === 'pending') {
+    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
+    log(`${page.slug}: request ${start.requestId} for this page is accepted and still pending; rerun to confirm (no model call)`);
+    return { done: { newEndIso: null } };
+  }
+  state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
+  log(`SKIP ${page.slug}: ${start.message}`);
+  return { done: { newEndIso: null } };
+}
+
+/** Books a committed receipt into the run's counters. */
+function settleManagedReceipt(state: ManagedRunState, receipt: Record<string, unknown>): { newEndIso: string | null } {
+  state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
+  state.result.facts_inserted += Number(receipt.facts_inserted ?? 0);
+  if (receipt.page_outcome === 'non_extractable') {
+    state.result.pages_marked_non_extractable++;
+    return { newEndIso: null };
+  }
+  state.result.pages_processed++;
+  return { newEndIso: typeof receipt.newest_end === 'string' ? receipt.newest_end : null };
+}
+
+/**
+ * Publishes one page's frozen batch as a receipted request. Returns the fact
+ * rows inserted, or null when the request is accepted but still pending after
+ * the job's wait (the page stays unfinished; the rerun replays it).
+ */
+export async function publishManagedBatch(state: ManagedRunState, snapshot: PageSnapshot,
+  start: Extract<GenerationStart, { kind: 'extract' }>, rows: ConversationFactRow[], newestEnd: string | null): Promise<number | null> {
+  const { engine, authority, config } = state.managed!;
+  const complete = rows.some(row => OUTCOME_SOURCES.has(row.source));
+  const intent = await buildConversationIntent(engine, config, start, rows, { complete, newestEnd, visibility: state.factVisibility });
+  try {
+    const receipt = await submitConversationIntent(engine, authority, snapshot.page.slug, start, intent);
+    state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
+    return Number(receipt.facts_inserted ?? 0);
+  } catch (error) {
+    if (!(error instanceof OperationError) || error.code !== 'write_pending') throw error;
+    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
+    process.stderr.write(`[extract-conversation-facts] ${snapshot.page.slug}: its facts were accepted and are still pending; rerun to confirm (the rerun replays them, no model call)\n`);
+    return null;
+  }
+}
+
+/** Managed admission backpressure and exhausted request ids stop the whole run, not one page. */
+export function stopsRun(err: unknown): boolean {
+  return err instanceof OperationError && (err.code === 'maintenance_backpressure' || err.code === 'queue_capacity');
 }

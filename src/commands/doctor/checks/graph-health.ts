@@ -297,6 +297,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'google_file_modes',
     'extractor_facts_expired',
     'captured_facts_active',
+    'conversation_outcomes_stale',
     'loop_facts_drift',
   ],
   run: runTimelineHistory,

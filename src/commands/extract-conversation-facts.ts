@@ -77,21 +77,7 @@ import {
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { maintenancePreflight, type MaintenanceAuthority } from '../core/persistence/prepared-maintenance.ts';
-import { loadConfig, type GBrainConfig } from '../core/config.ts';
-import { OperationError } from '../core/ops/contract.ts';
-import { resolveManagedFactsEmbedding } from '../core/persistence/facts-maintenance.ts';
-import {
-  assertConversationAdmissionHeadroom,
-  buildConversationIntent,
-  conversationIntentByteLimit,
-  estimateConversationIntentBytes,
-  startConversationGeneration,
-  submitConversationIntent,
-  type ConversationFactRow,
-  type GenerationStart,
-} from '../core/facts/conversation-publication.ts';
-import type { FactEmbeddingSignature } from '../core/facts/extract.ts';
+import { managedConversationPublisher, publishManagedBatch, startManagedPage, stopsRun, type ManagedConversationPublisher } from '../core/facts/conversation-publication.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingMessage } from '../core/budget/no-pricing.ts';
 import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
@@ -765,13 +751,8 @@ interface ExtractCoreState {
   result: ExtractConversationFactsResult;
   engine: BrainEngine;
   sourceId: string;
-  /** Managed brain: a page's rows are buffered and replace the prior batch in one receipted request. */
-  managed: boolean;
-  /** Managed brain, not a dry run: the maintenance authority its requests publish under. */
-  authority: MaintenanceAuthority | null;
-  config: GBrainConfig;
-  /** Managed brain: the facts embedding signature frozen batches carry (null: no vectors). */
-  embedding: FactEmbeddingSignature | null;
+  /** Managed brain (not a dry run): a page's rows are buffered and replace the prior batch in one receipted request. */
+  managed: ManagedConversationPublisher | null;
   dryRun: boolean;
   sleepMs: number;
   segmentLimit: number;
@@ -973,96 +954,6 @@ export async function currentConversationVersionToken(engine: BrainEngine, page:
   return (await preparePageSnapshot(engine, page)).versionToken;
 }
 
-/**
- * Managed brains, before any model work for one page: resolve its extraction
- * generation and settle it without the model when this writer already
- * admitted a request for it (replayed, resubmitted, pending or blocked), or
- * when its largest possible batch cannot fit one request. Returns the
- * generation to extract into otherwise.
- */
-async function startManagedPage(
-  state: ExtractCoreState,
-  snapshot: ConversationPageSnapshot,
-  sinceIso: string | undefined,
-  segments: number,
-): Promise<{ done: { newEndIso: string | null } } | { start: Extract<GenerationStart, { kind: 'extract' }> }> {
-  const authority = state.authority!;
-  const { page } = snapshot;
-  const start = await startConversationGeneration(state.engine, authority, state.config, {
-    slug: page.slug, page, versionToken: snapshot.versionToken, since: sinceIso ?? null, segmentLimit: state.segmentLimit,
-  });
-  if (start.kind === 'extract') {
-    const planned = state.segmentLimit > 0 ? Math.min(segments, state.segmentLimit) : segments;
-    const estimate = estimateConversationIntentBytes(planned, state.embedding);
-    const limit = await conversationIntentByteLimit(state.engine);
-    if (estimate > limit) {
-      state.result.pages_skipped_too_large++;
-      process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: up to ${planned} segment(s) could freeze a ${estimate}-byte batch, over the ${limit}-byte request limit; its prior facts were kept and no model call ran. Narrow it with --slug ${page.slug} --segment-limit <n>\n`);
-      return { done: { newEndIso: null } };
-    }
-    await assertConversationAdmissionHeadroom(state.engine, authority);
-    return { start };
-  }
-  if (start.kind === 'resubmit') {
-    process.stderr.write(`[extract-conversation-facts] ${page.slug}: resubmitting the stored batch of this page generation (attempt ${start.attempt + 1}); no model call\n`);
-    await assertConversationAdmissionHeadroom(state.engine, authority);
-    return { done: settleManagedReceipt(state, page.slug, await submitConversationIntent(state.engine, authority, page.slug, start, start.intent)) };
-  }
-  if (start.kind === 'settled') {
-    process.stderr.write(`[extract-conversation-facts] ${page.slug}: this page generation was already published; replaying its receipt, no model call\n`);
-    return { done: settleManagedReceipt(state, page.slug, start.receipt) };
-  }
-  if (start.kind === 'pending') {
-    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
-    process.stderr.write(`[extract-conversation-facts] ${page.slug}: request ${start.requestId} for this page is accepted and still pending; rerun to confirm (no model call)\n`);
-    return { done: { newEndIso: null } };
-  }
-  state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
-  process.stderr.write(`[extract-conversation-facts] SKIP ${page.slug}: ${start.message}\n`);
-  return { done: { newEndIso: null } };
-}
-
-/** Books a committed managed receipt into the run's counters. */
-function settleManagedReceipt(state: ExtractCoreState, slug: string, receipt: Record<string, unknown>): { newEndIso: string | null } {
-  state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
-  state.result.facts_inserted += Number(receipt.facts_inserted ?? 0);
-  if (receipt.page_outcome === 'non_extractable') {
-    state.result.pages_marked_non_extractable++;
-    return { newEndIso: null };
-  }
-  state.result.pages_processed++;
-  const newest = typeof receipt.newest_end === 'string' ? receipt.newest_end : null;
-  if (newest) state.cpMap.set(cpMapKey(state.sourceId, slug), newest);
-  return { newEndIso: newest };
-}
-
-/**
- * Managed publication of one page's frozen batch as a receipted request.
- * Returns the fact rows inserted, or null when the request is accepted but
- * still pending after the job's wait (the page stays unfinished).
- */
-async function publishManagedBatch(
-  state: ExtractCoreState,
-  snapshot: ConversationPageSnapshot,
-  start: Extract<GenerationStart, { kind: 'extract' }>,
-  rows: ConversationFactRow[],
-  newestEnd: string | null,
-): Promise<number | null> {
-  const complete = rows.some(row => row.source === TERMINAL_AUDIT_SOURCE || row.source === NON_EXTRACTABLE_AUDIT_SOURCE);
-  const intent = await buildConversationIntent(state.engine, state.config, start, rows,
-    { complete, newestEnd, visibility: state.factVisibility });
-  try {
-    const receipt = await submitConversationIntent(state.engine, state.authority!, snapshot.page.slug, start, intent);
-    state.result.orphan_facts_cleaned += Number(receipt.deleted ?? 0);
-    return Number(receipt.facts_inserted ?? 0);
-  } catch (error) {
-    if (!(error instanceof OperationError) || error.code !== 'write_pending') throw error;
-    state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
-    process.stderr.write(`[extract-conversation-facts] ${snapshot.page.slug}: its facts were accepted and are still pending; rerun to confirm (the rerun replays them, no model call)\n`);
-    return null;
-  }
-}
-
 async function processPage(
   state: ExtractCoreState,
   snapshot: ConversationPageSnapshot,
@@ -1183,11 +1074,10 @@ async function processPage(
         ? 'no conversation messages found'
         : 'fewer than two eligible messages');
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
-        if (state.authority) {
+        if (state.managed) {
           const managed = await startManagedPage(state, snapshot, sinceIso, 0);
           if ('done' in managed) return managed.done;
-          const row = nonExtractableAuditFact(page.slug, 0, snapshot.versionToken, reason);
-          if (await publishManagedBatch(state, snapshot, managed.start, [row], null) === null) return { newEndIso: null };
+          if (await publishManagedBatch(state, snapshot, managed.start, [nonExtractableAuditFact(page.slug, 0, snapshot.versionToken, reason)], null) === null) return { newEndIso: null };
         } else {
           state.result.orphan_facts_cleaned += await deleteOrphanFactsForPage(state.engine, state.sourceId, page.slug);
           const rowNum = await peekRowNumStart(state.engine, state.sourceId, page.slug);
@@ -1207,13 +1097,8 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  let managedStart: Extract<GenerationStart, { kind: 'extract' }> | null = null;
-  if (state.authority) {
-    const managed = await startManagedPage(state, snapshot, sinceIso, segments.length);
-    if ('done' in managed) return managed.done;
-    managedStart = managed.start;
-  }
-
+  const managed = state.managed ? await startManagedPage(state, snapshot, sinceIso, segments.length) : null;
+  if (managed && 'done' in managed) return managed.done;
   // D11: delete-orphans-first replay safety. Wipes any facts written by
   // a prior crashed / killed / partial run for this (sourceId, slug)
   // pair before we re-extract. The lock we hold (D2 + D12 refreshing
@@ -1366,11 +1251,10 @@ async function processPage(
     return { newEndIso: null };
   }
 
-  if (managedStart && newestEnd !== null) {
-    const inserted = await publishManagedBatch(state, snapshot, managedStart, managedRows, newestEnd);
+  if (managed && newestEnd !== null) {
+    const inserted = await publishManagedBatch(state, snapshot, managed.start, managedRows, newestEnd);
     if (inserted === null) return { newEndIso: null };
-    pageInsertedTotal = inserted;
-    state.result.facts_inserted += pageInsertedTotal;
+    state.result.facts_inserted += pageInsertedTotal = inserted;
   }
 
   if (newestEnd !== null) {
@@ -1453,13 +1337,7 @@ export async function runExtractConversationFactsCore(
   if (!sourceId) {
     throw new Error('runExtractConversationFactsCore: opts.sourceId is required');
   }
-  // A managed brain publishes each page's batch as a receipted maintenance
-  // request; the authority is preflighted once, before any model work. A dry
-  // run writes nothing and registers nothing.
-  const managed = await managedPersistenceEnabled(engine);
-  const authority = managed && !opts.dryRun ? await maintenancePreflight(engine, sourceId) : null;
-  const config = loadConfig() ?? { engine: engine.kind };
-  if (authority) await assertConversationAdmissionHeadroom(engine, authority, opts.slugs?.length ?? (opts.slug ? 1 : opts.limit ?? 1));
+  const managed = await managedConversationPublisher(engine, sourceId, opts);
 
   const result: ExtractConversationFactsResult = {
     pages_considered: 0,
@@ -1544,9 +1422,6 @@ export async function runExtractConversationFactsCore(
     engine,
     sourceId,
     managed,
-    authority,
-    config,
-    embedding: authority ? await resolveManagedFactsEmbedding(engine, config) : null,
     dryRun,
     sleepMs,
     segmentLimit,
@@ -2326,11 +2201,6 @@ function recordPageFailure(result: ExtractConversationFactsResult, sourceId: str
   result.pages_failed++;
   const reason = (error as { extractionReason?: ExtractFailureReason } | null)?.extractionReason ?? 'page_error';
   process.stderr.write(`[extract-conversation-facts] ${slug} failed (${reason}) and stays unfinished; retry: gbrain extract-conversation-facts --source-id ${sourceId} --slug ${slug}\n`);
-}
-
-/** Managed admission backpressure and exhausted request ids stop the whole run, not one page. */
-function stopsRun(err: unknown): boolean {
-  return err instanceof OperationError && (err.code === 'maintenance_backpressure' || err.code === 'queue_capacity');
 }
 
 export function isAbortError(err: unknown): boolean {
