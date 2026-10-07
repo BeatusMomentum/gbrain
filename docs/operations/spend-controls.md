@@ -379,6 +379,13 @@ gbrain config set dream.breaker.max_dead_submissions 5   # raise the limit; 0 di
 - The check happens before synthesis submission. Transcript triage for that run may
   already have happened, so the promise is "no synthesis submission", not "no
   model call at all".
+- Patterns digests its reflection set into its key, so the key changes whenever a
+  reflection does. Patterns deaths therefore count per source, under
+  `dream:patterns:source:<source id>`, whatever reflections each run read. A
+  patterns child cancelled at its timeout after paid work counts as a death; one
+  cancelled before any work does not. A completed run resets the count, so only
+  deaths in a row trip it; reset a tripped source with
+  `gbrain dream reset-key 'dream:patterns:source:<source id>'`.
 - Not covered: a transcript that keeps growing gets a new content-hashed key each
   cycle, and patterns runs outside maintenance carry no key.
 - If the count query fails, the breaker is skipped for that run with a warning, the
