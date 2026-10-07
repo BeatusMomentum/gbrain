@@ -122,9 +122,20 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // elements all fail the shape gate is malformed output: it rides the
   // failure streak like every other parse failure instead of tombstoning the
   // item forever on the first try.
+  //
+  // #6260: the honest `[]` counts only at top level. An empty array that sits
+  // inside an earlier `[` that is still open at its offset (a clipped
+  // response, or complete JSON broken by a missing comma) is an atom's own
+  // `"concepts": []`, not the model saying "nothing here", so it must not
+  // turn malformed output into a zero-yield stamp.
   let firstAttempt: ReturnType<typeof parseArrayAtOffset> | null = null;
   let sawEmptyArray = false;
   let candidates = 0;
+  const priorStarts: number[] = [];
+  const enclosed = (at: number): boolean => priorStarts.some((s) => {
+    const end = matchingCloseBracket(cleaned, s);
+    return end === -1 || end > at;
+  });
   for (
     let start = firstStart;
     start !== -1 && candidates < MAX_ARRAY_ANCHOR_CANDIDATES;
@@ -135,8 +146,10 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
     // Captured on the FIRST iteration only — every reason string this function
     // can return still describes the first bracket, unchanged.
     if (firstAttempt === null) firstAttempt = attempt;
+    const nested = enclosed(start);
+    priorStarts.push(start);
     if (attempt.ok) {
-      if (attempt.parsed.length === 0) { sawEmptyArray = true; continue; }
+      if (attempt.parsed.length === 0) { if (!nested) sawEmptyArray = true; continue; }
       const atoms = atomsFromParsedArray(attempt.parsed);
       if (atoms.length > 0) return { ok: true, atoms };
     }
