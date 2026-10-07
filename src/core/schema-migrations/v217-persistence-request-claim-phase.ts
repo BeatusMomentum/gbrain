@@ -9,8 +9,8 @@ import type { Migration } from './types.ts';
 // `gbrain sources writer status` and the `persistence_write_stall` doctor check
 // can name a stuck phase and its age. Column-only and nullable, no backfill;
 // like v178 and v198 it is migration-created on PGLite and no index references it.
-export const v216: Migration = {
-  version: 216,
+export const v217: Migration = {
+  version: 217,
   name: 'persistence_request_claim_phase',
   idempotent: true,
   sql: `

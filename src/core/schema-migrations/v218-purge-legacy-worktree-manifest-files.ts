@@ -12,8 +12,8 @@ import type { Migration } from './types.ts';
 // `compactStoredManifest` keeps exactly those). This drops every remaining map,
 // keeping `file_count` (counted from the map when it was not stored). Data-only
 // and idempotent: a second run matches no row.
-export const v217: Migration = {
-  version: 217,
+export const v218: Migration = {
+  version: 218,
   name: 'purge_legacy_worktree_manifest_files',
   idempotent: true,
   sql: `

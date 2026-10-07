@@ -3,7 +3,7 @@
  * Gitignored files (secrets, build output) are never opened or hashed, so rebinding to a clean clone works
  * without copying them; a modified, missing or extra tracked file still refuses; a directory that is not a Git
  * checkout keeps the exact-copy manifest; a transfer an older release prepared in tree scope refuses with a
- * re-prepare fix instead of asking for ignored files; and migration v217 drops the legacy per-file maps.
+ * re-prepare fix instead of asking for ignored files; and migration v218 drops the legacy per-file maps.
  * PGLite always; Postgres too when DATABASE_URL is set.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -18,7 +18,7 @@ import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { acceptWriterTransfer, getWorktreeBinding, prepareWriterTransfer, successorManifestMismatch, worktreeManifest } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { v217 } from '../src/core/schema-migrations/v217-purge-legacy-worktree-manifest-files.ts';
+import { v218 } from '../src/core/schema-migrations/v218-purge-legacy-worktree-manifest-files.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -156,7 +156,7 @@ for (const backend of testBackends()) describe(`#6099 git-scoped manifests (${ba
     expect((await getWorktreeBinding(engine, id))?.local_path).toBe(clone);
   }), 120_000);
 
-  test('migration v217 drops legacy per-file manifest maps and keeps the count; a rerun changes nothing', () => fixture(async home => {
+  test('migration v218 drops legacy per-file manifest maps and keeps the count; a rerun changes nothing', () => fixture(async home => {
     const id = sourceId('legacy-map');
     const root = join(home, 'legacy'); gitCheckout(root);
     await runManagedSourceLifecycle(engine, { operation: 'add', sourceId: id, path: root });
@@ -166,13 +166,13 @@ for (const backend of testBackends()) describe(`#6099 git-scoped manifests (${ba
     await engine.executeRaw(`INSERT INTO persistence_topology_changes(principal_id,request_id,digest,operation,source_id,state,recovery)
       VALUES(gen_random_uuid(),gen_random_uuid(),'legacy','reclone',$1,'recovering',$2::text::jsonb)`,
       [id, JSON.stringify({ kind: 'clone', manifest: { digest: 'f'.repeat(64), files: { '.env.local': 'd'.repeat(64) } } })]);
-    await engine.transaction(tx => tx.runMigration(v217.version, v217.sql));
+    await engine.transaction(tx => tx.runMigration(v218.version, v218.sql));
     const [after] = await engine.executeRaw<{ manifest: Record<string, unknown> }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding!.worktree_id]);
     expect(after?.manifest).toEqual({ digest: 'c'.repeat(64), file_count: 2, canonical_stamp: 'stamp' });
     const [record] = await engine.executeRaw<{ manifest: Record<string, unknown> }>(`SELECT recovery->'manifest' AS manifest FROM persistence_topology_changes WHERE source_id=$1 AND digest='legacy'`, [id]);
     expect(record?.manifest).toEqual({ digest: 'f'.repeat(64), file_count: 1 });
     await engine.executeRaw(`DELETE FROM persistence_topology_changes WHERE source_id=$1 AND digest='legacy'`, [id]);
-    await engine.transaction(tx => tx.runMigration(v217.version, v217.sql));
+    await engine.transaction(tx => tx.runMigration(v218.version, v218.sql));
     const [again] = await engine.executeRaw<{ manifest: Record<string, unknown> }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [binding!.worktree_id]);
     expect(again?.manifest).toEqual(after!.manifest);
   }), 120_000);

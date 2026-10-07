@@ -471,7 +471,7 @@ ignored ones included; if the successor is a Git checkout and does not match,
 accept refuses `writer_manifest_rescope_required`: prepare the transfer again
 on the owner host instead of copying ignored files. Upgrading removes the
 per-file path and hash maps releases before v0.60.69 stored with prepared
-transfers and clone recovery records (migration v217); only digests and counts
+transfers and clone recovery records (migration v218); only digests and counts
 remain.
 
 Live, young or foreign legacy locks block activation regardless of expiry. For

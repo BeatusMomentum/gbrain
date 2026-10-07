@@ -4,7 +4,7 @@
  *
  * The consumer keeps a `ClaimPhaseClock` per claim and every claim renewal
  * (claim-lease.ts cadence, 10 s) stores `claimPhaseStamp` in the request's
- * `claim_phase` column (v216): the phase, the claim start, the phase start and
+ * `claim_phase` column (v217): the phase, the claim start, the phase start and
  * the execution token, so a later claim of the same request never reads an
  * earlier claim's ages. Recording rides the renewal: no extra statement per write.
  *
@@ -57,7 +57,7 @@ export async function readMaxClaimMs(engine: Pick<BrainEngine, 'getConfig'>): Pr
  * Where a running claim is: `preparing` or `publishing` (recorded by a live
  * renewal), `publication_transaction` (the claim lapsed while running and
  * nothing was published yet), `file_publication` (files were being published)
- * or `unrecorded` (no stamp of this claim yet, or an owner that predates v216).
+ * or `unrecorded` (no stamp of this claim yet, or an owner that predates v217).
  */
 export type ClaimStatePhase = ClaimPhaseName | 'publication_transaction' | 'file_publication' | 'unrecorded';
 export interface ClaimState {
