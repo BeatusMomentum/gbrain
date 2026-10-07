@@ -5098,6 +5098,13 @@
       },
       {
         "kind": "variable",
+        "name": "MAX_FRONTMATTER_YAML_ALIASES",
+        "signature": [
+          "16"
+        ]
+      },
+      {
+        "kind": "variable",
         "name": "PROTECTED_FRONTMATTER_KEYS",
         "signature": [
           "readonly string[]"
@@ -5313,6 +5320,13 @@
         "name": "splitBody",
         "signature": [
           "(body: string) => { compiled_truth: string; timeline: string; }"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "yamlAliasesWithinLimit",
+        "signature": [
+          "(text: string) => boolean"
         ]
       },
       {
