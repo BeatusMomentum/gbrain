@@ -191,7 +191,7 @@ You also exercised the full mutation skeleton: bundled-pack guard, per-pack lock
 gbrain schema add-type archive --primitive concept --no-prefix
 ```
 
-The pack records `path_prefixes: []`, and the output notes that pages get this type only from frontmatter, never from a file path. Every type needs one of the two: leaving out both `--prefix` and `--no-prefix` is refused (exit 2, `invalid_params`) with a copy-paste example of each, so a forgotten `--prefix` never creates a type nothing infers. `--no-prefix` can't be combined with `--extractable` or `--expert`: extractable types are checked through their prefixes (lint rule `extractable_empty_corpus`), and expert routing without a prefix misses content (lint rule `expert_routing_without_prefix`). The type name is the first argument that isn't a flag value.
+The pack records `path_prefixes: []`, so pages get this type only from frontmatter. Leaving out both `--prefix` and `--no-prefix` is refused (exit 2, `invalid_params`), and `--no-prefix` can't be combined with `--extractable` or `--expert` (lint rules `extractable_empty_corpus`, `expert_routing_without_prefix`).
 
 **Add a link verb.** A `researcher` can `author` a `paper`. To model that:
 

@@ -50,6 +50,7 @@ import { staleAtomsRepair } from './stale-atoms.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { loopFactsRepair } from './loop-facts.ts';
+import { ontologyFactsRepair } from './ontology-facts.ts';
 import { orphanChildrenRepair } from './orphan-children.ts';
 import { failedWritesRepair } from './failed-writes.ts';
 import { frontmatterRepair } from './frontmatter.ts';
@@ -171,6 +172,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'Retire the commitment facts of loops closed before this release (#5869): expires each fact and strikes its fence row in one coordinated write, '
       + 'only when no open loop shares the fact. Preview-bound: --apply --expect <hash> retires exactly the previewed set; a loop or fact that changed since '
       + 'reports changed_since_preview and is kept. Never writes a withdrawal, so the same promise made again is stored normally.',
+  },
+  'ontology-facts': {
+    handler: ontologyFactsRepair, embeds: 'none', checks: ['ontology_facts_fenced'], explicit_only: true,
+    summary: 'Restore ontology observations that the extract_facts fence step (v0.60.53.0 until this release, #6264) moved onto an entity page\'s Facts '
+      + 'table: each gets its own provenance back, leaves the fence and, if a later page write retired it, becomes active again. Withdrawn, consolidated '
+      + 'and duplicated observations are never restored. Preview-bound: --apply --expect <hash> restores exactly the previewed set; a row that changed '
+      + 'since reports changed_since_preview. Database-only; no page is rewritten.',
   },
   'orphan-children': {
     handler: orphanChildrenRepair, embeds: 'none', checks: ['child_table_orphans'], explicit_only: true,
