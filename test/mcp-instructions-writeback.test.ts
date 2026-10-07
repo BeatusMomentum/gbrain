@@ -111,7 +111,7 @@ describe('buildMcpInstructions composition', () => {
     const line = `Ambient writeback is ON (${BASE_OPTS.mode}): unprompted, \`remember\` the user's preferences, corrections, decisions and commitments`;
     const head = out.slice(0, out.length - buildAmbientWritebackSection(BASE_OPTS).length);
     expect(head.endsWith('\n\n')).toBe(true);
-    expect(head.trimEnd()).toBe(GBRAIN_MCP_INSTRUCTIONS.replace('Automatic capture is opt-in.', line + (BASE_OPTS.visibility === 'private' ? ' with visibility "private"' : '') + ' (rules below).'));
+    expect(head.trimEnd()).toBe(GBRAIN_MCP_INSTRUCTIONS.replace('Automatic capture is opt-in.', `${line} (rules below).`));
     expect(out.endsWith(buildAmbientWritebackSection(BASE_OPTS))).toBe(true);
   });
 });
