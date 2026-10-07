@@ -376,6 +376,39 @@ doctor's `revision_backfill` check names those pages, and
 `gbrain apply-migrations --force-schema` resumes the backfill for the rest and
 prints its progress.
 
+<a id="timeline-comments"></a>
+### Timeline comments
+
+Before this release the inline-citation timeline parser read an HTML comment
+next to a `[Source: ..., YYYY-MM-DD]` citation as part of the entry, so a
+section marker such as `<!-- AUTO:slack END -->` became a timeline row, and
+writing that row back into the page added a second copy of the END marker.
+The parser now treats a comment-only line as a boundary and strips comments
+from summaries, and a row whose source, summary or detail still carries
+`<!--` or `-->` is never written back into the page (code
+`timeline_comment_markup`: it stays database-side and `gbrain repair timeline`
+warns about it). `gbrain repair timeline-comments` cleans what is already
+stored. It is explicit-only.
+
+**Say to your agent:** *"Preview the timeline comment cleanup, tell me how many
+rows and pages it touches, then apply after I agree."*
+
+```bash
+gbrain repair timeline-comments --source <id>          # preview: comment_only_rows, comment_bearing_rows, pages_with_comment_bullets
+gbrain repair timeline-comments --source <id> --apply  # clean them
+gbrain repair timeline-comments --source <id>          # verify: nothing left
+```
+
+Per page it publishes one revision-bound `put_page` that drops the
+materialized bullets (marker, bullet and detail) whose line carries comment
+markup; bullets you wrote yourself are left alone. Then, under the page lock in
+a coordinated transaction, a row that is only markup is deleted, and a row with
+markup around real text is rewritten to the stripped text, or deleted when the
+page already has that stripped entry. A rewritten row is written back as a
+clean marked bullet by the page's next write. A second apply finds nothing. A
+page that is only rewritten in its timeline section queues no facts
+extraction (the body is unchanged).
+
 ### Timeline history scan coverage
 
 Doctor's `timeline_history` check classifies at most 2,000 pages or 10

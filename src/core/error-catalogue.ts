@@ -49,6 +49,7 @@ export const ERROR_CATALOGUE = {
   source_checkout_missing: { code: 'recovery_required', docs: 'docs/guides/write-refusals.md#source_checkout_missing' },
   managed_pull_skipped: { code: 'managed_pull_skipped', docs: 'docs/guides/write-refusals.md#managed_pull_skipped' },
   no_pricing: { code: 'no_pricing', docs: 'docs/guides/write-refusals.md#no_pricing' },
+  timeline_comment_markup: { code: 'timeline_comment_markup', docs: 'docs/guides/repair.md#timeline-comments' },
   timeline_rows_would_be_removed: { code: 'timeline_rows_would_be_removed', docs: 'docs/guides/write-refusals.md#timeline_rows_would_be_removed' },
   reconcile_private_facts: { code: 'permission_denied', docs: 'docs/guides/write-refusals.md#reconcile-private-facts' },
   // F0 `gbrain sources refresh` (worktree-wide coordinated ff-only refresh).

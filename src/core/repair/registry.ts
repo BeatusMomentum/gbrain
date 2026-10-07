@@ -24,6 +24,7 @@ import { loadConfig } from '../config.ts';
 import { currentCliWriteWait } from '../persistence/write-wait.ts';
 import { REPAIR_KINDS, runRepair, type RepairHandler, type RepairKind, type RepairResult, type RepairScope } from './core.ts';
 import { timelineRepair } from './timeline.ts';
+import { timelineCommentsRepair } from './timeline-comments.ts';
 import { visibilityRepair } from './visibility.ts';
 import { safeChunksRepair } from './safe-chunks.ts';
 import { contextualModeRepair } from './contextual-mode.ts';
@@ -176,6 +177,11 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'duplicate keys, #-leading titles, a missing closing fence, a conflicting slug line, re-imports and rename re-binds). --only/--skip <path> '
       + 'select files. Preview-bound: --apply --expect <hash> --yes writes exactly the previewed bytes, imports them and clears the hold (managed '
       + 'sources commit through the Git effect; legacy sources back up first and print the commit step). Files no rule fixes are listed with the exact manual fix.',
+  },
+  'timeline-comments': {
+    handler: timelineCommentsRepair, embeds: 'effect', checks: [], explicit_only: true,
+    summary: 'Clean timeline rows filed from adjacent HTML comments (#6184): drop the materialized bullets that copied a section END marker into the page, '
+      + 'delete rows that are only comment markup, and strip the markup from the rest. Each page whose bullets change is re-embedded by its publication.',
   },
   'planner-stats': {
     handler: plannerStatsRepair, embeds: 'none', checks: ['planner_stats_stale'],
