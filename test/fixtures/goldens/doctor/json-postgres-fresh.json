@@ -1715,7 +1715,7 @@
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
               "max_usd_per_day": 1,
-              "max_usd_per_page": 0.05,
+              "max_usd_per_page": 0.3,
               "reserved_today_usd": 0,
               "spent_today_usd": 0
             },
@@ -1774,6 +1774,7 @@
                 "top_writers": []
               }
             ],
+            "uncommitted_repairs": 0,
             "warn_at_normalized_7d": 20
           },
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",
@@ -1912,7 +1913,7 @@
           "category": "meta",
           "details": {
             "counts": {
-              "global": 12,
+              "global": 13,
               "mixed": 2,
               "source": 12
             },
@@ -1930,6 +1931,7 @@
               "extract_atoms": "source",
               "extract_facts": "source",
               "facts_drain": "global",
+              "fence_repair": "global",
               "grade_takes": "global",
               "lint": "source",
               "orphans": "global",
@@ -1945,7 +1947,7 @@
               "synthesize_concepts": "global"
             }
           },
-          "message": "Phase taxonomy: 12 source-scoped, 12 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+          "message": "Phase taxonomy: 12 source-scoped, 13 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, drift, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
           "name": "cycle_phase_scope",
           "status": "ok"
         },
