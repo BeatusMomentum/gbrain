@@ -9,11 +9,13 @@
  *   `updated_at`, file mtime) and carries location and reason codes only.
  * - `fence-scan`: one row per (source, incarnation): the DB watermark and
  *   one-time backfill cursor, the file-walk cursor and the last census.
- * - `fence-trend`: what Tier 1 normalized, per source: one row per managed
- *   sync run (replaced as the run's running total grows) and one row per
- *   normalized page write (written once per request, so a replayed
- *   publication never counts twice). Rows carry fix classes and writers
- *   (receipt principal kind or top directory), never a path or cell value.
+ * - `fence-trend`: what Tier 1 normalized, per source: one row per sync run
+ *   (a managed run's total commits with the checkpoint publication that
+ *   completes the run; a legacy run writes its total when it ends) and one
+ *   row per normalized page write (written once per request inside its
+ *   publication, so a replayed publication never counts twice). Rows carry
+ *   fix classes and writers (receipt principal kind or top directory), never
+ *   a path or cell value.
  *
  * Candidate and scan rows survive the 7-day `op_checkpoints` purge while
  * their source incarnation lives (`purgeStaleCheckpoints`); trend rows age
@@ -130,9 +132,8 @@ export async function readCandidateRecords(engine: Exec, sourceIds?: readonly st
 export interface TrendEntry { day: string; count: number; by_class: Record<string, number>; writers: Record<string, number> }
 
 /**
- * A managed sync run's running total (replaced on every flush, so a run
- * resumed across invocations is counted once); the row keeps the UTC day of
- * its first flush.
+ * One sync run's total, keyed by run id (a rewrite replaces it, so a run is
+ * counted once); the row keeps the UTC day of its first write.
  */
 export async function recordSyncRunTrend(engine: Exec, input: { sourceId: string; runId: string; day: string; count: number;
   byClass: Record<string, number>; writers: Record<string, number> }): Promise<void> {
@@ -141,20 +142,6 @@ export async function recordSyncRunTrend(engine: Exec, input: { sourceId: string
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now())
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((EXCLUDED.completed_keys->0)||jsonb_build_object('day',op_checkpoints.completed_keys->0->'day')),updated_at=now()`,
   [FENCE_TREND_OP, `${input.sourceId}:run:${input.runId}`, JSON.stringify([record])]);
-}
-
-/**
- * A sync run's fence tally (`counts.fences` of a managed cursor, or the legacy
- * run's import tally) as its trend row; best effort, so a trend write never
- * fails a sync.
- */
-export async function flushSyncFenceTrend(engine: Exec, input: { sourceId: string; runId: string | null | undefined;
-  tally: { count: number; by_class: Record<string, number>; writers: Record<string, number> } | null | undefined; now?: Date }): Promise<void> {
-  if (!input.runId || !input.tally?.count) return;
-  try {
-    await recordSyncRunTrend(engine, { sourceId: input.sourceId, runId: input.runId, day: (input.now ?? new Date()).toISOString().slice(0, 10),
-      count: input.tally.count, byClass: input.tally.by_class, writers: input.tally.writers });
-  } catch { /* the trend is advisory; the sync result already reports fences_normalized */ }
 }
 
 /** One normalized page write (put_page, put_pages, remember, takes and fact writers), written once per request. */

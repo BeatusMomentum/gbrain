@@ -41,7 +41,7 @@ import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { faultPoint } from './fault-points.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { principalAttribution } from './attribution.ts';
-import { flushSyncFenceTrend } from '../fence-repair/census-store.ts';
+import { recordSyncRunTrend } from '../fence-repair/census-store.ts';
 import { addFencesNormalized, addRecovered, buildHoldReport, clearGitHold, clearGitHoldRetryPaths, fencesNormalizedReport, readSyncHoldPolicy, recordSyncConversion, recoveredReport, writeGitHold, type FencesTally } from './sync-holds.ts';
 
 export interface ManagedSyncWriteDiagnostic {
@@ -151,6 +151,10 @@ async function writeCursor(tx: BrainEngine, key: string, before: Cursor | null, 
     await tx.executeRaw('UPDATE op_checkpoints SET updated_at=now() WHERE op=$1 AND fingerprint=$2', [`${OP}-manifest`, next.runId]);
     // #5988: a hold write or clear commits with the cursor step that passes its entry, never without it.
     if (saved.length) await inTx?.(tx);
+    // #6188 (E33): the run's fences_normalized total commits with the cursor step that counts it, so the trend never differs from the cursor.
+    const fences = next.counts.fences;
+    if (saved.length && fences?.count && fences.count !== before.counts.fences?.count) await recordSyncRunTrend(tx, { sourceId: next.sourceId, runId: next.runId,
+      day: new Date().toISOString().slice(0, 10), count: fences.count, byClass: fences.by_class, writers: fences.dirs });
   }
   return currentCursor(tx, key, next);
 }
@@ -717,8 +721,6 @@ export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, sl
       screened: 'entries' in (cursor ?? {}) ? (cursor as Cursor).entries.slice(0, cursor!.index).filter(entry => entry.action === 'import').length : 0 });
     const recovered = state.remote ? undefined : recoveredReport(state.sourceId, cursor?.counts.recovered);
     const fences = fencesNormalizedReport(state.sourceId, cursor?.counts.fences, state.remote === true);
-    const tally = cursor?.counts.fences;
-    await flushSyncFenceTrend(engine, { sourceId: state.sourceId, runId: cursor?.runId, tally: tally && { count: tally.count, by_class: tally.by_class, writers: tally.dirs } });
     return { ...synced, ...report, ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
       ...(recovered ? { recovered_frontmatter: recovered } : {}), ...(fences ? { fences_normalized: fences } : {}) };
   } catch {

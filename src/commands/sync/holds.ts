@@ -10,7 +10,7 @@
  */
 import { createHash, randomUUID } from 'crypto';
 import { importFenceTally } from '../../core/fence-repair/report.ts';
-import { flushSyncFenceTrend } from '../../core/fence-repair/census-store.ts';
+import { recordSyncRunTrend } from '../../core/fence-repair/census-store.ts';
 import { existsSync, lstatSync } from 'fs';
 import { join } from 'path';
 import type { SyncResult } from '../sync.ts';
@@ -230,8 +230,8 @@ export async function legacyHoldFields(engine: BrainEngine, holds: LegacyHolds |
     ? recoveredReport(holds.sourceId, addRecovered(undefined, { paths: holds.recoveredPaths, commentValues: holds.counts.commentValues })) : undefined;
   const fences = holds.fences.fields();
   const normalized = fences.fences_normalized;
-  await flushSyncFenceTrend(engine, { sourceId: holds.sourceId, runId: holds.runId, tally: normalized && { count: normalized.count,
-    by_class: normalized.by_class as Record<string, number>, writers: Object.fromEntries(normalized.writers.map(w => [w.writer, w.count])) } });
+  if (normalized) await recordSyncRunTrend(engine, { sourceId: holds.sourceId, runId: holds.runId, day: new Date().toISOString().slice(0, 10), count: normalized.count,
+    byClass: normalized.by_class as Record<string, number>, writers: Object.fromEntries(normalized.writers.map(w => [w.writer, w.count])) });
   return { ...report, ...(recovered ? { recovered_frontmatter: recovered } : {}), ...fences };
 }
 
