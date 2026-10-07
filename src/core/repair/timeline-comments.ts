@@ -17,7 +17,7 @@ import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { TIMELINE_COMMENT_MARKUP } from '../persistence/canonical-projections.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
-import { maintenanceAttribution } from '../persistence/attribution.ts';
+import { maintenanceAttribution, maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { materializedMarkerHash } from '../timeline-marker.ts';
@@ -67,7 +67,7 @@ async function cleanRows(engine: BrainEngine, page: { id: number; slug: string; 
     }
     return fixed;
   };
-  if (!await managedPersistenceEnabled(engine)) return engine.transaction(run);
+  if (!await managedPersistenceEnabled(engine)) return maintenanceTransaction(engine, run);
   const attribution = await maintenanceAttribution(engine);
   return engine.transaction(tx => withCoordinatedWrite(tx, [page.source_id], () => run(tx), attribution));
 }
