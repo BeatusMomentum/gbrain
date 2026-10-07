@@ -46,7 +46,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { authorizeStoredRequest, authorizeWrite } from '../persistence/authority.ts';
 import { digest, jsonBytes } from '../persistence/digest.ts';
-import { assertLifetimeIdHeadroom, getWriteRequest } from '../persistence/journal.ts';
+import { getWriteRequest } from '../persistence/journal.ts';
 import { readJournalLimits } from '../persistence/limits.ts';
 import { principalKey } from '../persistence/model.ts';
 import { PERSISTENCE_IPC_MAX_BYTES } from '../persistence/ipc.ts';
@@ -57,12 +57,13 @@ import { loadConfig } from '../config.ts';
 import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE } from './audit-sources.ts';
+import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
 export const CONVERSATION_FACTS_SOURCE_PREFIX = 'cli:extract-conversation-facts';
 export const MAX_GENERATION_ATTEMPTS = 3;
-/** Admission stops once the principal's outstanding requests reach this share of `principalOutstanding`. */
+/** Admission stops once the principal's outstanding requests, reserved receipt bytes or request ids reach this share of their limit. */
 export const OUTSTANDING_ADMISSION_SHARE = 0.8;
 /** Facts per segment the extractor returns at most (extractFactsFromTurn's default maxFactsPerTurn). */
 const MAX_FACTS_PER_SEGMENT = 10;
@@ -203,22 +204,62 @@ export async function conversationIntentByteLimit(engine: BrainEngine): Promise<
 }
 
 /**
- * Before a page's model work: stop the run once this principal's outstanding
- * requests reach OUTSTANDING_ADMISSION_SHARE of its limit, and refuse when
- * its permanent request ids cannot cover `needed` more admissions.
+ * Before model work: stop admitting once this writer's outstanding requests,
+ * reserved receipt bytes or permanent request ids would pass
+ * OUTSTANDING_ADMISSION_SHARE of their limit. The writer is the local CLI
+ * principal the user's own CLI writes share, so the last 20% stays theirs:
+ * reserved receipt bytes free only when receipts compact (after the retention
+ * window), request ids never. `needed` is the run's planned admissions up
+ * front, 1 before each page.
  */
 export async function assertConversationAdmissionHeadroom(engine: BrainEngine, authority: MaintenanceAuthority, needed = 1): Promise<void> {
   const limits = await readJournalLimits(engine);
-  const [counter] = await engine.executeRaw<{ outstanding_count: number | string }>(
-    'SELECT outstanding_count FROM persistence_counters WHERE key=$1', [principalKey(authority.writer.principal)]);
+  const [counter] = await engine.executeRaw<{ outstanding_count: number | string; terminal_bytes: number | string; lifetime_ids: number | string }>(
+    'SELECT outstanding_count, terminal_bytes, lifetime_ids FROM persistence_counters WHERE key=$1', [principalKey(authority.writer.principal)]);
+  const sourceId = authority.writer.sourceId;
+  const share = (limit: number) => Math.max(1, Math.floor(limit * OUTSTANDING_ADMISSION_SHARE));
   const outstanding = Number(counter?.outstanding_count ?? 0);
-  const ceiling = Math.max(1, Math.floor(limits.principalOutstanding * OUTSTANDING_ADMISSION_SHARE));
-  if (outstanding >= ceiling) {
+  if (outstanding >= share(limits.principalOutstanding)) {
     throw catalogueError('maintenance_backpressure',
       `Conversation fact extraction stopped admitting: ${outstanding} of this writer's ${limits.principalOutstanding} outstanding requests are still pending.`,
-      `Let the pending requests settle (gbrain sources writer status --source ${authority.writer.sourceId} --json shows them; a resident gbrain serve or the next CLI run publishes them), then rerun the same command. Pages already published keep their facts.`);
+      `Let the pending requests settle (gbrain sources writer status --source ${sourceId} --json shows them; a resident gbrain serve or the next CLI run publishes them), then rerun the same command. Pages already published keep their facts.`);
   }
-  await assertLifetimeIdHeadroom(engine, authority.writer.principal, needed);
+  const reservation = Math.max(16_384, jsonBytes(authority.writer) + 8192);
+  const cumulative = [
+    { resource: 'reserved receipt bytes', key: 'persistence.limits.principal_terminal_bytes', used: Number(counter?.terminal_bytes ?? 0),
+      limit: limits.principalTerminalBytes, per: reservation,
+      why: 'each request reserves its receipt for the retention window (persistence.receipt_retention_days), and the reservation frees only when receipts compact' },
+    { resource: 'permanent request ids', key: 'persistence.limits.principal_lifetime_ids', used: Number(counter?.lifetime_ids ?? 0),
+      limit: limits.principalLifetimeIds, per: 1, why: 'request ids are never reused or freed' },
+  ];
+  for (const r of cumulative) {
+    const ceiling = share(r.limit);
+    if (r.used + needed * r.per <= ceiling) continue;
+    const room = Math.max(0, Math.floor((ceiling - r.used) / r.per));
+    const planned = needed > 1 ? `${needed} planned` : 'the next';
+    throw catalogueError('maintenance_backpressure',
+      `Conversation fact extraction stopped before admitting ${planned} request(s): this writer's ${r.resource} would pass 80% of its limit (${r.used} used of ${r.limit}).`,
+      `The last 20% stays free for this CLI writer's other writes; ${r.why}. ${room > 0 ? `Run a smaller batch that fits: gbrain extract-conversation-facts --source-id ${sourceId} --limit ${room}. ` : ''}`
+        + `Check the writer with gbrain sources writer status --source ${sourceId} --json; raising ${r.key} (gbrain config set ${r.key} <n>) is the user's call.`);
+  }
+}
+
+/**
+ * The admissions a run plans: the named pages, or every page of the
+ * conversation types (`opts.types`, else all) that has no active outcome yet
+ * (`--force`: every such page), capped by `--limit`.
+ */
+async function plannedAdmissions(engine: BrainEngine, sourceId: string,
+  opts: { slugs?: string[]; slug?: string; limit?: number; force?: boolean; types?: readonly AllowedType[] }): Promise<number> {
+  if (opts.slugs) return opts.slugs.length;
+  if (opts.slug) return 1;
+  const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM pages p
+    WHERE p.source_id=$1 AND p.deleted_at IS NULL AND p.type=ANY($2::text[])
+      AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM facts f WHERE f.source_id=p.source_id AND f.source_markdown_slug=p.slug
+        AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.source IN ($4,$5) AND f.expired_at IS NULL))`,
+  [sourceId, pageTypesForAllowed(opts.types ?? ALLOWED_TYPES), opts.force === true, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
+  const backlog = Number(row?.n ?? 0);
+  return Math.max(1, opts.limit ? Math.min(opts.limit, backlog) : backlog);
 }
 
 function freezeRow(row: ConversationFactRow): FrozenConversationFact {
@@ -419,11 +460,11 @@ interface PageSnapshot { page: Page; versionToken: string }
  * admissions fit the writer's request capacity.
  */
 export async function managedConversationPublisher(engine: BrainEngine, sourceId: string,
-  opts: { dryRun?: boolean; slugs?: string[]; slug?: string; limit?: number }): Promise<ManagedConversationPublisher | null> {
+  opts: { dryRun?: boolean; slugs?: string[]; slug?: string; limit?: number; force?: boolean; types?: readonly AllowedType[] }): Promise<ManagedConversationPublisher | null> {
   if (opts.dryRun || !await managedPersistenceEnabled(engine)) return null;
   const authority = (await maintenancePreflight(engine, sourceId))!;
   const config = loadConfig() ?? { engine: engine.kind };
-  await assertConversationAdmissionHeadroom(engine, authority, opts.slugs?.length ?? (opts.slug ? 1 : opts.limit ?? 1));
+  await assertConversationAdmissionHeadroom(engine, authority, await plannedAdmissions(engine, sourceId, opts));
   return { engine, authority, config, embedding: await resolveManagedFactsEmbedding(engine, config) };
 }
 

@@ -16,11 +16,12 @@ lines below when the PR is next to merge.
 - Managed brains now extract facts from email threads, and record single
   emails, prose meeting notes and undated pages as "not extractable" for good
   instead of rescanning them every run.
-- `gbrain extract-conversation-facts` on a managed brain stops admitting at
-  80% of the writer's outstanding-request limit (`maintenance_backpressure`,
-  exit 12), skips a page whose largest batch cannot fit one request before any
-  model call, and refuses up front when the writer's permanent request ids
-  cannot cover the run.
+- `gbrain extract-conversation-facts` on a managed brain stops admitting once
+  the writer's outstanding requests, reserved receipt bytes or permanent
+  request ids would pass 80% of their limit (`maintenance_backpressure`,
+  exit 12; the message names the resource and a `--limit` that fits), checked
+  up front for the whole planned run and again before each page, and skips a
+  page whose largest batch cannot fit one request before any model call.
 - The cycle `extract_facts` fence reconcile, its deleted-page fact expiry,
   `gbrain extract takes --source db` / `gbrain takes rebuild` / the v0.28.0
   takes backfill, and `gbrain repair take-supersession`'s database branch now
@@ -61,18 +62,27 @@ model calls). Script: `~/.capy/work/w9f-r/scratch/measure-d9.test.ts`
 | Measure | Per request | Per 1k pages | 50k pages | Share of default limit |
 |---|---|---|---|---|
 | Permanent request ids | 1 | 1,000 | 50,000 | 20% of `principalLifetimeIds` (250,000) |
-| Intent bytes (transient; released when the request settles) | avg 96 KB, max 191 KB | 96 MB (one at a time) | - | per request well under `principalIntentBytes` (32 MiB) |
-| Reserved receipt bytes (30-day window) | 16 KiB | 16 MiB | 819 MB | 51% of `principalTerminalBytes` (1,536 MiB) |
+| Intent bytes (transient; released when the request settles, stored intent dropped at compaction) | fact batch avg 128 KB (5 rows, 1536-dim vectors), outcome-only 1.5 KB | - | - | per request well under `principalIntentBytes` (32 MiB) |
+| Reserved receipt bytes (until compaction, 30-day window) | 16,384 B flat, whatever the payload | 16 MiB | 781 MiB | 51% of `principalTerminalBytes` (1,536 MiB) |
+| Retained receipt bytes (after compaction) | about 1.75 KB (1,743 B outcome-only, 1,754 B fact batch) | 1.7 MB | 87 MB | about 5.5% of `principalTerminalBytes`, long-term |
+
+Breakdown (second run, same corpus, receipts force-compacted;
+`~/.capy/work/w9f-r/scratch/measure-d9b.test.ts`, output
+`~/.capy/work/w9f-r/out/d9-breakdown.json`): 50 of the 200 requests (25%)
+were outcome-only (prose; no vectors) and 150 (75%) carried fact batches.
+Request ids and reserved receipt bytes are charged per request, not per
+payload byte, so each request type's share of the 20% and the 51% equals its
+share of requests. Vectors only affect intent bytes.
 
 One request id per page per extraction generation (each later page edit adds
 one). At 50k pages the backfill alone uses 20% of the writer's permanent
 request ids, above Decision 9's 10% switch threshold, and reserves half of
-its receipt bytes for the retention window (compacted receipts keep about
-4 KiB each, about 13% long term). Per Decision 9 (A) this wave keeps outcomes
-as receipted facts rows and reports the number; the threshold is crossed, so
-Garry's call on 9B (a non-guarded outcome side table for
-non-extractable/terminal outcomes) or batching outcomes across pages is the
-follow-up.
+its receipt bytes for the retention window. The writer is the local CLI
+principal the user's own CLI writes share, and outcome-only pages cost $0, so
+no spend cap limits them; `maintenance_backpressure` therefore also stops at
+80% of reserved receipt bytes and request ids. Per Decision 9 (A) this wave
+keeps outcomes as receipted facts rows; the threshold is crossed, so batching
+vs 9B (a non-guarded outcome side table) is Garry's call.
 
 ## Functions touched in GBRA-52's file (`src/commands/extract-conversation-facts.ts`)
 

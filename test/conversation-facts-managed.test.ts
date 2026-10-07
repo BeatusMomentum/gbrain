@@ -248,7 +248,7 @@ for (const backend of testBackends()) {
       const [used] = await engine.executeRaw<{ n: number }>("SELECT COALESCE(max(lifetime_ids),0)::int AS n FROM persistence_counters WHERE key LIKE 'principal:%'");
       await engine.setConfig('persistence.limits.principal_lifetime_ids', String(used!.n));
       const lifetime = await extract(engine, calls).then(() => null, (e: Error & { code?: string }) => e);
-      expect(lifetime?.code).toBe('queue_capacity');
+      expect(lifetime?.code).toBe('maintenance_backpressure');
       expect(calls.n).toBe(0);
       await engine.executeRaw("DELETE FROM config WHERE key='persistence.limits.principal_lifetime_ids'");
       // Outstanding: with one request pending, a limit of 2 (80% = 1) stops admitting the next page.
@@ -268,6 +268,61 @@ for (const backend of testBackends()) {
         expect(calls.n).toBe(1);
       } finally { release(); restore(); }
       expect(authority.writer.principal.kind).toBe('local_cli');
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: admission stops at 80% of the writer's reserved receipt bytes, before any model call`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await putPage(brain, transcript());
+      const [{ bytes }] = await engine.executeRaw<{ bytes: number }>("SELECT COALESCE(max(terminal_bytes),0)::bigint AS bytes FROM persistence_counters WHERE key LIKE 'principal:local_cli:%'");
+      // One more 16 KiB reservation fits under the hard limit but crosses 80% of it.
+      await engine.setConfig('persistence.limits.principal_terminal_bytes', String(Number(bytes) + 20_000));
+      const calls = { n: 0 };
+      const error = await extract(engine, calls).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
+      expect(error?.code).toBe('maintenance_backpressure');
+      expect(error?.message).toContain('reserved receipt bytes');
+      expect(error?.suggestion).toContain('persistence.limits.principal_terminal_bytes');
+      expect(calls.n).toBe(0);
+      expect(await extractorRows(engine)).toEqual([]);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: admission stops at 80% of the writer's permanent request ids, before any model call`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await putPage(brain, transcript());
+      await maintenancePreflight(engine, 'default');
+      const [{ used }] = await engine.executeRaw<{ used: number }>("SELECT COALESCE(max(lifetime_ids),0)::int AS used FROM persistence_counters WHERE key LIKE 'principal:local_cli:%'");
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', String(used + 1)); // fits one admission, but past 80%
+      const calls = { n: 0 };
+      const error = await extract(engine, calls).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
+      expect(error?.code).toBe('maintenance_backpressure');
+      expect(error?.message).toContain('permanent request ids');
+      expect(error?.suggestion).toContain('persistence.limits.principal_lifetime_ids');
+      expect(calls.n).toBe(0);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: the up-front check counts the whole planned run and names a --limit that fits`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      for (const day of ['28', '29', '30']) await putPage(brain, transcript().replace('Plan sync', `Plan sync ${day}`), `meetings/2026-09-${day}-plan-sync`);
+      await maintenancePreflight(engine, 'default');
+      const [{ used }] = await engine.executeRaw<{ used: number }>("SELECT COALESCE(max(lifetime_ids),0)::int AS used FROM persistence_counters WHERE key LIKE 'principal:local_cli:%'");
+      // 80% of the limit leaves room for one admission, not the three the run plans.
+      const limit = Math.ceil((used + 1) / 0.8) + 1;
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', String(limit));
+      const room = Math.floor(limit * 0.8) - used;
+      expect(room).toBeGreaterThanOrEqual(1);
+      expect(room).toBeLessThan(3);
+      const calls = { n: 0 };
+      const error = await runExtractConversationFactsCore(engine, { sourceId: 'default', sleepMs: 0, overrideDisabled: true,
+        extractor: async () => { calls.n++; return []; } }).then(() => null, (e: Error & { code?: string; suggestion?: string }) => e);
+      expect(error?.code).toBe('maintenance_backpressure');
+      expect(error?.message).toContain('3 planned');
+      expect(error?.suggestion).toContain(`gbrain extract-conversation-facts --source-id default --limit ${room}`);
+      expect(calls.n).toBe(0);
     }, { databaseUrl });
   }, 120_000);
 }
