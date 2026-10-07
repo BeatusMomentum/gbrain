@@ -47,6 +47,14 @@ scheduling surfaces — reach for these first:
 For scheduling `sync` + `embed --stale` specifically, the home doc is
 [live-sync.md](live-sync.md).
 
+### Dream beside autopilot
+
+A nightly `gbrain dream` beside autopilot is supported. Source phases run
+under the source's own lease; brain-wide phases (synthesize, patterns, embed,
+purge…) also need the shared `gbrain-cycle` lease, so the later run skips only
+those (`maintenance_lock_busy`) and the holder runs them.
+`gbrain status --section locks --json` shows the holder.
+
 ## Implementation: Setting Up Cron Jobs
 
 ```bash
