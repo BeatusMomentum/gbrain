@@ -3,6 +3,7 @@ import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
+import { settleQuarantineOverride } from './quarantine-override.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
@@ -360,6 +361,7 @@ export async function importFromContent(
   // trusted "this looks odd" channel) on clean content. Only the content-
   // sanity gate (below) and trusted local CLIs may set these. Fail-closed:
   // strip whenever opts.remote === true.
+  await settleQuarantineOverride(engine, parsed, slug, sourceId, opts.remote === true);
   if (opts.remote === true && parsed.frontmatter) {
     delete parsed.frontmatter[QUARANTINE_KEY];
     delete parsed.frontmatter[CONTENT_FLAG_KEY];
