@@ -71,6 +71,25 @@ gbrain config set cycle.lint_exclude attachments,drafts.md
 
 Contributed by @andreineacsu (#6140, #6155, #6152, #6182, #6166, #6148, #6200, #6145, #6141, #6180, #6174), @MarvinDontPanic (#6186, #6187, #6147, #6132), @javieraldape (#6172, #6151), @Masashi-Ono0611 (#6175, #6181, #6179, #5371). Each idea was re-implemented and widened; their PRs are superseded.
 
+## [0.60.103.0] - 2026-10-07
+
+**A legacy access token's first burst of reads converts it to the unified grant columns reliably, and the last nightly Test reds are fixed at their cause.**
+
+On Postgres, a legacy access token still on the old permissions shape is converted to the grant columns by its first read. Every read also fires a debounced `last_used_at` write, and that write held the token's row lock while the conversion skipped locked rows, so a burst of concurrent first reads could leave the token unconverted (it still authorized correctly from the same grant computed in memory, and a later read converted it). The `last_used_at` write now leaves an unconverted row to the conversion, which records first use itself.
+
+| After upgrading | Before | After |
+| --- | --- | --- |
+| Several concurrent first reads of a legacy-shape token | could leave it unconverted until a later read | the first read converts it once and records `last_used_at` |
+
+For contributors and agents working on gbrain:
+
+- `test/e2e/access-token-grants.test.ts` gains a forced probe for #6230: a `last_used_at` touch held in an open transaction while the first read converts. It fails on the previous release (`grant_revision` 0, the flake's signature) and passes now.
+- `test/list-pages-truncation.test.ts` counted the one-time `behavior_changes` disclosure as an extra content block whenever its shard restored the aged PGLite snapshot first (nightly Test run 37588995327). The test now uses a fresh brain in its own `GBRAIN_HOME`, so it counts only the listing notice.
+
+## To take advantage of v0.60.103.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.102.0] - 2026-10-07
 
 **Broken facts and takes tables in your notes now get repaired by themselves.**
