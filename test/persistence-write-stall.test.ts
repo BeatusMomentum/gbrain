@@ -4,7 +4,7 @@
  * (claim-phase.ts), `gbrain sources writer status` names it, and doctor's `persistence_write_stall` warns once
  * a claim is older than `persistence.max_claim_ms`. PGLite always; Postgres when DATABASE_URL is set.
  */
-import { afterAll, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -99,19 +99,19 @@ function harness(kind: 'pglite' | 'postgres'): HarnessConfig {
     sourceIds: ['write-stall', 'write-stall-other'], principalIds: [randomUUID()] };
 }
 
-test('PGLite: a hung publication is named by writer status and doctor persistence_write_stall', async () => {
-  const config = harness('pglite');
-  await withEnv({ GBRAIN_HOME: config.root, GBRAIN_PERSISTENCE_FIXTURE_HOME: config.root }, async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    try {
-      await engine.initSchema();
+describe('PGLite', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
+  afterAll(async () => { await engine.disconnect(); });
+  test('a hung publication is named by writer status and doctor persistence_write_stall', async () => {
+    const config = harness('pglite');
+    await withEnv({ GBRAIN_HOME: config.root, GBRAIN_PERSISTENCE_FIXTURE_HOME: config.root }, async () => {
       selectFixtureHost(config.hostId);
       await initializeFixtures(engine, config);
       await scenario(engine, config);
-    } finally { await engine.disconnect(); }
-  });
-}, 120_000);
+    });
+  }, 120_000);
+});
 
 describe.skipIf(!process.env.DATABASE_URL)('Postgres', () => {
   test('a hung publication is named by writer status and doctor persistence_write_stall', async () => {

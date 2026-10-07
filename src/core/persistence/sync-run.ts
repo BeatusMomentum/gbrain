@@ -698,6 +698,19 @@ async function groupStep(engine: BrainEngine, cursor: Cursor, key: string, bulk:
   return { cursor: saved };
 }
 
+/**
+ * A single-path admission that lost its cursor resolves to null (the caller re-reads the cursor): ENG-A7's
+ * CursorMoved, or #6075's idempotency_conflict when a bulk pass admitted the head first with its grouped intent.
+ */
+async function cursorMovedAdmission(engine: BrainEngine, key: string, admitting: Cursor, pending: Pending, error: unknown): Promise<null> {
+  if (error instanceof CursorMoved) return null;
+  if (error instanceof OperationError && error.code === 'idempotency_conflict') {
+    const current = await readCursor(engine, key, admitting);
+    if (current?.pending?.requestId === pending.requestId && digest(current.pending.intent) !== digest(pending.intent)) return null;
+  }
+  throw error;
+}
+
 /** A finished cursor is deleted (compare-and-swap) before the next run discovers; returns whichever cursor replaced it. */
 async function retireCompletedCursor(engine: BrainEngine, key: string, completed: Cursor, assertActive: () => void): Promise<Cursor | null> {
   await engine.transaction(async tx => {
@@ -969,15 +982,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         if (held?.request_id !== pending.requestId || held.same !== true) throw new CursorMoved();
         assertActive();
         return accepted;
-      })).catch(async error => {
-        if (error instanceof CursorMoved) return null;
-        // #6075: the group admitted this request first with its grouped intent; re-read the cursor instead of failing the pass.
-        if (error instanceof OperationError && error.code === 'idempotency_conflict') {
-          const current = await readCursor(engine, key, admitting);
-          if (current?.pending?.requestId === pending.requestId && digest(current.pending.intent) !== digest(pending.intent)) return null;
-        }
-        throw error;
-      });
+      })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
       if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
       assertSyncDispatchActive();

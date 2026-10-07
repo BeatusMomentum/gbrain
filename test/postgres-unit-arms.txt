@@ -47,6 +47,7 @@ test/managed-sweep-refused-window-retry.test.ts
 test/managed-sweep-timeline.test.ts
 test/managed-sync-bulk.test.ts
 test/managed-sync-chunker-version.test.ts
+test/managed-sync-concurrent-write-hold.test.ts
 test/managed-sync-drain.test.ts
 test/managed-sync-group-completion.test.ts
 test/managed-sync-images-5493.test.ts
@@ -65,14 +66,18 @@ test/persistence-history-fixture.test.ts
 test/persistence-image-import.serial.test.ts
 test/persistence-managed-lifecycle.test.ts
 test/persistence-managed-sync.test.ts
+test/persistence-manifest-git-scope.test.ts
 test/persistence-memory-mutations.test.ts
 test/persistence-page-authority.test.ts
 test/persistence-physical-root-device.test.ts
+test/persistence-preactivation-claim.test.ts
+test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-sync-cursor-options.test.ts
 test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
+test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-frontmatter.test.ts

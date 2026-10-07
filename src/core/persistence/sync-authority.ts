@@ -68,7 +68,7 @@ async function preActivationClaimRefusal(engine: BrainEngine, sourceId: string):
       preview_argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'], consent: ['destructive'], actor: 'agent', requires_exclusive: false,
       why: 'Releases every source claimed before activation (bindings removed, worktrees retired, a topology change recorded); the brain stays classic and the next gbrain sync runs in classic mode.',
       user_message: `Source ${sourceId} was claimed for managed writes, but managed persistence was never turned on, so sync is blocked. Release the claim and go back to classic sync, or turn managed persistence on?`,
-      verify: { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] }, docs: 'docs/architecture/topologies.md#deactivate-runbook' } });
+      verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }, docs: 'docs/architecture/topologies.md#deactivate-runbook' } });
 }
 export async function assertManagedSyncActive(engine: BrainEngine, lock = false): Promise<void> {
   const [brain] = await engine.executeRaw<{ enabled: boolean }>(`SELECT enabled FROM persistence_brain WHERE singleton=1${lock ? ' FOR SHARE' : ''}`);
