@@ -25,6 +25,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 import { opError } from '../ops/contract.ts';
 import { createProgress, type ProgressOptions } from '../progress.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
 import { digest, sha256 } from './digest.ts';
 import { isPhysicalRootMetadata } from './root-metadata.ts';
 import type { PhysicalRootRecovery } from './physical-root-recovery.ts';
@@ -51,10 +52,6 @@ export function storedManifestScope(manifest: { scope?: WorktreeManifestScope } 
  * it has no `.git` directory or file. (Wave 12 seam: lane W1's shared
  * "positively not a Git checkout" classifier replaces this at integration.)
  */
-function positivelyNotGitTop(canonical: string): boolean {
-  try { lstatSync(join(canonical, '.git')); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
-}
-
 /**
  * `git` when `root` is the top of its own Git work tree, else `tree`. W4.4:
  * when Git cannot answer for a directory that holds `.git` (damaged HEAD,
@@ -65,7 +62,7 @@ export function detectManifestScope(root: string): WorktreeManifestScope {
   const canonical = realpathSync(root);
   const top = hardenedGitSync(canonical, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000, maxBytes: 64 * 1024 });
   if (!top.ok) {
-    if (positivelyNotGitTop(canonical)) return 'tree';
+    if (classifyGitCheckout(canonical) === 'not_git') return 'tree';
     throw unsafe('Git could not read this checkout, so no manifest was recorded.',
       `${canonical} holds a .git entry but \`git rev-parse\` failed (${top.reason === 'exit' ? 'a damaged repository, or a checkout owned by another user' : top.reason}), and hashing every file instead would read ignored files such as .env. `
         + `Ask the user to run \`git -C ${canonical} status\` to see why Git refuses it and repair it (or run gbrain as the checkout's owner), then run the step again.`,
