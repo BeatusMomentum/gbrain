@@ -389,16 +389,16 @@ export function resolveSlug(fileDir: string, relTarget: string, allSlugs: Set<st
  *
  * Matches are deterministically sorted (shortest-slug first, then
  * lexical) so repeated runs over the same brain produce stable edges.
- * Returns `[]` on empty input or no matches.
+ * Returns `[]` on empty input or no matches. W4.14: the shared matcher's index is built once per slug set (again only when it grows), not per wikilink.
  */
 export function resolveBasenameMatchesFromSlugs(
   name: string, allSlugs: Set<string>,
 ): string[] {
-  // Issue #972 (codex [P2] DRY): delegate to the shared matcher so the FS
-  // path keys + sorts identically to the resolver and doctor. (Per-call
-  // index build is O(N), the same cost as the prior inline scan.)
-  return queryBasenameIndex(buildBasenameIndex(allSlugs), name);
+  const cached = basenameIndexes.get(allSlugs);
+  if (!cached || cached.size !== allSlugs.size) basenameIndexes.set(allSlugs, { size: allSlugs.size, index: buildBasenameIndex(allSlugs) });
+  return queryBasenameIndex(basenameIndexes.get(allSlugs)!.index, name);
 }
+const basenameIndexes = new WeakMap<Set<string>, { size: number; index: ReturnType<typeof buildBasenameIndex> }>();
 
 /**
  * Issue #972: multi-match variant of `resolveSlug`. Always tries the
