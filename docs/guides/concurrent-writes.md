@@ -537,6 +537,7 @@ require connecting a second process to an already-owned PGLite store.
 this source. Preserve my edits and the withdrawal, and ask before explicit
 recovery if the original processing options are unknown."*
 
+<a id="facts-backstop"></a>
 Before and after managed activation, eligible `put_page` and `capture` writes
 record durable facts-extraction intent. `facts_backstop.queued` means that
 intent committed with the page; the `facts-backstop` effect becomes
