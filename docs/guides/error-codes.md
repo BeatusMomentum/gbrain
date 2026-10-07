@@ -1508,6 +1508,14 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `preview_failed`, `schema_failed`.
 
+### migration_lease_lost
+
+<a id="migration_lease_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This apply-migrations run's own migration lease no longer matched its fence, so it stopped before the next migration. | The lease row still names this process (pid and host), but the fenced refresh matched no row: the direct and main database connections may reach different databases, or the row was rewritten. The details say whether the acquisition token and acquisition time still match (never the token itself). Run `gbrain doctor --json` and report it (#6028). | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### migrations_pending
 
 <a id="migrations_pending"></a>

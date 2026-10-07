@@ -18,6 +18,7 @@ import { gbrainPath, loadConfig } from '../core/config.ts';
 import { LiveServeLockError, PgliteBusyError, peekLock } from '../core/pglite-lock.ts';
 import {
   acquireMigrationOrchestrationLock,
+  MigrationLeaseLostError,
   MIGRATIONS_RUNNING_EXIT_CODE,
   MigrationsRunningError,
   type MigrationOrchestrationLock,
@@ -182,7 +183,8 @@ Flags:
 
 Exit codes:
   0  Success (including "nothing to do").
-  1  An orchestrator failed, or the run left the schema behind
+  1  An orchestrator failed, the migration lease stopped matching this run
+     (migration_lease_lost), or the run left the schema behind
      (migrations_pending: not_applied → rerun with --yes; still_behind or
      schema_unreadable → run gbrain doctor --json and report, not --yes again).
      An unreachable Postgres stays 0 (GBRAIN_DB_ACCESS on stderr) unless --require-db.
@@ -526,7 +528,17 @@ export async function applyMigrations(args: string[]): Promise<{ exitCode: numbe
     await holdLock();
     exitCode = await runLockedMigrations(cli, installed, holdLock, () => held.lock, report, args);
   } catch (error) {
-    if (error instanceof MigrationsRunningError) {
+    if (error instanceof MigrationLeaseLostError) {
+      console.error(`apply-migrations stopped: ${error.message}`);
+      report.doc.status = 'lease_lost';
+      report.doc.lease = error.details;
+      report.failure = opError('migration_lease_lost', error.message,
+        'Run `gbrain doctor --json` and report this to the user with the lease details; do not delete the lease row or rerun in a loop.',
+        { why: 'The migration lease row still names this run, but its fenced refresh matched nothing, so mutual exclusion can no longer be proven (#6028).',
+          fix: { consent: [], actor: 'agent', requires_exclusive: false, why: 'Tell the user the migration lease no longer matched its own fence and what doctor reports.',
+            verify: { argv: ['gbrain', 'doctor', '--json'] } } });
+      exitCode = 1;
+    } else if (error instanceof MigrationsRunningError) {
       console.error(`apply-migrations refused: ${error.message}`);
       report.doc.status = 'refused';
       report.failure = opError('migrations_running', error.message,

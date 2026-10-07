@@ -218,6 +218,8 @@ export const CODES = {
   membership_inactive: { class: 'caller', summary: "The shared-skills enrollment epoch was left or superseded.", docs: 'docs/guides/shared-brain-skills.md#membership-inactive-after-a-re-enrollment' },
   membership_not_found: { class: 'caller', summary: "This principal has no shared-skills membership with that installation id.", docs: 'docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover' },
   method_not_allowed: { class: 'caller', summary: "The HTTP method is not allowed on this endpoint." },
+  migration_lease_lost: { class: 'server', summary: "This apply-migrations run's own migration lease no longer matched its fence, so it stopped before the next migration.",
+    why: 'The lease row still names this process (pid and host), but the fenced refresh matched no row: the direct and main database connections may reach different databases, or the row was rewritten. The details say whether the acquisition token and acquisition time still match (never the token itself). Run `gbrain doctor --json` and report it (#6028).' },
   migration_failed: { class: 'server', summary: "A migration orchestrator failed, so the migration chain stopped; finished migrations stay recorded.",
     reasons: ['orchestrator_failed', 'orchestrator_threw', 'ledger_write_failed', 'preview_failed', 'schema_failed'] },
   migrations_pending: { class: 'caller', summary: "Schema migrations are behind (or could not be confirmed at head), so the command did not report success.",
