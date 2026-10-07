@@ -671,30 +671,11 @@ never holds a direct or session-pooler connection, so a
 `GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
 idle `gbrain serve` processes.
 
-<a id="persistence-claim-phase"></a>**Claim phases and `persistence.max_claim_ms`.** Each claim renewal
-(every 10 seconds) also records which phase the claimed write is in
-(`preparing` or `publishing`), when the claim started and when that phase
-started, in the request's `claim_phase` column, keyed to the claim's execution
-token. `gbrain sources writer status --json` shows it on every running blocker as
-`claim` (`phase`, `claim_age_ms`, `phase_age_ms`, `resumes_on_its_own`, `why`);
-a running request whose claim lapsed is reported as `publication_transaction`
-and one whose files were being published as `file_publication`. Doctor's
-`persistence_write_stall` warns when a claim is older than
-`persistence.max_claim_ms` (milliseconds; default 600000, 10 minutes, about 40
-times the 15-second bulk transaction budget; valid 60000 to 86400000; `gbrain
-config set persistence.max_claim_ms 900000` raises it, and `config set` refuses
-anything else with `invalid_params`). See
+<a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
+(`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
+`claim` on running blockers, and doctor `persistence_write_stall` warns past
+`persistence.max_claim_ms` (default 600000, 60000 to 86400000). See
 [troubleshooting](guides/troubleshooting.md#persistence-write-stall).
-
-<a id="concurrent-write-hold"></a>**A database-only write racing a managed sync import.** When a write that
-does not publish the canonical file (write-through off, a sandboxed or a
-derived write) commits to a page while managed sync imports a newer Git
-version of it, the import's receipt fails `revision_conflict`. If the page's
-live revision was written by a committed non-sync request for that page, the
-file is held with code `concurrent_write` and the sync continues; neither
-version is overwritten (#6194). Resolve it with `gbrain sources reconcile
-<source> <slug> --preview`; see
-[troubleshooting](guides/troubleshooting.md#concurrent-write-hold).
 
 ## JSONB writes: never double-encode
 

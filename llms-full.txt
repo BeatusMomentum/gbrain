@@ -5707,30 +5707,11 @@ never holds a direct or session-pooler connection, so a
 `GBRAIN_DIRECT_DATABASE_URL` that points at a session pooler is not pinned by
 idle `gbrain serve` processes.
 
-<a id="persistence-claim-phase"></a>**Claim phases and `persistence.max_claim_ms`.** Each claim renewal
-(every 10 seconds) also records which phase the claimed write is in
-(`preparing` or `publishing`), when the claim started and when that phase
-started, in the request's `claim_phase` column, keyed to the claim's execution
-token. `gbrain sources writer status --json` shows it on every running blocker as
-`claim` (`phase`, `claim_age_ms`, `phase_age_ms`, `resumes_on_its_own`, `why`);
-a running request whose claim lapsed is reported as `publication_transaction`
-and one whose files were being published as `file_publication`. Doctor's
-`persistence_write_stall` warns when a claim is older than
-`persistence.max_claim_ms` (milliseconds; default 600000, 10 minutes, about 40
-times the 15-second bulk transaction budget; valid 60000 to 86400000; `gbrain
-config set persistence.max_claim_ms 900000` raises it, and `config set` refuses
-anything else with `invalid_params`). See
+<a id="persistence-claim-phase"></a>**Claim phases.** Each claim renewal also records the claimed write's phase
+(`preparing` or `publishing`); `gbrain sources writer status --json` shows it as
+`claim` on running blockers, and doctor `persistence_write_stall` warns past
+`persistence.max_claim_ms` (default 600000, 60000 to 86400000). See
 [troubleshooting](guides/troubleshooting.md#persistence-write-stall).
-
-<a id="concurrent-write-hold"></a>**A database-only write racing a managed sync import.** When a write that
-does not publish the canonical file (write-through off, a sandboxed or a
-derived write) commits to a page while managed sync imports a newer Git
-version of it, the import's receipt fails `revision_conflict`. If the page's
-live revision was written by a committed non-sync request for that page, the
-file is held with code `concurrent_write` and the sync continues; neither
-version is overwritten (#6194). Resolve it with `gbrain sources reconcile
-<source> <slug> --preview`; see
-[troubleshooting](guides/troubleshooting.md#concurrent-write-hold).
 
 ## JSONB writes: never double-encode
 
@@ -10221,7 +10202,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 <a id="held-fence-files"></a>**Sync held a file because of its facts or takes fence (`Held <path>: invalid_fence …`)?** Managed sync succeeded; only that file waits. The hold names the fence, section, row numbers, columns and reason, never a cell, and most holds clear by themselves: the maintenance run's `fence_repair` phase repairs the fence on the owner host and commits the file. To see the plan or do it now, run `gbrain repair fences --source <id>` (a read-only preview with no model call), then the apply command it prints; applying needs no extra consent. Model repair spends only within `fences.repair.max_usd_per_page` and `fences.repair.max_usd_per_day`; raising them, or pausing automatic repair with `gbrain config set fences.repair.enabled false`, is the user's call. A hold whose reason is `manual` needs a person: read the page (`gbrain get --source <id> -- <slug>`), edit only that fence in the file (not the frontmatter; `gbrain repair frontmatter` does not touch fences), commit, and run `gbrain sync --source <id> --no-pull`. A `prepare_time` hold was refused against stored rows (for example a takes row number a stored take already uses): fix it as its `fence.reason` says, and after a database-side fix run `gbrain sources retry-held <id>`. A source a fence blocked before upgrading recovers on its next sync. A fence with one obvious meaning is never held: sync rewrites it losslessly, commits the file and reports `fences_normalized`; a `fence_normalized` notice on a write means re-read the page before editing it. `gbrain doctor --only fence_integrity` counts every malformed fence still waiting (held, stored or unsynced) by tier. See [fence holds](write-refusals.md#invalid_fence), [fence repair](repair.md#fences) and the [fence format](fence-format.md).
 
-<a id="concurrent-write-hold"></a>**Sync held a file with `concurrent_write` (a Git edit and a database-only write to the same page raced)?** Managed sync finished and nothing was overwritten: the page keeps the database version and only that file waits. Run `gbrain sources status <id>` (it names the page and the competing request), preview with `gbrain sources reconcile <id> <slug> --preview`, let the user choose, apply, then run `gbrain sources retry-held <id>` and `gbrain sync --source <id> --no-pull`. Before this release the same race left the source `blocked_by_failures` until `--retry-failed`; such a source converts to the hold on its next sync. See [concurrent_write](write-refusals.md#concurrent_write).
+<a id="concurrent-write-hold"></a>**Sync held a file with `concurrent_write`?** A Git edit and a database-only write to the same page raced; the sync finished and nothing was overwritten. Preview with `gbrain sources reconcile <id> <slug> --preview`, let the user choose, apply, then `gbrain sources retry-held <id>` and `gbrain sync --source <id> --no-pull`. See [concurrent_write](write-refusals.md#concurrent_write).
 
 <a id="held-connector-items"></a>**A Google or GitHub item is held after repeated failures (doctor `connector_held_items`, `gbrain waiting` says coverage is partial)?** Run `gbrain sources status <id>`, fix the cause, then after the user agrees run `gbrain sources retry-held <id>` and `gbrain sync --source <id>`. See [held items](google-connect.md#held-items).
 
@@ -10257,7 +10238,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 
 **`gbrain doctor` warns `slug_collisions`, or sync prints slug collisions?** Two or more files in a source map to the same page slug (for example `notes/Foo Bar.md` and `notes/foo-bar.md`), and only one is indexed. Rename all but one file in each group, commit, then sync.
 
-<a id="persistence-write-stall"></a>**A managed write stays `running` for minutes and later writes on the same root stay `queued`, or doctor warns `persistence_write_stall`?** The owner keeps renewing a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse. Doctor warns once a claim is older than `persistence.max_claim_ms` (milliseconds, default 600000 = 10 minutes, range 60000 to 86400000; for example `gbrain config set persistence.max_claim_ms 900000`) and names the request, its root, how long it has held the claim, how many writes wait behind it and the phase it is stuck in: `preparing` or `publishing` (the owner is still renewing, so nothing moves until that work settles or the owner restarts), `publication_transaction` (the claim lapsed while running and nothing was published; it is requeued once that transaction ends or the owner process exits), `file_publication` (files were being published; the recovery path restores or finishes them when the owner scans its roots again) or `unrecorded` (an owner that predates phase recording). Run `gbrain sources writer status --source <id> --json` (read-only; each running blocker carries `claim.phase`, `claim.claim_age_ms` and `claim.resumes_on_its_own`), then restart the `gbrain serve` that owns the root. The trigger of the hang is not known yet; attach that status output when reporting it. See the [consumer log](../ENGINES.md#persistence-consumer-log).
+<a id="persistence-write-stall"></a>**A managed write stays `running` and later writes on its root stay `queued`, or doctor warns `persistence_write_stall`?** Its owner keeps renewing the claim while hung work is unsettled. Doctor warns once a claim is older than `persistence.max_claim_ms` (default 600000 ms; `gbrain config set persistence.max_claim_ms 900000` raises it) and names the request, root, claim age, writes waiting behind it and the phase (`preparing`, `publishing`, `publication_transaction`, `file_publication` or `unrecorded`). Run `gbrain sources writer status --source <id> --json` (read-only; see `claim` on each running blocker), then restart the `gbrain serve` that owns the root, and attach that output when reporting the hang.
 
 <a id="write-capacity"></a>**Managed writes refused with `queue_capacity`, or doctor warns `persistence_capacity`?** A per-principal or per-brain write-journal limit (`persistence.limits.*`) is full (`queue_capacity`), or doctor sees lifetime request IDs or receipt bytes at 80% or more (`persistence_capacity`). For the cumulative limits (lifetime request IDs and receipt bytes), the warning and the refusal print a `gbrain config set persistence.limits.<limit> <value>` sized for about one more year; run it on the brain host, then retry with the same request ID. For outstanding-request or queued-byte limits, let outstanding writes finish and check `gbrain sources writer status`. Receipt compaction age is `persistence.receipt_retention_days` (default 30). Limits and defaults: [bounded admission and retention](concurrent-writes.md#bounded-admission-and-retention).
 
