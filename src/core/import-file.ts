@@ -3,7 +3,7 @@ import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
-import { settleGateOwnedMarkers } from './quarantine-override.ts';
+import { carryStoredQuarantineOverride, settleGateOwnedMarkers } from './quarantine-override.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
@@ -354,7 +354,7 @@ export async function importFromContent(
   parsed.timeline = sanitizeText(parsed.timeline);
 
   // #1699 trust boundary: only the gate and trusted local callers set gate-owned markers (quarantine-override.ts).
-  await settleGateOwnedMarkers(engine, parsed, slug, sourceId, opts.remote === true);
+  settleGateOwnedMarkers(parsed, opts.remote === true);
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
   // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
@@ -414,7 +414,7 @@ export async function importFromContent(
     // Disposition for the high-confidence junk path: quarantine (hide) by
     // default, or reject (throw → sync-failure) when the operator opts in.
     const junkDisposition = sanityCfg.junkDisposition;
-    const sanityResult = assessImportSanity(parsed, sanityCfg);
+    const sanityResult = await carryStoredQuarantineOverride(engine, parsed, assessImportSanity(parsed, sanityCfg), { slug, sourceId, remote: opts.remote === true });
     if (!sanityDisabled && !sanityResult.shouldQuarantine && sanityResult.flag_reason !== 'oversized' && (parsed.frontmatter[EMBED_SKIP_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') {
       delete parsed.frontmatter[EMBED_SKIP_KEY];
       if ((parsed.frontmatter[CONTENT_FLAG_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized') delete parsed.frontmatter[CONTENT_FLAG_KEY];

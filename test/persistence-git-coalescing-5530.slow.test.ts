@@ -348,8 +348,14 @@ for (const kind of testBackends()) describe(`#6210 native Git durability probe f
 
   test.each([
     ['damaged HEAD', (repo: Repo) => { writeFileSync(join(repo.root, '.git', 'HEAD'), 'not a ref\n'); return {}; }],
-    // Git's own switch for the "dubious ownership" refusal a checkout owned by another user gets.
-    ['dubious ownership', () => ({ GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' })],
+    // Git's own switch for the "dubious ownership" refusal a checkout owned by another user gets. A runner's
+    // global or system config can trust every directory (safe.directory=*, common in CI images), which
+    // suppresses the refusal, so this case reads an empty global config and no system config.
+    ['dubious ownership', (repo: Repo) => {
+      const empty = join(repo.root, '..', 'empty-gitconfig');
+      writeFileSync(empty, '');
+      return { GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_NOSYSTEM: '1' };
+    }],
     ['a directory at the hook path', (repo: Repo) => { const hook = join(repo.root, '.git', 'custom-hooks', 'post-commit'); rmSync(hook); mkdirSync(hook); return {}; }],
   ] as Array<[string, (repo: Repo) => Record<string, string>]>)('%s keeps Git effects unfinished with git_unavailable', (_name, damage) => withBrain(kind, async ({ engine, home, ctx }) => {
     const repo = makeRepo(home, 'content');
@@ -360,6 +366,14 @@ for (const kind of testBackends()) describe(`#6210 native Git durability probe f
     const before = repo.commits();
     try {
       const env = damage(repo);
+      if (env.GIT_TEST_ASSUME_DIFFERENT_OWNER) {
+        // Precondition: this git build must refuse the checkout under that env, or the case proves nothing.
+        const probe = Bun.spawnSync(['git', '-C', repo.root, 'rev-parse', '--git-path', 'hooks'], { env: { ...process.env, ...env, LC_ALL: 'C' } });
+        if (probe.exitCode === 0 || !probe.stderr.toString().includes('dubious ownership')) {
+          console.warn(`[#6210] skipped: this git (${Bun.spawnSync(['git', '--version']).stdout.toString().trim()}) does not refuse a checkout under GIT_TEST_ASSUME_DIFFERENT_OWNER (exit ${probe.exitCode})`);
+          return;
+        }
+      }
       await withEnv(env, async () => { await release(engine); await pass(engine); });
     } finally { writeFileSync(join(repo.root, '.git', 'HEAD'), 'ref: refs/heads/main\n'); }
     await expectUnfinished(engine, 2);
