@@ -12,6 +12,13 @@ interface CitationParagraph {
   text: string;
 }
 
+/** #6184: HTML comments (section markers, materialized-row markers) are markup, never summary text. */
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
+const COMMENT_ONLY_LINE_RE = /^\s*(?:<!--[\s\S]*?-->\s*)+$/;
+export function stripHtmlComments(text: string): string {
+  return text.replace(HTML_COMMENT_RE, ' ').replace(/<!--|-->/g, ' ');
+}
+
 function startsMarkdownBlock(line: string): boolean {
   return /^#{1,6}\s/.test(line) || /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
 }
@@ -31,7 +38,7 @@ function citationParagraphs(
   };
 
   for (const line of stripCodeBlocks(content).split(/\r?\n/)) {
-    if (line.trim().length === 0) {
+    if (line.trim().length === 0 || COMMENT_ONLY_LINE_RE.test(line)) {
       flush();
       continue;
     }
@@ -59,7 +66,7 @@ export function parseInlineCitationTimelineEntries(
   for (const paragraph of citationParagraphs(content, opts)) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;
-    const summary = paragraph.text
+    const summary = stripHtmlComments(paragraph.text)
       .replace(/\[Source:[^\]]*\](?:\((?:[^()]|\([^()]*\))*\))?/g, '')
       .replace(/^[-*>#\s]+/, '')
       .replace(/\s+/g, ' ')

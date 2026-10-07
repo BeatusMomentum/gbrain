@@ -84,14 +84,57 @@ const TYPE_TOKEN_RE = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 const CATEGORY_STOPLIST = new Set(['x', 'todo', 'done', 'wip']);
 const TYPE_STOPLIST = new Set(['see', 'also', 'cf', 'via', 'and', 'or', 'with', 'from', 're', 'by', 'to', 'per', 'and/or']);
 const LIST_ITEM_RE = /^([ \t]*)(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
-const QUALIFIER_RE = /^@([A-Za-z][A-Za-z0-9_]*)([[(])([^\][()]*),([^\][()]*)([\])])(?=\s|$)/;
+// Neither date group may contain a comma: with n commas and no closer, a group
+// that could also eat commas made the engine retry every comma as the
+// separator (quadratic on the page-write path, #6186).
+const QUALIFIER_RE = /^@([A-Za-z][A-Za-z0-9_]*)([[(])([^\][(),]*),([^\][(),]*)([\])])(?=\s|$)/;
+const QUALIFIER_BODY_RE = /^[^\][()]*/;
 const QUALIFIER_LIKE_RE = /^@([A-Za-z][A-Za-z0-9_]*)[[(:]/;
-const LINK_RE = /\[\[[^\]\n]+\]\]|\[[^\][\n]+\]\([^)\n]+\)/g;
 const LINE_TEXT_MAX = 160;
 // A trailing `[Source: ...]` citation (plain or wrapping a markdown link) is
 // part of the brain's quality convention, not of the grammar: it is set aside
 // before a line is read.
-const TRAILING_CITATION_RE = /\s*\[Source:\s*(?:[^\][]|\[[^\]]*\]\([^)]*\))*\]\s*$/i;
+const TRAILING_CITATION_RE = /\[Source:(?:[^\][]|\[[^\]]*\]\([^)]*\))*\]\s*$/i;
+
+/** Index of the first char at or after each position that is in `stops`, or `text.length`. */
+function nextStop(text: string, stops: string): Int32Array {
+  const next = new Int32Array(text.length + 1).fill(text.length);
+  for (let i = text.length - 1; i >= 0; i--) next[i] = stops.includes(text[i]) ? i : next[i + 1];
+  return next;
+}
+
+/**
+ * `[[wikilinks]]` and `[markdown](links)` in order, without overlaps: the
+ * matches of /\[\[[^\]\n]+\]\]|\[[^\][\n]+\]\([^)\n]+\)/g. A scan with
+ * precomputed stop positions, so a long run of unclosed brackets costs linear
+ * time where the regex rescanned the run from every bracket (#6186).
+ */
+export function findLinks(text: string): Array<{ index: number; text: string }> {
+  const out: Array<{ index: number; text: string }> = [];
+  if (!text.includes('[')) return out;
+  const closeOrNl = nextStop(text, ']\n');
+  const bracketOrNl = nextStop(text, '[]\n');
+  const parenOrNl = nextStop(text, ')\n');
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '[') continue;
+    let end = -1;
+    if (text[i + 1] === '[') {
+      const j = closeOrNl[i + 2];
+      if (j > i + 2 && text[j] === ']' && text[j + 1] === ']') end = j + 2;
+    }
+    if (end < 0) {
+      const k = bracketOrNl[i + 1];
+      if (k > i + 1 && text[k] === ']' && text[k + 1] === '(') {
+        const m = parenOrNl[k + 2];
+        if (m > k + 2 && text[m] === ')') end = m + 1;
+      }
+    }
+    if (end < 0) continue;
+    out.push({ index: i, text: text.slice(i, end) });
+    i = end - 1;
+  }
+  return out;
+}
 
 /** Normalize a written relation type: `worksAt`, `works-at`, `"works at"` -> `works_at`. */
 export function normalizeRelationType(raw: string): string {
@@ -132,8 +175,11 @@ export function parseEffectiveQualifier(text: string): QualifierParse {
     const like = QUALIFIER_LIKE_RE.exec(text);
     if (!like) return { kind: 'none' };
     const known = like[1] === 'effective' || like[1] === 'valid';
+    const extraComma = known && (QUALIFIER_BODY_RE.exec(text.slice(like[0].length))?.[0].split(',').length ?? 0) > 2;
     return { kind: 'refused', reason: known ? 'invalid_range' : 'unknown_qualifier',
-      message: known
+      message: extraComma
+        ? 'A validity range has exactly one comma separating start and end: @effective[2024-01-01,2025-06-01).'
+        : known
         ? 'A validity range takes ISO dates: @effective[2024-01-01,2025-06-01) — [ ] inclusive, ( ) exclusive, an empty side is open.'
         : `Only @effective[start,end) (alias @valid) is read; @${like[1]} stays plain text.` };
   }
@@ -271,7 +317,7 @@ function levenshtein(a: string, b: string): number {
 
 function parseRelationContent(content: string, declared: ReadonlySet<string> | null,
   note: (reason: GrammarReason, message: string) => void): Omit<GrammarRelation, 'line' | 'start' | 'end'> | null {
-  const links = [...content.matchAll(LINK_RE)];
+  const links = findLinks(content);
   if (!links.length) return null;
   const first = links[0];
   let prefix = content.slice(0, first.index).trim();
@@ -294,7 +340,7 @@ function parseRelationContent(content: string, declared: ReadonlySet<string> | n
     if (explicit) note('two_links', 'A relation line names exactly one link; write one line per target.');
     return null;
   }
-  let suffix = content.slice(first.index! + first[0].length).trim();
+  let suffix = content.slice(first.index + first.text.length).trim();
   if (!qualifierText && suffix.startsWith('@')) {
     const q = parseEffectiveQualifier(suffix);
     if (q.kind === 'ok') { qualifierText = q.range.raw; suffix = suffix.slice(q.length).trim(); }

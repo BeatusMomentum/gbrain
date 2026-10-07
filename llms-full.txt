@@ -1708,8 +1708,10 @@ start here.
    ```
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`,
    the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218).
-   Run `gbrain apply-migrations --yes --no-autopilot-install` to recover without installing services, or fall back to the
-   deterministic install: `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
+   Run `gbrain apply-migrations --yes --no-autopilot-install` to recover without installing services. It exits 0
+   only when the schema is at head; exit 1 with `migrations_pending` means the schema is still behind, and another
+   `--yes` repeats the failure, so run `gbrain doctor --json` and fall back to the deterministic install:
+   `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
 2. Init keyless memory: `gbrain init --pglite --no-embedding` (zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
 3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
@@ -2520,7 +2522,9 @@ restart the shell or add the PATH export to the shell profile.
 > occasionally blocks the top-level postinstall hook on global installs, so schema
 > migrations don't run automatically), the CLI prints a recovery hint pointing at
 > [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain apply-migrations --yes --no-autopilot-install`
-> to recover. If that doesn't work, fall back to the deterministic install path:
+> to recover. It exits 0 only when the schema is at head. Exit 1 with `migrations_pending` means the schema
+> is still behind: another `--yes` repeats the failure, so run `gbrain doctor --json`, tell the user what it
+> reports, and fall back to the deterministic install path:
 >
 > ```bash
 > git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
@@ -4372,7 +4376,7 @@ phrases. If a row here and a skill's frontmatter disagree, the frontmatter
 wins; fix the row.
 
 **A gbrain call failed or printed `[AGENT]` or a notice block:** follow the
-[agent operator protocol](../docs/protocol/AGENT_OPERATOR_v1.md). Read the
+[agent operator protocol](./conventions/agent-operator-protocol.md). Read the
 error's `code` (fall back to `error`), follow `fix.next`, then run `fix.verify`.
 
 ## Memory defaults
@@ -4653,14 +4657,15 @@ Requires **Bun 1.4.0 or newer**. Existing worker installations should follow the
 before restarting services with this version.
 
 > [!WARNING]
-> **GBrain is NOT distributed on npm.** The npm package named `gbrain` is an unrelated
-> package with no connection to this project. Do not run `npm install -g gbrain` or
-> `bun add -g gbrain` — you'll get something else, and it can shadow the real binary on
-> your PATH. Install and upgrade ONLY via the documented paths below
-> (`bun install -g github:garrytan/gbrain`, or `git clone` + `bun install && bun link`).
-> If you already ran the npm install by mistake: `npm uninstall -g gbrain` /
-> `bun remove -g gbrain`, then reinstall from GitHub. `gbrain doctor` detects a
-> shadowing npm install and prints the fix.
+> **GBrain is NOT distributed on npm.** The npm `gbrain` package is unrelated and
+> can shadow the real binary, so never run `npm install -g gbrain` or
+> `bun add -g gbrain`. Install only via `bun install -g github:garrytan/gbrain`
+> or `git clone` + `bun install && bun link`.
+> Installed it by mistake? `npm uninstall -g gbrain` / `bun remove -g gbrain`, then
+> reinstall; `gbrain doctor` detects it.
+> Schema not migrated ([#218](https://github.com/garrytan/gbrain/issues/218))?
+> Run `gbrain apply-migrations --yes --no-autopilot-install`; exit 1 means it's still
+> behind: run `gbrain doctor --json`, not `--yes` again.
 
 Start with the agent you already use. For Grok Bot and Muse, the dedicated guides above install an isolated launcher, repairable runtime, and memory in a verified persistent directory. For a coding agent, paste:
 
@@ -5678,7 +5683,14 @@ checkpoint did not advance. The message names both errors (redacted, at most
 the SQLSTATE (for example `53300` when a pooler's client limit is reached),
 a write-error code, `storage_error`, or `deadline_exceeded` when the phase
 overran its five-second budget. `message` is the redacted error text, one line,
-at most 200 characters. Connection-wait evidence follows on Postgres:
+at most 200 characters. When an unexpected exception in the owner failed a
+write (`storage_error` "Publication failed (TypeError in owner build 0.60.x)"),
+the line also carries `class=`, `errno=` and `frame=` (the top gbrain source
+frame, repo-relative, for example `src/core/persistence/page-prepare.ts:120`):
+the owner diagnostics the receipt points at. The stored receipt keeps the same
+identifiers (never the error message) owner-side in `error_detail`, with the
+build that ran the attempt; `gbrain write-request <id>` names an owner on
+another build than the CLI (`owner_build`) and the restart to run. Connection-wait evidence follows on Postgres:
 `first_conn_ms` is the time from phase start until the phase obtained a
 connection; `checkout=not_observed conn_wait_ms=<n>` means it had not obtained
 one after `n` milliseconds (a saturated pool or pooler, not a slow query); and
@@ -6170,6 +6182,14 @@ You now have:
 You also exercised the full mutation skeleton: bundled-pack guard, per-pack lock, validation gate, atomic write, audit log, cache invalidation. Every step was idempotent — re-running any of them is a no-op.
 
 ## Next steps
+
+**Add a type set by frontmatter only.** Some types don't live in one directory: an `archive` page can sit anywhere and is typed by its frontmatter `type: archive`. Declare it with `--no-prefix` instead of `--prefix`:
+
+```bash
+gbrain schema add-type archive --primitive concept --no-prefix
+```
+
+The pack records `path_prefixes: []`, and the output notes that pages get this type only from frontmatter, never from a file path. Every type needs one of the two: leaving out both `--prefix` and `--no-prefix` is refused (exit 2, `invalid_params`) with a copy-paste example of each, so a forgotten `--prefix` never creates a type nothing infers. `--no-prefix` can't be combined with `--extractable` or `--expert`: extractable types are checked through their prefixes (lint rule `extractable_empty_corpus`), and expert routing without a prefix misses content (lint rule `expert_routing_without_prefix`). The type name is the first argument that isn't a flag value, so `gbrain schema add-type --primitive concept archive --no-prefix` also names the type `archive`.
 
 **Add a link verb.** A `researcher` can `author` a `paper`. To model that:
 
@@ -7582,6 +7602,23 @@ plugin-manifest tests, `check-resolvable --strict`, the `skills.lock.json`
 regen + freshness check, and `check-skill-refs` in seconds — run it before
 committing a skills change so the membership/closure and `plugin.version`
 assertions fail locally instead of in CI.
+
+`check-skill-refs` fails on two things skill authors hit most:
+
+- **A `gbrain` command that cannot run.** Every `gbrain <cmd>` in a fenced
+  block or an inline code span must name a real command, and known-bad forms
+  (`gbrain embed refresh`, which parses `refresh` as a page slug) fail with
+  the replacement. Paid commands go preview first, then the user's approval,
+  then `--yes --max-usd <cap>`; never write a skill step that adds `--yes` on
+  its own.
+- **A relative link that leaves `skills/`.** Skills are copied verbatim into
+  host workspaces, harness skill dirs and the plugin trees, so a link to
+  `../../docs/...` dangles in every copy. Link the agent operator protocol
+  through its bundled copy, `skills/conventions/agent-operator-protocol.md`
+  (generated by `bun run build:agent-protocol`), and other repo docs by
+  absolute URL. `bun scripts/portable-skill-links.ts` rewrites both; it
+  derives the URL base from `LLMS_REPO_BASE` for forks. Links between skills
+  stay relative, and `skills/migrations/**` is exempt.
 
 ## When a skill misroutes
 
@@ -11369,6 +11406,39 @@ doctor's `revision_backfill` check names those pages, and
 `gbrain apply-migrations --force-schema` resumes the backfill for the rest and
 prints its progress.
 
+<a id="timeline-comments"></a>
+### Timeline comments
+
+Before this release the inline-citation timeline parser read an HTML comment
+next to a `[Source: ..., YYYY-MM-DD]` citation as part of the entry, so a
+section marker such as `<!-- AUTO:slack END -->` became a timeline row, and
+writing that row back into the page added a second copy of the END marker.
+The parser now treats a comment-only line as a boundary and strips comments
+from summaries, and a row whose source, summary or detail still carries
+`<!--` or `-->` is never written back into the page (code
+`timeline_comment_markup`: it stays database-side and `gbrain repair timeline`
+warns about it). `gbrain repair timeline-comments` cleans what is already
+stored. It is explicit-only.
+
+**Say to your agent:** *"Preview the timeline comment cleanup, tell me how many
+rows and pages it touches, then apply after I agree."*
+
+```bash
+gbrain repair timeline-comments --source <id>          # preview: comment_only_rows, comment_bearing_rows, pages_with_comment_bullets
+gbrain repair timeline-comments --source <id> --apply  # clean them
+gbrain repair timeline-comments --source <id>          # verify: nothing left
+```
+
+Per page it publishes one revision-bound `put_page` that drops the
+materialized bullets (marker, bullet and detail) whose line carries comment
+markup; bullets you wrote yourself are left alone. Then, under the page lock in
+a coordinated transaction, a row that is only markup is deleted, and a row with
+markup around real text is rewritten to the stripped text, or deleted when the
+page already has that stripped entry. A rewritten row is written back as a
+clean marked bullet by the page's next write. A second apply finds nothing. A
+page that is only rewritten in its timeline section queues no facts
+extraction (the body is unchanged).
+
 ### Timeline history scan coverage
 
 Doctor's `timeline_history` check classifies at most 2,000 pages or 10
@@ -11580,16 +11650,25 @@ and its original caller's authority is checked again first: a write that
 changed class since the preview reports `changed_since_preview`, and one whose
 caller lost its grant or whose source was re-created reports
 `authority_revoked`; both are kept. A replay goes through the operation's
-normal path on the original caller's trust lane: a write an agent sent over MCP
-is prepared as a remote write again, with its take-holder and delegated
-namespace limits, so it can do no more than the original could. A `put_page`
+normal path on the original caller's trust lane and under its stored authority:
+the same writer (an OAuth client stays that client), delegation, scopes,
+take-holder and delegated namespace limits and link trust, for the same source
+incarnation, checked against the live grant at admission and again at
+publication. A write an agent sent over MCP is prepared as a remote write
+again, so it can do no more than the original could; a grant revoked or
+narrowed between admission and publication refuses the replay at publication.
+A subagent or restricted-namespace write gets back the identity it recorded
+(the job id of an OAuth-delegated job, or the `wiki/agents/<id>/` namespace of
+a legacy subagent, which stays database-only); one that recorded neither is
+confined to exactly its stored namespace allow-list. Live subagent dispatches
+without a job id are still refused. A `put_page`
 replay is bound to the page revision the preview saw (an original `force: true`
 is dropped), so a page changed since the preview reports `changed_since_preview`
 or `conflict` instead of being overwritten. A `remember` replay targets the
 subject the original resolved. Each replay uses a new request id derived from
 the failed one, so a rerun after a crash resumes the same request and a second
 apply never writes it twice (`pending_elsewhere` when another writer holds that
-request). Attribution names the local owner's writer for that lane. A replay the
+request). Attribution names the original writer. A replay the
 brain refuses reports `refused` with the code. The failed receipts stay as
 history.
 
@@ -11824,6 +11903,12 @@ Request IDs are derived from the page and its revision, so rerunning after a
 crash replays the same write instead of making a second one. If the run stops
 with "still pending publication" or "the canonical writer ... is held", check
 `gbrain sources writer status <source>`, then rerun the printed apply command.
+
+Every applying kind waits for each publication with the CLI write wait: `--wait <seconds>`, then
+`GBRAIN_WRITE_WAIT_MS`, then `persistence.write_wait_ms`, else 30 seconds. That includes the doctor
+remediation run and the replay of a restore a previous `extractor-facts` apply left pending. A malformed
+`GBRAIN_WRITE_WAIT_MS` refuses the apply with `invalid_write_wait` before anything is written; a preview
+never reads it.
 
 ## Capacity stop
 

@@ -72,6 +72,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### ambient_capture_off
+
+<a id="ambient_capture_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| memory.auto_writeback no longer allows this ambient capture lane, so facts extracted from captured session text were dropped before admission. | An explicit off (or an incoherent setting) applies to every capture-lane fact request admitted after the change, including one whose provider call was already in flight; requests admitted earlier still publish. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch](../../docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch)
+
 ### ambiguous_id
 
 <a id="ambiguous_id"></a>
@@ -1194,6 +1204,26 @@ More: [docs/guides/move-to-postgres.md#verify](../../docs/guides/move-to-postgre
 |---|---|---|---|---|---|---|
 | Source relationship reconciliation is incomplete. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### harness_hook_duplicates
+
+<a id="harness_hook_duplicates"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A harness hook carrier wires one Claude Code event more than once with this install's own entries (marked or not), so the hook fires twice per event. | Claude Code can drop the `_gbrain` marker when it rewrites settings.json; installs before wave 11 then appended a second set on every re-run. | Correct the request using the message above, then retry. Run: gbrain doctor --only bootstrap_harness_health --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_duplicates](../../docs/guides/bootstrap.md#harness_hook_duplicates)
+
+### harness_hook_unowned
+
+<a id="harness_hook_unowned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A hook entry looks like gbrain's harness hook but is not this install's exact command, so gbrain left it in place. | An unmarked entry is deleted only when its command is exactly what this install (or its receipt) wrote; an edited command or another install's launcher is never removed, and removal is not reported complete while it remains. | Correct the request using the message above, then retry. Run: gbrain bootstrap harness --status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstrap.md#harness_hook_unowned)
+
 ### held_out_overlaps_benchmark
 
 <a id="held_out_overlaps_benchmark"></a>
@@ -1518,13 +1548,23 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `preview_failed`, `schema_failed`.
 
+### migration_lease_lost
+
+<a id="migration_lease_lost"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This apply-migrations run's own migration lease no longer matched its fence, so it stopped before the next migration. | The lease row still names this process (pid and host), but the fenced refresh matched no row: the direct and main database connections may reach different databases, or the row was rewritten. The details say whether the acquisition token and acquisition time still match (never the token itself). Run `gbrain doctor --json` and report it (#6028). | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### migrations_pending
 
 <a id="migrations_pending"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Schema migrations are behind and this run did not apply them. | apply-migrations applies schema migrations only with --yes (or --non-interactive); without it the run reports the drift instead of claiming the brain is up to date. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| Schema migrations are behind (or could not be confirmed at head), so the command did not report success. | apply-migrations reasons: not_applied: the run had no --yes (or --non-interactive), so it did not apply the schema migrations; the fix applies them with --yes. still_behind: an authorized run tried them and they did not apply; another --yes repeats the failure, so run `gbrain doctor --json` and report. schema_unreadable: the schema version could not be read back after the orchestrators ran, so the run cannot confirm it reached head; report it. Each failure names the schema migrations still pending. | not_applied: apply them with `gbrain apply-migrations --yes`. still_behind or schema_unreadable: run `gbrain doctor --json` and report it to the user; another --yes repeats the failure. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `not_applied`, `still_behind`, `schema_unreadable`.
 
 ### migrations_running
 
@@ -2343,6 +2383,26 @@ Reasons: `content_directory`.
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### timeline_comment_markup
+
+<a id="timeline_comment_markup"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A stored timeline row carries HTML comment markup, so gbrain keeps it database-side and never writes it back into the page; clean it with gbrain repair timeline-comments. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#timeline-comments](../../docs/guides/repair.md#timeline-comments)
+
+### timeline_rows_would_be_removed
+
+<a id="timeline_rows_would_be_removed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote put_page or put_pages entry has no Timeline section and would delete the page's dated entries; resend it with the section or with drop_timeline: true. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/guides/write-refusals.md#timeline_rows_would_be_removed)
 
 ### timeout
 
