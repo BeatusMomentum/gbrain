@@ -17,7 +17,7 @@ import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequ
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
-import { claimWorktree, getWorktreeBinding } from './ownership.ts';
+import { claimWorktree, getWorktreeBinding, managedPersistenceEnabled } from './ownership.ts';
 import { parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal, WriteRequest } from './model.ts';
@@ -288,7 +288,7 @@ export async function preparePageAdmission(ctx: OperationContext,
         && (await ctx.engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2',
           [p.version_id, snapshot.page.id]))[0]?.source_path);
       if (fileBacked || await readUnboundWritePolicy(ctx.engine) !== 'database_only') {
-        throw unboundSourceError(sourceId, ctx.remote === false ? root : null, fileBacked ? 'file_backed' : 'database_only_eligible');
+        throw unboundSourceError(sourceId, ctx.remote === false ? root : null, fileBacked ? 'file_backed' : 'database_only_eligible', !await managedPersistenceEnabled(ctx.engine));
       }
       authority.databaseOnlyReason = 'unbound_source';
     }

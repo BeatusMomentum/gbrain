@@ -270,7 +270,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       const state = await writerAdminState(engine);
       const report = await deactivatePersistence(engine, { dryRun: true });
       const unchanged = state === await writerAdminState(engine);
-      return { ...report, action: operation, ...(report.mode === 'managed' && report.blockers.length === 0 && unchanged
+      return { ...report, action: operation, ...((report.mode === 'managed' || report.pre_activation_claims?.length) && report.blockers.length === 0 && unchanged
         ? { apply_command: `gbrain sources writer deactivate --admin-intent writer_deactivate --expected-state ${state}` } : {}) };
     }
     let expectedState: string | undefined;

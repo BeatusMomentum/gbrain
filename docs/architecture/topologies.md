@@ -548,6 +548,19 @@ is classic. Reactivation is the normal claim and activate runbook above.
 **Say to your agent:** *"Switch this brain back to classic mode, but show me the
 dry run first."*
 
+<a id="pre-activation-claims"></a>**A source claimed before activation.** Claiming a source fences classic
+`gbrain sync` of it even while managed persistence was never activated, so sync
+refuses `writer_coordinator_required` (#6122). On such a brain, the dry run
+reports the claims as `pre_activation_claims` (with `source_bindings` counting
+them) and, when nothing blocks, an `apply_command`; running it releases every
+claim: the claimed worktrees are retired, source and host bindings are removed
+and a committed `writer_deactivate` receipt (`outcome.pre_activation: true`) is
+recorded. The brain stays classic and its mode epoch does not change; the next
+`gbrain sync` runs in classic mode, and the source can be claimed again later.
+The CLI writer registration that receipt needs is created if the brain has none
+yet, as activation would. The other choice is to finish the claim and activate
+runbook above.
+
 1. Quiesce every writer on every host, as for activation: stop `gbrain serve`,
    pause autopilot with `gbrain autopilot pause --reason "writer deactivation"`,
    and let queued writes finish.
