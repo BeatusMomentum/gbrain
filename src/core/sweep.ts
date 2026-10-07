@@ -756,6 +756,11 @@ async function runCorpusIngestPass(
       const wbSourceId = wbMeta?.sourceId && isValidSourceId(wbMeta.sourceId)
         ? wbMeta.sourceId
         : sourceId;
+      // #6159: facts happened when the session file was written, not when this (possibly late) sweep runs.
+      const factTime = windows.corpusFactTime(fileStat.mtime_ms);
+      if ('rejected' in factTime) {
+        log(`[sweep] ${name}: file time not trusted (${factTime.rejected}); its facts are dated at extraction time.`);
+      }
       const pipelineCtx: FactsBackstopCtx = {
         engine,
         sourceId: wbMeta ? wbSourceId : sourceId,
@@ -769,8 +774,9 @@ async function runCorpusIngestPass(
         mode: 'inline',
         remote: false,
         abortSignal: signal,
-        // #5888: the file's write time anchors the capture dedup window, not the (possibly late) sweep.
-        turnAt: await stat(full).then(st => st.mtime, () => undefined),
+        // #5888/#6159: the file's write time anchors the capture dedup window and dates the facts
+        // (turnAt, never validFrom: validFrom is part of the managed batch key).
+        turnAt: 'at' in factTime ? factTime.at : undefined,
         reAdmitFileRefusals: true,
         ...(wbMeta && wbCfg.mode === 'salient' ? { notabilityFilter: 'medium-and-up' as const } : {}),
         // visibility deliberately unset → resolveDefaultVisibility [ENG-8]
