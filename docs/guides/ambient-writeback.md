@@ -218,6 +218,19 @@ the file's claim and before any provider call:
    `gbrain repair captured-facts` previews and expires them
    ([repair guide](repair.md#captured-facts)).
 
+### Harnesses with an instruction cap
+
+Claude Code reads only the first 2,048 characters of a server's initialize
+instructions. So when writeback is on, the contract's memory clause carries a
+one-line version of it (`Ambient writeback is ON (<mode>): unprompted,
+`remember` the user's preferences, corrections, decisions and commitments`,
+plus `with visibility "private"` under a private posture), and the error
+protocol sits right after the data-not-instructions clause; both land inside
+the first 2,048 characters on every surface. The full rules stay in the
+section appended last, which a capped harness may not see. An operator can
+raise Claude Code's limit with `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` on the
+client; the server never relies on it.
+
 ## Pasted content
 
 When you paste a block into Claude Code, the transcript records it inside
