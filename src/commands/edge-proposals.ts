@@ -17,6 +17,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { applyEdgeProposal, rejectEdgeProposal, undoEdgeProposal, DREAM_TIMELINE_SOURCE } from '../core/cycle/edge-contradictions.ts';
 import { isCalendarDate, dateKey } from '../core/link-validity.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { EDGE_PROPOSALS_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
 const STATUSES = ['proposed', 'applied', 'rejected', 'undone', 'stale', 'reverted_by_user', 'undated_unresolved', 'ambiguous_same_date', 'compatible', 'error'];
 
@@ -56,14 +57,21 @@ function describe(r: Row): string {
   return `#${r.id} [${r.status}] ${pair}`;
 }
 
+export { EDGE_PROPOSALS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export function printUsage(): void {
+  console.log(usage());
+}
+
 export async function runEdgeProposals(engine: BrainEngine, args: string[]): Promise<void> {
-  const [sub, ...rest] = args;
+  if (subcommandHelpRequested(args, ROUTERS['edge-proposals'])) { printUsage(); return; }
+  const [sub, ...rest] = args as [(typeof EDGE_PROPOSALS_SUBCOMMANDS)[number] | undefined, ...string[]];
   const json = rest.includes('--json');
   const flag = (name: string) => { const i = rest.indexOf(name); return i >= 0 ? rest[i + 1] : undefined; };
   const id = Number(rest.find(a => /^\d+$/.test(a)));
   const out = (value: unknown, text: string) => console.log(json ? JSON.stringify(value, null, 2) : text);
 
-  if (!sub || sub === '--help' || sub === 'help') { console.log(usage()); return; }
+  if (!sub) { printUsage(); return; }
   if (sub === 'list') {
     const status = flag('--status');
     if (status && status !== 'all' && !STATUSES.includes(status)) { console.error(`Unknown status ${status}. One of: ${STATUSES.join(', ')}, all`); setCliExitVerdict(2); return; }

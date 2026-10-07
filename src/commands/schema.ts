@@ -58,9 +58,17 @@ import { opError } from '../core/ops/contract.ts';
 import { readDbSchemaPack } from '../core/schema-pack/best-effort.ts';
 import { sanitizeTypeForDisplay } from '../core/schema-pack/type-usage.ts';
 import { yamlScalar } from '../core/frontmatter-inference.ts';
+import { ROUTERS, SCHEMA_SUBCOMMANDS, subcommandHelpRequested } from '../cli/subcommands.ts';
+
+export { SCHEMA_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+export function printUsage(): void {
+  printHelp();
+}
 
 export async function runSchema(args: string[]): Promise<void> {
-  const sub = args[0];
+  if (subcommandHelpRequested(args, ROUTERS.schema)) return printHelp();
+  const sub = args[0] as (typeof SCHEMA_SUBCOMMANDS)[number] | undefined;
   switch (sub) {
     case 'active':   return runActive(args.slice(1));
     case 'list':     return runList(args.slice(1));
@@ -97,8 +105,6 @@ export async function runSchema(args: string[]): Promise<void> {
     case 'set-expert-routing': return runSetExpertRoutingCmd(args.slice(1));
     case 'scaffold-extractable': return runScaffoldExtractableCmd(args.slice(1));
     case undefined:
-    case '--help':
-    case '-h':
       return printHelp();
     default:
       console.error(`Unknown schema subcommand: ${sub}`);
