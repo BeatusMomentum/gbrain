@@ -245,6 +245,12 @@ export const SECTIONS: DocSection[] = [
         title: "docs/mcp/DEPLOY.md",
         description: "MCP server deployment.",
         path: "docs/mcp/DEPLOY.md",
+        // Fix wave 12: 42KB operator deployment runbook. Web index entry
+        // stays; the single-fetch bundle drops it to stay under
+        // FULL_SIZE_BUDGET (wave 12's onboard, dream and memory-verb doc
+        // additions passed 800KB). Operators read it once when deploying;
+        // agents follow the llms.txt link when they need it.
+        includeInFull: false,
       },
       {
         title: "docs/protocol/MEMORY_VERBS_v1.md",
