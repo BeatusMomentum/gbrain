@@ -110,7 +110,7 @@ describe('fence_integrity doctor check', () => {
     expect(details.sources.find((c: any) => c.source_id === s.id)).toMatchObject({ total: 4, holds: { manual: 1, total: 1 }, pages: { resolver: 1, deterministic: 1, total: 2 },
       files: { llm: 1, total: 1 }, by_tier: { deterministic: 1, resolver: 1, llm: 1, manual: 1, total: 4 } });
     expect(check.message).toContain(`${s.id}: 1 held file(s), 2 stored page(s), 1 unsynced file(s) (by tier: deterministic 1, resolver 1, llm 1, manual 1); oldest hold`);
-    expect(check.message).toContain('Model repair caps: $0.05 per page, $1.00 per day ($0.00 spent today).');
+    expect(check.message).toContain('Model repair caps: $0.30 per page, $1.00 per day ($0.00 spent today).');
     // No maintenance run has completed on this brain: never "repaired automatically", the preview then the apply.
     expect(check.message).toContain('not repaired automatically (no maintenance run has completed in the last 24 h)');
     expect(check.message).toContain(`Preview: gbrain repair fences --source ${s.id}`);

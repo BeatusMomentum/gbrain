@@ -54,7 +54,7 @@ import { fencesRepair, type FencesPreviewDetails } from '../src/core/repair/fenc
 import { readUncommittedFenceRepairs } from '../src/core/fence-repair/uncommitted.ts';
 import { parseRepairArgs, runRepairCommand } from '../src/commands/repair.ts';
 import { runModels } from '../src/commands/models.ts';
-import { resolveFenceRepairModel } from '../src/core/repair/fences.ts';
+import { resolveFenceRepairModel } from '../src/core/fence-repair/model.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -224,7 +224,7 @@ test('preview lists every tier with its cost and calls no model; the printed app
   const receipts = await engine.executeRaw<{ outcome: Record<string, any> }>("SELECT outcome FROM persistence_requests WHERE source_id=$1 AND outcome ? 'fence_repair' ORDER BY sequence", [s.id]);
   expect(receipts.map(r => r.outcome.fence_repair.tier).sort()).toEqual(['deterministic', 'llm', 'resolver']);
   const llmReceipt = receipts.find(r => r.outcome.fence_repair.tier === 'llm')!.outcome.fence_repair;
-  expect(llmReceipt).toMatchObject({ actor: 'fence-repair', classes: ['no_header'], model: 'anthropic:claude-opus-4-7' });
+  expect(llmReceipt).toMatchObject({ actor: 'fence-repair', classes: ['no_header'], model: 'anthropic:claude-fable-5-1' });
   expect(llmReceipt.cost_usd).toBeGreaterThan(0);
   expectNoSecrets([holds, receipts.map(r => r.outcome.fence_repair), surfaceOf(applied), git(s.root, 'log', '--format=%B')]);
 }), 240_000);
@@ -235,8 +235,8 @@ test('every model proposal rejected: the hold keeps its gate, nothing is reporte
   transport(() => answer('A different claim'));
   const first = await s.run({ apply: true });
   expect(first).toMatchObject({ applied: 0, repaired: 0, remaining: { claim_changed: 1 }, outcomes: { held: 1 } });
-  expect(calls).toHaveLength(2);
-  expect(String(calls[1]!.messages[2]!.content)).toContain('gate (b) claim_changed');
+  // Gate (b) is not structural, so there is no corrective re-ask.
+  expect(calls).toHaveLength(1);
   expect((await s.holds())[0]!.meta.fence_repair).toMatchObject({ reason: 'claim_changed', gate: 'b' });
   expect(first.cost.llm_usd).toBeGreaterThan(0);
   const human = await cli(engine, ['fences', '--source', s.id, '--apply']);
@@ -244,7 +244,7 @@ test('every model proposal rejected: the hold keeps its gate, nothing is reporte
   expect(human).not.toContain('repaired 1');
   // The memo: the same bytes, model, rules and prompt are never sent again.
   const again = await s.run({ apply: true });
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(1);
   expect(again).toMatchObject({ applied: 0, repaired: 0, remaining: { claim_changed: 1 } });
   expect(again.cost.llm_usd).toBe(0);
   const preview = await s.run();
@@ -474,7 +474,7 @@ test('doctor --remediate: the plan counts the fences model estimate as paid, and
   expect(s.read('people/model.md')).toBe(md('Model', noHeader()));
 }), 240_000);
 
-test('models.fence_repair: gbrain models lists it on the deep tier, and setting it changes the model the repair calls', async () => withEnv(env, async () => {
+test('models.fence_repair: unset, the first measured model with a key (else none); set, it always runs; gbrain models reports which', async () => withEnv(env, async () => {
   const engine = legacyEngine;
   const report = async () => {
     const chunks: string[] = [];
@@ -483,15 +483,31 @@ test('models.fence_repair: gbrain models lists it on the deep tier, and setting 
     try { await runModels(engine, ['--json']); } finally { process.stdout.write = write; }
     return JSON.parse(chunks.join('')) as { per_task: Array<{ key: string; tier: string; resolved: string; source: string }> };
   };
+  expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k' })).toBe('anthropic:claude-fable-5-1');
+  expect(await resolveFenceRepairModel(engine, { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' })).toBe('openai:gpt-6.1-sol');
+  expect(await resolveFenceRepairModel(engine, { GEMINI_API_KEY: 'k' })).toBeNull();
   const before = (await report()).per_task.find(row => row.key === 'models.fence_repair')!;
-  expect(before.tier).toBe('deep');
-  expect(before.resolved).toBe(await resolveFenceRepairModel(engine));
+  expect(before).toMatchObject({ tier: 'deep', resolved: 'anthropic:claude-fable-5-1', source: 'measured default' });
   await engine.setConfig('models.fence_repair', 'anthropic:claude-sonnet-5-5');
   const after = (await report()).per_task.find(row => row.key === 'models.fence_repair')!;
-  expect(after.resolved).toBe('anthropic:claude-sonnet-5-5');
-  expect(await resolveFenceRepairModel(engine)).toBe('anthropic:claude-sonnet-5-5');
+  expect(after).toMatchObject({ resolved: 'anthropic:claude-sonnet-5-5', source: 'config: models.fence_repair' });
+  expect(await resolveFenceRepairModel(engine, {})).toBe('anthropic:claude-sonnet-5-5');
   await engine.executeRaw("DELETE FROM config WHERE key='models.fence_repair'");
 }), 60_000);
+
+test('no measured model has a key and models.fence_repair is unset: model candidates are held no_measured_model and nothing calls a model', () => each(async engine => {
+  const s = await managed(engine, { 'people/model.md': md('Model', noHeader()) });
+  await s.sync();
+  transport(() => answer(CLAIM));
+  await withEnv({ ANTHROPIC_API_KEY: undefined }, async () => {
+    const preview = await s.run();
+    expect(details(preview).held[0]).toMatchObject({ reason: 'no_measured_model', tier: 'llm' });
+    expect(details(preview).held[0]!.resolution).toContain('gbrain config set models.fence_repair <provider:model>');
+    expect(await s.run({ apply: true })).toMatchObject({ repaired: 0, remaining: { no_measured_model: 1 } });
+    expect((await s.holds())[0]!.meta.fence_repair).toMatchObject({ reason: 'no_measured_model', tier: 'llm' });
+  });
+  expect(calls).toHaveLength(0);
+}), 240_000);
 
 test('a run past its deadline stops with time_budget before any item and calls no model', () => each(async engine => {
   const s = await managed(engine, { 'people/model.md': md('Model', noHeader()) });
@@ -512,8 +528,9 @@ test('two concurrent appliers at the daily cap: one model call, the other stops 
   const day = new Date().toISOString().slice(0, 10);
   const [before] = await engine.executeRaw<{ spent: string | null }>("SELECT (reserved_usd + committed_usd)::text AS spent FROM budget_ledger WHERE scope='llm_repair' AND resolver_id='fences' AND local_date=$1::date", [day]);
   const spent = Number(before?.spent ?? 0);
-  // Room for exactly one call today (each estimate is about $0.017 and settles at about $0.005).
-  await engine.setConfig('fences.repair.max_usd_per_day', (spent + 0.02).toFixed(4));
+  // Room for exactly one call today: one worst-case estimate, while a call settles at its real (much smaller) cost.
+  const estimate = details(await a.run()).llm_items[0]!.estimate_usd;
+  await engine.setConfig('fences.repair.max_usd_per_day', (spent + estimate + 0.001).toFixed(4));
   const results = await Promise.all([a.run({ apply: true }), b.run({ apply: true })]);
   expect(calls).toHaveLength(1);
   expect(results.map(r => r.repaired).sort()).toEqual([0, 1]);
@@ -531,7 +548,8 @@ test('the maintenance phase repairs held fences with the real kind, and the dail
   transport(() => answer(CLAIM));
   const day = new Date().toISOString().slice(0, 10);
   const [before] = await engine.executeRaw<{ spent: string | null }>("SELECT (reserved_usd + committed_usd)::text AS spent FROM budget_ledger WHERE scope='llm_repair' AND resolver_id='fences' AND local_date=$1::date", [day]);
-  await engine.setConfig('fences.repair.max_usd_per_day', (Number(before?.spent ?? 0) + 0.02).toFixed(4));
+  const estimate = details(await a.run()).llm_items[0]!.estimate_usd;
+  await engine.setConfig('fences.repair.max_usd_per_day', (Number(before?.spent ?? 0) + estimate + 0.001).toFixed(4));
   const tick = () => runFenceRepairPhase(engine, { dryRun: false, deadlineAtMs: Date.now() + 600_000 });
   const first = await tick();
   expect(first.details).toMatchObject({ mode: 'apply', stopped_reason: 'budget_exhausted' });

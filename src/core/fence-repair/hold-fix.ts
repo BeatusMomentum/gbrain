@@ -23,6 +23,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action, ActionInput } from '../agent-output.ts';
 import type { GitHoldRecord } from '../persistence/sync-holds.ts';
 import { FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY } from './config.ts';
+import { FENCE_REPAIR_MEASURED_MODELS } from './measured.ts';
 import { FENCE_REASONS, renderFenceFix, type FenceMessageLocation } from './reasons.ts';
 import { fenceWhere } from './refusal.ts';
 import type { FenceReason, FenceTier } from './types.ts';
@@ -76,7 +77,7 @@ export interface FenceHoldStatus {
   next_attempt_after: string | null;
 }
 
-const PAID: readonly FenceReason[] = ['budget_exhausted', 'llm_disabled', 'no_pricing'];
+const PAID: readonly FenceReason[] = ['budget_exhausted', 'llm_disabled', 'no_pricing', 'no_measured_model'];
 const OWNER: readonly FenceReason[] = ['owner_unavailable', 'owner_cli_required'];
 
 type HoldMeta = Pick<GitHoldRecord['meta'], 'reason' | 'line' | 'fence' | 'fence_repair'>;
@@ -147,6 +148,8 @@ function paidStep(reason: FenceReason): { argv: string[]; inputs?: ActionInput[]
   if (reason === 'budget_exhausted') return { argv: ['gbrain', 'config', 'set', 'fences.repair.max_usd_per_day', '<usd>'],
     inputs: [{ name: 'usd', how: 'The daily cap in USD the user agreed to; read the current one with gbrain config get fences.repair.max_usd_per_day.' }] };
   if (reason === 'llm_disabled') return { argv: ['gbrain', 'config', 'set', 'fences.repair.llm', 'true'] };
+  if (reason === 'no_measured_model') return { argv: ['gbrain', 'config', 'set', 'models.fence_repair', '<model>'],
+    inputs: [{ name: 'model', how: `The provider:model the user chooses to trust with fence repair. Measured accurate enough: ${FENCE_REPAIR_MEASURED_MODELS.join(', ')}; each needs its provider's key.` }] };
   return { argv: ['gbrain', 'pricing', 'set', '<model>', '--input', '<usd>', '--output', '<usd>'],
     inputs: [{ name: 'model', how: 'The fence repair model: models.fence_repair in gbrain models --json.' },
       { name: 'usd', how: "The provider's price in USD per 1M input tokens after --input and per 1M output tokens after --output, from its pricing page." }] };
@@ -156,6 +159,7 @@ function paidStep(reason: FenceReason): { argv: string[]; inputs?: ActionInput[]
 function paidWait(reason: FenceReason): string {
   if (reason === 'budget_exhausted') return "today's fence repair budget (fences.repair.max_usd_per_day) is spent";
   if (reason === 'llm_disabled') return 'model repair is off (fences.repair.llm false)';
+  if (reason === 'no_measured_model') return 'no model measured accurate enough for fence repair has a provider key here and models.fence_repair is unset';
   return 'a fence repair spend cap is set but gbrain has no price for the repair model, so it will not call it';
 }
 

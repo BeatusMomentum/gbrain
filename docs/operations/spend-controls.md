@@ -153,7 +153,7 @@ line naming the cap, its source and how to remove it, e.g.
 | Atom auto-drain daily cap | `autopilot.auto_drain.max_usd_per_day` | `2.00` | daily cap on drain **attempts** (`floor(max / 0.30)` = 6), not a dollar ledger | `gbrain config set autopilot.auto_drain.enabled false` | **not** consulted |
 | Connector email/meeting atoms | `cycle.extract_atoms.connector_pages` | on (unset) | Gmail/Calendar `email`/`meeting` pages are extracted like other pages, under the auto-drain cap | `false` | **not** consulted |
 | Life Chronicle event extraction | `chronicle.job_budget_usd` (per page) / `chronicle.auto_daily_limit` (calls per rolling 24 h) | `0.25` / `200` | caps one extraction call; past the daily limit pending pages wait for a free slot | `gbrain config set auto_chronicle false` | **not** consulted |
-| [Fence model repair (Tier 3)](#fence-model-repair-tier-3) | `fences.repair.max_usd_per_page` / `fences.repair.max_usd_per_day` | `0.05` / `1.00` | refuses the call: a page whose estimate is over the per-page cap or over today's remainder in the durable USD ledger (`llm_repair`/`fences`, per UTC day across every process) waits as `budget_exhausted`, and `gbrain repair fences --apply` stops there with exit 1. `--max-usd <n>` lowers a run's cap, never raises it | `gbrain config set fences.repair.llm false` (`0` on a cap = no model spend) | **not** consulted |
+| [Fence model repair (Tier 3)](#fence-model-repair-tier-3) | `fences.repair.max_usd_per_page` / `fences.repair.max_usd_per_day` | `0.30` / `1.00` | refuses the call: a page whose estimate is over the per-page cap or over today's remainder in the durable USD ledger (`llm_repair`/`fences`, per UTC day across every process) waits as `budget_exhausted`, and `gbrain repair fences --apply` stops there with exit 1. `--max-usd <n>` lowers a run's cap, never raises it | `gbrain config set fences.repair.llm false` (`0` on a cap = no model spend) | **not** consulted |
 | Dream `synthesize` per-run budget | `dream.synthesize.budget_usd` | `5` | defers the transcript and the rest of the run before submission (estimate: prompt size + child output cap, x `max_turns` in agentic mode) | `unlimited` (`0` = submit nothing) | **not** consulted |
 | Dream `synthesize` daily submission cap | `dream.synthesize.max_submissions_per_source_per_day` | `0` (off) | skips whole files; a failed count query submits nothing that run | `0` | **not** consulted |
 | Dream `BudgetMeter` phases (auto_think, drift, propose/grade takes, calibration) | `dream.auto_think.budget`, `dream.drift.budget`, `cycle.<phase>.budget_usd` | per phase | refuses the next submit past the cap | `unlimited` (`0` = spend nothing) | **not** consulted |
@@ -176,9 +176,16 @@ paying a model to repair my facts tables."*
 
 The maintenance run's `fence_repair` phase and `gbrain repair fences --apply`
 send a malformed facts or takes fence that only a rewrite can realign to the
-configured chat model (`models.fence_repair`). Only the fence header and the
-rows it must realign leave the machine, never valid rows or the rest of the
-page. Every other fence repair is free.
+repair model. Only the fence header and the rows it must realign leave the
+machine, never valid rows or the rest of the page. Every other fence repair
+is free.
+
+- **Model.** `models.fence_repair` when set (any model, priced or not, always
+  runs). Unset, the first model the fence-repair eval measured as accurate
+  enough whose provider key the brain has: `openai:gpt-6.1-sol`, then
+  `anthropic:claude-fable-5-1`. With neither key, model repair is off by
+  default and those fences wait as `no_measured_model`; choosing a model is
+  the user's call.
 
 - **Ledger.** Each call reserves its estimate in the durable daily USD ledger
   before it is sent and settles the measured cost after. Failed and retried
@@ -187,9 +194,14 @@ page. Every other fence repair is free.
   on the brain (the maintenance cycle and the CLI), so concurrent runs never
   exceed the cap together. When the ledger cannot be read, no call is made
   (`ledger_unavailable`).
-- **Caps.** `fences.repair.max_usd_per_page` (default $0.05) and
+- **Caps.** `fences.repair.max_usd_per_page` (default $0.30) and
   `fences.repair.max_usd_per_day` (default $1.00), validated at
-  `config set`; `0` means no model spend. A page over either cap waits as
+  `config set`; `0` means no model spend. A call's estimate is its worst
+  case: the prompt plus the full output ceiling, which leaves a reasoning
+  model 2,048 tokens to think before it writes the table. The per-page
+  default covers `anthropic:claude-fable-5-1`'s worst case for the largest
+  page in the eval (two fences, $0.27); measured spend was about $0.02 per
+  repair. A page over either cap waits as
   `budget_exhausted`; `gbrain repair fences --apply` stops with exit 1,
   naming the spend, the cap, the reset time (next 00:00 UTC) and the pages
   waiting. Raising a cap is the user's call.

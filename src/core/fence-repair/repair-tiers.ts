@@ -117,13 +117,13 @@ function scanIssue(page: FencePage): Pick<FenceIssue, 'fence' | 'section' | 'rea
   return { fence: defect.fence, section: defect.section, reason: defect.reason, line: defect.line };
 }
 
-/** The first call's estimate for every request of a page (the per-page cap also covers one corrective re-ask). */
+/** The first call's worst-case estimate for every request of a page. */
 export function tier3Estimate(requests: readonly Tier3Request[], pricing: { model: string; overrides?: PricingOverrides; capSource: CapSource }):
   { ok: true; usd: number; estimated: boolean } | { ok: false; reason: 'no_pricing'; guidance: NoPricingGuidance } {
   let usd = 0;
   let estimated = false;
   for (const req of requests) {
-    const budget = tier3TokenBudget(req);
+    const budget = tier3TokenBudget(req, pricing.model);
     const quote = estimateChatCallUsd({ model: pricing.model, inputTokens: budget.inputTokens, maxOutputTokens: budget.maxOutputTokens, overrides: pricing.overrides, capSource: pricing.capSource });
     if (!quote.ok) return quote;
     usd += quote.quote.usd;
@@ -165,7 +165,8 @@ export function tier3Memo(target: FenceTarget, model: string): string {
 /**
  * Tier 3 for one candidate: claim the attempt (a rejected memo returns its
  * stored verdict and spends nothing), call the model per fence under the
- * ledger, splice, normalize, validate, and re-ask once with the failed gate.
+ * ledger, splice, normalize, validate, and re-ask once after a structural
+ * failure (gate (a) or (e)); any other gate, or a HOLD, is final.
  * On success the claim is left `settled`: the caller publishes it after the
  * write lands, or marks it transient when the write could not run.
  */
@@ -196,7 +197,7 @@ export async function runTier3(target: FenceTarget, analysis: Extract<FenceAnaly
     for (const index of indexes) {
       const req = analysis.requests[index]!;
       const prior = correction ? tables.get(index)!.text : undefined;
-      const budget = tier3TokenBudget(req, prior !== undefined ? { answer: prior } : undefined);
+      const budget = tier3TokenBudget(req, deps.model, prior !== undefined ? { answer: prior } : undefined);
       const quote = estimateChatCallUsd({ model: deps.model, inputTokens: budget.inputTokens, maxOutputTokens: budget.maxOutputTokens, overrides: deps.overrides, capSource: deps.capSource });
       if (!quote.ok) return transient('no_pricing', `A spend cap is set but gbrain has no price for ${deps.model}; no call was made.`, { guidance: quote.guidance });
       const estimate = quote.quote.usd;
@@ -233,6 +234,7 @@ export async function runTier3(target: FenceTarget, analysis: Extract<FenceAnaly
       const done = await deps.store.settled(claim);
       if (done.ok) claim = done.claim;
       if (!answer.ok && answer.reason === 'llm_unavailable') return transient('llm_unavailable', `The repair model was unavailable (${answer.error ?? 'provider error'}); the next run retries.`);
+      if (!answer.ok && answer.reason === 'llm_declined') return reject('llm_declined', 'The repair model declined: a row has more than one reasonable reading, so it needs a person.');
       if (!answer.ok && answer.reason !== 'row_count_changed') return reject(answer.reason, `The repair model's answer was unusable (${answer.reason}).`);
       tables.set(index, { table: answer.table, text: answer.text });
     }
@@ -258,7 +260,8 @@ export async function runTier3(target: FenceTarget, analysis: Extract<FenceAnaly
       const cleared = [...new Set(analysis.residual.map(i => i.reason))].sort();
       return { ok: true, after, spentUsd: spent, claim, cleared };
     }
-    if (round === 0) { correction = failure; continue; }
+    // Only a structural failure earns the re-ask: naming gate (f) steers a model toward whatever placement the gates allow.
+    if (round === 0 && (failure!.gate === 'a' || failure!.gate === 'e')) { correction = failure; continue; }
     return reject(GATE_REASONS[failure!.gate], `LLM repair rejected by gate ${failure!.gate}; needs a manual edit${failure!.rows.length ? ` at row(s) ${failure!.rows.join(', ')}` : ''}.`, failure!.gate, failure!.rows);
   }
   return reject('still_invalid', 'LLM repair did not settle.');

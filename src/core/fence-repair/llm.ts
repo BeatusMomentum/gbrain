@@ -18,32 +18,44 @@
  * consumed), `llm_empty`, `llm_refused` (refusal or content-filter stop, or a
  * prose refusal), `llm_malformed` (no single table, wrong header, prose),
  * `llm_truncated` (any stop other than a normal end, rejected even if the
- * text parses). A table with the wrong number of rows is a gate (e) failure,
- * so it earns the one corrective re-ask like any other gate failure.
+ * text parses), `llm_declined` (the single word HOLD: a row has more than one
+ * reasonable reading, so the model declines instead of guessing). A table
+ * with the wrong number of rows is a gate (e) failure.
  *
- * The corrective re-ask repeats the conversation with the model's own answer
- * and names the failed gate letter and row numbers only.
+ * The corrective re-ask (only after a structural failure, gate (a) or (e))
+ * repeats the conversation with the model's own answer and names the failed
+ * gate letter and row numbers only.
+ *
+ * The output ceiling is the table's size plus, for a model whose reasoning a
+ * call cannot switch off, a reasoning allowance; the cost estimate uses the
+ * ceiling the gateway will actually send, so the caps reserve the worst case.
  *
  * Pure helpers (`tier3Requests`, `buildTier3Prompt`, `extractSingleTable`,
  * `spliceTier3`) do no I/O; `callTier3` is the one gateway call, testable
  * through the gateway's chat transport seam (`__setChatTransportForTests`).
  */
-import { chat, type ChatMessage, type ChatResult } from '../ai/gateway.ts';
+import { chat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS, type ChatMessage, type ChatResult } from '../ai/gateway.ts';
+import { thinkingOffMaxOutputTokens, thinkingOffNamespace } from '../ai/thinking-off.ts';
 import { isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { sectionsOf } from './page-checks.ts';
 import { extractRawRows, primaryFence, type RawFence, type RawRow } from './raw-rows.ts';
 import { ALLOWED, BASE_WIDTH, CANONICAL_HEADER, COLUMNS, COLUMN_DEFAULTS } from './schema.ts';
-import { GATE_REASONS } from './reasons.ts';
+import { FENCE_REASON_CODES, FENCE_REASONS, GATE_REASONS } from './reasons.ts';
 import type { FenceIssue, FenceKind, FencePage, FenceReason, FenceSection, GateLetter } from './types.ts';
 
 /** Bump when the prompt text changes: it is part of the attempt-memo key, so a new prompt retries rejected pages. */
-export const FENCE_REPAIR_PROMPT_VERSION = 1;
+export const FENCE_REPAIR_PROMPT_VERSION = 2;
 
-/** Residual reasons a model may clear (everything else is manual or the resolver's). */
-export const TIER3_REASONS: ReadonlySet<FenceReason> = new Set(['header_unmapped', 'no_header', 'row_before_header', 'short_row', 'extra_cells']);
+/** Residual reasons a model may clear: the screen reasons whose tier is `llm` (everything else is manual or the resolver's). */
+export const TIER3_REASONS: ReadonlySet<FenceReason> = new Set(FENCE_REASON_CODES.filter(reason => FENCE_REASONS[reason].stage === 'screen' && FENCE_REASONS[reason].tier === 'llm'));
 const FENCE_LEVEL: ReadonlySet<FenceReason> = new Set(['header_unmapped', 'no_header']);
 
-export type Tier3Failure = 'llm_unavailable' | 'llm_empty' | 'llm_refused' | 'llm_malformed' | 'llm_truncated';
+export type Tier3Failure = 'llm_unavailable' | 'llm_empty' | 'llm_refused' | 'llm_malformed' | 'llm_truncated' | 'llm_declined';
+
+/** The whole answer a model gives to decline (prompt rule 8). */
+export const TIER3_DECLINE = 'HOLD';
+/** Output tokens a reasoning model may spend thinking before it writes the table. */
+export const TIER3_REASONING_TOKENS = 2048;
 
 /** One fence the model is asked to repair. */
 export interface Tier3Request {
@@ -100,11 +112,11 @@ export function tier3Requests(page: FencePage, issues: readonly FenceIssue[], pa
   return { requests, ineligible };
 }
 
-/** Wide when the header names a wide-layout column, or (no header) when the rows that parse carry more than the narrow width. */
+/** Wide when the header names a wide-layout column, or (no header) when a row as written has more cells than the narrow width. */
 function wideLayout(kind: FenceKind, fence: RawFence): boolean {
   const base = BASE_WIDTH[kind];
   if (fence.header) return fence.columns.some(column => column !== null && COLUMNS[kind].indexOf(column) >= base);
-  return fence.rows.some(row => row.accepted && row.cells.length > base);
+  return fence.rows.some(row => row.cells.length > base);
 }
 
 /** Non-blank lines inside the fence that are neither the header, a separator nor a data row: rebuilding the table would drop them. */
@@ -140,7 +152,7 @@ export function buildTier3Prompt(req: Tier3Request): { system: string; user: str
   const system = [
     `You repair one malformed markdown table from a gbrain ${req.kind} fence. You move cells into the right columns and supply the canonical header; you never change what a cell says.`,
     '',
-    'Return exactly one markdown table and nothing else: no prose, no explanation, no code fence.',
+    `Return exactly one markdown table and nothing else (or the single word ${TIER3_DECLINE}, rule 8): no prose, no explanation, no code fence.`,
     'The table starts with this header and separator, unchanged:',
     header,
     separator,
@@ -155,6 +167,7 @@ export function buildTier3Prompt(req: Tier3Request): { system: string; user: str
     '5. Never invent, translate, summarize or correct a value. A cell you cannot place goes in the column it was written under.',
     `6. This page is ${req.pageVisibility}-visible. A row's visibility may be world only when that row already says world or public and the page is world-visible; otherwise keep what the row says or leave it empty.`,
     '7. Write a literal | inside a cell as \\|.',
+    `8. If any row has more than one reasonable reading (two values for one column, or a cell that fits more than one column), return only the single word ${TIER3_DECLINE} instead of a table.`,
     '',
     'Allowed values per column:',
     vocabulary(req.kind),
@@ -173,18 +186,32 @@ export function buildTier3Prompt(req: Tier3Request): { system: string; user: str
   return { system, user };
 }
 
-/** The follow-up after a gate rejection: the gate letter, its reason code and row numbers only. */
+/** The follow-up after a structural gate rejection: the gate letter, its reason code and row numbers only. */
 export function correctionMessage(gate: GateLetter, rows: readonly number[]): string {
   return `Your table was rejected by validation gate (${gate}) ${GATE_REASONS[gate]}${rows.length ? ` at row(s) ${rows.join(', ')}` : ''}: ${GATE_TEXT[gate]}. `
-    + 'Return the corrected full table following every rule above. Output only the table.';
+    + `Return the corrected full table following every rule above, or ${TIER3_DECLINE} if a row has more than one reasonable reading. Output only the table or ${TIER3_DECLINE}.`;
 }
 
-/** Token bounds for one call: the prompt's size and an output ceiling sized from the rows sent. */
-export function tier3TokenBudget(req: Tier3Request, prior?: { answer: string }): { inputTokens: number; maxOutputTokens: number } {
+/** The model may reason whatever the call asks: a thinking-by-default model, or a route with no per-call thinking switch. */
+function mayReason(model: string): boolean {
+  return isThinkingModel(model) || !thinkingOffNamespace(model);
+}
+
+/**
+ * Token bounds for one call: the prompt's size, and the output ceiling the
+ * gateway will send: the table's size (from the rows sent), plus
+ * TIER3_REASONING_TOKENS for a model that may reason, raised to the
+ * gateway's thinking headroom where a thinking model's route cannot switch
+ * thinking off. Estimates and the caps use this ceiling, so they reserve the
+ * worst case.
+ */
+export function tier3TokenBudget(req: Tier3Request, model: string, prior?: { answer: string }): { inputTokens: number; maxOutputTokens: number } {
   const prompt = buildTier3Prompt(req);
   const rowChars = req.rows.reduce((sum, row) => sum + row.text.length, 0) + headerOf(req).header.length * 2;
   const inputChars = prompt.system.length + prompt.user.length + (prior ? prior.answer.length + 400 : 0);
-  return { inputTokens: Math.ceil(inputChars / 3) + 64, maxOutputTokens: Math.min(4096, Math.max(512, Math.ceil(rowChars * 1.5 / 3) + 256)) };
+  const table = Math.min(4096, Math.max(512, Math.ceil(rowChars * 1.5 / 3) + 256));
+  const requested = table + (mayReason(model) ? TIER3_REASONING_TOKENS : 0);
+  return { inputTokens: Math.ceil(inputChars / 3) + 64, maxOutputTokens: thinkingOffMaxOutputTokens(model, requested, isThinkingModel(model), THINKING_MODEL_MAX_OUTPUT_TOKENS) };
 }
 
 export interface Tier3Table { header: string; separator: string; rows: string[] }
@@ -195,11 +222,12 @@ const REFUSAL = /\b(cannot|can['’]t|unable to|won['’]t|will not|refuse|not a
  * The single table in a model answer, or why there is none. A single
  * wrapping code fence is stripped; any other non-table line is prose.
  */
-export function extractSingleTable(text: string, req: Pick<Tier3Request, 'kind' | 'layout'>): { ok: true; table: Tier3Table } | { ok: false; reason: 'llm_empty' | 'llm_refused' | 'llm_malformed' } {
+export function extractSingleTable(text: string, req: Pick<Tier3Request, 'kind' | 'layout'>): { ok: true; table: Tier3Table } | { ok: false; reason: 'llm_empty' | 'llm_refused' | 'llm_malformed' | 'llm_declined' } {
   let body = text.trim();
   if (!body) return { ok: false, reason: 'llm_empty' };
   const fenced = /^```[\w-]*\n([\s\S]*?)\n```$/.exec(body);
   if (fenced) body = fenced[1]!.trim();
+  if (body.replace(/[.*_`]/g, '').trim() === TIER3_DECLINE) return { ok: false, reason: 'llm_declined' };
   const lines = body.split('\n').map(line => line.trim()).filter(Boolean);
   if (!lines.some(line => line.startsWith('|'))) return { ok: false, reason: REFUSAL.test(body) ? 'llm_refused' : 'llm_malformed' };
   if (lines.some(line => !line.startsWith('|')) || lines.length < 2) return { ok: false, reason: 'llm_malformed' };
@@ -245,12 +273,12 @@ export interface Tier3CallOptions {
   signal?: AbortSignal;
 }
 
-/** One gateway call (no tools, no fallback model, thinking off; no temperature, which reasoning models refuse), classified. */
+/** One gateway call (no tools, no fallback model, thinking off where the route allows; no temperature, which reasoning models refuse), classified. */
 export async function callTier3(req: Tier3Request, opts: Tier3CallOptions): Promise<Tier3Answer> {
   const prompt = buildTier3Prompt(req);
   const messages: ChatMessage[] = [{ role: 'user', content: prompt.user }];
   if (opts.correction) messages.push({ role: 'assistant', content: opts.correction.answer }, { role: 'user', content: correctionMessage(opts.correction.gate, opts.correction.rows) });
-  const budget = tier3TokenBudget(req, opts.correction ? { answer: opts.correction.answer } : undefined);
+  const budget = tier3TokenBudget(req, opts.model, opts.correction ? { answer: opts.correction.answer } : undefined);
   let result: ChatResult;
   try {
     result = await chat({ model: opts.model, system: prompt.system, messages, maxTokens: budget.maxOutputTokens, allowFallback: false,

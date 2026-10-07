@@ -4,10 +4,13 @@
  * The fixture page becomes a database-page target (`mode: 'db'`, the shape
  * `readFenceTarget` returns for a stored page) on the eval brain's default
  * source. `analyzeFences` runs the free tiers exactly as `gbrain repair
- * fences` does; a page they leave for the model goes through `runTier3` with
- * the real daily ledger and attempt store of that brain: prompt v1, one call
- * per fence, at most one corrective re-ask, gates (a)-(g) and the Tier 1
- * fixed point. Nothing here re-implements a tier or a gate.
+ * fences` does: a page they repair is `repaired` with `tier1: 'proposal'`
+ * (no call), a page they hold is `not_sent` with its manual reason, and a
+ * page they leave for the model goes through `runTier3` with the real daily
+ * ledger and attempt store of that brain: prompt v2 (a model may answer HOLD,
+ * held as `llm_declined`), one call per fence, a corrective re-ask only after
+ * a structural gate failure ((a) or (e)), gates (a)-(g) and the Tier 1 fixed
+ * point. Nothing here re-implements a tier or a gate.
  *
  * `observeCalls` wraps the ledger to record each call's estimate and settled
  * cost; the harness adds tokens (chat usage sink) and the answer text (a
@@ -23,7 +26,7 @@ export interface LedgerCall { estimate_usd: number; usd: number | null }
 
 export interface CaseOutcome {
   id: string;
-  /** What the free tiers decided: `llm` means the page reached Tier 3. */
+  /** What the free tiers decided: `llm` means the page reached Tier 3; `proposal` means they repaired it; `manual` means they held it. */
   tier1: 'clean' | 'proposal' | 'manual' | 'llm';
   /** Residual reasons Tier 1 left (location-only codes). */
   residual: string[];
@@ -78,7 +81,7 @@ export async function runCase(engine: BrainEngine, incarnation: string, f: Fixtu
   const base = { id: f.id, spent_usd: 0, ledger_calls: [] as LedgerCall[], after: null, gate: null, rows: [] as number[], message: null, requests: 0 };
   const analysis = await analyzeFences(engine, target, { pageId: null });
   if (analysis.status === 'clean') return { ...base, tier1: 'clean', residual: [], outcome: 'not_sent', reason: 'clean' };
-  if (analysis.status === 'proposal') return { ...base, tier1: 'proposal', residual: [], outcome: 'not_sent', reason: analysis.tier, after: analysis.after };
+  if (analysis.status === 'proposal') return { ...base, tier1: 'proposal', residual: [], outcome: 'repaired', reason: analysis.tier, after: { compiled_truth: analysis.after.compiled_truth, timeline: analysis.after.timeline } };
   if (analysis.status === 'manual') {
     return { ...base, tier1: 'manual', residual: [analysis.reason], outcome: 'not_sent', reason: analysis.reason, gate: analysis.gate ?? null, rows: analysis.rows ?? [] };
   }

@@ -841,18 +841,25 @@ Each candidate gets the cheapest tier that repairs it exactly:
 
 | Tier | What it does | Cost |
 | --- | --- | --- |
-| `deterministic` | The lossless rules every write already runs (missing end marker, row numbers, header aliases and order, enum and kind synonyms, assistant holders, percent confidences). | Free. |
+| `deterministic` | The lossless rules every write already runs (missing end marker, stray empty cells with one valid removal, row numbers, header aliases and order, enum and kind synonyms, assistant holders, percent confidences). | Free. |
 | `resolver` | A holder written as a display name becomes the `people/` or `companies/` page it names, only on an exact match (slug, unique slug basename or alias; never a guess, never a private page on a world-visible page). | Free. |
-| `llm` | Rows only a rewrite can realign (no header, a header column with no canonical name, rows above the header, short rows, extra cells). The configured chat model (`models.fence_repair`) sees only the fence header and those rows, never valid rows of a row-level problem and never the rest of the page, with no tools. | Paid, within `fences.repair.max_usd_per_page` ($0.05) and `fences.repair.max_usd_per_day` ($1.00). |
-| `manual` | Anything gbrain never guesses (a stray end marker, an unknown takes kind, a weight out of range, a holder no page matches). The preview names the exact edit. | Your edit. |
+| `llm` | Rows only a rewrite can realign (no header, a header column with no canonical name, rows above the header, short rows). The repair model sees only the fence header and those rows, never valid rows of a row-level problem and never the rest of the page, with no tools, and answers HOLD instead of guessing when a row has two readings. | Paid, within `fences.repair.max_usd_per_page` ($0.30) and `fences.repair.max_usd_per_day` ($1.00). |
+| `manual` | Anything gbrain never guesses (a stray end marker, an unknown takes kind, a weight out of range, a holder no page matches, extra cells that removing empty cells cannot line up, a sentence in the facts `kind` column). The preview names the exact edit. | Your edit. |
 
 Every proposal, whichever tier made it, must pass the validation
 [gates (a) to (g)](fence-format.md#gates) against the bytes as read (claims,
 existing row numbers and valid cells unchanged, no row more visible, nothing the
 fence hid shown) and be a normalizer fixed point, or it is not written. A model
-proposal a gate rejects gets one corrective re-ask naming the gate and rows;
-if that fails too the file stays held with the gate, and the same bytes are
-never sent again until the file, the model or the rules change.
+proposal that does not parse or changes the row count (gates (a) and (e)) gets
+one corrective re-ask naming the gate and rows; any other gate rejection, a
+HOLD, or a failed re-ask leaves the file held, and the same bytes are never
+sent again until the file, the model or the rules change.
+
+The repair model is `models.fence_repair` when set. Unset, it is the first
+model the fence-repair eval measured as accurate enough whose provider key the
+brain has: `openai:gpt-6.1-sol`, then `anthropic:claude-fable-5-1`. With
+neither key, model-tier fences wait as `no_measured_model` until the user
+picks a model.
 
 The session below is real output (volatile ids, hashes and times shown as
 `<id>`, `<hash>`, `<time>`; `test/fence-walkthrough.test.ts` runs these
@@ -902,15 +909,15 @@ exists). An older gbrain blocked the source on the first fence it refused.
 
    ```console
    $ gbrain repair fences --source notes
-   cost: 2 request ID(s), 32768 receipt bytes, 2 page(s) to re-embed, paid model ~$0.0112 ($1.0000 left under today's cap)
-   llm: notes:companies/acme-example.md (no_header; rewritten by openai:gpt-5.5 at apply time, gated by (a)-(g); est. $0.0112)
+   cost: 2 request ID(s), 32768 receipt bytes, 2 page(s) to re-embed, paid model ~$0.0273 ($1.0000 left under today's cap)
+   llm: notes:companies/acme-example.md (no_header; rewritten by openai:gpt-6.1-sol at apply time, gated by (a)-(g); est. $0.0273)
    resolver: notes:projects/widget-launch.md (holder_verified; rows 1)
-   tiers: deterministic=0, resolver=1, llm=1, held=0; model openai:gpt-5.5
-   model caps: $0.05/page, $1.00/day ($1.0000 left today)
+   tiers: deterministic=0, resolver=1, llm=1, held=0; model openai:gpt-6.1-sol
+   model caps: $0.30/page, $1.00/day ($1.0000 left today)
    -| 1 | The launch slips a week | bet | Alice Example | 0.6 | 2026-04 | standup |
    +| 1 | The launch slips a week | bet | people/alice-example | 0.6 | 2026-04 | standup |
    next: gbrain repair fences --source notes --apply --expect <hash>
-   Kinds that may call a paid model: fences (estimated $0.0112; $1.0000 left under today's cap).
+   Kinds that may call a paid model: fences (estimated $0.0273; $1.0000 left under today's cap).
    ```
 
 5. Apply exactly the previewed set. A file that changed since the preview is
@@ -919,7 +926,7 @@ exists). An older gbrain blocked the source on the first fence it refused.
 
    ```console
    $ gbrain repair fences --source notes --apply --expect <hash>
-   cost: 2 request ID(s), 32768 receipt bytes, 2 page(s) to re-embed, paid model $0.0072 spent ($0.9928 left under today's cap)
+   cost: 2 request ID(s), 32768 receipt bytes, 2 page(s) to re-embed, paid model $0.0039 spent ($0.9961 left under today's cap)
    applied 2, skipped 0, complete
    repaired 2; nothing left in this selection
    repaired: notes:companies/acme-example tier=llm, classes=no_header, slug=companies/acme-example, mode=managed, path=companies/acme-example.md, imported=created, hold_cleared=true, committed=queued
@@ -948,7 +955,7 @@ exists). An older gbrain blocked the source on the first fence it refused.
    ```
 
 One command got the source syncing again (the sync), and two repaired the rest
-(preview, apply), for $0.0072 of model spend.
+(preview, apply), for $0.0039 of model spend.
 
 Selection and output:
 
@@ -1009,9 +1016,9 @@ the next maintenance run, so pause first if you want to keep the original.
 | --- | --- | --- |
 | `fences.repair.enabled` | `true` | `false` pauses the maintenance run's repair; `gbrain repair fences --apply` still works. |
 | `fences.repair.llm` | `true` | `false` keeps every repair to the free tiers; model-tier holds stay `llm_disabled`. |
-| `fences.repair.max_usd_per_page` | `0.05` | The most one page may spend on the model (one call plus one corrective re-ask). `0` means no model spend. |
+| `fences.repair.max_usd_per_page` | `0.30` | The most one page may spend on the model, checked against each call's worst case (the prompt plus the full output ceiling, with 2,048 tokens for a reasoning model to think). `0` means no model spend. |
 | `fences.repair.max_usd_per_day` | `1.00` | The most all processes together spend per UTC day, through a durable ledger. `0` means no model spend. |
-| `models.fence_repair` | the `deep` tier | The model Tier 3 calls (`gbrain models` shows it). A model gbrain has no price for runs under the default caps at an estimated ceiling (the highest chat rate gbrain knows; `gbrain pricing set` makes it exact) and waits for its price under a cap you set. |
+| `models.fence_repair` | unset: the first measured model with a key (`openai:gpt-6.1-sol`, then `anthropic:claude-fable-5-1`), else none | The model Tier 3 calls (`gbrain models` shows it). A model you set always runs; one gbrain has no price for runs under the default caps at an estimated ceiling (the highest chat rate gbrain knows; `gbrain pricing set` makes it exact) and waits for its price under a cap you set. |
 | `fences.normalize` | `true` | `false` stops the inline rewrite on writes and syncs: a fixable fence is held or refused like any other. |
 
 ## Resume

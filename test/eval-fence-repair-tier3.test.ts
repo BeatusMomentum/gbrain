@@ -7,11 +7,12 @@
  * kinds of adversarial fence; every label holds under the production gates
  * (the $0 oracle: each repairable ground truth passes every gate and comes
  * out byte-identical, each gate-limited one is rejected, each ambiguous
- * probe is accepted, each unrecoverable probe is rejected); and the scorer's
- * match rule and rates. Fails when: a fixture is hand-edited without
- * regenerating, a Tier 1 or gate change moves a fixture out of Tier 3 or
- * makes a ground truth unreachable, or the scorer stops counting a moved
- * cell as a mismatch. It guards the instrument, not the score: the live run
+ * probe is accepted, each unrecoverable probe is rejected, the free tiers
+ * decide the fixtures the oracle lists as theirs, and a HOLD answer is held as
+ * `llm_declined`); and the scorer's match rule and rates. Fails when: a fixture
+ * is hand-edited without regenerating, a Tier 1 or gate change moves a
+ * fixture off its listed path or makes a ground truth unreachable, or the
+ * scorer stops counting a moved cell as a mismatch. It guards the instrument, not the score: the live run
  * (harness.ts --model ...) spends tokens and is never part of CI.
  * Why new: the eval is new with T4.
  * Seams: the gateway's chat transport stub (oracle.ts), which production never sets.
@@ -75,9 +76,11 @@ describe('scorer', () => {
       match_cells: match, match_exact: match, calls: [{ latency_ms: 1000, input_tokens: 500, output_tokens: 100, estimate_usd: 0.02, usd: 0.01, stop: 'end_turn', text: '' }],
       spent_usd: 0.01, usd_unregistered: 0.01, latency_ms: 1000, attempts: 1 });
     const rows = [...Array.from({ length: 8 }, (_, i) => row(`r${i}`, 'repairable', 'repaired', true)), row('r8', 'repairable', 'repaired', false), row('r9', 'repairable', 'held', null), row('a0', 'adversarial', 'held', null)];
+    rows[0] = { ...rows[0]!, tier1: 'proposal', calls: [] };
+    rows[10] = { ...rows[10]!, reason: 'llm_declined', gate: null };
     const [s] = summarize(rows);
-    expect(s!.repairable).toMatchObject({ n: 10, repaired: 9, gate_pass: 0.9, false_accepts: 1, false_accept: 0.1 });
-    expect(s!.adversarial).toMatchObject({ n: 1, held: 1 });
+    expect(s!.repairable).toMatchObject({ n: 10, repaired: 9, gate_pass: 0.9, false_accepts: 1, false_accept: 0.1, tier1_repaired: 1, tier3: { n: 9, repaired: 8, false_accepts: 1 } });
+    expect(s!.adversarial).toMatchObject({ n: 1, held: 1, declined: 1 });
     expect(s!.cost.usd_per_repair).toBeCloseTo(0.1 / 9, 10);
     expect(meetsRule(s!)).toBe(false);
     expect(meetsRule({ ...s!, repairable: { ...s!.repairable, gate_pass: 0.8, false_accept: 0.01 } })).toBe(true);

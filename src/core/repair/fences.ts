@@ -37,7 +37,8 @@ import type { OperationContext } from '../ops/contract.ts';
 import { trustedCliRequired } from '../ops/op-fix.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
+import { FENCE_REPAIR_MEASURED_MODELS } from '../fence-repair/measured.ts';
+import { FENCE_REPAIR_MODEL_KEY, resolveFenceRepairModel } from '../fence-repair/model.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { dailyLedger, FENCE_REPAIR_LEDGER, nextUtcMidnight } from '../budget/daily-ledger.ts';
 import { pricingSetCommand } from '../budget/no-pricing.ts';
@@ -109,8 +110,10 @@ const SCAN_MS = () => { const n = parseInt(process.env.GBRAIN_FENCE_REPAIR_SCAN_
 const CALL_TIMEOUT_MS = () => { const n = parseInt(process.env.GBRAIN_FENCE_REPAIR_CALL_TIMEOUT_MS ?? '', 10); return Number.isFinite(n) && n > 0 ? n : 90_000; };
 const ROTATION_OP = 'fence-repair-rotation';
 
-export async function resolveFenceRepairModel(engine: Pick<BrainEngine, 'getConfig'>): Promise<string> {
-  return resolveModel(engine, { configKey: 'models.fence_repair', tier: 'deep', fallback: TIER_DEFAULTS.deep });
+/** Held because no measured model has a key: the exact choice the user makes. */
+function noMeasuredModel(rows: readonly number[]): string {
+  return `No model measured accurate enough for fence repair has a provider key here (${FENCE_REPAIR_MEASURED_MODELS.join(', ')}) and ${FENCE_REPAIR_MODEL_KEY} is unset, `
+    + `so row(s) ${rows.join(', ') || '?'} stay held. Fix them by hand, or ask the user which model to trust, then: gbrain config set ${FENCE_REPAIR_MODEL_KEY} <provider:model>.`;
 }
 
 function previewArgv(scope: RepairScope, selection: Selection): string[] {
@@ -141,7 +144,7 @@ function afterBytes(target: FenceTarget, after: FencePage): { sha: string; text:
 }
 
 interface Settings {
-  llmEnabled: boolean; model: string; overrides: Awaited<ReturnType<typeof loadPricingOverrides>>; capSource: CapSource;
+  llmEnabled: boolean; model: string | null; overrides: Awaited<ReturnType<typeof loadPricingOverrides>>; capSource: CapSource;
   perPageUsd: number; perDayUsd: number; dayRemaining: number | null; runMaxUsd: number | null;
 }
 
@@ -296,6 +299,8 @@ export const fencesRepair: RepairHandler = {
           + 'Fix them by hand, or ask the user before turning model repair on: gbrain config set fences.repair.llm true.');
         continue;
       }
+      const model = s.model;
+      if (!model) { await llmHeld('no_measured_model', noMeasuredModel(at.rows)); continue; }
       if (target.mode === 'managed' && target.snapshot && !target.snapshot.page.deleted_at) {
         const fileTags = new Set(parseMarkdown(target.content ?? '', target.path ?? 'page.md').tags);
         if (target.snapshot.tags.some(tag => !fileTags.has(tag))) {
@@ -303,14 +308,14 @@ export const fencesRepair: RepairHandler = {
           continue;
         }
       }
-      const estimate = tier3Estimate(analysis.requests, { model: s.model, overrides: s.overrides, capSource: s.capSource });
+      const estimate = tier3Estimate(analysis.requests, { model, overrides: s.overrides, capSource: s.capSource });
       if (!estimate.ok) {
-        await llmHeld('no_pricing', `A spend cap is set but gbrain has no price for ${s.model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`);
+        await llmHeld('no_pricing', `A spend cap is set but gbrain has no price for ${model}. ${estimate.guidance.lookup} Register it with: ${estimate.guidance.register_command}`);
         continue;
       }
       if (estimate.estimated && !unpricedWarned) {
         unpricedWarned = true;
-        warnings.push(`gbrain has no price for the fence repair model ${s.model}; model repair runs under the default caps and is metered at an estimated ceiling (the highest chat rate gbrain knows). Make it exact with: ${pricingSetCommand(s.model, 'chat')}`);
+        warnings.push(`gbrain has no price for the fence repair model ${model}; model repair runs under the default caps and is metered at an estimated ceiling (the highest chat rate gbrain knows). Make it exact with: ${pricingSetCommand(model, 'chat')}`);
       }
       if (s.perPageUsd === 0 || s.perDayUsd === 0) {
         await llmHeld('budget_exhausted', `Model repair spend is set to 0 (fences.repair.max_usd_per_${s.perPageUsd === 0 ? 'page' : 'day'}), so these rows stay held. Raising it is the user's call: gbrain config set fences.repair.max_usd_per_${s.perPageUsd === 0 ? 'page' : 'day'} <usd>.`);
@@ -321,9 +326,9 @@ export const fencesRepair: RepairHandler = {
         continue;
       }
       const memo = await store.read(attemptCandidate(target, src.incarnation));
-      if (memo && memo.memo === tier3Memo(target, s.model) && memo.state === 'rejected') {
+      if (memo && memo.memo === tier3Memo(target, model) && memo.state === 'rejected') {
         const reason = (memo.reason ?? 'still_invalid') as FenceReason;
-        await keep({ item: name, reason, tier: 'manual', resolution: `${s.model}'s repair of these exact bytes was rejected (${reason}${memo.gate ? `, gate ${memo.gate}` : ''}); it is not retried until the file, the model or the rules change. `
+        await keep({ item: name, reason, tier: 'manual', resolution: `${model}'s repair of these exact bytes was rejected (${reason}${memo.gate ? `, gate ${memo.gate}` : ''}); it is not retried until the file, the model or the rules change. `
           + `Fix row(s) ${(memo.rows ?? at.rows).join(', ') || '?'} by hand.`, ...(memo.gate ? { gate: memo.gate as GateLetter } : {}), ...(memo.rows ? { rows: memo.rows } : {}) });
         continue;
       }
@@ -449,10 +454,12 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
   const s = await settings(engine, { noLlm: opts.noLlm, ...(opts.allowanceUsd !== undefined ? { maxLlmUsd: opts.allowanceUsd } : {}) });
   const rows = fixLocation(analysis.fixes, analysis.residual).rows;
   if (!s.llmEnabled) return held('llm_disabled', `Model repair is off; row(s) ${rows.join(', ')} stay held.`, { rows, tier: 'llm' });
+  const model = s.model;
+  if (!model) return held('no_measured_model', noMeasuredModel(rows), { rows, tier: 'llm' });
   if (s.perPageUsd === 0 || s.perDayUsd === 0) return held('budget_exhausted', 'Model repair spend is set to 0.', { rows, tier: 'llm' });
   const now = () => new Date();
   const timeoutMs = Math.max(5_000, Math.min(CALL_TIMEOUT_MS(), opts.deadline !== undefined ? opts.deadline - Date.now() : Infinity));
-  const result = await runTier3(target, analysis, src.incarnation, { ledger: dailyLedger(engine, FENCE_REPAIR_LEDGER), store: attemptStore(engine), model: s.model, overrides: s.overrides,
+  const result = await runTier3(target, analysis, src.incarnation, { ledger: dailyLedger(engine, FENCE_REPAIR_LEDGER), store: attemptStore(engine), model, overrides: s.overrides,
     capSource: s.capSource, perPageUsd: s.perPageUsd, perDayUsd: s.perDayUsd, ...(opts.allowanceUsd !== undefined ? { allowanceUsd: opts.allowanceUsd } : {}), timeoutMs, now });
   if (!result.ok) {
     if (result.reason === 'claimed_elsewhere') return { applied: false, outcome: 'skipped', reason: 'claimed_elsewhere', detail: { path: target.path, slug: target.slug, message: result.message } };
@@ -472,7 +479,7 @@ async function tier3(ctx: OperationContext, src: FenceSource, target: FenceTarge
       inputs: [{ name: 'usd', how: 'The new daily cap in USD the user agrees to; it must exceed what is already spent today.' }],
       verify: { argv: ['gbrain', 'doctor', '--only', 'fence_integrity', '--json'] } } } };
   }
-  const written = await write(ctx, src, target, result.after, { tier: 'llm', classes: classesOf(analysis.fixes, result.cleared), ...fixLocation(analysis.fixes, analysis.residual), model: s.model, cost: result.spentUsd },
+  const written = await write(ctx, src, target, result.after, { tier: 'llm', classes: classesOf(analysis.fixes, result.cleared), ...fixLocation(analysis.fixes, analysis.residual), model, cost: result.spentUsd },
     opts, held);
   const store = attemptStore(engine);
   if (written.applied) await store.publish(result.claim);

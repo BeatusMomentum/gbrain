@@ -1648,7 +1648,7 @@
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
               "max_usd_per_day": 1,
-              "max_usd_per_page": 0.05,
+              "max_usd_per_page": 0.3,
               "reserved_today_usd": 0,
               "spent_today_usd": 0
             },

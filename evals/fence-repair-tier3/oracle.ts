@@ -11,12 +11,18 @@
  * - adversarial/ambiguous: the probe (a wrong guess) must be accepted, which
  *   shows only the model can keep the page held.
  * - adversarial/unrecoverable: the probe (an invented value) must be rejected.
+ * - every fixture that reaches Tier 3: a model answering HOLD is held as
+ *   `llm_declined` (prompt v2).
  *
- * Every fixture must also reach Tier 3 with the residual reason its class names.
+ * Every fixture must reach Tier 3 with the residual reason its class names,
+ * except the ones `FREE_TIER_PATH` lists, which the free tiers decide: `tier1`
+ * ones Tier 1 repairs to the ground truth byte for byte, `manual` ones it
+ * holds before any model call.
  */
 import { __setChatTransportForTests, type ChatResult } from '../../src/core/ai/gateway.ts';
 import { dailyLedger, FENCE_REPAIR_LEDGER } from '../../src/core/budget/daily-ledger.ts';
 import { attemptStore } from '../../src/core/fence-repair/attempts.ts';
+import { FENCE_REPAIR_DEFAULT_MAX_USD_PER_PAGE } from '../../src/core/fence-repair/config.ts';
 import { analyzeFences } from '../../src/core/fence-repair/repair-tiers.ts';
 import { extractRawRows, primaryFence } from '../../src/core/fence-repair/raw-rows.ts';
 import type { Tier3Request } from '../../src/core/fence-repair/llm.ts';
@@ -27,6 +33,19 @@ import { fixtureTarget, runCase } from './run-case.ts';
 const REASON_OF: Record<string, string | null> = {
   short_row_trailing: 'short_row', short_row_gap: 'short_row', no_header: 'no_header', row_before_header: 'row_before_header',
   extra_cells: 'extra_cells', header_unmapped: 'header_unmapped', mixed: null,
+};
+
+/**
+ * Fixtures the free tiers decide without a model since the eval's fixes
+ * (#6188 T4): `tier1` rows have stray empty cells with exactly one valid
+ * removal (Tier 1 `stray_empty_cell`); `manual` rows have extra cells that
+ * removing empty cells cannot line up (a misplaced text cell, a duplicated
+ * value, or a claim cut by an unescaped pipe), held as `extra_cells`.
+ */
+export const FREE_TIER_PATH: Readonly<Record<string, 'tier1' | 'manual'>> = {
+  'f-ex-01': 'tier1', 'f-ex-02': 'tier1', 'f-ex-03': 'tier1', 'f-ex-04': 'tier1', 'f-ex-06': 'tier1', 'f-ex-07': 'tier1',
+  't-ex-01': 'tier1', 't-ex-02': 'tier1', 't-ex-03': 'tier1', 't-ex-04': 'tier1',
+  'f-ex-05': 'manual', 'f-adv-01': 'manual', 'f-adv-02': 'manual', 'f-adv-03': 'manual', 'f-adv-04': 'manual', 't-adv-01': 'manual', 'f-gl-02': 'manual',
 };
 
 export type AnswerFn = (f: Fixture, req: Tier3Request, variant: 'as_written' | 'blank_numbers') => string;
@@ -56,7 +75,7 @@ export async function runOracle(fixtures: readonly Fixture[], answer: AnswerFn):
   await engine.initSchema();
   const [src] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
   const deps = { ledger: dailyLedger(engine, FENCE_REPAIR_LEDGER), store: attemptStore(engine), model: 'anthropic:claude-opus-4-7', capSource: 'default' as const,
-    perPageUsd: 0.05, perDayUsd: 1000, timeoutMs: 30_000, now: () => new Date() };
+    perPageUsd: FENCE_REPAIR_DEFAULT_MAX_USD_PER_PAGE, perDayUsd: 1000, timeoutMs: 30_000, now: () => new Date() };
   const violations: string[] = [];
   try {
     for (const f of fixtures) {
@@ -64,6 +83,16 @@ export async function runOracle(fixtures: readonly Fixture[], answer: AnswerFn):
       for (const variant of variants) {
         const run = variant === 'as_written' ? f : { ...f, id: `${f.id}~blank` };
         const analysis = await analyzeFences(engine, fixtureTarget(run), { pageId: null });
+        const path = FREE_TIER_PATH[f.id];
+        if (path === 'tier1') {
+          if (analysis.status !== 'proposal') violations.push(`${f.id}: the free tiers returned ${analysis.status}; Tier 1 must repair it`);
+          else if (analysis.after.compiled_truth !== f.expected!.compiled_truth || analysis.after.timeline !== f.expected!.timeline) violations.push(`${f.id}: the Tier 1 repair differs from expected`);
+          continue;
+        }
+        if (path === 'manual') {
+          if (analysis.status !== 'manual') violations.push(`${f.id}: the free tiers returned ${analysis.status}; they must hold it before any model call`);
+          continue;
+        }
         if (analysis.status !== 'llm') {
           violations.push(`${f.id}: the free tiers returned ${analysis.status}${analysis.status === 'manual' ? ` (${analysis.reason})` : ''}; it must reach Tier 3`);
           continue;
@@ -89,6 +118,11 @@ export async function runOracle(fixtures: readonly Fixture[], answer: AnswerFn):
         } else if (f.adversarial === 'ambiguous') {
           if (out.outcome !== 'repaired') violations.push(`${tag}: the ambiguous probe was rejected (${out.reason}${out.gate ? `, gate ${out.gate}` : ''}); the gates can already hold it`);
         } else if (out.outcome === 'repaired') violations.push(`${tag}: the unrecoverable probe was accepted`);
+        if (variant === 'as_written') {
+          __setChatTransportForTests(async () => result('HOLD'));
+          const declined = await runCase(engine, src!.incarnation, { ...f, id: `${f.id}~hold` }, deps);
+          if (declined.outcome !== 'held' || declined.reason !== 'llm_declined') violations.push(`${f.id}: a HOLD answer was ${declined.outcome} (${declined.reason}), not held as llm_declined`);
+        }
       }
     }
   } finally {

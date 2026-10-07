@@ -12,7 +12,7 @@
  * fence rows to the configured chat model (Tier 3); false keeps it to the
  * free tiers everywhere and holds Tier 3 candidates with `llm_disabled`.
  *
- * `fences.repair.max_usd_per_page` (default $0.05) and
+ * `fences.repair.max_usd_per_page` (default $0.30) and
  * `fences.repair.max_usd_per_day` (default $1.00) cap model (Tier 3) fence
  * repair: per page, and per UTC day across every process through the daily
  * USD ledger. 0 means no Tier 3 spend. They are validated at `config set`
@@ -27,7 +27,7 @@ export const FENCE_REPAIR_LLM_KEY = 'fences.repair.llm';
 export const FENCE_REPAIR_MAX_USD_PER_PAGE_KEY = 'fences.repair.max_usd_per_page';
 export const FENCE_REPAIR_MAX_USD_PER_DAY_KEY = 'fences.repair.max_usd_per_day';
 /** Defaults of the Tier 3 caps (USD). */
-export const FENCE_REPAIR_DEFAULT_MAX_USD_PER_PAGE = 0.05;
+export const FENCE_REPAIR_DEFAULT_MAX_USD_PER_PAGE = 0.3;
 export const FENCE_REPAIR_DEFAULT_MAX_USD_PER_DAY = 1;
 const USD_KEYS: readonly string[] = [FENCE_REPAIR_MAX_USD_PER_PAGE_KEY, FENCE_REPAIR_MAX_USD_PER_DAY_KEY];
 /** Every `fences.*` key `gbrain config set` accepts. */

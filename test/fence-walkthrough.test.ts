@@ -8,7 +8,9 @@
  * guide shows appears in the real output (hashes, ids, times, costs and the
  * checkout path normalized) and that every command exits 0. The model is a
  * local stand-in for the provider's Responses API (OPENAI_BASE_URL), so the
- * spawned CLI makes its genuine provider call and no network or key is used.
+ * spawned CLI makes its genuine provider call and no network or key is used;
+ * `models.fence_repair` is unset, so the repair uses the measured default for
+ * an OpenAI key (openai:gpt-6.1-sol).
  *
  * Protects: the documented journey (post-upgrade notice, converting sync,
  * sources status, preview, apply, commit subjects, doctor ok) and its command
@@ -41,7 +43,7 @@ const provider = Bun.serve({
     const url = new URL(req.url);
     if (!url.pathname.endsWith('/responses')) return new Response(JSON.stringify({ data: [{ id: 'gpt-5.5' }] }), { headers: { 'Content-Type': 'application/json' } });
     requests++;
-    return new Response(JSON.stringify({ id: 'resp_walkthrough', object: 'response', created_at: 1, model: 'gpt-5.5', status: 'completed', error: null, incomplete_details: null,
+    return new Response(JSON.stringify({ id: 'resp_walkthrough', object: 'response', created_at: 1, model: 'gpt-6.1-sol', status: 'completed', error: null, incomplete_details: null,
       output: [{ type: 'message', id: 'msg_walkthrough', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: `${NARROW}\n${SEP}\n${ACME_ROW}`, annotations: [] }] }],
       usage: { ...usage, total_tokens: usage.input_tokens + usage.output_tokens } }), { headers: { 'Content-Type': 'application/json' } });
   },
@@ -128,7 +130,6 @@ test('docs/guides/repair.md "Fences": every command runs and prints every line t
   await commit('init');
   await ok(['gbrain', 'init', '--pglite', '--no-embedding']);
   await ok(['gbrain', 'config', 'set', 'self_upgrade.mode', 'off']);
-  await ok(['gbrain', 'config', 'set', 'models.fence_repair', 'openai:gpt-5.5']);
   await ok(['gbrain', 'sources', 'add', 'notes', '--path', checkout]);
   await ok(['gbrain', 'sync', '--source', 'notes', '--no-pull']);
 

@@ -16,11 +16,12 @@
  *     [--max-usd 10] [--only id1,id2]
  * One throwaway PGLite brain per invocation (fresh ledger and attempt
  * memo). `models.fence_repair` is set to the model (left unset for
- * `default`, so gbrain's own resolution picks it), `pricing.overrides`
+ * `default`, so gbrain's own resolution picks it: the first measured model
+ * with a provider key, refused when there is none), `pricing.overrides`
  * registers list prices gbrain's table lacks (as `gbrain pricing set`
  * would), and `fences.repair.max_usd_per_day` is set to --max-usd, which the
  * daily ledger enforces as a hard ceiling. The per-page cap stays at the
- * production default ($0.05). Each fixture goes through `run-case.ts`. A
+ * production default. Each fixture goes through `run-case.ts`. A
  * provider error (`llm_unavailable`) is retried twice after a pause, as the
  * next maintenance run would; anything else is the outcome.
  *
@@ -39,10 +40,11 @@ const here = import.meta.dir;
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(name); return i === -1 ? null : args[i + 1] ?? null; };
 
-/** List prices (USD per 1M tokens) for models gbrain's price table lacks, registered on the eval brain like `gbrain pricing set`. */
-export const REGISTERED_PRICES: Record<string, { input: number; output: number; source: string }> = {
-  'openai:gpt-6.1-sol': { input: 2, output: 10, source: 'gbrain-evals eval/runner/budget-ledger.ts CHAT_PRICE_OVERRIDES (provider pricing page, checked 2026-10-02)' },
-};
+/**
+ * List prices (USD per 1M tokens) for models gbrain's price table lacks, registered on the eval brain like `gbrain pricing set`.
+ * Empty: every model this eval has run is in the table (gpt-6.1-sol joined it with the fixes the first run found).
+ */
+export const REGISTERED_PRICES: Record<string, { input: number; output: number; source: string }> = {};
 
 export const CALL_TIMEOUT_MS = Number(process.env.GBRAIN_FENCE_REPAIR_CALL_TIMEOUT_MS) > 0 ? Number(process.env.GBRAIN_FENCE_REPAIR_CALL_TIMEOUT_MS) : 90_000;
 
@@ -107,7 +109,7 @@ if (!modelArg || !outPath || !Number.isInteger(run) || !(maxUsd > 0)) {
 const { configureEvalGateway } = await import('../../src/eval/shared/gateway-bootstrap.ts');
 const { isAvailable } = await import('../../src/core/ai/gateway.ts');
 const { registerChatUsageSink } = await import('../../src/core/ai/chat-usage.ts');
-const { resolveFenceRepairModel } = await import('../../src/core/repair/fences.ts');
+const { resolveFenceRepairModel } = await import('../../src/core/fence-repair/model.ts');
 const { readFenceRepairCaps, FENCE_REPAIR_MAX_USD_PER_DAY_KEY } = await import('../../src/core/fence-repair/config.ts');
 const { loadPricingOverrides } = await import('../../src/core/budget/budget-tracker.ts');
 const { analyzeFences, tier3Estimate } = await import('../../src/core/fence-repair/repair-tiers.ts');
@@ -118,7 +120,12 @@ const { engine, incarnation } = await newBrain();
 if (modelArg !== 'default') await engine.setConfig('models.fence_repair', modelArg);
 await engine.setConfig('pricing.overrides', JSON.stringify(Object.fromEntries(Object.entries(REGISTERED_PRICES).map(([m, p]) => [m, { input: p.input, output: p.output }]))));
 await engine.setConfig(FENCE_REPAIR_MAX_USD_PER_DAY_KEY, String(maxUsd));
-const model = await resolveFenceRepairModel(engine);
+const resolved = await resolveFenceRepairModel(engine);
+if (!resolved) {
+  console.error('fence-repair-tier3: --model default resolves to no model: no measured fence-repair model has a provider key here. Set a key, or pass --model.');
+  process.exit(2);
+}
+const model = resolved;
 const overrides = await loadPricingOverrides(engine);
 const caps = await readFenceRepairCaps(engine);
 configureEvalGateway({ chatModel: model });
@@ -204,10 +211,6 @@ for (const f of selected) {
     await new Promise(r => setTimeout(r, attempts * 20_000));
   }
   spent += out.spent_usd;
-  if (out.tier1 !== 'llm') {
-    console.error(`${f.id}: fixture defect, the free tiers returned ${out.tier1} (${out.reason}); it must reach Tier 3.`);
-    process.exitCode = 2;
-  }
   const match = out.outcome === 'repaired' && f.expected ? compareRepair(out.after!, f.expected) : null;
   const unregistered = calls.every(c => c.input_tokens !== null)
     ? calls.reduce((s, c) => s + chatCallUsd(model, { inputTokens: c.input_tokens!, outputTokens: c.output_tokens! }).usd, 0) : null;
@@ -215,7 +218,7 @@ for (const f of selected) {
     outcome: out.outcome, reason: out.reason, gate: out.gate, rows: out.rows, match_cells: match ? match.cells : null, match_exact: match ? match.exact : null,
     calls, spent_usd: out.spent_usd, usd_unregistered: unregistered, latency_ms: latency, attempts, message: out.message, after: out.after };
   appendFileSync(outPath, JSON.stringify(row) + '\n');
-  console.error(`${f.id}: ${out.outcome}${out.gate ? ` gate ${out.gate}` : out.reason && out.outcome !== 'repaired' ? ` ${out.reason}` : ''}${match ? (match.cells ? ' match' : ' MISMATCH') : ''} calls=${calls.length} $${out.spent_usd.toFixed(4)} ${latency}ms`);
+  console.error(`${f.id}: ${out.tier1 === 'llm' ? '' : `[${out.tier1}] `}${out.outcome}${out.gate ? ` gate ${out.gate}` : out.reason && out.outcome !== 'repaired' ? ` ${out.reason}` : ''}${match ? (match.cells ? ' match' : ' MISMATCH') : ''} calls=${calls.length} $${out.spent_usd.toFixed(4)} ${latency}ms`);
   if (out.reason === 'budget_exhausted' && /daily/.test(out.message ?? '')) { stopped = `the daily ledger cap ($${maxUsd}) was reached after $${spent.toFixed(4)}`; break; }
 }
 globalThis.fetch = realFetch;

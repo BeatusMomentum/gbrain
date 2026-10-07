@@ -10,10 +10,14 @@
  * stricter byte-for-byte comparison, reported alongside.
  *
  * Metrics (preregistered in gbrain-evals, docs/benchmarks/2026-10-06-fence-repair-tier3-preregistration.md):
- * - gate-pass rate: repairable items whose Tier 3 repair passed every gate,
- *   over repairable items run.
+ * - gate-pass rate: repairable items repaired on the production path (by the
+ *   free tiers or by a Tier 3 repair that passed every gate), over repairable
+ *   items run.
  * - false-accept rate: repairable items repaired but not matching their
  *   ground truth, over repairable items run.
+ * `repairable.tier3` restricts both to the items that reached the model;
+ * `tier1_repaired` and `held_before_model` count the free tiers' share, and
+ * `declined` counts HOLD answers (`llm_declined`, prompt v2).
  * - held correctly: adversarial items that stayed held, over adversarial
  *   items run.
  * - USD per repair: ledger-priced spend on repairable items over repairs.
@@ -23,7 +27,7 @@ import { extractRawRows, primaryFence } from '../../src/core/fence-repair/raw-ro
 import { collapse } from '../../src/core/fence-repair/schema.ts';
 import type { FencePageText } from './generate-fixtures.ts';
 
-export const SCORER_VERSION = 1;
+export const SCORER_VERSION = 2;
 
 type Section = 'compiled_truth' | 'timeline';
 
@@ -111,8 +115,9 @@ export interface ModelSummary {
   model: string;
   runs: number;
   repairable: { n: number; repaired: number; gate_pass: number; gate_pass_ci: [number, number] | null; false_accepts: number; false_accept: number; false_accept_ci: [number, number] | null;
-    exact_matches: number; per_run_gate_pass: number[]; reask_used: number; reask_rescued: number; held_by: Record<string, number> };
-  adversarial: { n: number; held: number; held_rate: number; ambiguous_n: number; ambiguous_held: number; unrecoverable_n: number; unrecoverable_held: number; accepted_ids: string[] };
+    exact_matches: number; per_run_gate_pass: number[]; reask_used: number; reask_rescued: number; held_by: Record<string, number>;
+    tier1_repaired: number; held_before_model: number; declined: number; tier3: { n: number; repaired: number; false_accepts: number } };
+  adversarial: { n: number; held: number; held_rate: number; ambiguous_n: number; ambiguous_held: number; unrecoverable_n: number; unrecoverable_held: number; declined: number; accepted_ids: string[] };
   gate_limited: { n: number; held: number; accepted_ids: string[] };
   cost: { usd_total: number; usd_repairable: number; usd_per_repair: number | null; usd_per_item: number; usd_unregistered_per_repair: number | null; input_tokens: number; output_tokens: number; calls: number };
   latency_ms: { p50: number | null; p95: number | null };
@@ -145,11 +150,14 @@ export function summarize(rows: readonly ResultRow[]): ModelSummary[] {
         exact_matches: repaired.filter(r => r.match_exact).length,
         per_run_gate_pass: runs.map(run => { const x = rep.filter(r => r.run === run); return x.length ? x.filter(r => r.outcome === 'repaired').length / x.length : 0; }),
         reask_used: reask.length, reask_rescued: reask.filter(r => r.outcome === 'repaired').length, held_by: heldBy,
+        tier1_repaired: rep.filter(r => r.tier1 === 'proposal').length, held_before_model: rep.filter(r => r.tier1 === 'manual').length,
+        declined: rep.filter(r => r.reason === 'llm_declined').length,
+        tier3: { n: rep.filter(r => r.tier1 === 'llm').length, repaired: repaired.filter(r => r.tier1 === 'llm').length, false_accepts: falseAccepts.filter(r => r.tier1 === 'llm').length },
       },
       adversarial: {
         n: adv.length, held: adv.filter(r => r.outcome !== 'repaired').length, held_rate: adv.length ? adv.filter(r => r.outcome !== 'repaired').length / adv.length : 0,
         ambiguous_n: amb.length, ambiguous_held: amb.filter(r => r.outcome !== 'repaired').length,
-        unrecoverable_n: unr.length, unrecoverable_held: unr.filter(r => r.outcome !== 'repaired').length,
+        unrecoverable_n: unr.length, unrecoverable_held: unr.filter(r => r.outcome !== 'repaired').length, declined: adv.filter(r => r.reason === 'llm_declined').length,
         accepted_ids: [...new Set(adv.filter(r => r.outcome === 'repaired').map(r => r.id))].sort(),
       },
       gate_limited: { n: gl.length, held: gl.filter(r => r.outcome !== 'repaired').length, accepted_ids: [...new Set(gl.filter(r => r.outcome === 'repaired').map(r => r.id))].sort() },

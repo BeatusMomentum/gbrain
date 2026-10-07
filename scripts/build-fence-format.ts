@@ -82,7 +82,7 @@ const GATE_TEXT = {
 
 const TIER_TEXT: Record<Exclude<FenceTier, 'deterministic'>, string> = {
   resolver: 'Tier 2, verified holder lookup, free',
-  llm: 'Tier 3, the configured chat model rewrites only the named rows',
+  llm: 'Tier 3, the repair model rewrites only the named rows, or answers HOLD when a row has two readings',
   manual: 'a person edits the fence; gbrain never guesses',
 };
 
@@ -187,11 +187,12 @@ function normalizedTable(): string {
   const text = {
     close_fence: 'A fence with no end marker gets one directly after its table, when nothing but blank lines follows the last row up to the end of the section.',
     marker_form: 'Two-dash takes markers (`<!-- gbrain:takes:begin -->`) directly above a takes table become the three-dash markers. Two-dash facts markers are not a fence and are left alone.',
+    stray_empty_cell: 'A row with more cells than its header loses empty cells, only when exactly one choice of empty cells to remove leaves every checked column (`#`, kind, confidence, visibility, notability, `claim_value`; takes kind, holder, weight) valid. Otherwise the row is `extra_cells` and a person fixes it.',
     renumber: 'A row number that is zero, negative, not a number or a duplicate gets a new number (see [row numbers](#row-numbers)).',
     column_default: `A required facts column missing from the whole header gets its write default: ${Object.entries(COLUMN_DEFAULTS.facts).map(([c, v]) => `${code(c)} ${code(v)}`).join(', ')}. Takes have no defaults; a takes fence with no weight is \`weight_missing\`.`,
     header_alias: 'A header whose every column has a known spelling (see [header spellings](#header-spellings)) becomes the canonical header, and each row\'s cells move into canonical order unchanged.',
     enum_synonym: `Facts notability ${synonymLines(NOTABILITY_SYNONYMS)}; visibility ${codes(PRIVATE_SYNONYMS)} → \`private\`, and \`public\` → \`world\` only on a world-visible page (\`private\` otherwise); case and spacing variants of a canonical value. Any other word is \`enum_unmapped\`.`,
-    kind_map: `Facts: ${synonymLines(FACT_KIND_SYNONYMS)}; any other word → \`fact\`, with the word kept in \`context\` (for example ${code(appendOriginalKind('', 'partnership'))}). Takes: ${synonymLines(TAKE_KIND_SYNONYMS)}; any other word is \`takes_kind_unsupported\`, because gbrain never chooses a takes kind.`,
+    kind_map: `Facts: ${synonymLines(FACT_KIND_SYNONYMS)}; any other word → \`fact\`, with the word kept in \`context\` (for example ${code(appendOriginalKind('', 'partnership'))}). A facts kind cell longer than three words, or with sentence punctuation, a link or strikethrough, is not read as a kind: it is \`claim_split\`, usually the end of a claim an unescaped \`|\` cut in two. Takes: ${synonymLines(TAKE_KIND_SYNONYMS)}; any other word is \`takes_kind_unsupported\`, because gbrain never chooses a takes kind.`,
     holder_alias: `Takes holder ${codes(brainWords)} (any case) → \`brain\`.`,
     confidence_format: `A percent or a number with stray spaces in \`confidence\` or \`weight\` becomes a decimal: \`85%\` → ${code(confidenceFormat('85%')!)}, \`0. 8\` → ${code(confidenceFormat('0. 8')!)}. A number outside 0 to 1 is \`confidence_out_of_range\`.`,
     holder_verified: 'Tier 2, not Tier 1: a takes holder written as a name becomes the one `people/` or `companies/` page it resolves to exactly. On a world-visible page a private page never matches. Anything less certain stays `holder_unresolved`.',
