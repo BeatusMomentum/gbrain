@@ -2594,13 +2594,23 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Successor checkout differs from the recorded canonical manifest. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### writer_manifest_rescope_required
+
+<a id="writer_manifest_rescope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A writer transfer prepared by an older release covers every file of the old checkout, ignored files included, so a clean Git clone cannot match it. | Transfer manifests now cover the files Git tracks, so ignored secrets such as .env files are never read, hashed or required on the successor; a manifest recorded before that change is prepared again instead of asking the user to copy ignored files. | On the owner host, run gbrain sources writer transfer prepare <source> again with its admin intent and state, then accept with the new epoch and manifest. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/topologies.md#transfer-manifest-scope](../../docs/architecture/topologies.md#transfer-manifest-scope)
+
 ### writer_manifest_unsafe
 
 <a id="writer_manifest_unsafe"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Canonical worktree transfer requires a symlink-free manifest. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, or a Git-scoped comparison ran on a directory Git cannot list. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 ### writer_not_initialized
 

@@ -454,6 +454,26 @@ intent and state checks. Explicit noninteractive provisioning uses the same
 procedure and preconditions. A transfer still requires the prepared epoch and an
 exact successor manifest; stale heartbeats never authorize takeover.
 
+<a id="transfer-manifest-scope"></a>**What the manifest covers.** In a Git checkout, the transfer, `sources
+set-path` (rebind), clone and reclone manifest covers the files Git tracks
+(`git ls-files --cached`), hashed from their bytes in the working tree; a
+tracked file missing on disk counts as deleted (#6099). Files Git ignores (such
+as `.env.local` or `node_modules`) are never opened, hashed or stored, and never
+need copying: a clean `git clone` of the same commit verifies. Untracked files
+that Git does not ignore are not covered; `transfer prepare` reports how many as
+`untracked_files` with a warning to commit or ignore them. Git runs with the
+checkout's own hooks, fsmonitor and submodule recursion disabled. Symlinks and
+submodules refuse with `writer_manifest_unsafe`. A directory that is not the top
+of its own Git work tree keeps the exact-copy manifest over every file. A
+mismatch names the first differing paths for a local rebind (tracked paths only
+in a Git checkout). A transfer an older release prepared covers every file,
+ignored ones included; if the successor is a Git checkout and does not match,
+accept refuses `writer_manifest_rescope_required`: prepare the transfer again
+on the owner host instead of copying ignored files. Upgrading removes the
+per-file path and hash maps releases before v0.60.69 stored with prepared
+transfers and clone recovery records (migration v217); only digests and counts
+remain.
+
 Live, young or foreign legacy locks block activation regardless of expiry. For
 exact dead same-host holders only, preview with
 `--cleanup-dead-local-locks --dry-run` and explicitly opt in on the reviewed
