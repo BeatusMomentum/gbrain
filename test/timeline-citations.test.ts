@@ -1,5 +1,6 @@
 /** #6184: an HTML comment next to an inline citation is markup, never a timeline summary. */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { parseInlineCitationTimelineEntries, stripHtmlComments, supersededInlineCitationEntries } from '../src/core/timeline-citations.ts';
 import { parseTimelineEntries } from '../src/core/link-extraction.ts';
 import { extractTimelineFromContent, hasExtractorDetail, retractRemovedTimelineEntries } from '../src/core/timeline-extract.ts';
@@ -118,24 +119,25 @@ describe('#6226 multi-source citations and emphasis', () => {
 describe('#6226 timeline retraction retires the older reading on unmanaged brains', () => {
   const text = '- **Widget-co:** per Alice. [Source: meeting transcript, 2026-10-06; Gmail "Intro", 2026-09-28]';
   const old = { date: '2026-09-28', source: 'meeting transcript, 2026-10-06; Gmail "Intro"', summary: 'Widget-co:** per Alice.' };
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
+  afterAll(async () => { await engine.disconnect(); }, 60_000);
+  beforeEach(async () => { await resetPgliteState(engine); });
+
   const retract = async (detail: string) => {
-    const engine = new PGLiteEngine();
-    await engine.connect({}); await engine.initSchema();
-    try {
-      await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: text, timeline: '' });
-      await engine.addTimelineEntry('people/alice-example', { ...old, detail });
-      await engine.addTimelineEntry('people/alice-example', { date: '2026-10-06', source: 'meeting transcript', summary: 'Widget-co: per Alice.', detail: 'Source: meeting transcript' });
-      const retired = await retractRemovedTimelineEntries(engine, 'people/alice-example', 'default', text);
-      const left = await engine.executeRaw<{ source: string }>('SELECT source FROM timeline_entries ORDER BY source');
-      return { retired: retired.map(r => r.source), left: left.map(r => r.source) };
-    } finally { await engine.disconnect(); }
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: text, timeline: '' });
+    await engine.addTimelineEntry('people/alice-example', { ...old, detail });
+    await engine.addTimelineEntry('people/alice-example', { date: '2026-10-06', source: 'meeting transcript', summary: 'Widget-co: per Alice.', detail: 'Source: meeting transcript' });
+    const retired = await retractRemovedTimelineEntries(engine, 'people/alice-example', 'default', text);
+    const left = await engine.executeRaw<{ source: string }>('SELECT source FROM timeline_entries ORDER BY source');
+    return { retired: retired.map(r => r.source), left: left.map(r => r.source) };
   };
 
   test('an old row with extractor detail is retracted; the current row stays', async () => {
     expect(await retract(`Source: ${old.source}`)).toEqual({ retired: [old.source], left: ['meeting transcript'] });
-  }, 60_000);
+  });
 
   test('an old row someone gave its own detail stays (T3)', async () => {
     expect(await retract('confirmed by phone')).toEqual({ retired: [], left: ['meeting transcript', old.source] });
-  }, 60_000);
+  });
 });

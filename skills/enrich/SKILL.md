@@ -19,8 +19,6 @@ tools:
   - add_link
   - add_timeline_entry
   - get_backlinks
-  - get_active_schema_pack
-  - schema_explain_type
 mutating: true
 writes_pages: true
 writes_to:
