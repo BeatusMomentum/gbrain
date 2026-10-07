@@ -225,6 +225,8 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         });
       }
     }
+    const { harnessHookCarrierChecks } = await import('./harness-hook-checks.ts');
+    checks.push(...harnessHookCarrierChecks(hr));
   } else if (harnessState.state !== 'absent') {
     checks.push({
       name: 'bootstrap_harness_health',

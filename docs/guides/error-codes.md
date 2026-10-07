@@ -1204,6 +1204,26 @@ More: [docs/guides/move-to-postgres.md#verify](../../docs/guides/move-to-postgre
 |---|---|---|---|---|---|---|
 | Source relationship reconciliation is incomplete. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### harness_hook_duplicates
+
+<a id="harness_hook_duplicates"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A harness hook carrier wires one Claude Code event more than once with this install's own entries (marked or not), so the hook fires twice per event. | Claude Code can drop the `_gbrain` marker when it rewrites settings.json; installs before wave 11 then appended a second set on every re-run. | Correct the request using the message above, then retry. Run: gbrain doctor --only bootstrap_harness_health --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_duplicates](../../docs/guides/bootstrap.md#harness_hook_duplicates)
+
+### harness_hook_unowned
+
+<a id="harness_hook_unowned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A hook entry looks like gbrain's harness hook but is not this install's exact command, so gbrain left it in place. | An unmarked entry is deleted only when its command is exactly what this install (or its receipt) wrote; an edited command or another install's launcher is never removed, and removal is not reported complete while it remains. | Correct the request using the message above, then retry. Run: gbrain bootstrap harness --status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstrap.md#harness_hook_unowned)
+
 ### held_out_overlaps_benchmark
 
 <a id="held_out_overlaps_benchmark"></a>
