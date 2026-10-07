@@ -226,6 +226,13 @@ describe('runTier3: the re-ask and the decline', () => {
     expect(out.ok).toBe(true);
   });
 
+  test('a headerless row whose claim an unescaped pipe cut in two is held before any model call', async () => {
+    const page = { compiled_truth: `${FB}\n| 1 | Headerlesszq9 revenue grew | mostly from enterprise renewals, per the memo | fact | 0.9 | private | high | 2026-06-30 |  | memo |  |\n${FBE}\n`, timeline: '' };
+    const target = { mode: 'db', sourceId: 'default', key: 't3/split', slug: 't3/split', path: null, sourcePath: null, page, content: null, before: pageSha(page), snapshot: null, hold: null,
+      ctx: { pageVisibility: 'private' } } as FenceTarget;
+    expect(await analyzeFences(engine, target, { pageId: null })).toMatchObject({ status: 'manual', reason: 'claim_split' });
+  });
+
   test('HOLD is held as llm_declined and consumes the memo: the same bytes are never sent again', async () => {
     const first = await attempt('t3/hold', [result('HOLD')]);
     expect(first.calls).toHaveLength(1);

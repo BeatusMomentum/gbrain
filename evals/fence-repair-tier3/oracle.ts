@@ -43,14 +43,15 @@ const REASON_OF: Record<string, string | null> = {
  * model call: extra cells that removing empty cells cannot line up (a
  * misplaced text cell, a duplicated value, or a claim cut by an unescaped
  * pipe), held as `extra_cells`, and a sentence in the facts `kind` column,
- * held as `claim_split`. Round 1 ids, then the held-out set's (`h-`).
+ * held as `claim_split`; in a fence with no header the same rows are read by
+ * position from their row number. Round 1 ids, then the held-out set's (`h-`).
  */
 export const FREE_TIER_PATH: Readonly<Record<string, 'tier1' | 'manual'>> = {
   'f-ex-01': 'tier1', 'f-ex-02': 'tier1', 'f-ex-03': 'tier1', 'f-ex-04': 'tier1', 'f-ex-06': 'tier1', 'f-ex-07': 'tier1',
   't-ex-01': 'tier1', 't-ex-02': 'tier1', 't-ex-03': 'tier1', 't-ex-04': 'tier1',
   'f-ex-05': 'manual', 'f-adv-01': 'manual', 'f-adv-02': 'manual', 'f-adv-03': 'manual', 'f-adv-04': 'manual', 't-adv-01': 'manual', 'f-gl-02': 'manual',
   'h-f-ex-01': 'tier1', 'h-f-ex-02': 'tier1', 'h-f-ex-03': 'tier1', 'h-f-ex-04': 'tier1', 'h-t-ex-01': 'tier1', 'h-t-ex-02': 'tier1',
-  'h-f-ex-05': 'manual', 'h-adv-01': 'manual', 'h-adv-02': 'manual', 'h-spl-01': 'manual', 'h-spl-02': 'manual', 'h-spl-03': 'manual',
+  'h-f-ex-05': 'manual', 'h-adv-01': 'manual', 'h-adv-02': 'manual', 'h-spl-01': 'manual', 'h-spl-02': 'manual', 'h-spl-03': 'manual', 'h-spl-04': 'manual',
 };
 
 export type AnswerFn = (f: Fixture, req: Tier3Request, variant: 'as_written' | 'blank_numbers') => string;

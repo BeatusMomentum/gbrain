@@ -484,3 +484,28 @@ describe('stray empty cells and split claims (#6188 T4)', () => {
     expectRepaired(phrase);
   });
 });
+
+describe('fences with no header: rows read by their row number (#6188 T4)', () => {
+  const headerless = (...rows: string[]) => ['## Facts', '', FB, ...rows, FE, ''].join('\n');
+
+  test('a claim an unescaped pipe cut in two is held manual, never sent to the model; the row is untouched', () => {
+    const sentence = '| 4 | Synthco revenue grew 40% | mostly from enterprise renewals | fact | 0.9 | private | high | 2026-06-30 |  | Q2 memo |  |';
+    const short = '| 5 | Synthco churn fell | in Q3 | fact | 0.8 | private | medium | 2026-07-01 |  | dashboard |  |';
+    for (const [row, reason] of [[sentence, 'claim_split'], [short, 'extra_cells']] as const) {
+      const r = run(headerless(factsRow(1, 'Synthco anchor row'), row));
+      expect(reasons(r)).toEqual([reason, 'no_header'].sort() as FenceReason[]);
+      expect(r.fixes).toEqual([]);
+      expect(r.page.compiled_truth).toContain(row);
+      expect(FENCE_REASONS[reason].manualOnly).toBe(true);
+    }
+  });
+
+  test('a stray empty cell is still removed; aligned rows, and rows with no row number to anchor them, stay plain no_header', () => {
+    const r = run(headerless('| 6 | Synthco opened a lab |  | event | 0.7 | private | low | 2026-05-01 |  | site visit |  |'));
+    expect(classes(r)).toEqual(['stray_empty_cell']);
+    expect(reasons(r)).toEqual(['no_header']);
+    expect(r.page.compiled_truth).toContain('| 6 | Synthco opened a lab | event | 0.7 | private | low | 2026-05-01 |  | site visit |  |');
+    expect(reasons(run(headerless(factsRow(1, 'Synthco aligned row'), '| 2 | Synthco short row | idea | 0.4 | private | low |')))).toEqual(['no_header']);
+    expect(reasons(run(headerless('| Synthco unnumbered row | event | 0.8 | private | low | 2026-02-01 |  | press note |  |')))).toEqual(['no_header']);
+  });
+});

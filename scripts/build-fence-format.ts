@@ -187,7 +187,7 @@ function normalizedTable(): string {
   const text = {
     close_fence: 'A fence with no end marker gets one directly after its table, when nothing but blank lines follows the last row up to the end of the section.',
     marker_form: 'Two-dash takes markers (`<!-- gbrain:takes:begin -->`) directly above a takes table become the three-dash markers. Two-dash facts markers are not a fence and are left alone.',
-    stray_empty_cell: 'A row with more cells than its header loses empty cells, only when exactly one choice of empty cells to remove leaves every checked column (`#`, kind, confidence, visibility, notability, `claim_value`; takes kind, holder, weight) valid. Otherwise the row is `extra_cells` and a person fixes it.',
+    stray_empty_cell: 'A row with more cells than its header (with no header: than the narrow layout, or 14 facts cells) loses empty cells, only when exactly one choice of empty cells to remove leaves every checked column (`#`, kind, confidence, visibility, notability, `claim_value`; takes kind, holder, weight) valid. Otherwise the row is `extra_cells` and a person fixes it.',
     renumber: 'A row number that is zero, negative, not a number or a duplicate gets a new number (see [row numbers](#row-numbers)).',
     column_default: `A required facts column missing from the whole header gets its write default: ${Object.entries(COLUMN_DEFAULTS.facts).map(([c, v]) => `${code(c)} ${code(v)}`).join(', ')}. Takes have no defaults; a takes fence with no weight is \`weight_missing\`.`,
     header_alias: 'A header whose every column has a known spelling (see [header spellings](#header-spellings)) becomes the canonical header, and each row\'s cells move into canonical order unchanged.',
