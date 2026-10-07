@@ -9,7 +9,6 @@ test/agent-register.test.ts	resolvePreset	7	readFileSync
 test/agent-register.test.ts	structural guards	2	readFileSync
 test/ai/silent-drop-regression.test.ts	(file-level)	3	source-surface-helper
 test/apply-migrations.test.ts	failed migration prints phase detail (#921)	1	readFileSync
-test/apply-migrations.test.ts	resolveSchemaBehind (#1530)	5	readFileSync
 test/apply-migrations.test.ts	runApplyMigrations exit codes (v0.36.1.x #1062)	1	readFileSync
 test/archived-source-scoping.test.ts	#3880 structural pins — all-source local_path selections filter archived	2	readFileSync
 test/auto-link-targeted-probe-2544.test.ts	#2544 — auto-link behavior through put_page (targeted probe)	6	readFileSync
@@ -57,6 +56,9 @@ test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	9	readFileSync
 test/check-bootstrap-guards.test.ts	check-opencode-pin.sh	6	readFileSync
 test/check-bootstrap-guards.test.ts	verify + workflow wiring	5	readFileSync
+test/check-skill-refs.test.ts	check-skill-refs CLI-ref lane (#6197)	4	exec-scan
+test/check-skill-refs.test.ts	check-skill-refs on the shipped trees	1	exec-scan
+test/check-skill-refs.test.ts	check-skill-refs outside-root links (#6198)	3	exec-scan
 test/check-update.test.ts	check-update CLI	3	source-surface-helper
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	4	readFileSync
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
@@ -290,7 +292,7 @@ test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
 test/scripts/postgres-lane-coverage.test.ts	check-postgres-lane-coverage.ts	9	readFileSync
-test/scripts/regen-all.test.ts	regen:all	4	readFileSync
+test/scripts/regen-all.test.ts	regen:all	5	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	7	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync

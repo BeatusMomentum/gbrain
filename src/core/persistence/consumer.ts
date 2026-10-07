@@ -7,6 +7,7 @@ import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX } from './group-publish.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
 import { claimPhaseStamp, enterClaimPhase, startClaimPhase } from './claim-phase.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
+import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
@@ -32,6 +33,12 @@ const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
 /** #5233: one-line, redacted, length-capped error text for the consumer's stderr line. */
+/** #5929: the failed receipt's message plus, for an owner exception, its class, errno and gbrain frame (this log is owner-side). */
+function failureLogText(row: WriteRequest): string | undefined {
+  const extra = ownerExceptionLogText(row.error_detail);
+  return row.error_message || extra ? `${row.error_message ?? ''}${extra}`.replaceAll('"', "'") : undefined;
+}
+
 function errorDetail(error: unknown): string | undefined {
   const message = (error as { message?: unknown } | null)?.message;
   if (typeof message !== 'string' || !message.trim()) return undefined;
@@ -561,7 +568,7 @@ export class PersistenceConsumer {
       enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
       const done = await publishMutation(this.engine, row, prepared, this.hostId);
-      if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', done.error_message ?? undefined);
+      if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));
       if (done.state === 'committed' && row.worktree_id && !String(row.intent?.kind).startsWith('managed_sync_')) {
         this.foregroundCounts.set(row.worktree_id, this.foregroundCompletions(row.worktree_id) + 1);
       }
@@ -575,7 +582,7 @@ export class PersistenceConsumer {
       const current = await getWriteRequestById(this.engine, row.id);
       if (current && !isTerminal(current) && current.execution_token === row.execution_token && !current.recovery) {
         const done = await finishUnpublishedFailure(this.engine, current, error, preparationActive ? 'preparation' : 'publication');
-        if (done.state === 'failed') this.log(preparationActive ? 'preparation' : 'publication', done.error_code ?? 'storage_error', done.error_message ?? undefined);
+        if (done.state === 'failed') this.log(preparationActive ? 'preparation' : 'publication', done.error_code ?? 'storage_error', failureLogText(done));
         return this.settled(done);
       }
       throw error;

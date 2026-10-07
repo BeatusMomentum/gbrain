@@ -4,6 +4,8 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
+import { VERSION } from '../../version.ts';
+import { ownerBuildMismatch } from './publication-failure.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam, requireWritablePage, validatePageSlug } from '../ops/context.ts';
 import { suffixedSlugAdmission } from './suffixed-slug.ts';
 import { defaultSlug, detectBinaryNullByte, explicitCaptureType, mergeCaptureFrontmatter, normalizeForHash } from '../capture-content.ts';
@@ -13,6 +15,7 @@ import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import { sha256 } from './digest.ts';
 import { assertPersistenceAccepting, estimatedRetryAfterMs, waitForWrite, writeResponse } from './service.ts';
 import { parseWireWriteWaitMs } from './write-wait.ts';
+import { assertTimelineNotOmitted, isTimelineSection, timelineSectionOf, type TimelineSection } from './timeline-omission.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { submissionAuthority, authorizeStoredRequest } from './authority.ts';
 import { currentVerifiedLocalWriter, localHostId, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
@@ -30,6 +33,8 @@ import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
+  // #5994: a failed-writes replay is admitted under the original writer.
+  if (ctx.replayAuthority) return { ...ctx.replayAuthority.principal };
   if (ctx.auth?.principal) return { ...ctx.auth.principal };
   const verified = currentVerifiedLocalWriter();
   if (verified) return verified.principal;
@@ -132,7 +137,12 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
 }
 
 function pendingAwareResponse(ctx: OperationContext, row: WriteRequest): Record<string, unknown> {
-  return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) });
+  try { return writeResponse(row, { retryAfterMs: estimatedRetryAfterMs(ctx.engine, 1) }); } catch (error) {
+    // #5929: a trusted local caller is told when an owner on another build ran the failed attempt.
+    const mismatch = ctx.remote === false ? ownerBuildMismatch(row.error_detail, VERSION) : null;
+    if (mismatch && error instanceof OperationError) { error.why = mismatch.why; error.fix = mismatch.fix; }
+    throw error;
+  }
 }
 
 /** #6188 (D21): a write whose fence Tier 1 rewrote carries one `fence_normalized` coaching notice. */
@@ -148,7 +158,7 @@ const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 
 export interface PageBatchMember { id: string; index: number; size: number; requestId: string }
 
 export async function submitPageMutation(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true }): Promise<Record<string, unknown>> {
+  input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -169,7 +179,7 @@ export async function submitPageMutation(ctx: OperationContext,
  * the admission to submit. `put_pages` admits several of these together.
  */
 export async function preparePageAdmission(ctx: OperationContext,
-  input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember }
+  input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; timelineSection?: TimelineSection }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -178,7 +188,7 @@ export async function preparePageAdmission(ctx: OperationContext,
         'Drop kind, preview and backup_reference from put_page; reconciling a canonical file runs through gbrain sources reconcile on the brain host.');
     }
   }
-  const { page_batch: _forged, ...params } = input.params;
+  const { page_batch: _forged, timeline_section: _section, ...params } = input.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size };
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
@@ -207,6 +217,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(input.operation)
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
   delete intent.request_id;
+  // #5969 (D3): read before normalization; a replay carries the section its first admission read.
+  if (input.operation === 'put_page' && input.managedFileImport !== true && p.kind === undefined && typeof p.content === 'string') {
+    intent.timeline_section = isTimelineSection(input.timelineSection) ? input.timelineSection : timelineSectionOf(p.content, slug);
+  }
   if (input.operation === 'put_page') await normalizeSubagentPageInput(ctx, intent);
   const typeWarning = input.operation === 'put_page' && input.managedFileImport !== true
     ? await undeclaredPageTypeWarning(ctx, { ...intent, slug }, sourceId) : null;
@@ -247,6 +261,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   const authority = await submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug);
   await assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug });
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
+  if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
+    await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
+      slug, sourceId, content: intent.content, prior: snapshot });
+  }
   const slugAdvisory = input.operation === 'put_page' && input.managedFileImport !== true
     ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at) : null;
   // #5616: typed edit refusals before admission; publication repeats them on the locked snapshot.
