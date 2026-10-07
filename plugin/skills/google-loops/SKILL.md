@@ -153,7 +153,7 @@ unanswered-thread detector is free and unaffected.
 
 ## Output Format
 
-When relaying `gbrain waiting`, present per counterparty, most urgent first:
+When relaying `gbrain waiting`, present per counterparty, most urgent first, then the `## No counterparty` section (loops that name no person) last:
 
 ```
 ## <Counterparty> (<N> open)

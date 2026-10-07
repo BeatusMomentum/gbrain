@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 207947,
-    "stdoutSha256": "e701d9d6ea58a198e29b939eba243b90349890cb3713631c940fbcbe6781e06d",
+    "stdoutBytes": 208130,
+    "stdoutSha256": "06ae73add41b18eedf984fd14f85603ad1aa57af46eb7597f05b27da457397a4",
     "toolNames": [
       "remember",
       "entity",
@@ -6379,7 +6379,7 @@
         "scope": "admin"
       },
       {
-        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked) or flat. Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command.",
+        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
