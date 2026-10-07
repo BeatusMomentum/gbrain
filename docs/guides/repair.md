@@ -900,8 +900,7 @@ sent again until the file, the model or the rules change.
 The repair model is `models.fence_repair` when set. Unset, it is the first
 model the fence-repair eval measured as accurate enough whose provider key the
 brain has: `openai:gpt-6.1-sol` with an OpenAI key, else
-`anthropic:claude-opus-5-5` with an Anthropic key (`anthropic:claude-fable-5-1`
-also met the bar). With neither key, model-tier fences wait as
+`anthropic:claude-opus-5-5` with an Anthropic key. With neither key, model-tier fences wait as
 `no_measured_model` until the user picks a model.
 
 The gates check that no text is lost or rewritten; they cannot tell which of two
