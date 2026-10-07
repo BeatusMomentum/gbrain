@@ -102,7 +102,7 @@ export interface PatternsPhaseOpts {
  * working.
  */
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
-import { patternsBudgetSkipFix, planPatternsRun, readPatternsLastRun, recordPatternsBudgetSkip, recordPatternsLastRun } from './patterns-plan.ts';
+import { recordPatternsLastRun, sizePatternsRun } from './patterns-plan.ts';
 export { CYCLE_DEADLINE_RESERVE_MS };
 
 /**
@@ -243,21 +243,10 @@ export async function runPhasePatterns(
       );
     }
 
-    // #6177: size an in-cycle run to its budget from the recorded cost of recent runs; skip before any spend.
-    const lastRun = await readPatternsLastRun(engine);
-    const plan = planPatternsRun({ budgetMs: opts.deadlineAtMs == null ? null : budgets.timeoutMs, lastRun,
-      reflections: reflections.length, minEvidence: config.minEvidence, nowMs: Date.now() });
-    if (plan.kind === 'skip') {
-      if (lastRun) await recordPatternsBudgetSkip(engine, lastRun);
-      return { phase: 'patterns', status: 'skipped', duration_ms: 0,
-        summary: `patterns: the ${Math.round(budgets.timeoutMs / 1000)}s cycle budget fits ${plan.n} of ${reflections.length} reflections ` +
-          `at the recorded runtime (need ≥${config.minEvidence}); nothing was submitted. Run it outside the cycle: gbrain dream --phase patterns`,
-        details: { reason: 'insufficient_cycle_budget', cause: 'budget_below_recent_runtime', reflections_selected: reflections.length,
-          reflections_submitted: 0, reflections_fit: plan.n, budget_ms: budgets.timeoutMs, last_run: lastRun,
-          fix: patternsBudgetSkipFix(), reset_command: 'gbrain config unset dream.patterns.last_run' } };
-    }
-    const selected = reflections.length;
-    const submitted = reflections.slice(0, plan.n);
+    // #6177: size an in-cycle run from the recorded cost of recent runs; a run that cannot fit is skipped before any spend.
+    const sized = await sizePatternsRun(engine, { budgetMs: opts.deadlineAtMs == null ? null : budgets.timeoutMs, reflections: reflections.length, minEvidence: config.minEvidence });
+    if (sized.kind === 'skip') return sized.result;
+    const { plan } = sized, selected = reflections.length, submitted = reflections.slice(0, plan.n);
 
     const queue = new MinionQueue(engine);
     // #2050: children drain inline on BOTH engines (see runSubagentsInline),
@@ -364,9 +353,7 @@ export async function runPhasePatterns(
       }
     }
 
-    // #6177: every child records its cost, timed-out and failed ones included.
-    await recordPatternsLastRun(engine, { duration_ms: Date.now() - submittedAt, reflections: submitted.length, at: new Date().toISOString(),
-      outcome: outcome === 'completed' ? 'completed' : outcome === 'timeout' ? 'timeout' : 'failed' });
+    await recordPatternsLastRun(engine, { duration_ms: Date.now() - submittedAt, reflections: submitted.length, outcome }); // #6177: every child, timed out or failed too
 
     if (opts.yieldDuringPhase) {
       try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }

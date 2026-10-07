@@ -49,6 +49,7 @@ import { lineGrammarOptions } from './line-grammar.ts';
 
 import { join } from 'node:path';
 import { readdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import type { CorpusFactTime } from './context/corpus-windows.ts';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput } from './engine.ts';
 import type { FactsBackstopCtx } from './facts/backstop.ts';
 import type { CapabilityReport } from './capability.ts';
@@ -127,6 +128,17 @@ export interface SweepReport {
   corpus_files: Array<{ file: string; windows_done: number; windows_remaining: number }>;
   skipped: SweepSkip[];
   durationMs: number;
+}
+
+/**
+ * #6159: the session file's write time as its facts' time (`turnAt`), or
+ * undefined when the file time is not trusted (logged; the facts are then
+ * dated at extraction).
+ */
+function corpusTurnAt(name: string, factTime: CorpusFactTime, log: (line: string) => void): Date | undefined {
+  if ('at' in factTime) return factTime.at;
+  log(`[sweep] ${name}: file time not trusted (${factTime.rejected}); its facts are dated at extraction time.`);
+  return undefined;
 }
 
 /**
@@ -756,11 +768,6 @@ async function runCorpusIngestPass(
       const wbSourceId = wbMeta?.sourceId && isValidSourceId(wbMeta.sourceId)
         ? wbMeta.sourceId
         : sourceId;
-      // #6159: facts happened when the session file was written, not when this (possibly late) sweep runs.
-      const factTime = windows.corpusFactTime(fileStat.mtime_ms);
-      if ('rejected' in factTime) {
-        log(`[sweep] ${name}: file time not trusted (${factTime.rejected}); its facts are dated at extraction time.`);
-      }
       const pipelineCtx: FactsBackstopCtx = {
         engine,
         sourceId: wbMeta ? wbSourceId : sourceId,
@@ -774,9 +781,8 @@ async function runCorpusIngestPass(
         mode: 'inline',
         remote: false,
         abortSignal: signal,
-        // #5888/#6159: the file's write time anchors the capture dedup window and dates the facts
-        // (turnAt, never validFrom: validFrom is part of the managed batch key).
-        turnAt: 'at' in factTime ? factTime.at : undefined,
+        // #5888/#6159: the file's write time anchors the dedup window and dates the facts (never validFrom: a batch-key input).
+        turnAt: corpusTurnAt(name, windows.corpusFactTime(fileStat.mtime_ms), log),
         reAdmitFileRefusals: true,
         ...(wbMeta && wbCfg.mode === 'salient' ? { notabilityFilter: 'medium-and-up' as const } : {}),
         // visibility deliberately unset → resolveDefaultVisibility [ENG-8]

@@ -1198,26 +1198,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
 
     // #4907: a phase knob the phase would ignore is refused before the write.
-    const { PHASE_CONFIG_KEYS, parsePhaseConfigValue } = await import('../core/cycle/phase-config-values.ts');
-    if (PHASE_CONFIG_KEYS.includes(key)) {
-      try { parsePhaseConfigValue(key, value); }
-      catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
-    }
-
-    // #6177: dream.patterns.last_run is state the patterns phase records, not a setting.
-    if (key === 'dream.patterns.last_run') {
-      const { opError } = await import('../core/ops/contract.ts');
-      (await import('../cli/cli-error.ts')).exitCliError(opError('invalid_params', 'dream.patterns.last_run is recorded by the patterns phase and cannot be set.',
-        'To forget the recorded run cost, unset it: gbrain config unset dream.patterns.last_run', {
-          why: 'The phase sizes in-cycle runs from the cost of the last child it ran; a hand-written value would mis-size them. Nothing was written.',
-          fix: { argv: ['gbrain', 'config', 'unset', 'dream.patterns.last_run'], consent: [], actor: 'agent', requires_exclusive: false,
-            why: 'Unsetting resets the record; the next in-cycle run submits a conservative first batch.', verify: { argv: ['gbrain', 'config', 'get', 'dream.patterns.last_run'] } },
-        }), 'config');
-    }
-
-    // #6134: a path in cycle.lint_exclude would never match a basename.
-    if (key === 'cycle.lint_exclude') {
-      try { (await import('../core/cycle/lint-fix-setting.ts')).parseCycleLintExclude(value); }
+    const [{ PHASE_CONFIG_KEYS, parsePhaseConfigValue }, { CYCLE_GUARDED_KEYS, assertCycleConfigValue }] = await Promise.all([import('../core/cycle/phase-config-values.ts'), import('../core/cycle/config-guards.ts')]);
+    if (PHASE_CONFIG_KEYS.includes(key) || CYCLE_GUARDED_KEYS.includes(key)) { // #6134/#6177: lint_exclude paths, the last_run state key
+      try { if (PHASE_CONFIG_KEYS.includes(key)) parsePhaseConfigValue(key, value); else assertCycleConfigValue(key, value); }
       catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
     }
 

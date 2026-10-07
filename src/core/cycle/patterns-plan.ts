@@ -10,6 +10,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
+import type { PhaseResult } from '../cycle.ts';
 
 export const PATTERNS_LAST_RUN_KEY = 'dream.patterns.last_run';
 /** Reflections a first in-cycle run submits with no history (or min_evidence, if larger). */
@@ -74,8 +75,11 @@ export async function readPatternsLastRun(engine: BrainEngine): Promise<Patterns
   }
 }
 
-export async function recordPatternsLastRun(engine: BrainEngine, run: Omit<PatternsLastRun, 'budget_skips'>): Promise<void> {
-  await engine.setConfig(PATTERNS_LAST_RUN_KEY, JSON.stringify({ ...run, budget_skips: 0 })).catch(() => undefined);
+/** Record a child's cost; any end other than completed or timeout is `failed`. */
+export async function recordPatternsLastRun(engine: BrainEngine, run: { duration_ms: number; reflections: number; outcome: string }): Promise<void> {
+  const outcome: PatternsLastRun['outcome'] = run.outcome === 'completed' || run.outcome === 'timeout' ? run.outcome : 'failed';
+  const record: PatternsLastRun = { duration_ms: run.duration_ms, reflections: run.reflections, at: new Date().toISOString(), outcome, budget_skips: 0 };
+  await engine.setConfig(PATTERNS_LAST_RUN_KEY, JSON.stringify(record)).catch(() => undefined);
 }
 
 export async function recordPatternsBudgetSkip(engine: BrainEngine, lastRun: PatternsLastRun): Promise<void> {
@@ -89,4 +93,23 @@ export function patternsBudgetSkipFix(): Action {
     why: 'A direct run is not limited by the cycle budget and records its cost for the next cycle. It is a paid model run, so ask the user first. To forget the recorded cost instead: gbrain config unset dream.patterns.last_run',
     docs: 'docs/guides/dream-patterns.md#budget-sizing',
   };
+}
+
+/**
+ * The phase's sizing step: plan from the recorded last run, or the budget
+ * skip result (the skip is counted toward the probe, nothing is submitted).
+ */
+export async function sizePatternsRun(engine: BrainEngine, input: { budgetMs: number | null; reflections: number; minEvidence: number }):
+  Promise<{ kind: 'submit'; plan: Extract<PatternsPlan, { kind: 'submit' }> } | { kind: 'skip'; result: PhaseResult }> {
+  const lastRun = await readPatternsLastRun(engine);
+  const plan = planPatternsRun({ ...input, lastRun, nowMs: Date.now() });
+  if (plan.kind === 'submit') return { kind: 'submit', plan };
+  if (lastRun) await recordPatternsBudgetSkip(engine, lastRun);
+  const budgetMs = input.budgetMs ?? 0;
+  return { kind: 'skip', result: { phase: 'patterns', status: 'skipped', duration_ms: 0,
+    summary: `patterns: the ${Math.round(budgetMs / 1000)}s cycle budget fits ${plan.n} of ${input.reflections} reflections ` +
+      `at the recorded runtime (need ≥${input.minEvidence}); nothing was submitted. Run it outside the cycle: gbrain dream --phase patterns`,
+    details: { reason: 'insufficient_cycle_budget', cause: plan.reason, reflections_selected: input.reflections,
+      reflections_submitted: 0, reflections_fit: plan.n, budget_ms: budgetMs, last_run: lastRun,
+      fix: patternsBudgetSkipFix(), reset_command: `gbrain config unset ${PATTERNS_LAST_RUN_KEY}` } } };
 }
