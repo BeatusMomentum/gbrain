@@ -630,7 +630,7 @@ gbrain onboard --check --json
 The JSON envelope (`schema_version: 1`) carries `recommendations[]` with
 `apply_policy` per item: `auto_apply` (safe to run unattended),
 `prompt_required` (needs explicit user consent), or `manual_only`
-(LLM-bearing, user must run themselves).
+(the schema-pack upgrade or the paid takes bootstrap; the user runs it).
 
 **After every `gbrain upgrade`:**
 ```bash
@@ -644,7 +644,9 @@ step regardless.
 ```bash
 gbrain onboard --auto --max-usd 5
 ```
-Refuses without `--max-usd N`. Runs auto-eligible items only. The
+Refuses without `--max-usd N`. Never runs a `manual_only` item: the
+result lists each under `manual_only_skipped` with the command for the
+user to run (`fix.next` is `tell_user_to_run`). The
 autopilot daemon also consults onboard recommendations on its tick — no
 explicit agent action needed for the autonomous path.
 
