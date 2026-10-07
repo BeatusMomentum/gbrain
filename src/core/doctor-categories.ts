@@ -66,6 +66,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'derived_visibility',
   'extractor_facts_expired',
   'loop_facts_drift',
+  'ontology_facts_fenced',
   'orphan_persistence_bindings',
   'safe_index_pending',
   'self_capture',

@@ -71,6 +71,36 @@ gbrain config set cycle.lint_exclude attachments,drafts.md
 
 Contributed by @andreineacsu (#6140, #6155, #6152, #6182, #6166, #6148, #6200, #6145, #6141, #6180, #6174), @MarvinDontPanic (#6186, #6187, #6147, #6132), @javieraldape (#6172, #6151), @Masashi-Ono0611 (#6175, #6181, #6179, #5371). Each idea was re-implemented and widened; their PRs are superseded.
 
+## [0.60.104.0] - 2026-10-07
+
+**Ontology observations stay in the ontology: the maintenance sweep no longer moves them onto a page's Facts table and loses them.**
+
+Since v0.60.53.0 the facts step of the maintenance run (the sweep `gbrain serve` runs after about 3 seconds of quiet, and the dream cycle) moved every fact without a table row onto its entity page's `## Facts` table. That included ontology observations from `ontology_propose`, such as "Alder's location is Example City from 2026". Each one took the page as its source, and the next ordinary rewrite of the page, which didn't list it, plus one more sweep, retired it: `ontology_get` returned nothing for a write gbrain had acknowledged. The same step republished the page, so a client that had just read the page and was writing it back got `revision_conflict`, and the page kept serving its previous Facts value. Observations are now never moved, and they no longer hold up the reconcile of their page. Found by gbrain-evals N1-ci under CPU load (ledger N1-7, #6264).
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| Maintenance sweep, dream cycle | The `extract_facts` step leaves rows with a `dimension` (ontology observations) alone and doesn't count them as rows waiting for a table. It doesn't rewrite a page for them. |
+| `gbrain doctor` | New `ontology_facts_fenced` check: how many observations an earlier release moved (still on a page table, or already retired by a page write), and the repair that brings them back. |
+| `gbrain repair ontology-facts` | Explicit-only and preview-bound. The preview lists every moved observation (`fenced`, `retired`, or excluded as `withdrawn`, `consolidated` or `duplicate`); `--apply --expect <hash>` gives each one its own source back, takes it off the table and makes a retired one active again. Database only: page text isn't rewritten, so a line the old step added to a page's Facts table stays there as an ordinary page fact. |
+
+### For contributors
+
+- `planUnfencedFacts` (`src/core/facts/unfenced-facts.ts`) and the empty-fence guard in `src/core/cycle/extract-facts.ts` select `dimension IS NULL` rows only. The fence step stays source-wide: the rows it fences are the inline writer's database-only facts, which mostly land on pages the run's slug list doesn't name.
+- `src/core/repair/ontology-facts.ts` finds ontology rows with a fence row number or a `source_markdown_slug` other than their `source` (ontology writes produce neither) and restores them through `ontology_propose`'s coordinated database-only write on managed brains.
+- `test/ontology-fence-sweep.test.ts` (PGLite, Postgres through `test/e2e/ontology-fence-sweep-postgres.test.ts`) runs the N1-7 repro (observation, sweep, page rewrite, sweep) on managed and unmanaged brains, a page write bound to a revision read before the sweep (it failed with `revision_conflict` before the fix), the reconcile guard, and the repair from damage made by the old fence step.
+
+## To take advantage of v0.60.104.0
+
+`gbrain upgrade` stops new losses. If you used `ontology_propose` on v0.60.53.0 or later, check what was moved and restore it:
+
+```bash
+gbrain doctor --only ontology_facts_fenced
+gbrain repair ontology-facts                 # preview: read-only, prints the apply command
+gbrain repair ontology-facts --apply --expect <hash>
+```
+
 ## [0.60.103.0] - 2026-10-07
 
 **A legacy access token's first burst of reads converts it to the unified grant columns reliably, and the last nightly Test reds are fixed at their cause.**
