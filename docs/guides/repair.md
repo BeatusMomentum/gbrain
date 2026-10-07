@@ -613,6 +613,7 @@ candidate one class:
 | `duplicate` | A later request with the same intent exists; that one is the candidate. | Kept. |
 | `superseded` | A later write or delete of the page committed or is still pending; for `put_page`, also a later failed `put_page` of the page (the newer content) or a page that changed after the revision the caller read. | Kept. Read the page and re-issue the change by hand if it is still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
+| `file_database_drift` | Its last replay was refused `source_changed`: the page's file and the database differ (an edit made in the file only), and the page has not been written since. | Kept. Reconcile the page first (`gbrain sources reconcile <source> <slug> --preview`, which the listing names); the next preview lists the write as `replay` again once the page changes. An apply that hits the same refusal reports `file_database_drift` too. |
 | `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content, such as `gbrain sync --source <id> --no-pull --retry-failed --json`. |
 
 The apply replays exactly the previewed set. Each write is classified again
