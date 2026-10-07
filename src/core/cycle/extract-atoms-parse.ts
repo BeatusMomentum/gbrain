@@ -37,9 +37,30 @@ const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
  */
 export type AtomsParseOutcome =
   | { ok: true; atoms: ExtractedAtom[] }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; stopped?: true };
 
-export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
+/**
+ * #6260: the gateway stop reason decides how far a response is trusted. A
+ * response stopped by the output cap, a refusal or a content filter is never
+ * parsed; `other` and `tool_calls` (some local providers report a normal end
+ * as `other`) are parsed, but their zero-yield is never taken as a
+ * completion. Both come back `ok: false, stopped: true`, so the caller counts
+ * them like malformed output (the bounded streak; managed: a failure receipt,
+ * which never retires earlier atoms). A missing reason (legacy chat seams)
+ * reads as a normal end.
+ */
+export function parseAtomsOutcome(raw: string, stopReason?: string): AtomsParseOutcome {
+  if (stopReason === 'length' || stopReason === 'refusal' || stopReason === 'content_filter') {
+    return { ok: false, stopped: true, reason: `output stopped before the end (stopReason=${stopReason})` };
+  }
+  const outcome = parseAtomsText(raw);
+  if ((stopReason === 'other' || stopReason === 'tool_calls') && outcome.ok && outcome.atoms.length === 0) {
+    return { ok: false, stopped: true, reason: `an empty answer under stopReason=${stopReason} is not taken as complete` };
+  }
+  return outcome;
+}
+
+function parseAtomsText(raw: string): AtomsParseOutcome {
   const direct = parseAtomsOutcomeInner(raw);
   if (direct.ok) return direct;
   // Same reasoning-block hazard as the facts extractor: `indexOf('[')` below
