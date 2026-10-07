@@ -58,6 +58,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'abandoned_threads',
   'atom_provenance_drift',
   'captured_facts_active',
+  'conversation_label_facts',
   'conversation_outcomes_stale',
   'connector_checkpoints',
   'connector_held_items',

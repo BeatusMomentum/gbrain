@@ -309,10 +309,8 @@ async function mergedEntities(tx: BrainEngine, sourceId: string, slugs: string[]
  */
 export async function replaceConversationFacts(tx: BrainEngine, sourceId: string, slug: string,
   rows: Array<Omit<ConversationFactRow, 'row_num' | 'source_markdown_slug'>>): Promise<{ deleted: number; inserted: number }> {
-  const [deleted] = await tx.executeRaw<{ count: string }>(
-    `WITH del AS (DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' RETURNING 1)
-     SELECT COUNT(*)::text AS count FROM del`, [sourceId, slug]);
-  if (!rows.length) return { deleted: Number(deleted?.count ?? 0), inserted: 0 };
+  const deleted = await clearConversationFacts(tx, sourceId, slug);
+  if (!rows.length) return { deleted, inserted: 0 };
   const [top] = await tx.executeRaw<{ n: number | string | null }>(
     'SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [sourceId, slug]);
   const start = top?.n == null ? 0 : Number(top.n) + 1;
@@ -321,7 +319,29 @@ export async function replaceConversationFacts(tx: BrainEngine, sourceId: string
     throw opError('storage_error', 'A conversation fact insert was lost; the page\'s prior facts were kept.',
       `Only ${inserted} of ${rows.length} fact rows of ${slug} in source ${sourceId} were inserted, so the replacement rolled back. Run the extraction for the page again; report this if it repeats.`);
   }
-  return { deleted: Number(deleted?.count ?? 0), inserted };
+  return { deleted, inserted };
+}
+
+/** Context marker `gbrain repair conversation-labels` appends to the rows it retires. */
+export const LABEL_RETIRED_MARKER = 'retired: conversation-labels';
+
+/**
+ * Clears a page's prior extractor batch before a replacement, keeping the
+ * history other records depend on: a row an open loop (`open_loops.fact_id`,
+ * no FK) or another fact's `superseded_by` references is expired, never
+ * deleted, and rows `gbrain repair conversation-labels` retired stay expired.
+ * Every other extractor row of the page is deleted. Returns the rows removed
+ * from the active batch.
+ */
+export async function clearConversationFacts(db: BrainEngine, sourceId: string, slug: string): Promise<number> {
+  const page = `f.source_id=$1 AND f.source_markdown_slug=$2 AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'`;
+  const referenced = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
+  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now()
+    WHERE ${page} AND f.expired_at IS NULL AND (${referenced}) RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, [sourceId, slug]);
+  const [deleted] = await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f
+    WHERE ${page} AND NOT (${referenced}) AND COALESCE(f.context,'') NOT LIKE '%${LABEL_RETIRED_MARKER}%' RETURNING 1)
+    SELECT COUNT(*)::text AS count FROM del`, [sourceId, slug]);
+  return Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
 }
 
 /** Preparer for `managed_maintenance_conversation_facts`: a database-only publication on the page key. */

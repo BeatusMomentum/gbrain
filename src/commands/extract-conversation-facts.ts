@@ -77,7 +77,7 @@ import {
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { managedConversationPublisher, publishManagedBatch, startManagedPage, stopsRun, type ManagedConversationPublisher } from '../core/facts/conversation-publication.ts';
+import { clearConversationFacts, managedConversationPublisher, publishManagedBatch, startManagedPage, stopsRun, type ManagedConversationPublisher } from '../core/facts/conversation-publication.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingMessage } from '../core/budget/no-pricing.ts';
 import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
@@ -728,19 +728,7 @@ async function deleteOrphanFactsForPage(
 ): Promise<number> {
   // A cleanup failure is authoritative: callers must not write a terminal or
   // non-extractable marker while facts from an older snapshot may remain.
-  const rows = await writeDerivedFacts(engine, sourceId, slug, db => db.executeRaw<{ count: string }>(
-    `WITH del AS (
-       DELETE FROM facts
-       WHERE source_id = $1
-         AND source_markdown_slug = $2
-         AND source LIKE 'cli:extract-conversation-facts%'
-       RETURNING 1
-     )
-     SELECT COUNT(*)::text AS count FROM del`,
-    [sourceId, slug],
-  ));
-  const n = parseInt(rows[0]?.count ?? '0', 10);
-  return Number.isFinite(n) ? n : 0;
+  return writeDerivedFacts(engine, sourceId, slug, db => clearConversationFacts(db, sourceId, slug));
 }
 
 // ---------------------------------------------------------------------------
@@ -904,7 +892,7 @@ export async function findFreshExtractionOutcomes(
        FROM facts
       WHERE source_id = $1
         AND source_markdown_slug = ANY($2::text[])
-        AND source = ANY($3::text[])
+        AND source = ANY($3::text[]) AND expired_at IS NULL
       ORDER BY source_markdown_slug,
         CASE WHEN source = $4 THEN 0 ELSE 1 END`,
     [
@@ -1113,9 +1101,9 @@ async function processPage(
     );
   }
 
-  // Page-global row_num: after delete-orphans-first the table has no
-  // rows for this (sourceId, slug), so we always start from 0.
-  let rowNum = 0;
+  // Page-global row_num, above every row the cleanup kept (retired or referenced history,
+  // fence rows); 0 on a page with none. A managed batch is renumbered under its lock.
+  let rowNum = state.managed ? 0 : await peekRowNumStart(state.engine, state.sourceId, page.slug);
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
@@ -1808,6 +1796,8 @@ interface ParsedArgs {
   sourceId?: string;
   types?: AllowedType[];
   slug?: string;
+  /** Exactly these pages (comma-separated `--slugs`; `gbrain repair conversation-labels` prints it). */
+  slugs?: string[];
   dryRun?: boolean;
   limit?: number;
   sinceIso?: string;
@@ -1824,7 +1814,7 @@ interface ParsedArgs {
   error?: string;
 }
 
-function parseArgs(args: string[]): ParsedArgs {
+export function parseArgs(args: string[]): ParsedArgs {
   const out: ParsedArgs = {};
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1835,6 +1825,7 @@ function parseArgs(args: string[]): ParsedArgs {
     if (a === '--yes' || a === '-y') { out.yes = true; continue; }
     if (a === '--override-disabled') { out.overrideDisabled = true; continue; }
     if (a === '--slug') { out.slug = args[++i]; continue; }
+    if (a === '--slugs') { out.slugs = (args[++i] ?? '').split(',').map(s => s.trim()).filter(Boolean); continue; }
     if (a === '--source-id') { out.sourceId = args[++i]; continue; }
     if (a === '--since') { out.sinceIso = args[++i]; continue; }
     if (a === '--types') {
@@ -1899,6 +1890,7 @@ Options:
                          Default: reads cycle.conversation_facts_backfill.types config
                          (falls back to the full allowlist).
   --slug <slug>          Process a single page (overrides multi-page enumeration).
+  --slugs <a,b,...>      Process exactly these pages (comma-separated).
   --dry-run              Show segmentation + counts; no model calls, DB writes, or checkpoint advance.
   --limit <N>            Cap pages processed (default: all).
   --since <iso>          Only consider messages newer than this ISO timestamp.
@@ -1940,6 +1932,7 @@ function buildJobParams(args: string[]): Record<string, unknown> {
     sourceId: parsed.sourceId,
     types: parsed.types,
     slug: parsed.slug,
+    slugs: parsed.slugs,
     dryRun: parsed.dryRun,
     limit: parsed.limit,
     sinceIso: parsed.sinceIso,
@@ -2037,6 +2030,7 @@ export async function runExtractConversationFacts(
         sourceId,
         types: parsed.types,
         slug: parsed.slug,
+        slugs: parsed.slugs,
         dryRun: parsed.dryRun,
         limit: parsed.limit,
         sinceIso: parsed.sinceIso,
@@ -2132,12 +2126,8 @@ export async function runExtractConversationFacts(
     if (aggregate.pages_failed > 0) {
       console.error(`  Failed ${aggregate.pages_failed} page(s); they remain unfinished and will retry.`);
     }
-    if (aggregate.pages_pending) {
-      console.log(`  ${aggregate.pages_pending} page(s) were accepted and are still pending; rerun the same command to confirm them (no model call).`);
-    }
-    if (aggregate.pages_blocked) {
-      console.log(`  ${aggregate.pages_blocked} page(s) are blocked at their current version after a request failed; they are retried only once the page changes (each SKIP line names the receipt).`);
-    }
+    if (aggregate.pages_pending) console.log(`  ${aggregate.pages_pending} page(s) were accepted and are still pending; rerun the same command to confirm them (no model call).`);
+    if (aggregate.pages_blocked) console.log(`  ${aggregate.pages_blocked} page(s) are blocked at their current version after a request failed; they are retried only once the page changes (each SKIP line names the receipt).`);
     if (aggregate.pages_llm_fallback > 0) {
       console.log(`  Parsed ${aggregate.pages_llm_fallback} page(s) with the opt-in LLM fallback.`);
     }

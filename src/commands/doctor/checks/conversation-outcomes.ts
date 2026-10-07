@@ -49,3 +49,31 @@ export async function conversationOutcomesStaleCheck(engine: BrainEngine, source
       message: `Conversation extraction outcomes could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
   }
 }
+
+export const LABEL_SCAN_CAP = 1000;
+
+/**
+ * conversation_label_facts (wave 9 follow-ups, item 2): active conversation
+ * facts on meeting-note pages whose context names a 1970-01-01 segment, the
+ * signature of the pre-v0.60.69 parser reading `**Date:**`-style labels as
+ * speakers. Bounded (indexed extractor rows, capped at LABEL_SCAN_CAP and
+ * reported as at least N). Points at the repair's preview, never at apply.
+ * Read-only.
+ */
+export async function conversationLabelFactsCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
+  const name = 'conversation_label_facts';
+  try {
+    const { countLabelFacts } = await import('../../../core/repair/conversation-labels.ts');
+    const sources = sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+    const { count, capped } = await countLabelFacts(engine, sources, LABEL_SCAN_CAP);
+    const details = { evidenced: count, capped, repair: 'conversation-labels', docs: 'docs/guides/repair.md#conversation-labels' };
+    if (!count) return { name, status: 'ok', details, message: 'No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).' };
+    return { name, status: 'warn', details,
+      message: `${capped ? 'At least ' : ''}${count} conversation fact(s) were extracted by the pre-v0.60.69 parser from meeting-note labels (**Date:**, **Attendees:** …) `
+        + 'read as speakers, and recall still returns them. Preview the repair on the brain host (it makes no model calls): gbrain repair conversation-labels '
+        + '— then run the apply command it prints after the user agrees.' };
+  } catch (error) {
+    return { name, status: 'warn', details: { evidenced: 'unknown' },
+      message: `Label-misattributed conversation facts could not be inspected: ${error instanceof Error ? error.message : String(error)}. Health is unknown.` };
+  }
+}
