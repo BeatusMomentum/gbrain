@@ -2334,6 +2334,16 @@ Reasons: `content_directory`.
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### timeline_rows_would_be_removed
+
+<a id="timeline_rows_would_be_removed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote put_page or put_pages entry has no Timeline section and would delete the page's dated entries; resend it with the section or with drop_timeline: true. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/guides/write-refusals.md#timeline_rows_would_be_removed)
+
 ### timeout
 
 <a id="timeout"></a>

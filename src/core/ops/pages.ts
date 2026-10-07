@@ -297,6 +297,7 @@ const put_page: Operation = {
     slug: { type: 'string', description: 'Page slug.', required: true },
     content: { type: 'string', required: true, description: 'Complete markdown with frontmatter; read get_page include_content:true first.' },
     allow_empty: { type: 'boolean', required: false, description: 'Allow emptying a non-empty page.' },
+    drop_timeline: { type: 'boolean', required: false, description: 'Content without a Timeline section deletes its dated entries; otherwise refused.' },
     wait_ms: WRITE_WAIT_PARAM,
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote

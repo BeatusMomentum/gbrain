@@ -35,6 +35,7 @@
  * from the failed request id. The failed receipt stays as history.
  */
 import { OperationError } from '../ops/contract.ts';
+import { isTimelineSection } from '../persistence/timeline-omission.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { BrainEngine } from '../engine.ts';
 import { digest } from '../persistence/digest.ts';
@@ -246,8 +247,10 @@ async function replay(ctx: OperationContext, failed: ApprovedWrite): Promise<Rep
   if ('refused' in prepared) return prepared.refused;
   const { params } = prepared;
   try {
+    // #5969 (D3): the Timeline section the first admission read from the caller's content, before normalization.
+    const { timeline_section: timelineSection, ...replayed } = params;
     if (live.operation === 'remember') await submitRememberMutation(lane, params);
-    else await submitPageMutation(lane, { operation: live.operation, params });
+    else await submitPageMutation(lane, { operation: live.operation, params: replayed, ...(isTimelineSection(timelineSection) ? { timelineSection } : {}) });
   } catch (error) {
     if (error instanceof OperationError && !['write_pending', 'owner_unavailable', 'writer_lock_unavailable', 'writer_busy'].includes(error.code)) {
       return { applied: false, outcome: ['revision_conflict', 'revision_required'].includes(error.code) ? 'conflict' : 'refused', reason: `${error.code}: ${error.message}` };
