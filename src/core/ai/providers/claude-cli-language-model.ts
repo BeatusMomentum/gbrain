@@ -278,7 +278,8 @@ function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; user
           if (p.type === 'text') return p.text;
           if (p.type === 'reasoning') return ''; // dropped on replay
           if (p.type === 'tool-call') {
-            return `[tool_use ${p.toolName}(${p.input})]`;
+            // #6236: the V2 prompt's input is an object; a template literal rendered it as [object Object].
+            return `[tool_use ${p.toolName}(${typeof p.input === 'string' ? p.input : JSON.stringify(p.input)})]`;
           }
           if (p.type === 'tool-result') {
             const out = typeof p.output === 'string' ? p.output : JSON.stringify(p.output);
