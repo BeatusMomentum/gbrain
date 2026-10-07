@@ -50,6 +50,7 @@ import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
 import { decideSingleFact } from './single-prepare.ts';
 import { cosineVerdict, dedupCapturedFacts, withCaptureDrops } from './capture-dedup.ts';
+import { assertAmbientCaptureAdmissible, type FactsBackstopSource } from './capture-sources.ts';
 import { appendContextNote, type InferredVia } from './subject-infer.ts';
 import { inferenceNote, inferMissingSubjects } from './subject-infer-write.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -106,9 +107,10 @@ export interface FactsBackstopCtx {
    *   - 'hook:compact'       — compaction-boundary checkpoint harvest (cathedral 5)
    *   - 'hook:writeback'     — ambient-writeback Stop-hook backstop (WP4)
    *   - 'sweep:corpus'       — the sweep's session-corpus pass
-   * The last three are capture lanes (capture-dedup.ts, #5888).
+   * The last three are capture lanes (capture-dedup.ts, #5888); the list is
+   * FACTS_BACKSTOP_SOURCES (capture-sources.ts).
    */
-  source: 'sync:import' | 'mcp:put_page' | 'mcp:extract_facts' | 'file_upload' | 'code_import' | 'hook:compact' | 'hook:writeback' | 'sweep:corpus';
+  source: FactsBackstopSource;
   /** Execution mode — D8. Default 'queue' (fire-and-forget). */
   mode?: 'queue' | 'inline';
   /** Notability filter — D4. Default 'all'; sync uses 'high-only'; the
@@ -685,6 +687,7 @@ async function runPipelineBodyInner(
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
   // #5888: one exact-duplicate check for the capture lanes, before either writer.
   const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug) : null);
 
   let inserted = 0;

@@ -27,13 +27,15 @@
  * `.in-progress` claim discipline; this module never touches claims.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MAX_TURN_TEXT_CHARS } from '../facts/extract.ts';
 import type { runFactsPipeline } from '../facts/backstop.ts';
-import { stripPastedContent } from '../transcripts/pasted-content.ts';
+import { parseCorpusTurns, type CorpusTurn } from './corpus-turns.ts';
 import { CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, parseWbFileName } from './corpus-segments.ts';
+
+export { parseCorpusTurns, type CorpusTurn };
 
 /** Per-file window cap per sweep; longer files converge over later sweeps. */
 export const CORPUS_WINDOWS_PER_SWEEP = 8;
@@ -50,17 +52,6 @@ const MAX_ENTITY_SLUGS = 500;
 
 type PipelineResult = Awaited<ReturnType<typeof runFactsPipeline>>;
 
-export interface CorpusTurn {
-  role: 'user' | 'assistant' | null;
-  /** UTF-8 byte offsets of the turn in the raw file (header included). */
-  start: number;
-  end: number;
-  /** SHA-256 of the raw turn text (trailing whitespace trimmed). */
-  sha256: string;
-  header: string;
-  /** Extractor-facing body: pastes stripped (user turns), trimmed. */
-  body: string;
-}
 
 export interface CorpusWindow {
   text: string;
@@ -98,8 +89,6 @@ export interface CorpusWindowRun {
   result: PipelineResult;
 }
 
-const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
-
 let invalidKnobWarned = false;
 
 /**
@@ -125,50 +114,6 @@ export function resolveCorpusWindowsPerSweepTotal(
 /** TEST SEAM: re-arm the once-per-process invalid-knob warning. */
 export function __resetCorpusWindowsWarningForTests(): void {
   invalidKnobWarned = false;
-}
-
-/** Split corpus text into turns at the exact `toCorpusText` markers. */
-export function parseCorpusTurns(raw: string): CorpusTurn[] {
-  const starts: Array<{ at: number; role: 'user' | 'assistant' }> = [];
-  if (raw.startsWith('[user]\n')) starts.push({ at: 0, role: 'user' });
-  else if (raw.startsWith('[assistant]\n')) starts.push({ at: 0, role: 'assistant' });
-  const USER = '\n\n[user]\n';
-  const ASSISTANT = '\n\n[assistant]\n';
-  let nextUser = raw.indexOf(USER);
-  let nextAssistant = raw.indexOf(ASSISTANT);
-  while (nextUser >= 0 || nextAssistant >= 0) {
-    const isUser = nextAssistant < 0 || (nextUser >= 0 && nextUser < nextAssistant);
-    const at = isUser ? nextUser : nextAssistant;
-    starts.push({ at: at + 2, role: isUser ? 'user' : 'assistant' });
-    if (isUser) nextUser = raw.indexOf(USER, at + 2);
-    else nextAssistant = raw.indexOf(ASSISTANT, at + 2);
-  }
-
-  let charAt = 0;
-  let byteAt = 0;
-  const bytes = (index: number): number => {
-    byteAt += Buffer.byteLength(raw.slice(charAt, index), 'utf8');
-    charAt = index;
-    return byteAt;
-  };
-  const turns: CorpusTurn[] = [];
-  const push = (role: CorpusTurn['role'], from: number, to: number): void => {
-    const span = raw.slice(from, to);
-    const header = role ? `[${role}]\n` : '';
-    const rawBody = span.slice(header.length);
-    const body = (role === 'user' ? stripPastedContent(rawBody).text : rawBody).trim();
-    const start = bytes(from);
-    turns.push({ role, start, end: bytes(to), sha256: sha256(span.trimEnd()), header, body });
-  };
-  const firstAt = starts.length ? starts[0].at : raw.length;
-  if (firstAt > 0) {
-    const preambleEnd = starts.length ? firstAt - 2 : raw.length;
-    if (raw.slice(0, preambleEnd).trim()) push(null, 0, preambleEnd);
-  }
-  for (let k = 0; k < starts.length; k++) {
-    push(starts[k].role, starts[k].at, k + 1 < starts.length ? starts[k + 1].at - 2 : raw.length);
-  }
-  return turns;
 }
 
 function isHigh(code: number): boolean { return code >= 0xd800 && code <= 0xdbff; }
@@ -408,6 +353,54 @@ export async function adoptFinishedCorpusFile(full: string): Promise<boolean> {
     finished: st,
   });
   return written !== null;
+}
+
+/**
+ * #6091: record a corpus file as finished WITHOUT extracting it — the capture
+ * gate retired it (explicit `memory.auto_writeback off`). `.progress` is
+ * finished at the file's current stat with every current turn hash recorded
+ * and `skipped_reason`, then the `.ingested` sidecar names the reason. A
+ * retire overrides another extractor's lease (its next compare-and-set fails),
+ * and a later rewrite of the file (a resumed session) extracts only turns that
+ * are not recorded here. Returns false when the file changed mid-read or the
+ * progress lock stayed busy (the caller retries on its next pass).
+ */
+export async function retireCorpusFile(full: string, reason: string = 'writeback_off'): Promise<boolean> {
+  const st = corpusFileStat(await stat(full));
+  const raw = await readFile(full, 'utf8');
+  if (!sameCorpusFileStat(st, corpusFileStat(await stat(full)))) return false;
+  const written = await updateProgress(full, (cur) => ({
+    ...(cur ?? freshProgress()),
+    turns: mergeTurns(cur?.turns ?? [], parseCorpusTurns(raw)),
+    continuation: null,
+    finished: st,
+    skipped_reason: reason,
+    lease: null,
+  }));
+  if (!written) return false;
+  await writeFile(full + '.ingested', JSON.stringify({ ingested_at: new Date().toISOString(), skipped: reason }) + '\n');
+  return true;
+}
+
+/**
+ * #6091: record turns captured under explicit off as done, so extraction of
+ * this file resumes past them. Leaves `finished` alone: turns the file holds
+ * beyond these still extract. False when the progress lock stayed busy.
+ */
+export async function retireCorpusTurns(full: string, hashes: readonly string[]): Promise<boolean> {
+  const written = await updateProgress(full, (cur) => {
+    const known = new Set(cur?.turns.map((t) => t.sha256) ?? []);
+    const added = hashes.filter((h) => !known.has(h));
+    if (cur && added.length === 0) return null;
+    return { ...(cur ?? freshProgress()), turns: [...(cur?.turns ?? []), ...added.map((h) => ({ start: 0, end: 0, sha256: h }))].slice(-MAX_RECORDED_TURNS) };
+  });
+  return written !== null || (await readCorpusProgress(full)) !== null;
+}
+
+function mergeTurns(recorded: CorpusProgress['turns'], turns: CorpusTurn[]): CorpusProgress['turns'] {
+  const known = new Set(recorded.map((t) => t.sha256));
+  const added = turns.filter((t) => !known.has(t.sha256)).map(({ start, end, sha256: h }) => ({ start, end, sha256: h }));
+  return [...recorded, ...added].slice(-MAX_RECORDED_TURNS);
 }
 
 /**

@@ -14,6 +14,7 @@
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
 test/behavior-change-notice.test.ts
+test/capture-consent-admission.test.ts
 test/chronicle-backfill-max-usd.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts

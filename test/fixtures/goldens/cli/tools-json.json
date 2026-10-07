@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208130,
-    "stdoutSha256": "06ae73add41b18eedf984fd14f85603ad1aa57af46eb7597f05b27da457397a4",
+    "stdoutBytes": 208391,
+    "stdoutSha256": "bc381e0b30d5f4929756f1f781edaf9e9f22ea2490ad437556693a2457fca542",
     "toolNames": [
       "remember",
       "entity",
@@ -415,7 +415,7 @@
         "scope": "read"
       },
       {
-        "description": "Replace a complete Markdown page: content REPLACES the whole page. Read get_page include_content:true; pass its revision as expected_revision (omit to create). Keep a request_id UUID; retry with identical arguments. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Small changes: edit_page. Over 3 pages: put_pages.",
+        "description": "Complete content REPLACES the whole page: read get_page include_content:true, then send its revision as expected_revision and a request_id. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; over 3 pages: put_pages.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -423,6 +423,7 @@
         "parameters": {
           "allow_empty": "boolean?",
           "content": "string",
+          "drop_timeline": "boolean?",
           "expected_revision": "string?",
           "force": "boolean?",
           "ingested_via": "string?",
@@ -437,12 +438,16 @@
         "schema": {
           "properties": {
             "allow_empty": {
-              "description": "Allow emptying a non-empty page.",
+              "description": "Allow emptying the page.",
               "type": "boolean"
             },
             "content": {
               "description": "Complete markdown with frontmatter; read get_page include_content:true first.",
               "type": "string"
+            },
+            "drop_timeline": {
+              "description": "No Timeline in content: delete its entries.",
+              "type": "boolean"
             },
             "expected_revision": {
               "description": "Revision read; omit to create.",
@@ -871,6 +876,10 @@
                   "content": {
                     "description": "Complete markdown with frontmatter.",
                     "type": "string"
+                  },
+                  "drop_timeline": {
+                    "description": "Content without a Timeline section deletes its dated entries.",
+                    "type": "boolean"
                   },
                   "expected_revision": {
                     "description": "Revision read; omit to create.",
