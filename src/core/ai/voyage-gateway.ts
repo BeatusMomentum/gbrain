@@ -35,10 +35,10 @@ export function applyVoyageOutputDimension(body: Record<string, unknown>, input:
  * the stored vectors, so the message says so before suggesting a migration.
  */
 export function embeddingDimMismatchError(
-  modelId: string, returned: number, expected: number, embeddingModel: string,
+  modelId: string, returned: number, expected: number, migrateCommand: string,
   route: { provider: string; baseUrl?: string; defaultBaseUrl?: string },
 ): AIConfigError {
-  const migrate = `\`gbrain migrate --embedding-model ${embeddingModel} --embedding-dimensions ${returned}\``;
+  const migrate = `\`${migrateCommand}\``;
   const proxied = route.baseUrl !== undefined && route.baseUrl !== route.defaultBaseUrl;
   if (!proxied) {
     return new AIConfigError(`Embedding dim mismatch: model ${modelId} returned ${returned} but schema expects ${expected}.`, `Run ${migrate} or change models.`);

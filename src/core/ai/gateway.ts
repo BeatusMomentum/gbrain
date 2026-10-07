@@ -1749,7 +1749,7 @@ async function embedSubBatch(
 
     for (const embedding of result.embeddings) {
       if (Array.isArray(embedding) && embedding.length !== expectedDims) {
-        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, getEmbeddingModel(),
+        throw embeddingDimMismatchError(modelId, embedding.length, expectedDims, `gbrain migrate --embedding-model ${getEmbeddingModel()} --embedding-dimensions ${embedding.length}`,
           { provider: recipe.id, baseUrl: _config?.base_urls?.[recipe.id], defaultBaseUrl: recipe.base_url_default });
       }
     }

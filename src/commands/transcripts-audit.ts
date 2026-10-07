@@ -49,10 +49,11 @@ export async function runTranscriptsAuditSecrets(engine: BrainEngine, args: stri
   const { auditTranscriptSecrets, saveTranscriptSecretAudit } = await import('../core/transcripts/secret-audit.ts');
   const result = await auditTranscriptSecrets(engine, { sourceId });
   const cached = await saveTranscriptSecretAudit(engine, result);
+  const slug = [{ name: 'slug', how: 'One `slug` from `pages` above.' }];
   const nextActions = result.pages_affected === 0 ? [] : [
-    { action: 'review', argv: ['gbrain', 'get', '<slug>'], why: 'Read the page at the listed lines to confirm each hit is a real credential.' },
-    { action: 'edit', argv: ['gbrain', 'put', '<slug>'], why: 'Rewrite the page with the credential removed (page content on stdin); the rest of the conversation stays searchable.' },
-    { action: 'remove', next: 'ask_user', argv: ['gbrain', 'delete', '<slug>', '--purge'], why: 'Purging a conversation page loses the whole session with no recovery window; ask the user before running it.' },
+    { action: 'review', argv: ['gbrain', 'get', '<slug>'], inputs: slug, why: 'Read the page at the listed lines to confirm each hit is a real credential.' },
+    { action: 'edit', argv: ['gbrain', 'put', '<slug>'], inputs: slug, why: 'Rewrite the page with the credential removed (page content on stdin); the rest of the conversation stays searchable.' },
+    { action: 'remove', next: 'ask_user', argv: ['gbrain', 'delete', '<slug>', '--purge'], inputs: slug, why: 'Purging a conversation page loses the whole session with no recovery window; ask the user before running it.' },
     { action: 'rotate', next: 'ask_user', why: 'A credential that reached a page may also sit in git history, synced copies or exports; ask the user to rotate it (SECURITY.md, "If a secret reached the brain").' },
   ];
   if (json) {
