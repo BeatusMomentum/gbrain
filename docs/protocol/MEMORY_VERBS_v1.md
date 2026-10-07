@@ -659,6 +659,16 @@ degraded_reason?, budget_tokens?, budget_used?, dropped_count?, core? }`. `text`
 pre-rendered, envelope-wrapped injectable block; with `budget_tokens` it is
 rendered from the packed sets and never exceeds the declared budget.
 
+`entities` scopes the cards and open threads, not the facts. The hot-facts arm
+is the session's recent memory (its facts, else the last 24 hours of the
+session's source), the same set every MCP response carries, so a fact about
+another entity, or about none, can appear next to the requested ones. For a
+strictly entity-scoped read use `recall` with `entity` (`gbrain recall --entity
+<slug>`). Each `facts[]` entry (here and in `delta`) carries `fact_id`, the
+opaque id `forget` accepts, and `provenance`, the stored source attribution
+(`remember --provenance`), so a packed fact traces back to its full record;
+neither enters `text`.
+
 #### context_pack core memory (additive)
 
 `core: { text, revision, chars_used, chars_limit, pages, truncated }` carries the
@@ -777,8 +787,9 @@ isolation on every read. Remote callers see `visibility = world` facts only.
 
 Read verbs redact credential-shaped values in their responses with the
 canonical secret scanner: a value becomes `<REDACTED:pattern>`. `recall`,
-`context_pack` and `delta` redact the facts' `fact`, `context` and `source`
-fields for remote callers (`ctx.remote !== false`; every MCP transport,
+`context_pack` and `delta` redact the facts' `fact`, `context` and provenance
+(`source` and `provenance` in `recall`, `provenance` in `context_pack` and
+`delta`) fields for remote callers (`ctx.remote !== false`; every MCP transport,
 including stdio, and thin clients) and return them as stored to the trusted
 local CLI, so a remembered credential is readable only with `gbrain recall` on
 the brain host. Search results, the rendered `text` and `entity` cards are
