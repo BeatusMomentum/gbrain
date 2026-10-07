@@ -311,7 +311,7 @@ async function runScan(engine: BrainEngine, args: string[]): Promise<void> {
   // brain publishes only through its canonical owner, so refuse up front.
   if (apply && await managedPersistenceEnabled(engine)) {
     const error = opError('writer_coordinator_required', 'quarantine scan --apply cannot rewrite pages on a managed brain.',
-      'It re-imports every page outside the canonical owner, so nothing was changed. Preview with gbrain quarantine scan (no --apply); new imports already pass the gate. Review hidden pages with gbrain quarantine list and clear a false positive with gbrain quarantine clear <slug> --force.',
+      'It re-imports every page outside the canonical owner, so nothing was changed. Preview with gbrain quarantine scan (no --apply); new imports already pass the gate. Review hidden pages with gbrain quarantine list, then clear a false positive by passing its slug to gbrain quarantine clear with --force.',
       { fix: readFix('Previews what the gate would mark, read-only.', { argv: ['gbrain', 'quarantine', 'scan', '--json'] }) });
     if (!await reportPersistenceCliError(error, json)) throw error;
     return;

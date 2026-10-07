@@ -12,7 +12,7 @@
  * are not overridden.
  *
  * Trust: only trusted local callers set it. Every untrusted ingress strips it
- * (the gate-owned strip in `import-file.ts`, which remote put_page,
+ * (`settleGateOwnedMarkers`, called by `importFromContent`, which remote put_page,
  * put_pages, HTTP and ingest-capture all reach through `remote: true`); a
  * remote edit that leaves title, type and body unchanged carries the stored
  * override forward, so an unrelated tag edit does not re-hide the page.
@@ -24,6 +24,8 @@ import { parseMarkdown, type ParsedMarkdown } from './markdown.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { sha256 } from './persistence/digest.ts';
 import { CONTENT_FLAG_KEY, QUARANTINE_KEY } from './quarantine.ts';
+import { EMBED_SKIP_KEY } from './embed-skip.ts';
+import { ATOMS_SCAN_HASH_KEY } from './utils.ts';
 
 export const QUARANTINE_OVERRIDE_KEY = 'quarantine_override';
 
@@ -56,15 +58,28 @@ export function hasCurrentQuarantineOverride(page: Bound & { frontmatter?: Recor
 }
 
 /**
- * Called by the import gate before it assesses `parsed` (already canonicalized).
- * Remote input loses any override it carries, then keeps the stored one only
- * when it still binds this content; trusted input keeps its own override only
- * while it binds. A stale or malformed override is dropped.
+ * Called by `importFromContent` before the gate assesses `parsed` (already canonicalized).
+ *
+ * v0.42 (#1699 trust boundary): gate-owned markers are stripped from
+ * UNTRUSTED input. parseMarkdown preserves every frontmatter key except
+ * type/title/tags/slug, so a remote MCP put_page (ctx.remote !== false,
+ * threaded as opts.remote) could otherwise plant `quarantine` (hide a page
+ * from search + suppress chunks), `content_flag.detail` (inject text into the
+ * agent's trusted "this looks odd" channel) or `embed_skip` on clean content.
+ * #1699 part 2: the extract_atoms completion marker is phase-owned; a remote
+ * writer planting a matching one would suppress atom mining for the page.
+ * Trusted local sync/export round-trips keep them. Fail-closed: strip
+ * whenever `remote` is true.
+ *
+ * #6259: remote input also loses any `quarantine_override`, then keeps the
+ * stored one only when it still binds this content; trusted input keeps its
+ * own override only while it binds. A stale or malformed override is dropped,
+ * and a current one drops classifier markers the content still carries.
  */
-export async function settleQuarantineOverride(engine: Pick<BrainEngine, 'executeRaw'>, parsed: ParsedMarkdown,
+export async function settleGateOwnedMarkers(engine: Pick<BrainEngine, 'executeRaw'>, parsed: ParsedMarkdown,
   slug: string, sourceId: string | undefined, remote: boolean): Promise<void> {
   if (remote) {
-    delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
+    for (const key of [QUARANTINE_KEY, CONTENT_FLAG_KEY, EMBED_SKIP_KEY, ATOMS_SCAN_HASH_KEY, QUARANTINE_OVERRIDE_KEY]) delete parsed.frontmatter[key];
     const [stored] = await engine.executeRaw<{ override: unknown }>(
       `SELECT frontmatter->'${QUARANTINE_OVERRIDE_KEY}' AS override FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId ?? 'default', slug]);
     const carried = overrideOf(stored?.override);

@@ -5,7 +5,7 @@ import type { FactsBackstopCtx } from '../facts/backstop.ts';
 import { factEventTime } from '../facts/event-time.ts';
 import { ENTITY_HINTS_CAP, type ExtractedFact, type FactEmbeddingSignature } from '../facts/extract.ts';
 import { readFactsEmbeddingDim } from '../embedding-dim-check.ts';
-import { getEmbeddingModel } from '../ai/gateway.ts';
+import { currentEmbeddingSignature } from '../embedding.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { hostFix, opTransport, readFix } from '../ops/op-fix.ts';
@@ -120,8 +120,8 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
   const dimensions = /^[1-9]\d*$/.test(values.embedding_dimensions ?? '') ? Number(values.embedding_dimensions) : null;
   if (!/[:/]/.test(model) && /^[^\s]+$/.test(model) && dimensions) {
     // #6113: a legacy row stores the model without its provider. Name the one supported rewrite (a preview first).
-    let gateway: string | null = null;
-    try { gateway = getEmbeddingModel(); } catch { /* unconfigured gateway: no provider to suggest */ }
+    const signature = currentEmbeddingSignature();
+    const gateway = signature ? signature.slice(0, signature.lastIndexOf(':')) : null;
     const target = gateway?.endsWith(`:${model}`) ? gateway : null;
     throw opError('embedding_configuration', 'The selected brain records its embedding model without a provider, so facts cannot be embedded.',
       `The brain's embedding_model row is ${JSON.stringify(model)} with no provider prefix (a row from an older install), so fact extraction stopped before admission; gbrain config set cannot change it. `

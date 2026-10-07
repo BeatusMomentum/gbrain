@@ -168,7 +168,7 @@ describe('quarantine clear on a managed brain (#6259)', () => {
     const before = await engine.executeRaw('SELECT slug,knowledge_revision FROM pages ORDER BY id');
     const { err } = await capture(() => runQuarantine(engine, ['scan', '--apply']));
     expect(err).toContain('writer_coordinator_required');
-    expect(err).toContain('gbrain quarantine clear <slug> --force');
+    expect(err).toContain('passing its slug to gbrain quarantine clear with --force');
     expect(currentExitCode()).toBe(1);
     expect(await engine.executeRaw('SELECT slug,knowledge_revision FROM pages ORDER BY id')).toEqual(before);
   }), 120_000);

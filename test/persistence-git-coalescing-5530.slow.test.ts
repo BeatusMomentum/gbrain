@@ -347,10 +347,11 @@ for (const kind of testBackends()) describe(`#6210 native Git durability probe f
   }), 300_000);
 
   test.each([
-    ['damaged HEAD', (repo: Repo) => writeFileSync(join(repo.root, '.git', 'HEAD'), 'not a ref\n')],
-    ['dubious ownership', () => { process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER = '1'; }],
-    ['a directory at the hook path', (repo: Repo) => { const hook = join(repo.root, '.git', 'custom-hooks', 'post-commit'); rmSync(hook); mkdirSync(hook); }],
-  ])('%s keeps Git effects unfinished with git_unavailable', (_name, damage) => withBrain(kind, async ({ engine, home, ctx }) => {
+    ['damaged HEAD', (repo: Repo) => { writeFileSync(join(repo.root, '.git', 'HEAD'), 'not a ref\n'); return {}; }],
+    // Git's own switch for the "dubious ownership" refusal a checkout owned by another user gets.
+    ['dubious ownership', () => ({ GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' })],
+    ['a directory at the hook path', (repo: Repo) => { const hook = join(repo.root, '.git', 'custom-hooks', 'post-commit'); rmSync(hook); mkdirSync(hook); return {}; }],
+  ] as Array<[string, (repo: Repo) => Record<string, string>]>)('%s keeps Git effects unfinished with git_unavailable', (_name, damage) => withBrain(kind, async ({ engine, home, ctx }) => {
     const repo = makeRepo(home, 'content');
     await bindSource(engine, 'default', repo);
     await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
@@ -358,9 +359,9 @@ for (const kind of testBackends()) describe(`#6210 native Git durability probe f
     await pauseGitEffects(engine, () => seed(ctx('default'), 2));
     const before = repo.commits();
     try {
-      damage(repo);
-      await release(engine); await pass(engine);
-    } finally { delete process.env.GIT_TEST_ASSUME_DIFFERENT_OWNER; writeFileSync(join(repo.root, '.git', 'HEAD'), 'ref: refs/heads/main\n'); }
+      const env = damage(repo);
+      await withEnv(env, async () => { await release(engine); await pass(engine); });
+    } finally { writeFileSync(join(repo.root, '.git', 'HEAD'), 'ref: refs/heads/main\n'); }
     await expectUnfinished(engine, 2);
     expect(repo.commits()).toBe(before); expect(repo.pushes()).toBe(0);
   }), 300_000);

@@ -54,6 +54,25 @@ export async function listPendingProjectionPages(engine: BrainEngine, opts: Proj
     JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived ORDER BY p.id LIMIT $${params.length + 1}`, [...params, limit]);
 }
 
+/**
+ * #6223: `embed --stale` keeps going when bounded recovery leaves pages
+ * blocked; this adds one failure sample naming the first of them (and the
+ * importer route for image/media pages) and returns the keys
+ * (`source_id::slug`) of the pages it listed, so the drain counts their chunks
+ * without renaming them as pages that changed mid-run.
+ */
+export async function reportBlockedProjections(engine: BrainEngine, opts: ProjectionScope & { sourceId?: string }, blocked: number, samples: string[]): Promise<Set<string>> {
+  const pages = await listPendingProjectionPages(engine, opts);
+  const named = pages.slice(0, 5);
+  const more = blocked > named.length ? ` and ${blocked - named.length} more` : '';
+  const sourceArg = opts.sourceId ? ` --source ${opts.sourceId}` : '';
+  samples.push(`${blocked} page(s) still need a text projection, so their chunks were not embedded (${named.map(page => `${page.source_id}:${page.slug}`).join(', ')}${more}); every other stale chunk was embedded. `
+    + (pages.some(page => page.page_kind !== 'markdown' && page.page_kind !== 'code')
+      ? `Image and media pages are rebuilt only by their importer: run gbrain embed --stale --images${sourceArg} (needs GBRAIN_EMBEDDING_MULTIMODAL=true) or gbrain sync --full${sourceArg}. ` : '')
+    + 'Rerun gbrain embed --stale to retry bounded projection recovery.');
+  return new Set(pages.map(page => `${page.source_id}::${page.slug}`));
+}
+
 export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { sourceId?: string; limit?: number; repair?: boolean; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean }; signal?: AbortSignal; deadline?: number; assertOwned?: (tx?: BrainEngine) => Promise<void> } = {}) {
   const limit = Math.max(1, Math.min(opts.limit ?? 100, 100));
   const { where, params } = await pendingProjectionWhere(engine, opts);

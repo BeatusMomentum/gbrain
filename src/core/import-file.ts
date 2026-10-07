@@ -3,7 +3,7 @@ import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { assertImportBase, sameCanonicalImport, sameContentAnyKeyOrder } from './page-state/import-guard.ts';
 import { stabilizeSafetyAssessments } from './persistence/reconcile-safety.ts';
-import { settleQuarantineOverride } from './quarantine-override.ts';
+import { settleGateOwnedMarkers } from './quarantine-override.ts';
 import { decideImportIdentity, collidingSlugOwner, fileOriginUri } from './import-identity.ts';
 import { readSourceFileSync } from './minions/source-filesystem.ts';
 import { readFileSync, statSync, lstatSync } from 'fs';
@@ -353,26 +353,8 @@ export async function importFromContent(
   parsed.compiled_truth = sanitizeText(parsed.compiled_truth);
   parsed.timeline = sanitizeText(parsed.timeline);
 
-  // v0.42 (#1699 trust boundary): strip gate-owned markers from UNTRUSTED
-  // input. parseMarkdown preserves every frontmatter key except type/title/
-  // tags/slug, so a remote MCP put_page (ctx.remote !== false, threaded as
-  // opts.remote) could otherwise plant `quarantine` (hide a page from search +
-  // suppress chunks) or `content_flag.detail` (inject text into the agent's
-  // trusted "this looks odd" channel) on clean content. Only the content-
-  // sanity gate (below) and trusted local CLIs may set these. Fail-closed:
-  // strip whenever opts.remote === true.
-  await settleQuarantineOverride(engine, parsed, slug, sourceId, opts.remote === true);
-  if (opts.remote === true && parsed.frontmatter) {
-    delete parsed.frontmatter[QUARANTINE_KEY];
-    delete parsed.frontmatter[CONTENT_FLAG_KEY];
-    delete parsed.frontmatter[EMBED_SKIP_KEY];
-    // #1699 part 2: the extract_atoms completion marker is phase-owned. A
-    // remote writer planting a matching marker would suppress atom mining
-    // for the page (a silent extraction bypass); planting a stale one is
-    // harmless but still not the caller's to set. Trusted local sync/export
-    // round-trips (remote unset/false) preserve it.
-    delete parsed.frontmatter[ATOMS_SCAN_HASH_KEY];
-  }
+  // #1699 trust boundary: only the gate and trusted local callers set gate-owned markers (quarantine-override.ts).
+  await settleGateOwnedMarkers(engine, parsed, slug, sourceId, opts.remote === true);
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
   // parseMarkdown and the size guard, BEFORE content-sanity, hash compute,
