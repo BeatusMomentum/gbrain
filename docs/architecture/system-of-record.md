@@ -235,7 +235,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/embed-facts.ts` (1): embedding columns only (physical projection).
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
 - `src/core/extract/receipt-writer.ts` (1): the extraction receipt page runs in `maintenanceTransaction`.
-- `src/core/facts/conversation-publication.ts` (2): the managed conversation-facts preparer clears the prior batch and inserts the frozen one inside the coordinator publication of its admitted request; the unmanaged cleanup runs the same clear in `maintenanceTransaction`.
+- `src/core/facts/conversation-publication.ts` (3): the managed conversation-facts preparer clears each member page's prior rows and inserts its frozen entry (or a blocked outcome row) inside the coordinator publication of its admitted batch request; the unmanaged cleanup runs the same clear in `maintenanceTransaction`.
 - `src/core/facts/backstop.ts` (3): the facts backstop's DB-only fallbacks insert each fact in `maintenanceTransaction`; managed brains publish through the facts request preparer.
 - `src/core/facts/fence-write.ts` (2): the markdown-first fence reconcile insert and its page body mirror each run in `maintenanceTransaction`.
 - `src/core/facts/forget.ts` (4): the legacy fence expiry, withdrawal and strike-through each run in `maintenanceTransaction` (nested inside a caller's coordinated write, they keep its actor).
