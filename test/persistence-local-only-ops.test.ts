@@ -155,35 +155,38 @@ describe('localOnly skill administration through a resident owner', () => {
 });
 
 describe('gbrain takes rebuild without a resident owner (W9F item 8)', () => {
+  const slug = 'notes/local-takes-rebuild';
+  let dir: string;
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'gbrain-takes-rebuild-local-'));
+    const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
+    await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const local = new PGLiteEngine();
+      await local.connect(config);
+      await local.initSchema();
+      await local.putPage(slug, { type: 'note', title: 'Local takes rebuild', compiled_truth: [
+        'About the local rebuild path.', '', '## Takes', '', '<!--- gbrain:takes:begin -->',
+        '| # | claim | kind | who | weight | since | source |', '|---|-------|------|-----|--------|-------|--------|',
+        '| 1 | Local claim | take | world | 0.5 | 2026-10 | test |', '<!--- gbrain:takes:end -->',
+      ].join('\n') }, { sourceId: 'default' });
+      await local.disconnect();
+    });
+    mkdirSync(join(dir, '.gbrain'), { recursive: true });
+    writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(config));
+  }, 120_000);
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
   test('runs on the local engine and prints the rebuild result', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'gbrain-takes-rebuild-local-'));
-    try {
-      const config = { engine: 'pglite' as const, database_path: join(dir, 'db') };
-      const slug = 'notes/local-takes-rebuild';
-      await withEnv({ GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
-        const local = new PGLiteEngine();
-        await local.connect(config);
-        await local.initSchema();
-        await local.putPage(slug, { type: 'note', title: 'Local takes rebuild', compiled_truth: [
-          'About the local rebuild path.', '', '## Takes', '', '<!--- gbrain:takes:begin -->',
-          '| # | claim | kind | who | weight | since | source |', '|---|-------|------|-----|--------|-------|--------|',
-          '| 1 | Local claim | take | world | 0.5 | 2026-10 | test |', '<!--- gbrain:takes:end -->',
-        ].join('\n') }, { sourceId: 'default' });
-        await local.disconnect();
-      });
-      mkdirSync(join(dir, '.gbrain'), { recursive: true });
-      writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify(config));
-      const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), 'takes', 'rebuild', slug, '--json'], {
-        cwd: dir,
-        env: { ...process.env, GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKIP_UPGRADE_CHECK: '1',
-          GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
-        stdout: 'pipe', stderr: 'pipe',
-      });
-      const timeout = setTimeout(() => child.kill('SIGKILL'), 60_000);
-      const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-      clearTimeout(timeout);
-      expect(code, stdout + stderr).toBe(0);
-      expect(JSON.parse(stdout)).toMatchObject({ slug, source_id: 'default', pagesScanned: 1, takesUpserted: 1, warnings: [] });
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    const child = Bun.spawn([process.execPath, join(import.meta.dir, '../src/cli.ts'), 'takes', 'rebuild', slug, '--json'], {
+      cwd: dir,
+      env: { ...process.env, GBRAIN_HOME: dir, GBRAIN_BRAIN_ID: 'host', GBRAIN_NO_BANNER: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SKIP_UPGRADE_CHECK: '1',
+        GBRAIN_SOURCE: undefined, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      stdout: 'pipe', stderr: 'pipe',
+    });
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 60_000);
+    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    clearTimeout(timeout);
+    expect(code, stdout + stderr).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ slug, source_id: 'default', pagesScanned: 1, takesUpserted: 1, warnings: [] });
   }, 120_000);
 });

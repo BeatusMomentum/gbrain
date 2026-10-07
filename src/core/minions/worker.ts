@@ -86,7 +86,7 @@ export const INFRASTRUCTURE_ABORT_REASONS = new Set<string>([
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { evaluateQuietHours, type QuietHoursConfig } from './quiet-hours.ts';
-import { releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
+import { endedByShutdown, releaseUndrainedClaims, settleShutdownInterruptedJob } from './worker-shutdown.ts';
 import { readFileSync } from 'fs';
 
 /**
@@ -1640,11 +1640,7 @@ export class MinionWorker extends EventEmitter {
         }
         return;
       }
-      // Decision 7 (W9F item 6): an error during shutdown is presumed
-      // shutdown-induced (cooperative handlers throw plain errors when they
-      // bail), except UnrecoverableError, which is deterministic and dead-letters.
-      if (err instanceof ChildWorkerShutdownError
-        || (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted && !(err instanceof UnrecoverableError))) {
+      if (err instanceof ChildWorkerShutdownError || (!isolated && endedByShutdown(err, this.shutdownAbort.signal, abort.signal))) {
         return settleShutdownInterruptedJob(this.engine, job, lockToken, errorText, !(err instanceof ChildWorkerShutdownError) || err.executionStopped === true);
       }
       if (err instanceof ChildNotClaimedError) {

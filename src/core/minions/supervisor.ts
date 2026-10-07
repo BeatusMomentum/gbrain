@@ -51,17 +51,7 @@ import { currentBrainId, readWorkers } from './worker-registry.ts';
 import { autopilotOperatorPauseMarkerPath, autopilotPaused } from '../autopilot-paths.ts';
 import { registerSignalOwner, triggerCleanupAndExit } from '../process-cleanup.ts';
 import { resolveEnvNumber } from '../env-number.ts';
-import { processStartTime } from '../pglite-lock.ts';
-
-/**
- * PID file body: the supervisor pid, then (Linux) its kernel start time, so
- * `supervisor stop` can tell a stale PID file whose pid was recycled from
- * this supervisor (W9F item 7). Readers take the first line.
- */
-export function pidFileContents(pid: number = process.pid): string {
-  const start = processStartTime(pid);
-  return start ? `${pid}\n${start}\n` : String(pid);
-}
+import { pidFileContents, processStartStamp } from './supervisor-pid.ts';
 
 export type SupervisorEvent =
   | 'started'
@@ -842,11 +832,9 @@ export class MinionSupervisor {
     }
 
     // 5. Announce start.
-    const supervisorStart = processStartTime(process.pid);
     this.emit('started', {
       supervisor_pid: process.pid,
-      // W9F item 7: the identity `supervisor stop` validates before SIGTERM.
-      ...(supervisorStart ? { supervisor_start: supervisorStart } : {}),
+      ...processStartStamp('supervisor_start', process.pid),
       // Resolved to absolute at emit time (relative to THIS process's cwd,
       // the only context in which a relative --pid-file was meaningful) so a
       // later reader (e.g. `gbrain doctor`, possibly running from a
@@ -1237,12 +1225,9 @@ export class MinionSupervisor {
         // (possibly wedged) one's stale DB state.
         this.childStartedAt = Date.now();
         this.consecutiveWedgedChecks = 0;
-        const pidStart = event.pid >= 0 ? processStartTime(event.pid) : null;
         this.emit('worker_spawned', {
           pid: event.pid >= 0 ? event.pid : undefined,
-          // W9F item 7: process identity, so `supervisor stop` never mistakes
-          // a recycled pid for this worker.
-          ...(pidStart ? { pid_start: pidStart } : {}),
+          ...(event.pid >= 0 ? processStartStamp('pid_start', event.pid) : {}),
           cli_path: this.opts.cliPath,
           ...(event.tini ? { tini: true } : {}),
           ...(this.opts.nice_requested !== undefined ? { nice: this.opts.nice_requested } : {}),

@@ -6,7 +6,18 @@
  * until its lease expires and the stall sweep charges a stall.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { MinionJob } from './types.ts';
+import { UnrecoverableError, type MinionJob } from './types.ts';
+
+/**
+ * Whether an in-process handler error ended because of the shutdown
+ * (Decision 7, W9F item 6): shutdown was requested and the job's own abort
+ * did not fire. Cooperative handlers throw plain errors when they bail, so
+ * any error counts, except UnrecoverableError, which is deterministic and
+ * dead-letters with its own text.
+ */
+export function endedByShutdown(err: unknown, shutdown: AbortSignal, job: AbortSignal): boolean {
+  return shutdown.aborted && !job.aborted && !(err instanceof UnrecoverableError);
+}
 
 /**
  * Hand one claim back to `waiting`. False when the claim already moved on.
