@@ -102,6 +102,7 @@ export interface PatternsPhaseOpts {
  * working.
  */
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
+import { patternsBudgetSkipFix, planPatternsRun, readPatternsLastRun, recordPatternsBudgetSkip, recordPatternsLastRun } from './patterns-plan.ts';
 export { CYCLE_DEADLINE_RESERVE_MS };
 
 /**
@@ -242,6 +243,22 @@ export async function runPhasePatterns(
       );
     }
 
+    // #6177: size an in-cycle run to its budget from the recorded cost of recent runs; skip before any spend.
+    const lastRun = await readPatternsLastRun(engine);
+    const plan = planPatternsRun({ budgetMs: opts.deadlineAtMs == null ? null : budgets.timeoutMs, lastRun,
+      reflections: reflections.length, minEvidence: config.minEvidence, nowMs: Date.now() });
+    if (plan.kind === 'skip') {
+      if (lastRun) await recordPatternsBudgetSkip(engine, lastRun);
+      return { phase: 'patterns', status: 'skipped', duration_ms: 0,
+        summary: `patterns: the ${Math.round(budgets.timeoutMs / 1000)}s cycle budget fits ${plan.n} of ${reflections.length} reflections ` +
+          `at the recorded runtime (need ≥${config.minEvidence}); nothing was submitted. Run it outside the cycle: gbrain dream --phase patterns`,
+        details: { reason: 'insufficient_cycle_budget', cause: 'budget_below_recent_runtime', reflections_selected: reflections.length,
+          reflections_submitted: 0, reflections_fit: plan.n, budget_ms: budgets.timeoutMs, last_run: lastRun,
+          fix: patternsBudgetSkipFix(), reset_command: 'gbrain config unset dream.patterns.last_run' } };
+    }
+    const selected = reflections.length;
+    const submitted = reflections.slice(0, plan.n);
+
     const queue = new MinionQueue(engine);
     // #2050: children drain inline on BOTH engines (see runSubagentsInline),
     // so give this job a private per-run queue: the inline drain must never
@@ -259,7 +276,7 @@ export async function runPhasePatterns(
     );
     const cycleDate = opts.cycleDate ?? await resolveCycleDate(engine);
     const data: SubagentHandlerData = {
-      prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix, cycleDate),
+      prompt: buildPatternsPrompt(submitted, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix, cycleDate),
       model: config.model,
       max_turns: 30,
       // #4217/CDX-12: a patterns child whose every put_page failed must
@@ -277,7 +294,7 @@ export async function runPhasePatterns(
     };
     const submitOpts: Partial<MinionJobInput> = {
       ...(maintenance ? { idempotency_key: `dream:patterns:${digest({ source: maintenance.writer.sourceIncarnation,
-        authority: maintenance.writer, reflections: withoutSeats(reflections), model: config.model, output: config.outputSlugPrefix })}` } : {}),
+        authority: maintenance.writer, reflections: withoutSeats(submitted), model: config.model, output: config.outputSlugPrefix })}` } : {}),
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
       queue: childQueueName,
@@ -293,6 +310,7 @@ export async function runPhasePatterns(
       return skipped('dream_breaker_tripped', refusal);
     }
     let job: Awaited<ReturnType<typeof queue.add>>;
+    const submittedAt = Date.now();
     try {
       job = await queue.add('subagent', data as unknown as Record<string, unknown>, submitOpts, {
         allowProtectedSubmit: true,
@@ -346,6 +364,10 @@ export async function runPhasePatterns(
       }
     }
 
+    // #6177: every child records its cost, timed-out and failed ones included.
+    await recordPatternsLastRun(engine, { duration_ms: Date.now() - submittedAt, reflections: submitted.length, at: new Date().toISOString(),
+      outcome: outcome === 'completed' ? 'completed' : outcome === 'timeout' ? 'timeout' : 'failed' });
+
     if (opts.yieldDuringPhase) {
       try { await opts.yieldDuringPhase(); } catch { /* best-effort */ }
     }
@@ -363,10 +385,10 @@ export async function runPhasePatterns(
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // #6052: `finalized` leaves out outputs whose managed publication is held (pending or contended); `held` counts them.
-    const { quoteVerify, finalized, held } = await stampPatternOutputs(engine, maintenance, writtenRefs, reflections, config, cycleSourceId, cycleDate, opts.signal);
+    const { quoteVerify, finalized, held } = await stampPatternOutputs(engine, maintenance, writtenRefs, submitted, config, cycleSourceId, cycleDate, opts.signal);
     const reverseWriteCount = maintenance ? await verifyMaintenanceOutputs(engine, maintenance, finalized)
       : await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
-    const details = { reflections_considered: reflections.length, patterns_written: finalized.length,
+    const details = { reflections_considered: submitted.length, reflections_selected: selected, plan_basis: plan.basis, patterns_written: finalized.length,
       ...(quoteVerify ? { quote_verify: quoteVerify } : {}), reverse_write_count: reverseWriteCount, publish_deferred: held,
       child_outcome: outcome, job_id: job.id };
 

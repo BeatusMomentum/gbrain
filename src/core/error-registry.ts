@@ -60,6 +60,7 @@ export const CODES = {
   api_not_enabled: { class: 'host_only', summary: "Google connect credential error: api not enabled.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   approval_required: { class: 'consent', summary: "The change needs the owner's explicit approval before it can proceed." },
   autopilot_job_owned_by_other_brain: { class: 'caller', summary: "The autopilot job is bound to a different brain." },
+  budget_below_recent_runtime: { class: 'unavailable', summary: "The cycle's remaining budget fits fewer reflections than dream patterns needs at the recorded runtime, so the in-cycle run was skipped before any spend.", why: 'An in-cycle patterns run is sized from dream.patterns.last_run; a run that cannot finish in the budget would spend tokens and be killed.', docs: 'docs/guides/dream-patterns.md#budget-sizing', suggestion: 'Run `gbrain dream --phase patterns` outside the cycle after the user agrees to the paid run (it is not budget-limited and records its cost), or reset the record with `gbrain config unset dream.patterns.last_run`.' },
   benchmark_duplicate_task_id: { class: 'caller', summary: "Benchmark duplicate task id." },
   benchmark_empty: { class: 'caller', summary: "The benchmark file has no tasks." },
   benchmark_exists: { class: 'caller', summary: "A benchmark already exists at the target path." },

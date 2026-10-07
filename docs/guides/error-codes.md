@@ -306,6 +306,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The configured storage bucket does not exist. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### budget_below_recent_runtime
+
+<a id="budget_below_recent_runtime"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The cycle's remaining budget fits fewer reflections than dream patterns needs at the recorded runtime, so the in-cycle run was skipped before any spend. | An in-cycle patterns run is sized from dream.patterns.last_run; a run that cannot finish in the budget would spend tokens and be killed. | Run `gbrain dream --phase patterns` outside the cycle after the user agrees to the paid run (it is not budget-limited and records its cost), or reset the record with `gbrain config unset dream.patterns.last_run`. | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/dream-patterns.md#budget-sizing](../../docs/guides/dream-patterns.md#budget-sizing)
+
 ### budget_unsatisfiable
 
 <a id="budget_unsatisfiable"></a>
