@@ -291,11 +291,11 @@ const put_page: Operation = {
   name: 'put_page',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Complete content REPLACES the whole page: read get_page include_content:true, then send its revision as expected_revision and a request_id. Remote callers: [[links]] to existing pages become mentions; typed links are skipped (a stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; over 3 pages: put_pages.',
+  description: 'Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. Keep a request_id UUID; retry with identical arguments. Remote callers: existing-page [[links]] become mentions; typed links are skipped (stdio `gbrain serve` sweeps them later, `gbrain serve --http` does not self-sweep). Edits: edit_page; >3 pages: put_pages.',
   params: {
     ...PAGE_MUTATION_PARAMS,
     slug: { type: 'string', description: 'Page slug.', required: true },
-    content: { type: 'string', required: true, description: 'Complete markdown with frontmatter; read get_page include_content:true first.' },
+    content: { type: 'string', required: true, description: 'Complete markdown (get_page include_content:true).' },
     allow_empty: { type: 'boolean', required: false, description: 'Allow emptying the page.' },
     drop_timeline: { type: 'boolean', required: false, description: 'No Timeline in content: delete its entries.' },
     wait_ms: WRITE_WAIT_PARAM,
