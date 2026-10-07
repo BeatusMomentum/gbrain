@@ -43,6 +43,7 @@ import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { derivedWriteThrough } from './derived-write-through.ts';
+import { canonicalConceptStem, loadConceptRedirects } from './concept-redirects.ts';
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
 } from './concept-publication.ts';
@@ -215,9 +216,12 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by normalized concept slug; one atom counts once per concept.
+  // #6161: a concept merged into another (merged_into / a canonical alias) groups under the canonical one.
+  const redirects = await loadConceptRedirects(engine, opts.sourceId ?? 'default', conceptStemFor).catch(() => new Map<string, string>());
   const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
   for (const atom of atoms) {
-    const conceptSlugs = new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null));
+    const conceptSlugs = new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null)
+      .map((stem) => canonicalConceptStem(stem, redirects)));
     for (const conceptSlug of conceptSlugs) {
       const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
       existing.slugs.push(atom.slug);
@@ -330,6 +334,7 @@ export async function runPhaseSynthesizeConcepts(
   const publicationDeferred: Array<{ concept: string; reason: string }> = [];
   const publicationHeld: Array<{ concept: string; reason: string }> = [];
   const skippedHumanOwned: string[] = [];
+  const skippedDeleted: string[] = [];
   const skippedUnchanged: string[] = [];
   const rehashed: string[] = [];
   const keptExistingNarrative: string[] = [];
@@ -339,7 +344,12 @@ export async function runPhaseSynthesizeConcepts(
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
     // writer). Check before any spend; never replace its body.
-    const existingSnapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default' });
+    const existingSnapshot = await engine.readPageSnapshot(conceptSlug, { sourceId: opts.sourceId ?? 'default', includeDeleted: true });
+    // #6161: a concept page someone deleted (with no merge redirect) is never resurrected.
+    if (existingSnapshot?.page.deleted_at) {
+      skippedDeleted.push(conceptSlug);
+      continue;
+    }
     const existing = existingSnapshot?.page ?? null;
     if (existing && !String(existing.frontmatter?.synthesized_by ?? '').startsWith('synthesize_concepts')) {
       skippedHumanOwned.push(conceptSlug);
@@ -622,6 +632,7 @@ export async function runPhaseSynthesizeConcepts(
       link_warnings: linkWarnings,
       warnings,
       skipped_human_owned: skippedHumanOwned,
+      skipped_deleted: skippedDeleted,
       skipped_unchanged: skippedUnchanged,
       rehashed,
       kept_existing_narrative: keptExistingNarrative,
