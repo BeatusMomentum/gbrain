@@ -21,6 +21,7 @@ import { CORPUS_INGESTED_SUFFIX, runMaintenanceSweep } from '../src/core/sweep.t
 import { __drainCheckpointHarvestForTests, __resetCheckpointHarvestForTests, scheduleCheckpointHarvest } from '../src/core/context/checkpoint-harvest.ts';
 import { appendSegmentLedger, segmentFileName, writeSegment } from '../src/core/context/corpus-segments.ts';
 import { runHook } from '../src/commands/hook.ts';
+import { discoverTranscripts } from '../src/core/cycle/transcript-discovery.ts';
 
 const KEYED: CapabilityReport = {
   embeddings: { available: false },
@@ -247,6 +248,36 @@ describe('durable revocation: a capture under off never extracts later', () => {
     expect(prompts[0]).not.toContain('old secret plan alpha');
   });
 
+  test('a rewrite that puts earlier on-period turns before the off-period turns still never extracts them', async () => {
+    await setMode('off');
+    await sessionEnd('sess-r5', ['old secret plan alpha', 'ack alpha']);
+    await sweep();
+    expect(prompts.length).toBe(0);
+    await setMode('salient');
+    await sessionEnd('sess-r5', ['earlier public plan zeta', 'ack zeta', 'old secret plan alpha', 'ack alpha', 'new public plan beta', 'ack beta']);
+    await sweep();
+    const sent = prompts.join('\n');
+    expect(sent).toContain('earlier public plan zeta');
+    expect(sent).toContain('new public plan beta');
+    expect(sent).not.toContain('old secret plan alpha');
+    expect(sent).not.toContain('ack alpha');
+  });
+
+  test('a worker-side retire is honored when the rewrite puts new turns first', async () => {
+    await setMode('off');
+    const full = join(corpusDir, 'sess-r6.txt');
+    writeFileSync(full, corpusText(['old secret plan alpha', 'ack alpha']));
+    await sweep();
+    expect(sidecar('sess-r6.txt')?.skipped).toBe('writeback_off');
+    await setMode('salient');
+    writeFileSync(full, corpusText(['earlier public plan zeta', 'ack zeta', 'old secret plan alpha', 'ack alpha']));
+    rmSync(full + CORPUS_INGESTED_SUFFIX, { force: true });
+    await sweep();
+    const sent = prompts.join('\n');
+    expect(sent).toContain('earlier public plan zeta');
+    expect(sent).not.toContain('old secret plan alpha');
+  });
+
   test('appended turns after a worker-side retire: only the new turns extract', async () => {
     await setMode('off');
     const full = join(corpusDir, 'sess-r3.txt');
@@ -318,5 +349,21 @@ describe('two brains on one machine', () => {
     });
     expect(prompts.length).toBe(1);
     expect(prompts[0]).toContain('gamma in the shared directory');
+  });
+});
+
+describe('dream synthesis never reads off-period turns', () => {
+  test('discovery drops turns captured under off and skips a file holding nothing else', async () => {
+    await setMode('off');
+    await sessionEnd('sess-d1', ['old secret plan alpha', 'ack alpha']);
+    await sessionEnd('sess-d2', ['private plan gamma', 'ack gamma']);
+    await setMode('salient');
+    await sessionEnd('sess-d1', ['earlier public plan zeta', 'ack zeta', 'old secret plan alpha', 'ack alpha', 'new public plan beta', 'ack beta']);
+    const found = discoverTranscripts({ corpusDir, minChars: 1 });
+    const d1 = found.find((t) => t.basename === 'sess-d1');
+    expect(d1?.content).toContain('earlier public plan zeta');
+    expect(d1?.content).toContain('new public plan beta');
+    expect(d1?.content).not.toContain('old secret plan alpha');
+    expect(found.some((t) => t.basename === 'sess-d2')).toBe(false);
   });
 });

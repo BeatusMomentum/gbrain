@@ -78,6 +78,8 @@ export interface CorpusProgress {
   totals: { inserted: number; duplicate: number; superseded: number };
   entity_slugs: string[];
   skipped_reason?: string;
+  /** #6091: hashes of turns captured or retired under writeback off; never extracted wherever they sit. */
+  retired_turns?: string[];
   lease: { owner: string; at: number } | null;
 }
 
@@ -139,6 +141,7 @@ export function planCorpusWindows(
   turns: CorpusTurn[],
   from: { turn: number; offset: number },
   maxChars: number = MAX_TURN_TEXT_CHARS,
+  skip: ReadonlySet<string> = new Set(),
 ): CorpusWindow[] {
   const windows: CorpusWindow[] = [];
   let parts: string[] = [];
@@ -152,7 +155,7 @@ export function planCorpusWindows(
   for (let t = from.turn; t < turns.length; t++) {
     const { header, body } = turns[t];
     let offset = t === from.turn ? Math.min(from.offset, body.length) : 0;
-    if (offset >= body.length) {
+    if (offset >= body.length || skip.has(turns[t].sha256)) {
       last = { turn: t, offset: null };
       continue;
     }
@@ -372,6 +375,7 @@ export async function retireCorpusFile(full: string, reason: string = 'writeback
   const written = await updateProgress(full, (cur) => ({
     ...(cur ?? freshProgress()),
     turns: mergeTurns(cur?.turns ?? [], parseCorpusTurns(raw)),
+    retired_turns: mergeRetired(cur, parseCorpusTurns(raw).map((t) => t.sha256)),
     continuation: null,
     finished: st,
     skipped_reason: reason,
@@ -391,10 +395,21 @@ export async function retireCorpusTurns(full: string, hashes: readonly string[])
   const written = await updateProgress(full, (cur) => {
     const known = new Set(cur?.turns.map((t) => t.sha256) ?? []);
     const added = hashes.filter((h) => !known.has(h));
-    if (cur && added.length === 0) return null;
-    return { ...(cur ?? freshProgress()), turns: [...(cur?.turns ?? []), ...added.map((h) => ({ start: 0, end: 0, sha256: h }))].slice(-MAX_RECORDED_TURNS) };
+    const retired = new Set(cur?.retired_turns ?? []);
+    if (cur && added.length === 0 && hashes.every((h) => retired.has(h))) return null;
+    return { ...(cur ?? freshProgress()), turns: [...(cur?.turns ?? []), ...added.map((h) => ({ start: 0, end: 0, sha256: h }))].slice(-MAX_RECORDED_TURNS),
+      retired_turns: mergeRetired(cur, hashes) };
   });
   return written !== null || (await readCorpusProgress(full)) !== null;
+}
+
+function mergeRetired(cur: CorpusProgress | null, hashes: readonly string[]): string[] {
+  return [...new Set([...(cur?.retired_turns ?? []), ...hashes])].slice(-MAX_RECORDED_TURNS);
+}
+
+/** #6091: turns that must never reach extraction, wherever a rewrite puts them. */
+export function retiredTurns(progress: CorpusProgress | null): ReadonlySet<string> {
+  return new Set(progress?.retired_turns ?? []);
 }
 
 function mergeTurns(recorded: CorpusProgress['turns'], turns: CorpusTurn[]): CorpusProgress['turns'] {
@@ -431,12 +446,12 @@ export async function runCorpusWindows(opts: {
   const turns = parseCorpusTurns(opts.raw);
   if (!state) {
     const cur = await readCorpusProgress(full).catch(() => null);
-    const remaining = planCorpusWindows(turns, resumePoint(turns, cur)).filter((w) => w.text).length;
+    const remaining = planCorpusWindows(turns, resumePoint(turns, cur), MAX_TURN_TEXT_CHARS, retiredTurns(cur)).filter((w) => w.text).length;
     return { status: 'contended', windowsDone: 0, windowsRemaining: remaining, result: resultOf(cur ?? { ...freshProgress(), generation: 0 }) };
   }
 
   let cursor = resumePoint(turns, state);
-  const windows = planCorpusWindows(turns, cursor);
+  const windows = planCorpusWindows(turns, cursor, MAX_TURN_TEXT_CHARS, retiredTurns(state));
   let done = 0;
   let status: CorpusWindowRun['status'] = 'complete';
   let holding = true;
@@ -492,7 +507,7 @@ export async function runCorpusWindows(opts: {
       if (released) state = released;
     }
   }
-  const remaining = planCorpusWindows(turns, cursor).filter((w) => w.text).length;
+  const remaining = planCorpusWindows(turns, cursor, MAX_TURN_TEXT_CHARS, retiredTurns(state)).filter((w) => w.text).length;
   // Rewritten while extracting: the snapshot's progress stands, but the file
   // is not done; its new turns wait for the next run.
   if (status === 'complete' && !sameCorpusFileStat(fileStat, corpusFileStat(await stat(full)))) status = 'changed';
