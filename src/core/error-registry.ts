@@ -51,6 +51,7 @@ export const CODES = {
   access_env_missing: { class: 'caller', summary: "Google connect credential error: access env missing.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   acknowledgment_unavailable: { class: 'unavailable', summary: "This batch is unknown or outside the retained replay window." },
   admin_policy_enforced: { class: 'host_only', summary: "Google connect credential error: admin policy enforced.", docs: 'docs/guides/google-connect.md#troubleshooting' },
+  ambient_capture_off: { class: 'caller', summary: "memory.auto_writeback no longer allows this ambient capture lane, so facts extracted from captured session text were dropped before admission.", why: "An explicit off (or an incoherent setting) applies to every capture-lane fact request admitted after the change, including one whose provider call was already in flight; requests admitted earlier still publish.", docs: 'docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch' },
   ambiguous_id: { class: 'caller', summary: "The legacy id matches multiple readable pages." },
   ambiguous_ref: { class: 'caller', summary: "A page reference in a rating matches pages in more than one source of that answer.", docs: 'docs/guides/retrieval-feedback.md#ambiguous_ref' },
   ambiguous_skill: { class: 'caller', summary: "This name belongs to multiple authorized sources." },

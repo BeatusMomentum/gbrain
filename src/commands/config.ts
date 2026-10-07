@@ -777,7 +777,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       if (fileHad || dbDeleted > 0) {
         console.log(`Unset ${key} (${[fileHad ? 'file plane' : null, dbDeleted > 0 ? 'db plane' : null].filter(Boolean).join(' + ')})`);
         if (key === 'memory.auto_writeback') {
-          console.log('Ambient writeback resolves off while unset. If harness instruction blocks were installed, remove them: gbrain bootstrap harness --yes (converges on off).');
+          for (const line of (await import('../core/facts/writeback-config.ts')).writebackUnsetMessage()) console.log(line);
         }
       } else {
         console.error(`Config key not found: ${key}`);
@@ -903,7 +903,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       const out = typeof val === 'string' ? val : JSON.stringify(val);
       console.log(rawFlag ? out : redactConfigValue(key, out));
       if (dbAuthoritative) {
-        console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}`);
+        console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}${await writebackLanesNote(engine, key)}`);
         if (dbVal !== null && dbVal !== undefined && fileVal !== undefined && fileVal !== null && String(fileVal) !== String(dbVal)) {
           console.error(`[config] WARN: file mirror disagrees ('${String(fileVal)}') — planes diverged; re-run: gbrain config set ${key} ${String(dbVal)}`);
         }
@@ -1081,7 +1081,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // The off switch gates instructions + extraction immediately, but
         // previously-installed harness instruction blocks keep directing new
         // sessions until converged — say so (red-team review, this wave).
-        console.log('Ambient writeback off. If harness instruction blocks were installed, remove them: gbrain bootstrap harness --yes (converges on off).');
+        for (const line of (await import('../core/facts/writeback-config.ts')).writebackOffMessage()) console.log(line);
       }
       return;
     }
@@ -1460,4 +1460,11 @@ async function refuseSchemaSizingKey(key: 'embedding_model' | 'embedding_dimensi
   console.error(`[config]`);
   console.error(`[config] No --force escape: silently writing a no-op preserves the bug class this rejection closes.`);
   process.exit(1);
+}
+
+/** #6091: the per-lane effective state of `memory.auto_writeback`, appended to `config get`'s stderr source line. */
+async function writebackLanesNote(engine: BrainEngine, key: string): Promise<string> {
+  if (key !== 'memory.auto_writeback') return '';
+  const { captureLaneSummary, resolveWritebackConfig } = await import('../core/facts/writeback-config.ts');
+  return `; capture lanes: ${captureLaneSummary(await resolveWritebackConfig(engine, loadConfig(), { gate: true }))}`;
 }

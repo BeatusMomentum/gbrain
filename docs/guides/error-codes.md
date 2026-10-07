@@ -72,6 +72,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### ambient_capture_off
+
+<a id="ambient_capture_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| memory.auto_writeback no longer allows this ambient capture lane, so facts extracted from captured session text were dropped before admission. | An explicit off (or an incoherent setting) applies to every capture-lane fact request admitted after the change, including one whose provider call was already in flight; requests admitted earlier still publish. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch](../../docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch)
+
 ### ambiguous_id
 
 <a id="ambiguous_id"></a>
