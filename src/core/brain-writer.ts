@@ -31,6 +31,7 @@ import {
   type ParseValidationCode,
   type ParseValidationError,
   type ParseWarningCode,
+  yamlAliasesWithinLimit,
   yamlBlockError,
 } from './markdown.ts';
 import { isMarkdownFilePath, isSyncable, pruneDir, slugifyPath } from './sync.ts';
@@ -156,9 +157,11 @@ export function createFrontmatterBackup(filePath: string, opts: FrontmatterBacku
 /**
  * A cosmetic line rewrite is kept only when it reads back as the same value
  * (#6157). A line that does not parse on its own is a repair target, so the
- * rewrite is allowed.
+ * rewrite is allowed. A line over the alias limit is never rewritten: its
+ * value could expand exponentially when compared.
  */
 function rewriteKeepsYamlValue(before: string, after: string): boolean {
+  if (!yamlAliasesWithinLimit(before)) return false;
   let original: unknown;
   try {
     original = yamlLoad(before);
@@ -336,7 +339,8 @@ export function autoFixFrontmatter(
       for (let i = firstNonEmpty + 1; i < lines.length; i++) {
         if (lines[i].trim() === '---') { closeIdx = i; break; }
       }
-      const blockParses = closeIdx < lines.length && yamlBlockError(lines.slice(firstNonEmpty + 1, closeIdx).join('\n')) === null;
+      const block = lines.slice(firstNonEmpty + 1, closeIdx).join('\n');
+      const blockParses = closeIdx < lines.length && yamlBlockError(block) === null && yamlAliasesWithinLimit(block);
       let fixedAny = false;
       for (let i = firstNonEmpty + 1; !blockParses && i < closeIdx; i++) {
         const m = lines[i].match(/^(\s*[A-Za-z_][\w-]*\s*:\s*)"(.*)"\s*(.*)$/);
