@@ -1514,7 +1514,9 @@ Reasons: `orchestrator_failed`, `orchestrator_threw`, `ledger_write_failed`, `pr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Schema migrations are behind and this run did not apply them. | apply-migrations applies schema migrations only with --yes (or --non-interactive); without it the run reports the drift instead of claiming the brain is up to date. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| Schema migrations are behind (or could not be confirmed at head), so the command did not report success. | apply-migrations reasons: not_applied: the run had no --yes (or --non-interactive), so it did not apply the schema migrations; the fix reruns with --yes. still_behind: an authorized run tried them and they did not apply; another --yes repeats the failure, so run `gbrain doctor --json` and report. schema_unreadable: the schema version could not be read back after the orchestrators ran, so the run cannot confirm it reached head; report it. Each failure names the schema migrations still pending. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `not_applied`, `still_behind`, `schema_unreadable`.
 
 ### migrations_running
 
