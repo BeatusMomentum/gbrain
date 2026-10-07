@@ -1224,9 +1224,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
 
     // #4907: a phase knob the phase would ignore is refused before the write.
-    const { PHASE_CONFIG_KEYS, parsePhaseConfigValue } = await import('../core/cycle/phase-config-values.ts');
-    if (PHASE_CONFIG_KEYS.includes(key)) {
-      try { parsePhaseConfigValue(key, value); }
+    const [{ PHASE_CONFIG_KEYS, parsePhaseConfigValue }, { CYCLE_GUARDED_KEYS, assertCycleConfigValue }] = await Promise.all([import('../core/cycle/phase-config-values.ts'), import('../core/cycle/config-guards.ts')]);
+    if (PHASE_CONFIG_KEYS.includes(key) || CYCLE_GUARDED_KEYS.includes(key)) { // #6134/#6177: lint_exclude paths, the last_run state key
+      try { if (PHASE_CONFIG_KEYS.includes(key)) parsePhaseConfigValue(key, value); else assertCycleConfigValue(key, value); }
       catch (error) { (await import('../cli/cli-error.ts')).exitCliError(error, 'config'); }
     }
 

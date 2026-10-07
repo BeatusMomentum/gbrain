@@ -223,6 +223,25 @@ export async function readCorpusProgress(full: string): Promise<CorpusProgress |
   }
 }
 
+/** The earliest file time trusted as when a session was written. */
+const MIN_FACT_TIME_MS = Date.UTC(2000, 0, 1);
+/** Clock skew a future file time may carry and still be trusted. */
+const FACT_TIME_SKEW_MS = 60_000;
+
+export type CorpusFactTime = { at: Date } | { rejected: 'invalid' | 'before_2000' | 'future' };
+
+/**
+ * #6159: the session file's write time as the time its facts happened. A time
+ * that is not finite, before 2000 or more than a minute ahead of now is not
+ * trusted, and the caller dates the facts at extraction instead.
+ */
+export function corpusFactTime(mtimeMs: number, nowMs: number = Date.now()): CorpusFactTime {
+  if (!Number.isFinite(mtimeMs)) return { rejected: 'invalid' };
+  if (mtimeMs < MIN_FACT_TIME_MS) return { rejected: 'before_2000' };
+  if (mtimeMs > nowMs + FACT_TIME_SKEW_MS) return { rejected: 'future' };
+  return { at: new Date(mtimeMs) };
+}
+
 export function corpusFileStat(st: { size: number; mtimeMs: number; ino: number }): CorpusFileStat {
   return { size: st.size, mtime_ms: st.mtimeMs, ino: st.ino };
 }
