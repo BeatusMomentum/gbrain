@@ -275,7 +275,7 @@ export function newTableScanState(): TableScanState {
  * line (a header row is the one above a separator). Linear in the line.
  */
 export function tableCredentialCells(line: string, next: string | undefined, state: TableScanState): Array<{ start: number; value: string }> {
-  const cells = tableCells(line);
+  const cells = line.includes('|') ? tableCells(line) : null;
   const out: Array<{ start: number; value: string }> = [];
   if (!cells) {
     state.columns = null;

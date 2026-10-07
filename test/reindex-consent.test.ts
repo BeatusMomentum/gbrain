@@ -119,7 +119,7 @@ describe('W4.5: the reindex job handler', () => {
   const ctx = (spend?: boolean): MinionJobContext => ({
     id: 41, name: 'reindex', data: { markdown: true }, attempts_made: 0, signal: new AbortController().signal,
     ...(spend ? { spend: { record: jobSpendAuthorization({ consented_effects: ['paid'], cap_usd: 5, cap_source: 'user', via: 'yes' }, { command: 'jobs submit reindex', of: 1 }), budget_key: 'group:x' } } : {}),
-  }) as MinionJobContext;
+  }) as unknown as MinionJobContext;
 
   test('a queued job without a stored authorization fails with confirmation_required and spends nothing', async () => {
     let thrown: unknown;

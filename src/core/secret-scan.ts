@@ -38,8 +38,7 @@ import {
   danglingLabel,
   labeledEchoEligible,
   labeledValueIsCredential,
-  newTableScanState,
-  tableCredentialCells,
+  newTableScanState, tableCredentialCells,
 } from './secret-scan-labeled.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -982,8 +981,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
     const lineStart = offset;
     offset += line.length + 1;
     const dangling = opts.labeledCredentials === true && i > 0 ? danglingLabel(lines[i - 1] ?? '') : null;
-    const cells = table && line.includes('|') ? tableCredentialCells(line, lines[i + 1], table) : [];
-    if (table && !line.includes('|')) { table.columns = null; table.previous = null; }
+    const cells = table ? tableCredentialCells(line, lines[i + 1], table) : [];
     if (line.length < 8 && !dangling && cells.length === 0) continue;
     // ENG-12: a line wholly inside a private-key claim is already redacted by
     // it; hits on it would only double-report (one key, one finding).
@@ -1040,11 +1038,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
         claim(p.name, value, start);
       }
     }
-    for (const cell of cells) {
-      if (taken && anyTaken(taken, cell.start, cell.start + cell.value.length)) continue;
-      taken ??= new Uint8Array(line.length);
-      claim('labeled_credential', cell.value, cell.start);
-    }
+    for (const c of cells) if (!taken || !anyTaken(taken, c.start, c.start + c.value.length)) { taken ??= new Uint8Array(line.length); claim('labeled_credential', c.value, c.start); }
   }
   return hits;
 }
