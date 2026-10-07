@@ -203,20 +203,10 @@ async function readDbSchemaPackConfig(cfg: GBrainConfig | null): Promise<string 
   }
 }
 
-async function runActive(_args: string[]): Promise<void> {
-  const cfg = loadConfig();
-  const dbConfig = await readDbSchemaPackConfig(cfg);
-  const resolution = resolveActivePackNameOnly({ cfg, remote: false, dbConfig });
-  const pack = await loadActivePack({ cfg, remote: false, dbConfig });
-  console.log(`Active pack: ${pack.manifest.name} v${pack.manifest.version}`);
-  console.log(`Source: ${resolution.source}`);
-  console.log(`Pack identity: ${pack.identity}`);
-  console.log(`Page types: ${pack.manifest.page_types.length}`);
-  console.log(`Link verbs: ${pack.manifest.link_types.length}`);
-  console.log(`Takes kinds: ${pack.manifest.takes_kinds.join(', ')}`);
-  if (pack.manifest.description) {
-    console.log(`\n${pack.manifest.description}`);
-  }
+async function runActive(args: string[]): Promise<void> {
+  const { json, source } = parseFlags(args);
+  const { runSchemaActive } = await import('./schema-active.ts');
+  return runSchemaActive({ json, sourceId: source }, withConnectedEngine);
 }
 
 function runList(_args: string[]): void {
