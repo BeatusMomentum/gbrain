@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 208391,
-    "stdoutSha256": "bc381e0b30d5f4929756f1f781edaf9e9f22ea2490ad437556693a2457fca542",
+    "stdoutBytes": 208653,
+    "stdoutSha256": "0df2586d0d82b9edbeb6bc242a687ab5ca01bdbccca68fe1dddc3c8eceaf79bb",
     "toolNames": [
       "remember",
       "entity",
@@ -656,13 +656,14 @@
         "scope": "write"
       },
       {
-        "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.",
+        "description": "Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `gbrain pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.",
         "idempotent": false,
         "local_only": true,
         "mutating": true,
         "name": "purge_deleted_pages",
         "parameters": {
-          "older_than_hours": "number?"
+          "older_than_hours": "number?",
+          "yes": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -670,6 +671,10 @@
             "older_than_hours": {
               "description": "Age cutoff in hours. Default 72.",
               "type": "number"
+            },
+            "yes": {
+              "description": "Consent to the irreversible brain-wide purge. Ask the user first.",
+              "type": "boolean"
             }
           },
           "required": [],

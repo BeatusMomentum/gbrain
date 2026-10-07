@@ -17,10 +17,11 @@
  *
  * Git runs through `hardened-git.ts` (the candidate directory's config is
  * untrusted). Symlinks, submodules (gitlinks) and tracked paths that resolve
- * outside the root refuse with `writer_manifest_unsafe`.
+ * outside the root (including an index entry with a `..` segment) refuse with
+ * `writer_manifest_unsafe` before anything is read.
  */
 import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { opError } from '../ops/contract.ts';
 import { createProgress, type ProgressOptions } from '../progress.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
@@ -102,6 +103,7 @@ function trackedPaths(canonical: string): { paths: string[]; untracked: number }
     if (!record) continue;
     const tab = record.indexOf('\t');
     const mode = record.slice(0, record.indexOf(' ')), rel = record.slice(tab + 1);
+    if (!insideCheckout(rel)) throw outsideCheckout(canonical);
     if (excluded(rel)) continue;
     if (mode === '160000') throw unsafe('Canonical worktree transfer does not support Git submodules.',
       `${rel} in ${canonical} is a Git submodule, so no manifest was recorded. Ask the user to replace the submodule with ordinary tracked files (or remove it), then run the step again.`);
@@ -114,9 +116,20 @@ function trackedPaths(canonical: string): { paths: string[]; untracked: number }
   return { paths: [...paths].sort(), untracked };
 }
 
+/** A repository-relative path that names a file under the checkout: no empty, `.` or `..` segment and not absolute. */
+function insideCheckout(rel: string): boolean {
+  return !isAbsolute(rel) && rel.split('/').every(part => part !== '' && part !== '.' && part !== '..');
+}
+const outsideCheckout = (canonical: string) => unsafe('Canonical worktree transfer only hashes files inside the checkout.',
+  `The Git index of ${canonical} lists a path that leaves the checkout (a hand-edited or corrupted index), so no manifest was recorded and nothing outside the checkout was read. `
+    + 'Ask the user to replace the checkout with a fresh git clone of the same repository at the same commit, then run the step again.');
+
 /** The working-tree bytes of a tracked path; null when it is missing on disk (counted as deleted). */
 function trackedBytes(canonical: string, rel: string): Buffer | null {
+  if (!insideCheckout(rel)) throw outsideCheckout(canonical);
   const path = join(canonical, ...rel.split('/'));
+  const within = relative(canonical, path);
+  if (within === '' || within.split(sep)[0] === '..' || isAbsolute(within)) throw outsideCheckout(canonical);
   let real: string;
   try { real = realpathSync(path); } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return null;

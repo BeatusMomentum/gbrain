@@ -429,20 +429,21 @@ const purge_deleted_pages: Operation = {
   name: 'purge_deleted_pages',
   idempotent: false,
   outputRedaction: 'no_stored_text',
-  description: 'Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
+  description: 'Admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72), in every source. Cascades through content_chunks, page_links, chunk_relations. Trusted local CLI only; the command is `gbrain pages purge-deleted`, which asks first (yes: true is the consent). Manual escape hatch alongside the autopilot purge phase.',
   params: {
     older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
+    yes: { type: 'boolean', description: 'Consent to the irreversible brain-wide purge. Ask the user first.' },
   },
   mutating: true,
   scope: 'admin',
-  localOnly: true,
+  localOnly: true, cliOnly: { argv: ['gbrain', 'pages', 'purge-deleted', '--dry-run', '--json'] },
   handler: async (ctx, p) => {
     const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
     if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
-    const result = await (await import('../persistence/purge-deleted.ts')).purgeDeletedPagesCoordinated(ctx.engine, olderThanHours);
-    return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
+    if (ctx.remote !== false) throw (await import('./callable.ts')).cliOnlyRefusal(purge_deleted_pages);
+    return (await import('../persistence/purge-deleted.ts')).consentedPurgeDeletedPages(ctx.engine, olderThanHours, p.yes === true);
   },
-  cliHints: { name: 'purge-deleted' },
+  cliHints: { name: 'purge-deleted', hidden: true },
 };
 
 const LIST_PAGES_SORT_VALUES = ['updated_desc', 'updated_asc', 'created_desc', 'slug'] as const;

@@ -30,6 +30,8 @@ interface StrictSpec {
   when?: (args: readonly string[]) => boolean;
   /** Extra why for specific refused flags. */
   refusedWhy?: Readonly<Record<string, string>>;
+  /** The handler reads value flags only as `--flag value`, so a `--flag=value` form (which it would ignore) refuses. */
+  separateValues?: true;
 }
 
 const SCHEMA_FIX = { argv: ['schema', 'active', '--json'], why: 'Shows the active schema pack and where it was resolved; changes nothing.' } as const;
@@ -47,10 +49,10 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
       '--source-id': 'The purge is brain-wide: it removes soft-deleted pages from every source, and per-source purge is not supported.',
     },
   },
-  'cache clear': { flags: ['--yes', '-y'], values: { '--source': null }, maxPositionals: 0, fix: CACHE_FIX },
+  'cache clear': { flags: ['--yes', '-y'], values: { '--source': null }, separateValues: true, maxPositionals: 0, fix: CACHE_FIX },
   'cache prune': { maxPositionals: 0, fix: CACHE_FIX },
   'schema use': { maxPositionals: 1, fix: SCHEMA_FIX },
-  'schema downgrade': { flags: ['--json'], values: { '--to': null }, maxPositionals: 0, fix: SCHEMA_FIX },
+  'schema downgrade': { flags: ['--json'], values: { '--to': null }, separateValues: true, maxPositionals: 0, fix: SCHEMA_FIX },
   'schema init': { flags: ['--json'], maxPositionals: 1, fix: SCHEMA_FIX },
   'schema remove-type': { flags: ['--json'], values: PACK, maxPositionals: 1, fix: SCHEMA_FIX },
   'schema remove-alias': { flags: ['--json'], values: PACK, maxPositionals: 2, fix: SCHEMA_FIX },
@@ -73,6 +75,7 @@ export const STRICT_SUBCOMMANDS: Readonly<Record<string, StrictSpec>> = {
   'search modes': {
     flags: ['--reset', '--json'],
     values: { '--source': null },
+    separateValues: true,
     maxPositionals: 0,
     when: args => args.includes('--reset'),
     fix: { argv: ['search', 'modes'], why: 'Shows every search.* override and its value; changes nothing.' },
@@ -101,6 +104,7 @@ export function strictArgsProblem(spec: StrictSpec, args: readonly string[]): St
       continue;
     }
     if (!(name in values)) return { token, problem: 'is not an argument this subcommand reads' };
+    if (spec.separateValues && name !== token) return { token, problem: `is not read in this form; write it as ${name} <value>` };
     if (seen.has(name)) return { token, problem: `${name} was given more than once` };
     seen.add(name);
     const value = name !== token ? token.slice(eq + 1) : args[i + 1];

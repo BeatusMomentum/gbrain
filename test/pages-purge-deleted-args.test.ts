@@ -11,7 +11,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { parsePurgeArgs, runPages } from '../src/commands/pages.ts';
-import { OperationError } from '../src/core/ops/contract.ts';
+import { OperationError, type OperationContext } from '../src/core/ops/contract.ts';
+import { operations } from '../src/core/operations.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -138,5 +140,32 @@ describe('runPages', () => {
   test('nothing to purge needs no confirmation', async () => {
     expect(await run(['purge-deleted', '--older-than', '9999'])).toContain('No pages to purge');
     expect(currentExitCode()).toBe(0);
+  });
+});
+
+describe('the purge_deleted_pages op is not a consent-free side door (security review)', () => {
+  const op = operations.find(o => o.name === 'purge_deleted_pages')!;
+  const local = (p: Record<string, unknown>) => withEnv({ GBRAIN_NON_INTERACTIVE: '1' }, () =>
+    op.handler({ engine, config: { engine: 'pglite' }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext, p));
+
+  test('gbrain call without yes refuses with the D6 consent payload and purges nothing', async () => {
+    const refused = await local({ older_than_hours: 72 }).then(() => null, (e: unknown) => e as OperationError);
+    expect(refused?.code).toBe('confirmation_required');
+    expect(await slugs()).toEqual(['notes/live', 'notes/old-deleted']);
+  });
+
+  test('yes: true is the consent, and an empty purge set needs none', async () => {
+    expect(await local({ older_than_hours: 99999 })).toMatchObject({ count: 0 });
+    expect(await local({ older_than_hours: 72, yes: true })).toMatchObject({ status: 'purged', count: 1 });
+    expect(await slugs()).toEqual(['notes/live']);
+  });
+
+  test('no top-level `gbrain purge-deleted`, and the stdio MCP pipe gets the trusted-CLI refusal', async () => {
+    expect(op.cliHints?.hidden).toBe(true);
+    const res = await dispatchToolCall(engine, 'purge_deleted_pages', { older_than_hours: 72, yes: true }, { remote: true, transport: 'stdio', sourceId: 'default' });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toContain('trusted_local_only');
+    expect(await slugs()).toEqual(['notes/live', 'notes/old-deleted']);
   });
 });
