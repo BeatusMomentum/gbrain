@@ -814,6 +814,19 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "config_key": "persistence.max_claim_ms",
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#persistence-write-stall",
+            "max_claim_ms": "<volatile>",
+            "stalls": []
+          },
+          "message": "No write request has held its claim longer than persistence.max_claim_ms (600000 ms).",
+          "name": "persistence_write_stall",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "docs": "docs/guides/repair.md#connector-held-items",

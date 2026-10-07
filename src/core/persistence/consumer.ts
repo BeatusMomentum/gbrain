@@ -5,6 +5,7 @@ import { finishUnpublishedFailure, publishMutation, recoverPublication, type Pre
 import { localHostId } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX } from './group-publish.ts';
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
+import { claimPhaseStamp, enterClaimPhase, startClaimPhase } from './claim-phase.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -538,9 +539,10 @@ export class PersistenceConsumer {
       abort.abort({ code: 'preparation_deadline' });
       this.log('preparation', 'deadline_exceeded');
     }, budget) : undefined;
+    const clock = startClaimPhase();
     const lease = startClaimLease(
       signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, 30_000,
-        this.engine.kind === 'postgres' ? signal : undefined),
+        this.engine.kind === 'postgres' ? signal : undefined, claimPhaseStamp(clock, row.execution_token)),
       this.leaseTiming(), () => abort.abort({ code: 'claim_lost' }));
     const releaseReason = () => !lease.held ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping';
     try {
@@ -563,6 +565,7 @@ export class PersistenceConsumer {
       }
       this.preparing.delete(row.id);
       preparationActive = false;
+      enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, sourceId: row.source_id, operation: row.operation });
       const done = await publishMutation(this.engine, row, prepared, this.hostId);
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done));

@@ -506,6 +506,16 @@ More: [docs/guides/write-refusals.md#colon_slug_windows_write_through](../../doc
 |---|---|---|---|---|---|---|
 | The command failed before it wrote its JSON result. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### concurrent_write
+
+<a id="concurrent_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed sync import raced a database-only write to the same page, so the file is held and the page keeps the database version; neither was overwritten. | The page's live revision was written by a committed non-sync request after the import was frozen, so the Git file and the database genuinely diverge; choosing either silently would lose the other. | Preview the reconciliation with gbrain sources reconcile <source> <slug> --preview, resolve it with the user, then run gbrain sources retry-held <source> and gbrain sync --source <source> --no-pull. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#concurrent_write](../../docs/guides/write-refusals.md#concurrent_write)
+
 ### config_error
 
 <a id="config_error"></a>
@@ -1776,6 +1786,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | This caller is not authorized for the operation. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### persistence_write_stall
+
+<a id="persistence_write_stall"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A managed write request has held its claim longer than persistence.max_claim_ms, so later writes on its root wait behind it. | The owner renews a claim for as long as its work is unsettled, so a preparation or publication that hangs never lets the lease lapse; doctor names the stuck phase, the root, the claim's age and whether the same request resumes on its own. | Inspect the request with the command in fix, then restart the gbrain serve that owns the root; attach that status output when reporting the hang. Run: gbrain sources writer status --source '{source_id}' --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#persistence-write-stall](../../docs/guides/troubleshooting.md#persistence-write-stall)
+
 ### pglite_busy
 
 <a id="pglite_busy"></a>
@@ -2654,13 +2674,23 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Successor checkout differs from the recorded canonical manifest. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### writer_manifest_rescope_required
+
+<a id="writer_manifest_rescope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A writer transfer prepared by an older release covers every file of the old checkout, ignored files included, so a clean Git clone cannot match it. | Transfer manifests now cover the files Git tracks, so ignored secrets such as .env files are never read, hashed or required on the successor; a manifest recorded before that change is prepared again instead of asking the user to copy ignored files. | On the owner host, run gbrain sources writer transfer prepare <source> again with its admin intent and state, then accept with the new epoch and manifest. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/topologies.md#transfer-manifest-scope](../../docs/architecture/topologies.md#transfer-manifest-scope)
+
 ### writer_manifest_unsafe
 
 <a id="writer_manifest_unsafe"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Canonical worktree transfer requires a symlink-free manifest. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The canonical worktree manifest cannot be recorded safely: the checkout holds a symlink or a Git submodule, or a Git-scoped comparison ran on a directory Git cannot list. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 ### writer_not_initialized
 
