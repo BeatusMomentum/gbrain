@@ -8,8 +8,8 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-Eight explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
-`captured-facts`, `loop-facts`, `orphan-children`, `failed-writes` and `frontmatter`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
+Nine explicit-only kinds, `google-file-modes`, `stale-atoms`, `extractor-facts`,
+`captured-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes` and `frontmatter`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
@@ -543,6 +543,42 @@ loop that uses it closes. The apply expires the fact and strikes its fence row
 in one coordinated write, exactly for the previewed set; a loop or fact that
 changed since the preview reports `changed_since_preview` and is kept. No
 withdrawal is recorded, so the same promise made again is stored normally.
+
+<a id="ontology-facts"></a>
+### Ontology facts
+
+From v0.60.53.0 until v0.60.104.0 the facts step of the maintenance run (the
+`gbrain serve` sweep and the dream cycle) moved ontology observations
+(`ontology_propose`) onto their entity page's `## Facts` table: each took the
+page as its source, and the next rewrite of the page that did not list it
+retired it, so `ontology_get` stopped returning it (#6264). `gbrain repair
+ontology-facts` restores them. It is explicit-only and preview-bound.
+
+**Say to your agent:** *"Doctor says some ontology observations were moved onto
+page tables. Preview restoring them, then apply after I agree."* The agent runs
+`gbrain repair ontology-facts` and, after you agree, the printed apply command.
+
+```bash
+gbrain doctor --only ontology_facts_fenced      # fenced=N retired=N
+gbrain repair ontology-facts                    # preview: one line per observation
+gbrain repair ontology-facts --apply --expect <hash>
+gbrain doctor --only ontology_facts_fenced
+```
+
+A candidate is an ontology row with a fence row number, or whose
+`source_markdown_slug` differs from its `source`; ontology writes produce
+neither. The preview classes each one `fenced` (still on the table) or
+`retired` (a page write retired it), or excludes it: `withdrawn` (its claim
+was forgotten), `consolidated`, or `duplicate` (the same observation was
+proposed again after it went missing, so restoring it would make a second
+copy). The apply gives each restorable row its own source back, takes it off
+the table and clears its expiry, exactly for the previewed set; validity dates
+and supersession links stay as they are. A row that changed since the preview
+reports `changed_since_preview` and is kept. It writes the database only:
+the line the old step added to the page's Facts table stays in the page as an
+ordinary page fact. An observation whose source was already the page's own
+slug and that a page write detached carries no trace of the move, so it is not
+found.
 
 <a id="failed-writes"></a>
 ### Failed writes
@@ -1420,8 +1456,8 @@ Each heading below is the `docs` anchor a refusal carries.
 
 ### Explicit-only repair kinds
 
-`google-file-modes`, `stale-atoms`, `extractor-facts`, `captured-facts` and
-`loop-facts` run only when named: `gbrain repair <kind>` previews, and
+`google-file-modes`, `stale-atoms`, `extractor-facts`, `captured-facts`,
+`loop-facts` and `ontology-facts` run only when named: `gbrain repair <kind>` previews, and
 `gbrain repair <kind> --apply` applies (every kind but `google-file-modes`
 also needs `--expect <hash>`, so it applies exactly the previewed set; `google-file-modes` re-checks each file's owner,
 type and mode at apply time). They are excluded everywhere else:
