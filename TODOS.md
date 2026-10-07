@@ -1,5 +1,17 @@
 # TODOS
 
+## Fix wave 12 follow-ups (filed 2026-10-07, GBRA-57)
+
+- [ ] **P2 — Free relabel for a legacy bare `embedding_model` row (#6113, carried from wave 11 W4.7).** **What:** wave 12 ships the refusal that names `gbrain migrate embeddings --to <provider:model> --dry-run`; the zero-cost relabel is not built. **Fix:** a restamp-only branch taken only when bare row, recipe, unambiguous model, dimensions, gateway config and every stored chunk/fact/take stamp agree (a NULL stamp on a non-null vector refuses), translating the model-bound chunk input hashes (`embedding-input-hash.ts`) and recording prior labels; doctor `embedding_identity_unqualified`. Needs a concurrent old-model worker test on Postgres. **Effort:** M-L. **Priority:** P2.
+- [ ] **P2 — Hard ceiling for a stuck managed write (W3.3b, #6176).** **What:** still detection only. **Fix:** reuse `persistence.max_claim_ms` as a ceiling during preparation, fail as `write_stalled` after 3 releases, keep publication detection-only; it needs two `consumer.ts` hunks, so it lands after GBRA-45's sync-feeder rework. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — Transcript budget for dream patterns children (#6236).** **What:** wave 12 de-duplicates claim records and counts deaths per source; a per-job transcript budget and subagent tool wrapper are not built. **Effort:** M. **Priority:** P3.
+- [ ] **P3 — Quarantine junk classifier masks code (#6259).** **What:** fenced and inline code still trip junk patterns; wave 12 ships the override only. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Restore image pages' text projection after managed activation (#6223).** **What:** activation clears every page's projection marker; only `embed --stale --images` restores image pages. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — `type: code` pages skip body link extraction (#6228).** **What:** code pages no longer abort extraction but still add noise rows to `gbrain wanted`. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Cyrillic-aware slug folding (#6235's bug).** **What:** `Сергей` slugs to `сергеи` because й loses its breve; #6235 was declined (undisclosed changes, a self-granting migration). Needs its own designed wave covering aliases and in-place upgrade. **Effort:** L. **Priority:** P3.
+- [ ] **P3 — `extract all --source db` keeps finished pages on an abort (#6228 S4).** **What:** only the stale sweep stamps finished pages; the `all` path runs links then timeline, so stamping on a links abort would mark pages timeline-fresh. **Fix:** per-phase stamps. **Effort:** S. **Priority:** P3.
+- [ ] **P3 — Postgres vector arm without Materialize (#6039, second half).** **What:** `enable_material=off` was moved out of wave 12 because one scale run can't show no regression. **Fix:** a retrieval-latency eval at several brain sizes before changing the default. **Effort:** M. **Priority:** P3.
+
 ## Fix wave 11 follow-ups (filed 2026-10-07, GBRA-55)
 
 - [ ] **P2 — Ceiling for a stuck managed publication (W3.3b, #6176).** **What:** a publication that hangs inside a live consumer keeps renewing its claim; wave 11 ships detection only (`claim_phase`, doctor `persistence_write_stall` past `persistence.max_claim_ms`). **Fix:** a phase-split ceiling: a statement timeout inside `publishMutation`, a recovery handoff that releases the root, and a bounded abandonment counter, written against the consumer/coordinator after GBRA-45's sync-feeder work lands. **Effort:** M. **Priority:** P2.
