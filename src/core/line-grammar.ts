@@ -94,7 +94,32 @@ const LINE_TEXT_MAX = 160;
 // A trailing `[Source: ...]` citation (plain or wrapping a markdown link) is
 // part of the brain's quality convention, not of the grammar: it is set aside
 // before a line is read.
-const TRAILING_CITATION_RE = /\[Source:(?:[^\][]|\[[^\]]*\]\([^)]*\))*\]\s*$/i;
+// Same language as /\[Source:(?:[^\][]|\[[^\]]*\]\([^)]*\))*\]\s*$/i, scanned by hand: on a long
+// unclosed body the regex left JSC's JIT for its backtracking interpreter, a 20x cost step at ~100k chars.
+function citationBodyEnd(text: string, from: number): number {
+  let i = from;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === ']') return i;
+    if (c !== '[') { i++; continue; }
+    const close = text.indexOf(']', i + 1);
+    if (close < 0 || text[close + 1] !== '(') return -1;
+    const paren = text.indexOf(')', close + 2);
+    if (paren < 0) return -1;
+    i = paren + 1;
+  }
+  return -1;
+}
+
+/** `text` without a trailing `[Source: ...]` citation (plain or wrapping a markdown link). */
+export function stripTrailingCitation(text: string): string {
+  const lower = text.toLowerCase();
+  for (let at = lower.indexOf('[source:'); at >= 0; at = lower.indexOf('[source:', at + 1)) {
+    const end = citationBodyEnd(text, at + 8);
+    if (end >= 0 && text.slice(end + 1).trim() === '') return text.slice(0, at);
+  }
+  return text;
+}
 
 /** Index of the first char at or after each position that is in `stops`, or `text.length`. */
 function nextStop(text: string, stops: string): Int32Array {
@@ -256,8 +281,8 @@ export function parseLineGrammar(text: string, opts: { declaredTypes?: ReadonlyS
     // Masking keeps offsets, so the item's content sits at the same place in
     // the original line; structure is read from the masked text (links inside
     // code are not links), the fact text from the original.
-    const visibleContent = item[2].replace(TRAILING_CITATION_RE, '').trim();
-    const content = line.slice(line.length - item[2].length).replace(TRAILING_CITATION_RE, '').trim();
+    const visibleContent = stripTrailingCitation(item[2]).trim();
+    const content = stripTrailingCitation(line.slice(line.length - item[2].length)).trim();
     if (!visibleContent || visibleContent.startsWith('\\')) continue;
     const note = (reason: GrammarReason, message: string) => result.diagnostics.push({ line: lineNo, reason, text: lineText(line), message });
     if (visibleContent.startsWith('[')) {

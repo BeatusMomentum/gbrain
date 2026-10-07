@@ -114,7 +114,9 @@ export class PersistenceConsumer {
   constructor(readonly engine: BrainEngine, readonly config: GBrainConfig, readonly prepare: PrepareMutation,
     private opts: { hostId?: string; concurrency?: number; pollMs?: number; idleMaxMs?: number; phaseMs?: number; preparationMs?: number;
       /** Claim renewal cadence (default 10 s); each renewal runs under the `phaseMs` deadline. */
-      renewalIntervalMs?: number; onError?: (error: unknown) => void;
+      renewalIntervalMs?: number;
+      /** Claim lease length for single-request claims (default 30 s). A test seam, like the timings above. */
+      claimLeaseMs?: number; onError?: (error: unknown) => void;
       onSettled?: (row: WriteRequest) => void;
       /** Engine graduation drain: claim, recover and publish requests only; effect, projection, topology and maintenance workers never start. */
       requestsOnly?: boolean } = {}) {
@@ -374,7 +376,7 @@ export class PersistenceConsumer {
     while (!this.stopping && this.active.size - this.laneTaskCount() < concurrency) {
       const claimed = laneClaim();
       try {
-        const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, 30_000, [...attemptedRoots]));
+        const row = await this.phase('claim', () => claimNextWrite(this.engine, this.hostId, this.opts.claimLeaseMs ?? 30_000, [...attemptedRoots]));
         if (!row) break;
         if (this.stopping) { await releaseUnpublishedClaim(this.engine, row, 'consumer_stopping'); break; }
         const key = row.worktree_id ?? `db:${row.source_incarnation}`;
@@ -541,7 +543,7 @@ export class PersistenceConsumer {
     }, budget) : undefined;
     const clock = startClaimPhase();
     const lease = startClaimLease(
-      signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, 30_000,
+      signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
         this.engine.kind === 'postgres' ? signal : undefined, claimPhaseStamp(clock, row.execution_token)),
       this.leaseTiming(), () => abort.abort({ code: 'claim_lost' }));
     const releaseReason = () => !lease.held ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping';

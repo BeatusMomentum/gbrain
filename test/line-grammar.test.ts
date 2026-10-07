@@ -195,13 +195,16 @@ test('long comma, bracket and space runs are parsed in linear time (#6186)', () 
       '- [idea] a' + ' '.repeat(n) + 'b', '- [idea] a [Source:' + ' '.repeat(n) + 'b'].join('\\n');
     const time = (n) => { const text = lines(n); const t = performance.now(); parseLineGrammar(text); return performance.now() - t; };
     time(1000);
-    const small = Math.min(time(100_000), time(100_000)); const large = Math.min(time(200_000), time(200_000));
-    console.log(JSON.stringify({ small, large }));`;
+    // Interleaved samples so CPU contention hits both sizes alike; n vs 4n so linear (x4) and quadratic (x16)
+    // sit a factor of 2 either side of the bound.
+    const smalls = [], larges = [];
+    for (let i = 0; i < 5; i++) { smalls.push(time(50_000)); larges.push(time(200_000)); }
+    console.log(JSON.stringify({ small: Math.min(...smalls), large: Math.min(...larges) }));`;
   const run = spawnSync(process.execPath, ['-e', script], { timeout: 5_000, encoding: 'utf-8' });
   expect(run.error?.message ?? '', 'the 200k-character lines did not finish within 5 s').toBe('');
   expect(run.status, run.stderr).toBe(0);
   const { small, large } = JSON.parse(run.stdout.trim()) as { small: number; large: number };
-  expect(large / Math.max(small, 1)).toBeLessThan(3);
+  expect(large / Math.max(small, 1)).toBeLessThan(8);
 }, 30_000);
 
 test('a qualifier with more than one comma is refused as a range (#6186)', () => {
