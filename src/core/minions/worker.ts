@@ -1640,7 +1640,11 @@ export class MinionWorker extends EventEmitter {
         }
         return;
       }
-      if (err instanceof ChildWorkerShutdownError || (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted)) {
+      // Decision 7 (W9F item 6): an error during shutdown is presumed
+      // shutdown-induced (cooperative handlers throw plain errors when they
+      // bail), except UnrecoverableError, which is deterministic and dead-letters.
+      if (err instanceof ChildWorkerShutdownError
+        || (!isolated && this.shutdownAbort.signal.aborted && !abort.signal.aborted && !(err instanceof UnrecoverableError))) {
         return settleShutdownInterruptedJob(this.engine, job, lockToken, errorText, !(err instanceof ChildWorkerShutdownError) || err.executionStopped === true);
       }
       if (err instanceof ChildNotClaimedError) {
