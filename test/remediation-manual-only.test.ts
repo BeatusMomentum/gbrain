@@ -111,7 +111,7 @@ describe('runRemediation never submits a manual-only step', () => {
       code: 'manual_only_skipped', id: 'onboard.pack_upgrade_example', job: 'unify-types', params: { target_pack: 'example-pack', apply: true },
       fix: {
         argv: ['gbrain', 'jobs', 'submit', 'unify-types', '--params', '{"target_pack":"example-pack","apply":true}', '--follow'],
-        consent: [], actor: 'user', next: 'tell_user_to_run', verify: { argv: ['gbrain', 'onboard', '--check', '--json'] },
+        consent: [], actor: 'user', next: 'tell_user_to_run', verify: { argv: ['gbrain', 'doctor', '--only', 'brain_score', '--json'] },
       },
     });
     expect(takes).toMatchObject({
