@@ -163,6 +163,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_coverage',
   'timeline_orphans',
   'timeline_history',
+  // #6147: imported conversation pages that may still carry a typed credential (cached audit).
+  'transcript_secret_exposure',
   // #5254 — pages written database-only to a source with no canonical owner.
   'unbound_source',
   'undeclared_db_only_pages',

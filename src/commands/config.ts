@@ -381,6 +381,12 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
     if (err) { console.error(`[config] ${err}`); process.exit(1); }
   }
   (await import('./config/enumerated-keys.ts')).refuseUnregisteredEnumeratedKey(key, force);
+  const searchRefusal = key.startsWith('search.') ? (await import('../core/search/config-values.ts')).searchConfigValueRefusal(key, value) : null;
+  if (searchRefusal) {
+    const { exitCliError, usageError } = await import('../cli/cli-error.ts');
+    exitCliError(usageError(searchRefusal.message, `Re-run with a valid value, e.g. gbrain config set ${key} ${searchRefusal.example}.`,
+      { fix: { argv: ['gbrain', 'config', 'get', key], consent: [], actor: 'agent', why: 'Shows the value in effect; nothing was written.', requires_exclusive: false } }), 'config');
+  }
   if (key === 'auto_chronicle' || key.startsWith('chronicle.')) await refuseInvalidChronicleValue(key, value, force);
   if (key.startsWith('fences.')) {
     const { validateFenceConfigValue } = await import('../core/fence-repair/config.ts');

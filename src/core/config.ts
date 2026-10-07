@@ -261,6 +261,10 @@ export interface GBrainConfig {
     adaptive_return_min_keep?: number;
     /** #5824 rollback switch (search/vector-legacy-guard.ts); file > DB, env wins over both. */
     vector_legacy_guard?: boolean;
+    /** #6132 pgvector iterative scan mode (search/hnsw-iterative-scan.ts); file > DB, env wins over both. */
+    hnsw_iterative_scan?: string;
+    /** #5989 CJK keyword arm deadline in ms (search/cjk-keyword-deadline.ts); file > DB. */
+    cjk_keyword_deadline_ms?: number;
   };
 
   /**
@@ -820,6 +824,23 @@ export function loadConfig(): GBrainConfig | null {
 export { DB_MERGED_PROVIDER_KEY_FIELDS } from './config-db-merge.ts';
 
 /**
+ * DB-plane rows for the vector/keyword scan knobs nested under `search` (file
+ * plane wins): the #5824 legacy guard, the #6132 iterative scan mode and the
+ * #5989 CJK keyword deadline.
+ */
+async function mergeSearchScanKnobs(
+  mergedSearch: NonNullable<GBrainConfig['search']>,
+  dbStr: (key: string) => Promise<string | undefined>,
+  dbBoolStrict: (key: string) => Promise<boolean | undefined>,
+): Promise<void> {
+  const dbVectorLegacyGuard = await dbBoolStrict('search.vector_legacy_guard');
+  if (mergedSearch.vector_legacy_guard === undefined && dbVectorLegacyGuard !== undefined) mergedSearch.vector_legacy_guard = dbVectorLegacyGuard;
+  const dbHnswIterativeScan = await dbStr('search.hnsw_iterative_scan');
+  if (mergedSearch.hnsw_iterative_scan === undefined && dbHnswIterativeScan !== undefined) mergedSearch.hnsw_iterative_scan = dbHnswIterativeScan;
+  const dbCjkDeadline = Number(await dbStr('search.cjk_keyword_deadline_ms'));
+  if (mergedSearch.cjk_keyword_deadline_ms === undefined && Number.isFinite(dbCjkDeadline) && dbCjkDeadline > 0) mergedSearch.cjk_keyword_deadline_ms = dbCjkDeadline;
+}
+/**
  * v0.27.1 — async config loader that overlays DB-plane config on top of the
  * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
  * so flags written via `gbrain config set` actually take effect. Unlike the
@@ -1171,8 +1192,7 @@ export async function loadConfigWithEngine(
     const n = Number(await dbStr(`search.${cap}`));
     if (Number.isFinite(n)) mergedSearch[cap] = n;
   }
-  const dbVectorLegacyGuard = await dbBoolStrict('search.vector_legacy_guard');
-  if (mergedSearch.vector_legacy_guard === undefined && dbVectorLegacyGuard !== undefined) mergedSearch.vector_legacy_guard = dbVectorLegacyGuard;
+  await mergeSearchScanKnobs(mergedSearch, dbStr, dbBoolStrict);
   if (Object.keys(mergedSearch).length > 0) {
     merged.search = mergedSearch;
   }
@@ -1353,6 +1373,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // review). See docs/operations/spend-controls.md.
   // #5824 one-release rollback, latched per process (search/vector-legacy-guard.ts).
   'search.vector_legacy_guard',
+  'search.hnsw_iterative_scan',
+  'search.cjk_keyword_deadline_ms',
   'search.adaptive_return',
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',

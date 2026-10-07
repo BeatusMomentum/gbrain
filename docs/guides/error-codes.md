@@ -1474,6 +1474,16 @@ More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guid
 |---|---|---|---|---|---|---|
 | Invalid write wait. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### keyword_candidates_incomplete
+
+<a id="keyword_candidates_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Hybrid search's CJK keyword arm hit its deadline or candidate cap on a large corpus, so some keyword matches can be missing. | The CJK fallback is an unindexed LIKE scan; the arm is bounded so a large brain cannot stall every hybrid search. An incomplete keyword search is not evidence of absence. | Narrow the search with --source-id (MCP source_id), or ask the user to raise search.cjk_keyword_deadline_ms. Run: gbrain config get search.cjk_keyword_deadline_ms | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/multi-language-fts.md#cjk-keyword-budget)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
@@ -2439,6 +2449,16 @@ More: [docs/guides/write-refusals.md#timeline_rows_would_be_removed](../../docs/
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Adding this source would replace or overlap another owner root. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### transcript_secret_exposure
+
+<a id="transcript_secret_exposure"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Imported conversation pages may still carry a typed credential from before the labeled-credential detector, or the last audit found some; pages are never rewritten automatically. | Re-ingest skips unchanged sessions, so pages imported before the detector keep any password typed in prose until someone reviews them. | Run the read-only audit to list affected slugs (never values), then review, edit or (after asking the user) remove each page, and ask the user to rotate any real credential. Run: gbrain transcripts audit-secrets --json | agent | `gbrain doctor --only transcript_secret_exposure --json` | 1 | no |
+
+More: [docs/guides/data-ingestion.md#credential-redaction](../../docs/guides/data-ingestion.md#credential-redaction)
 
 ### trusted_local_only
 
