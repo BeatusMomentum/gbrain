@@ -17,50 +17,50 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
+import { requirePostgresTestDatabase, testBackends } from '../helpers/test-backends.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { serializeMarkdown } from '../../src/core/markdown.ts';
 import { publishClassicConcept } from '../../src/core/cycle/concept-publication.ts';
 import { _resetWriteThroughCacheForTest, writePageThrough } from '../../src/core/write-through.ts';
-import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
 const SLUG = 'concepts/launch-dates';
 const BASELINE = 'Launch dates slip when nobody owns them.';
 const SYNTHESIZED = 'SYNTHESIZED: launch dates need a single owner.';
-let engine: PGLiteEngine;
-let repo: string;
-let file: string;
-
-beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-}, 60000);
-
-afterAll(async () => {
-  await engine.disconnect();
-});
-
 const frontmatter = { synthesized_by: 'synthesize_concepts-v0.41', tier: 2, member_hash: 'h1', visibility: 'world' };
 
-beforeEach(async () => {
-  await resetPgliteState(engine);
-  _resetWriteThroughCacheForTest();
-  repo = mkdtempSync(join(tmpdir(), 'gbrain-concept-recheck-'));
-  execFileSync('git', ['init', '-q'], { cwd: repo });
-  await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [repo]);
-  await importFromContent(engine, SLUG, serializeMarkdown(frontmatter, BASELINE, '', { type: 'concept', title: 'launch dates', tags: ['ops'] }), { noEmbed: true });
-  const written = await writePageThrough(engine, SLUG, { sourceId: 'default' });
-  expect(written.written).toBe(true);
-  file = written.path!;
-});
+for (const backend of testBackends()) describe(`publishClassicConcept file recheck (W9F item 3, ${backend})`, () => {
+  let engine: BrainEngine;
+  let close: () => Promise<void>;
+  let repo: string;
+  let file: string;
 
-const importPage = (markdown: string) => importFromContent(engine, SLUG, markdown, { noEmbed: true });
-const publish = (opts: { importPage?: (markdown: string) => Promise<unknown> } = {}) => publishClassicConcept(engine, SLUG, 'default',
-  { ...frontmatter, member_hash: 'h2' }, SYNTHESIZED, BASELINE, { writeThrough: false, importPage: opts.importPage ?? importPage });
-const codeOf = async (p: Promise<unknown>) => p.then(() => 'published', (err: { code?: string }) => err.code ?? String(err));
+  beforeAll(async () => {
+    ({ engine, close } = await isolatedSharedSkillsEngine(backend === 'postgres' ? requirePostgresTestDatabase() : undefined));
+  }, 120000);
 
-describe('publishClassicConcept file recheck (W9F item 3)', () => {
+  afterAll(async () => {
+    await close();
+  });
+
+  beforeEach(async () => {
+    await engine.executeRaw('DELETE FROM pages');
+    _resetWriteThroughCacheForTest();
+    repo = mkdtempSync(join(tmpdir(), 'gbrain-concept-recheck-'));
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    await engine.executeRaw("UPDATE sources SET local_path = $1 WHERE id = 'default'", [repo]);
+    await importFromContent(engine, SLUG, serializeMarkdown(frontmatter, BASELINE, '', { type: 'concept', title: 'launch dates', tags: ['ops'] }), { noEmbed: true });
+    const written = await writePageThrough(engine, SLUG, { sourceId: 'default' });
+    expect(written.written).toBe(true);
+    file = written.path!;
+  });
+
+  const importPage = (markdown: string) => importFromContent(engine, SLUG, markdown, { noEmbed: true });
+  const publish = (opts: { importPage?: (markdown: string) => Promise<unknown> } = {}) => publishClassicConcept(engine, SLUG, 'default',
+    { ...frontmatter, member_hash: 'h2' }, SYNTHESIZED, BASELINE, { writeThrough: false, importPage: opts.importPage ?? importPage });
+  const codeOf = async (p: Promise<unknown>) => p.then(() => 'published', (err: { code?: string }) => err.code ?? String(err));
+
   test('a narrative edit made only to the file defers and survives', async () => {
     writeFileSync(file, readFileSync(file, 'utf-8').replace(BASELINE, `${BASELINE}\n\nUSER EDIT: the board owns launch dates.`));
     expect(await codeOf(publish())).toBe('revision_conflict');
