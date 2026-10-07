@@ -8,7 +8,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -67,6 +68,21 @@ test('a tracked submodule or symlink refuses writer_manifest_unsafe', () => {
     execFileSync('ln', ['-s', 'alice-example.md', join(root, 'notes', 'link.md')]);
     git(root, 'add', 'notes/link.md');
     expect(() => worktreeManifest(root)).toThrow(expect.objectContaining({ code: 'writer_manifest_unsafe' }));
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('an index entry that leaves the checkout refuses writer_manifest_unsafe and the outside file is never hashed', () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-manifest-escape-'));
+  try {
+    const root = join(home, 'brain'); gitCheckout(root);
+    writeFileSync(join(home, 'secret'), 'NOT-A-REAL-SECRET\n');
+    // A hand-edited index (git itself refuses such paths) names ../secret instead of a same-length tracked path.
+    mkdirSync(join(root, 'zz')); writeFileSync(join(root, 'zz', 'secret'), 'tracked\n'); git(root, 'add', 'zz/secret');
+    const index = readFileSync(join(root, '.git', 'index'));
+    const body = Buffer.from(index.subarray(0, index.length - 20).toString('latin1').replace('zz/secret', '../secret'), 'latin1');
+    writeFileSync(join(root, '.git', 'index'), Buffer.concat([body, createHash('sha1').update(body).digest()]));
+    expect(git(root, 'ls-files')).toContain('../secret');
+    expect(() => worktreeManifest(root, { withFiles: true })).toThrow(expect.objectContaining({ code: 'writer_manifest_unsafe' }));
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
