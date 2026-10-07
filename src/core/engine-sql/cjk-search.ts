@@ -69,6 +69,8 @@ export interface CjkKeywordRun {
   /** Test and bench seams; production uses CJK_CANDIDATE_CAP and PGLITE_CJK_CAPPED_CHUNKS. */
   candidateCap?: number;
   pgliteCappedChunks?: number;
+  /** Full-scoring share of the deadline in ms (default 2/3 of it). */
+  fullBudgetMs?: number;
 }
 
 type Exec = ScopedRead;
@@ -167,12 +169,12 @@ export async function searchKeywordCJK(
     });
     return out.map(rowToSearchResult);
   }
-  const full = await bounded(scoped, started + (run.deadlineMs * 2) / 3 - performance.now(), exec => fullScoring(exec, query, ctx, orFallback));
+  const full = await bounded(scoped, started + (run.fullBudgetMs ?? (run.deadlineMs * 2) / 3) - performance.now(), exec => fullScoring(exec, query, ctx, orFallback));
   if (full) {
     report({ incomplete: false, capped: false });
     return full.map(rowToSearchResult);
   }
   const capped = await bounded(scoped, started + run.deadlineMs - performance.now(), exec => cappedScoring(exec, query, ctx, orFallback, cap));
-  report(capped && !capped.capHit ? { incomplete: false, capped: true } : { incomplete: true, reason: 'timeout', capped: true });
+  report(!capped ? { incomplete: true, reason: 'timeout', capped: true } : capped.capHit ? { incomplete: true, reason: 'candidate_budget', capped: true } : { incomplete: false, capped: true });
   return (capped?.rows ?? []).map(rowToSearchResult);
 }

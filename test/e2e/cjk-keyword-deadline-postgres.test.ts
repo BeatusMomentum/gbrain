@@ -2,9 +2,10 @@
  * Postgres parity for the CJK keyword OR fallback (#6043) and the bounded arm
  * (#5989): a real statement timeout inside the scoped read transaction rolls
  * back to the savepoint, the capped retry keeps the source scope, and the
- * engine serves the next query normally. The corpus is sized so the full
- * scoring takes well past 2/3 of the 1.5 s deadline (asserted) while the capped
- * retry needs tens of milliseconds, so the outcome does not depend on load.
+ * engine serves the next query normally. The rollback case pins the full
+ * attempt's budget (150 ms, far below the >1 s full scoring of this corpus)
+ * and gives the capped retry ample time, so its outcome does not depend on
+ * load; the default-split case asserts only what holds under any load.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -42,20 +43,24 @@ describe.skipIf(!RUN)('CJK keyword arm on Postgres', () => {
 
   test('a full scoring that times out rolls back; the capped retry, in a fresh transaction, serves in-scope rows and the engine stays usable', async () => {
     const metas: CjkKeywordMeta[] = [];
-    const started = performance.now();
     const rows = await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', orFallback: true, limit: 20,
-      cjkKeyword: { deadlineMs: 1500, onMeta: (m) => metas.push(m) } });
-    const elapsed = performance.now() - started;
+      cjkKeyword: { deadlineMs: 30_000, fullBudgetMs: 150, onMeta: (m) => metas.push(m) } });
     expect(metas).toHaveLength(1);
-    expect(metas[0]).toMatchObject({ incomplete: true, reason: 'timeout', capped: true });
-    const full = performance.now();
-    await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', limit: 20 });
-    expect(performance.now() - full).toBeGreaterThan(1_200);
-    expect(elapsed).toBeLessThan(2_500);
-    expect(rows.length).toBeGreaterThan(0);
+    expect(metas[0]).toMatchObject({ incomplete: true, reason: 'candidate_budget', capped: true });
+    expect(rows).toHaveLength(20);
     expect(rows.every((r) => r.source_id === 'cjk-a')).toBe(true);
     const after = await engine.searchKeyword('席位', { sourceId: 'cjk-b' });
     expect(after.map((r) => r.slug)).toEqual(['cjkb/seats-1']);
+  }, 60_000);
+
+  test('with the default split the arm ends near its deadline and reports honestly either way', async () => {
+    const metas: CjkKeywordMeta[] = [];
+    const started = performance.now();
+    const rows = await engine.searchKeyword('좌석 업그레이드', { sourceId: 'cjk-a', orFallback: true, limit: 20,
+      cjkKeyword: { deadlineMs: 1500, onMeta: (m) => metas.push(m) } });
+    expect(performance.now() - started).toBeLessThan(1500 + 2_000);
+    expect(metas[0]?.incomplete).toBe(true);
+    expect(rows.every((r) => r.source_id === 'cjk-a')).toBe(true);
   }, 60_000);
 
   test('a retry that also runs out of time returns no keyword rows with the degraded reason, never an error', async () => {
