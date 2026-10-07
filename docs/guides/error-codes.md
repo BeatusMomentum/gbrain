@@ -72,6 +72,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### ambient_capture_off
+
+<a id="ambient_capture_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| memory.auto_writeback no longer allows this ambient capture lane, so facts extracted from captured session text were dropped before admission. | An explicit off (or an incoherent setting) applies to every capture-lane fact request admitted after the change, including one whose provider call was already in flight; requests admitted earlier still publish. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch](../../docs/guides/ambient-writeback.md#capture-lanes-and-the-off-switch)
+
 ### ambiguous_id
 
 <a id="ambiguous_id"></a>
@@ -1193,6 +1203,26 @@ More: [docs/guides/move-to-postgres.md#verify](../../docs/guides/move-to-postgre
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Source relationship reconciliation is incomplete. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### harness_hook_duplicates
+
+<a id="harness_hook_duplicates"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A harness hook carrier wires one Claude Code event more than once with this install's own entries (marked or not), so the hook fires twice per event. | Claude Code can drop the `_gbrain` marker when it rewrites settings.json; installs before wave 11 then appended a second set on every re-run. | Correct the request using the message above, then retry. Run: gbrain doctor --only bootstrap_harness_health --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_duplicates](../../docs/guides/bootstrap.md#harness_hook_duplicates)
+
+### harness_hook_unowned
+
+<a id="harness_hook_unowned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A hook entry looks like gbrain's harness hook but is not this install's exact command, so gbrain left it in place. | An unmarked entry is deleted only when its command is exactly what this install (or its receipt) wrote; an edited command or another install's launcher is never removed, and removal is not reported complete while it remains. | Correct the request using the message above, then retry. Run: gbrain bootstrap harness --status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/bootstrap.md#harness_hook_unowned](../../docs/guides/bootstrap.md#harness_hook_unowned)
 
 ### held_out_overlaps_benchmark
 

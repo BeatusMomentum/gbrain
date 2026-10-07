@@ -77,6 +77,8 @@ boundary and add its link here rather than raising the cap.
 | [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md) | Cross-file subsystem contract |
 | [Google And Loops (continued)](key-files/google-and-loops-continued.md) | Remaining cross-file entries |
 | [Always-loaded core memory (key files cluster)](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
+| [Workspace push and backup coverage (key files cluster)](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
+| [Ambient capture consent gate (key files cluster)](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
 
 ## BrainBench — in a sibling repo
 
