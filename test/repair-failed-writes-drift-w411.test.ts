@@ -20,22 +20,39 @@ import { MANAGED_WRITER_GUARD_FUNCTION_SQL } from '../src/core/persistence/write
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 
-let engine: PGLiteEngine;
+const backends = testBackends();
+const engines: BrainEngine[] = [];
 const dataDir = mkdtempSync(join(tmpdir(), 'gbrain-replay-w411-db-'));
 const logger = { info() {}, warn() {}, error() {} };
+let closePostgres: (() => Promise<void>) | undefined;
 
 beforeAll(async () => {
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} });
-  engine = new PGLiteEngine();
-  await engine.connect({ database_path: dataDir }); await engine.initSchema();
-  for (const table of ['tags', 'timeline_entries', 'takes']) await engine.executeRaw(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS source_id TEXT`);
+  if (backends.includes('pglite')) {
+    const engine = new PGLiteEngine();
+    await engine.connect({ database_path: dataDir }); await engine.initSchema(); engines.push(engine);
+  }
+  if (backends.includes('postgres')) {
+    const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+    engines.push(pg.engine); closePostgres = pg.close;
+  }
 }, 120_000);
-afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); resetGateway(); rmSync(dataDir, { recursive: true, force: true }); });
+afterAll(async () => {
+  for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }
+  await closePostgres?.(); resetGateway(); rmSync(dataDir, { recursive: true, force: true });
+});
 
 test('a replay refused because the page file drifted is classified file_database_drift, not replayed again and again', async () => {
+  for (const engine of engines) await driftCase(engine);
+}, 240_000);
+
+async function driftCase(engine: BrainEngine): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-replay-w411-'));
   const root = join(dir, 'brain'); mkdirSync(root);
   const sourceId = `w411-${randomUUID().slice(0, 8)}`;
@@ -84,4 +101,4 @@ test('a replay refused because the page file drifted is classified file_database
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     rmSync(dir, { recursive: true, force: true });
   }
-}, 180_000);
+}
