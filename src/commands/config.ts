@@ -14,6 +14,7 @@ import { redactPgUrl } from '../core/url-redact.ts';
 import { PUBLISH_GATE_KEYS } from '../mcp/publish-gates.ts';
 import { isConsentConfigKey, setConsentPreapproval, unsetConsentPreapproval } from '../core/consent-preapproval.ts';
 import { WRITER_ADMIN_LOCK_KEY } from '../core/persistence/admin-contract.ts';
+import { CONFIG_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 import {
   SELF_UPGRADE_CONFIG_LEAVES,
   isSelfUpgradeConfigLeaf,
@@ -653,8 +654,27 @@ async function showConfig(engine: BrainEngine): Promise<void> {
   }
 }
 
+export { CONFIG_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+
+const USAGE = `Usage: gbrain config [show|get|set|unset] <key> [value]
+       gbrain config unset --pattern <prefix>
+
+Subcommands:
+  show                         Print the effective configuration
+  get <key> [--raw]            Print one value (--raw: no secret redaction)
+  set <key> <value>            Write a value. --force accepts an unknown key;
+                               --coverage-override (or --yes) passes the embedding
+                               coverage gate; --yes accepts a disclosure prompt
+  unset <key>                  Remove one key
+  unset --pattern <prefix>     Remove every key under a prefix`;
+
+export function printUsage(): void {
+  console.log(USAGE);
+}
+
 export async function runConfig(engine: BrainEngine, args: string[]) {
-  const action = args[0];
+  if (subcommandHelpRequested(args, ROUTERS.config)) { printUsage(); return; }
+  const action = args[0] as (typeof CONFIG_SUBCOMMANDS)[number] | undefined;
 
   // The writer admin lock is reserved for `gbrain sources writer lock|unlock`; --force is no escape.
   if (action === 'set' || action === 'unset') {
@@ -1423,8 +1443,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
     }
   } else {
-    console.error('Usage: gbrain config [show|get|set|unset] <key> [value]');
-    console.error('       gbrain config unset --pattern <prefix>');
+    console.error(USAGE);
     process.exit(1);
   }
 }

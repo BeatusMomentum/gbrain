@@ -261,7 +261,9 @@ const STATIC_READ_ONLY = new Set(['doctor', 'errors', 'status', 'get', 'search',
 /** Read-only subcommands of otherwise-mutating commands. */
 const READ_ONLY_SUBCOMMANDS = new Set(['config get', 'sources list', 'sources status', 'jobs get', 'jobs stats', 'jobs list', 'auth list', 'auth clients', 'backup status', 'engine status',
   // Engine graduation: --status and --plan are zero-mutation (pre-connect; no schema migration, no target DDL).
-  'migrate --status', 'migrate --plan']);
+  'migrate --status', 'migrate --plan',
+  // Reads the pack resolution only; never connects without a configured brain (#6090).
+  'schema active']);
 
 function tsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
