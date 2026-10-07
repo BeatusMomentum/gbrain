@@ -12,6 +12,18 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [0.60.100.0] - 2026-10-07
 
+**The nightly CI runs green again: E2E shard weights are re-mined from a full green E2E run on master.**
+
+No user-facing behavior changes. For contributors and agents working on gbrain:
+
+- **`scripts/e2e-weights.json`** is re-mined from full-corpus E2E run 37553155517 on master 9cc7c4677 (all 459 measured files). 59 of 462 E2E files had no weight (12.8%, over the 10% bound), mostly the files the long-pole splits created, so the scheduled `check:weight-coverage` failed every Test and macOS nightly. It passes under `GITHUB_EVENT_NAME=schedule`.
+
+## To take advantage of v0.60.100.0
+
+Nothing to do: this release changes CI data only.
+
+## [0.60.100.0] - 2026-10-07
+
 **`gbrain doctor` now counts every broken facts or takes table still waiting in your brain, and says what would fix each one.**
 
 After v0.60.98.0 and v0.60.99.0 a broken table never blocks a sync: gbrain repairs it in place when it can, and holds it otherwise. That still left one question without an answer: how many are left, and where? A held file was visible in `gbrain sources status`, but a page an older release imported with a broken table, or a file edited in the checkout and not yet synced, showed up nowhere. The new `fence_integrity` check finds all three, counts each table once, and splits them by what would fix them. Tables gbrain repairs by itself are fixed the next time the file syncs or the page is written. The rest need the named table edited. The same check shows the oldest hold and how many tables were repaired in the last 7 days and by which writer. A source at 20 or more warns, because something keeps writing broken tables.
