@@ -50,7 +50,11 @@ async function scenario(engine: BrainEngine, config: HarnessConfig) {
   installFaultHook(async (point, detail) => { if (point === 'consumer:prepared' && detail.requestId === stuck.request_id) await hang.promise; });
   const errors: unknown[] = [];
   const consumer = new PersistenceConsumer(engine, { engine: engine.kind }, async (_engine, row) => prepared(row, sources),
-    { hostId: config.hostId, concurrency: 1, pollMs: 20, renewalIntervalMs: 20, phaseMs: 2_000, onError: error => errors.push(error) });
+    { hostId: config.hostId, concurrency: 1, pollMs: 20, renewalIntervalMs: 20, phaseMs: 2_000, onError: error => errors.push(error),
+      // The test moves the clock 11 minutes ahead. A 30 s lease would let the consumer's own expired-claims sweep requeue the
+      // stuck claim before the next renewal (a race that hangs the frozen-clock waitFor); a day-long lease keeps it live, as
+      // an owner renewing for 11 real minutes would.
+      claimLeaseMs: 86_400_000 });
   try {
     consumer.start();
     await waitFor(async () => (await engine.executeRaw<{ p: string | null }>("SELECT claim_phase->>'phase' AS p FROM persistence_requests WHERE id=$1::uuid", [stuck.id]))[0]?.p === 'publishing',
