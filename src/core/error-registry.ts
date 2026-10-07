@@ -254,6 +254,7 @@ export const CODES = {
   preview_changed: { class: 'caller', summary: "The state changed since the approved preview." },
   profile_incompatible: { class: 'caller', summary: "The stored profile is incompatible with this operation." },
   projection_owner_resident: { class: 'host_only', summary: "A resident owner holds the projection." },
+  keyword_candidates_incomplete: { class: 'unavailable', summary: "Hybrid search's CJK keyword arm hit its deadline or candidate cap on a large corpus, so some keyword matches can be missing.", why: 'The CJK fallback is an unindexed LIKE scan; the arm is bounded so a large brain cannot stall every hybrid search. An incomplete keyword search is not evidence of absence.', docs: 'docs/guides/multi-language-fts.md#cjk-keyword-budget', suggestion: 'Narrow the search with --source-id (MCP source_id), or ask the user to raise search.cjk_keyword_deadline_ms.', fix: { argv: ['gbrain', 'config', 'get', 'search.cjk_keyword_deadline_ms'], consent: [], actor: 'agent', why: 'Shows the deadline in effect (unset means 3000 ms); read-only.', requires_exclusive: false } },
   projection_pending: { class: 'retryable', summary: "The current text projection is not ready." },
   provenance_required: { class: 'caller', summary: "provenance is required and must be non-empty." },
   publication_pending: { class: 'retryable', summary: "The catalog adoption is accepted but not fully committed." },

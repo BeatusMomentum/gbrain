@@ -1424,6 +1424,16 @@ More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guid
 |---|---|---|---|---|---|---|
 | Invalid write wait. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### keyword_candidates_incomplete
+
+<a id="keyword_candidates_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Hybrid search's CJK keyword arm hit its deadline or candidate cap on a large corpus, so some keyword matches can be missing. | The CJK fallback is an unindexed LIKE scan; the arm is bounded so a large brain cannot stall every hybrid search. An incomplete keyword search is not evidence of absence. | Narrow the search with --source-id (MCP source_id), or ask the user to raise search.cjk_keyword_deadline_ms. Run: gbrain config get search.cjk_keyword_deadline_ms | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/multi-language-fts.md#cjk-keyword-budget](../../docs/guides/multi-language-fts.md#cjk-keyword-budget)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>

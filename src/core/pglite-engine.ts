@@ -1570,7 +1570,7 @@ export class PGLiteEngine implements BrainEngine {
       dedup: boolean;
     },
   ): Promise<SearchResult[]> {
-    return searchKeywordCJK(async (read) => read(scopedRead(this.engineSql)), query, ctx);
+    return searchKeywordCJK(async (read) => read(scopedRead(this.engineSql)), query, ctx, 'pglite');
   }
 
   /**
