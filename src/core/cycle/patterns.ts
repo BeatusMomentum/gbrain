@@ -835,7 +835,7 @@ async function dedupePatternsBeforeChild(engine: BrainEngine, maintenance: Maint
     why: 'Existing pattern pages carried a full reflection list on every quarantined claim; the child reads those pages, so it runs only after they are rewritten.',
     fix: { argv: ['gbrain', 'dream', '--phase', 'patterns', '--source', sourceId], consent: ['paid'], actor: 'agent', requires_exclusive: false,
       why: 'Re-runs the patterns phase once the held rewrites have landed; it is a paid model run, so ask the user first.',
-      verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] } } } };
+      verify: { argv: ['gbrain', 'write-requests', '--source', sourceId] } } } };
 }
 
 function skipped(reason: string, summary: string): PhaseResult {

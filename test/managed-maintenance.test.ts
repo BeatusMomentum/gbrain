@@ -607,7 +607,7 @@ test('managed patterns scopes evidence and publishes through the real admitted s
 }, 90_000);
 
 test('#6236: a held claim-source rewrite of an existing pattern page submits no patterns child (0 model calls)', async () => {
-  await fixture(async (engine, sourceId) => {
+  await fixture(async (engine, sourceId, root) => {
     for (let i = 0; i < 3; i++) await seed(engine, sourceId, `wiki/personal/reflections/example-${i}`);
     const list = Array.from({ length: 50 }, (_, i) => `      - wiki/personal/reflections/old-${i}`).join('\n');
     const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
@@ -628,7 +628,7 @@ test('#6236: a held claim-source rewrite of an existing pattern page submits no 
     expect(lock).not.toBeNull();
     try {
       await withEnv({ ANTHROPIC_API_KEY: 'sk-test-maintenance' }, async () => {
-        const result = await pendingWait(() => runPhasePatterns(engine, { brainDir: null, sourceId, dryRun: false, once: true, cycleDate: '2026-02-03' }));
+        const result = await pendingWait(() => runPhasePatterns(engine, { brainDir: root, sourceId, dryRun: false, once: true, cycleDate: '2026-02-03' }));
         expect(result.status).toBe('skipped');
         expect(result.details).toMatchObject({ reason: 'pattern_claims_pending', held: ['wiki/personal/patterns/legacy'] });
         expect(calls).toBe(0);

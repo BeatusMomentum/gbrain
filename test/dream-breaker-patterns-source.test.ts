@@ -38,7 +38,7 @@ describe('patterns breaker per source (#6236)', () => {
     const skip = await patternsBreakerSkip(engine, 'default');
     expect(skip?.status).toBe('skipped');
     expect(skip?.details).toMatchObject({ reason: 'dream_breaker_tripped', code: 'dream_breaker_tripped',
-      fix: { argv: ['gbrain', 'dream', 'reset-key', 'dream:patterns:source:default'], consent: ['paid'], verify: { argv: ['gbrain', 'dream', 'reset-key', '--list', '--json'] } } });
+      fix: { argv: ['gbrain', 'dream', 'reset-key', 'dream:patterns:source:default'], consent: ['paid'], verify: { argv: ['gbrain', 'doctor', '--only', 'dream_paid_loop', '--json'] } } });
   });
 
   test('a paid timeout-cancel counts; a cancel before any work does not', async () => {

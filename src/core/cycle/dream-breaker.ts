@@ -178,7 +178,7 @@ export async function patternsBreakerSkip(engine: BrainEngine, sourceId: string)
     base_key: key, why: 'The patterns phase died (or was cancelled after paid work) that many times in a row for this source within 24 hours, so it is not submitted again until reset.',
     fix: { argv: ['gbrain', 'dream', 'reset-key', key], consent: ['paid'], actor: 'agent', requires_exclusive: false,
       why: 'Re-enables patterns runs for this source; the next cycle pays for a run, so fix the cause and ask the user first.',
-      verify: { argv: ['gbrain', 'dream', 'reset-key', '--list', '--json'] } } } };
+      verify: { argv: ['gbrain', 'doctor', '--only', 'dream_paid_loop', '--json'] } } } };
 }
 
 /**
