@@ -129,6 +129,19 @@ for (const backend of testBackends()) {
     }, 120_000);
   }
 
+  test(`${backend}: managed: a page write bound to a revision read before the sweep still lands, so the page serves its new Facts value`, async () => {
+    await managedBrain(async ({ engine, ctx }) => {
+      await put(ctx, page('Alder Example likes example tea'));
+      await propose(ctx, 'location', 'Example City', '2026-02-01');
+      // The client reads the page, the idle sweep runs, then the client writes the page back.
+      const read = await op(ctx, 'get_page', { slug: SLUG, include_content: true });
+      await sweep(engine);
+      await op(ctx, 'put_page', { slug: SLUG, content: page('Alder Example likes example coffee'), expected_revision: read.revision });
+      const fence = parseFactsFence((await engine.getPage(SLUG, { sourceId: 'default' }))!.compiled_truth).facts;
+      expect(fence.filter(f => f.active).map(f => f.claim)).toEqual(['Alder Example likes example coffee']);
+    }, { databaseUrl });
+  }, 120_000);
+
   test(`${backend}: unmanaged: an ontology observation does not hold up the extract_facts reconcile of its page`, async () => {
     await unmanagedBrain(databaseUrl, async ({ engine, ctx, write }) => {
       await write(page('Alder Example likes example tea'));

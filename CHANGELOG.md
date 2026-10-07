@@ -28,7 +28,7 @@ Since v0.60.53.0 the facts step of the maintenance run (the sweep `gbrain serve`
 
 - `planUnfencedFacts` (`src/core/facts/unfenced-facts.ts`) and the empty-fence guard in `src/core/cycle/extract-facts.ts` select `dimension IS NULL` rows only. The fence step stays source-wide: the rows it fences are the inline writer's database-only facts, which mostly land on pages the run's slug list doesn't name.
 - `src/core/repair/ontology-facts.ts` finds ontology rows with a fence row number or a `source_markdown_slug` other than their `source` (ontology writes produce neither) and restores them through `ontology_propose`'s coordinated database-only write on managed brains.
-- `test/ontology-fence-sweep.test.ts` (PGLite, Postgres through `test/e2e/ontology-fence-sweep-postgres.test.ts`) runs the N1-7 repro (observation, sweep, page rewrite, sweep) on managed and unmanaged brains, the reconcile guard, and the repair from damage made by the old fence step.
+- `test/ontology-fence-sweep.test.ts` (PGLite, Postgres through `test/e2e/ontology-fence-sweep-postgres.test.ts`) runs the N1-7 repro (observation, sweep, page rewrite, sweep) on managed and unmanaged brains, a page write bound to a revision read before the sweep (it failed with `revision_conflict` before the fix), the reconcile guard, and the repair from damage made by the old fence step.
 
 ## To take advantage of v0.60.104.0
 
