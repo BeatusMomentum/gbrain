@@ -12,7 +12,8 @@
  * Fails when: the runner submits a manual-only step (initially or after the
  * per-step recheck), trusts `protected` instead of the job name, refuses free
  * steps because of a manual-only step's cost, or the fix/queued report drifts.
- * Seams: none; real remediation with inline jobs on PGLite. The onboard and MCP cases run
+ * Seams: none; real remediation with inline jobs on PGLite (the queued-job
+ * report also on Postgres, via test/postgres-unit-arms.txt). The onboard and MCP cases run
  * a background worker with stub handlers so a regression completes instead of
  * waiting out the step timeout.
  */
@@ -27,6 +28,9 @@ import { MinionWorker } from '../src/core/minions/worker.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { runOnboard } from '../src/commands/onboard.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
+import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
 let engine: PGLiteEngine;
 let schemaVersion: string;
@@ -214,3 +218,23 @@ describe('autopilot targeted dispatch', () => {
     expect(autopilotTargetedSteps([auto, PACK(), TAKES()])).toEqual([auto]);
   });
 });
+
+for (const backend of testBackends()) {
+  const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+  describe(`${backend}: queued manual-only jobs`, () => {
+    let db: BrainEngine;
+    let close: () => Promise<void>;
+    beforeAll(async () => { ({ engine: db, close } = await isolatedSharedSkillsEngine(databaseUrl)); }, 120_000);
+    afterAll(async () => { await close(); });
+
+    test('a dry run names the waiting unify-types row and leaves it queued', async () => {
+      const queued = await new MinionQueue(db).add('unify-types', { target_pack: 'example-pack', apply: true },
+        { queue: 'default', idempotency_key: `earlier-run-${backend}` }, { allowProtectedSubmit: true });
+      const result = await runRemediation(db, { targetScore: 0, dryRun: true, extraRemediations: [PACK()] });
+      expect(result.submitted).toEqual([]);
+      expect(result.manual_only_skipped?.[0]?.queued_jobs).toEqual([{ id: queued.id, status: 'waiting' }]);
+      const rows = await db.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [queued.id]);
+      expect(rows.map((r) => r.status)).toEqual(['waiting']);
+    });
+  });
+}
