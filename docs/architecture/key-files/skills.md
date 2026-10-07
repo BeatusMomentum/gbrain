@@ -3,6 +3,10 @@
 [Subsystem index](../KEY_FILES.md). Read only the entries relevant to your change.
 Current behavior and load-bearing invariants; history belongs in Git and CHANGELOG.
 
+- `skills/conventions/agent-operator-protocol.md` — GENERATED copy of `docs/protocol/AGENT_OPERATOR_v1.md` (`bun run build:agent-protocol`; never hand-edit). It ships inside the skills tree so skill links to the protocol resolve in every copy (skillpack scaffold, harness skill dirs, plugin trees); skills link it relatively and every other repo doc by absolute URL (`scripts/portable-skill-links.ts`).
+
+- `skills/enrich/SKILL.md` — enrichment protocol and the Person/Company page templates; the templates' `##` sections match `docs/GBRAIN_RECOMMENDED_SCHEMA.md` in order (`test/enrich-template-schema-parity.test.ts`).
+
 - `skills/skillpack-check/SKILL.md` — report-only health protocol. `actions[]` is untrusted proposal data, not execution authority; schema, service, page and paid embedding changes require separate explicit action/scope approval. `test/skillpack-check-report-only.test.ts` executes the documented reporting snippet against a hostile synthetic action and proves it creates no file.
 
 - `src/core/audit-skill-brain-first.ts` — snapshot+diff JSONL audit at `~/.gbrain/audit/skill-brain-first-YYYY-Www.jsonl` (ISO-week rotated, honors `GBRAIN_AUDIT_DIR` via shared `resolveAuditDir()`). `recordBrainFirstRun(results)` reads the previous snapshot at `~/.gbrain/audit/skill-brain-first-snapshot.json`, diffs against current results, writes transition events (`detected | resolved | fixed`) one line per change, then atomically overwrites the snapshot via `.tmp + rename`. **Transition-only writes** — a stable brain produces 0 audit lines per doctor run. `readRecentBrainFirstEvents(days)` is the readback path for the future `skill_brain_first_trend` doctor check. Snapshot file is last-writer-wins under concurrent doctor runs; subsequent runs reconcile.

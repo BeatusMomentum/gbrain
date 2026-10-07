@@ -57,6 +57,9 @@ test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	9	readFileSync
 test/check-bootstrap-guards.test.ts	check-opencode-pin.sh	6	readFileSync
 test/check-bootstrap-guards.test.ts	verify + workflow wiring	5	readFileSync
+test/check-skill-refs.test.ts	check-skill-refs CLI-ref lane (#6197)	4	exec-scan
+test/check-skill-refs.test.ts	check-skill-refs on the shipped trees	1	exec-scan
+test/check-skill-refs.test.ts	check-skill-refs outside-root links (#6198)	3	exec-scan
 test/check-update.test.ts	check-update CLI	3	source-surface-helper
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	4	readFileSync
 test/chronicle-extract.test.ts	runChronicleExtract	9	readFileSync
