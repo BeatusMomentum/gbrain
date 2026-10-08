@@ -1452,6 +1452,7 @@ cross-subsystem duplicate entries, and byte caps for the entry docs and referenc
 | **R3** | `new PGLiteEngine(` outside ~50 lines after a `beforeAll(` line | Use the canonical block (below) inside `beforeAll(` |
 | **R4** | `new PGLiteEngine(` without `engine.disconnect(` in an `afterAll(` block | Add `afterAll(() => engine.disconnect())` |
 | **R5** | `configureGateway(` with no `resetGateway(` (comments ignored): the global gateway leaks to later files | `afterAll(() => resetGateway())`; a child-script-only call takes `isolation-lint: R5-subprocess-only` |
+| **R6** | `currentExitCode(` with no verdict reset outside an after-hook: the process-wide CLI exit verdict a previous file left (a doctor or remediate run sets 1) is what the first test reads | `beforeEach(() => _resetCliExitVerdictForTests())`, or reset right before the run it checks; a test that drives a verdict-setting command also resets after it |
 
 Files that violated these rules at the lint baseline are listed in `scripts/check-test-isolation.allowlist`. **The allow-list MUST shrink over time**: never add entries.
 
