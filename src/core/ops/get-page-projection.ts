@@ -1,6 +1,8 @@
 import type { Page } from '../types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { isQuarantined, QUARANTINE_KEY } from '../quarantine.ts';
+import { isQuarantined, pageQuarantinedNotice, QUARANTINE_KEY } from '../quarantine.ts';
+import { hasScope } from '../scope.ts';
+import type { OperationContext } from './contract.ts';
 
 /** #6259: how a get_page reader sees a page the content-quality gate hid as junk. */
 export interface QuarantinedView { reason: string; detail: string; assessed_at: string | null; body_omitted: boolean }
@@ -18,6 +20,13 @@ export function quarantinedView(page: Pick<Page, 'frontmatter'>, reader: { remot
     body_omitted: reader.remote && !(reader.admin && reader.includeQuarantined) };
 }
 
+
+/** get_page's read of a quarantined page: its view for this caller (null when not quarantined), with the safety notice emitted. */
+export function readQuarantined(ctx: Pick<OperationContext, 'remote' | 'auth' | 'emitNotice'>, page: Pick<Page, 'slug' | 'frontmatter'>, includeQuarantined: boolean): QuarantinedView | null {
+  const view = quarantinedView(page, { remote: ctx.remote !== false, admin: hasScope(ctx.auth?.scopes ?? [], 'admin'), includeQuarantined });
+  if (view) ctx.emitNotice?.(pageQuarantinedNotice(page.slug, view, 'read'));
+  return view;
+}
 
 export interface GetPageProjectionOpts {
   revision: string;
