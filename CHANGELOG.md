@@ -65,6 +65,8 @@ gbrain doctor --only conversation_label_facts,conversation_outcomes_stale
 - Worker shutdown error matrix; supervisor stop pairs exits with spawns by pid and kernel start time.
 - `takes_rebuild` is a local-only operation delegated to the resident owner.
 - `src/core/ai/thinking-off.ts`: a per-model thinking capability table that `chat()`, the judge estimates and the fence-repair model tier all read.
+- The brain filing rules skill (and its plugin copies), the takes-fence doc comment and the takes holder test fixtures use placeholder people and companies (`people/alice-example`, `companies/acme-example`) instead of real names.
+- `check-test-isolation` rule R6: a unit test that reads the CLI exit verdict sets its own baseline, so a verdict another file left in the same test process can't fail it.
 
 ## [0.60.107.0] - 2026-10-08
 
