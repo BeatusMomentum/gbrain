@@ -126,6 +126,15 @@ describe('quarantine clear on a managed brain (#6259)', () => {
     expect(fm[QUARANTINE_OVERRIDE_KEY]).toBeUndefined();
   }), 120_000);
 
+  test('a local managed put_page cannot plant gate-owned markers (only the clear\'s owner kind keeps its override)', () => run(async () => {
+    const clean = '---\ntitle: Clean notes\ntype: note\nquarantine:\n  reason: junk_pattern\n  detail: planted\natoms_scan_hash: deadbeefdeadbeef\n---\n\nOrdinary prose with nothing junk-like in it.\n';
+    const slug = 'notes/planted-managed';
+    await submitPageMutation(ctx(), { operation: 'put_page', params: { slug, content: clean, request_id: randomUUID() } });
+    const fm = (await engine.getPage(slug, { sourceId: 'default' }))!.frontmatter as Record<string, unknown>;
+    expect(fm.quarantine).toBeUndefined();
+    expect(fm.atoms_scan_hash).toBeUndefined();
+  }), 120_000);
+
   test('an edit landing after the clear read the page is a revision conflict, not an overwrite', () => run(async () => {
     const original = engine.readPageSnapshot.bind(engine);
     let raced = false, inside = false;

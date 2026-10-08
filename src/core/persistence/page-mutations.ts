@@ -164,8 +164,8 @@ export function emitFenceNotice(ctx: Pick<OperationContext, 'emitNotice'>, respo
   if (report) ctx.emitNotice?.(fenceNormalizedNotice(report, slug));
 }
 
-/** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair) submit; every other caller is refused them. */
-const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 'managed_file_repair']);
+/** Owner-internal `put_page` kinds the trusted local file writers (import, frontmatter repair, quarantine clear) submit; every other caller is refused them. */
+const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 'managed_file_repair', 'managed_quarantine_clear']);
 
 /** #6007: a `put_pages` child: its batch, its position and the batch size are part of its identity. */
 export interface PageBatchMember { id: string; index: number; size: number; requestId: string }
