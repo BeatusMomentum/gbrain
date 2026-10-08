@@ -67,14 +67,18 @@ export function __setPrivatePathRunnerForTests(runner?: ProtectRunner): void {
  * PowerShell's first start on a cold Windows machine can take longer than the
  * 15 s bound (measured 3.3-27.7 s on fresh CI runners; later starts take
  * 0.2-1.5 s), which failed a user's first backup. A run killed by that bound is
- * retried once; any other failure, or a second timeout, is final. The script
+ * retried once; any other failure (an output overflow included), or a second
+ * timeout, is final. The script
  * only sets and verifies the ACL of the same new empty path, so a rerun is safe.
  */
 export async function withColdStartRetry<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {
-    if ((error as { killed?: boolean } | null)?.killed !== true) throw error;
+    // execFile kills the child for the timeout and for an output overflow; only
+    // the timeout leaves `code` unset (the overflow is ERR_CHILD_PROCESS_STDIO_MAXBUFFER).
+    const killed = error as { killed?: boolean; code?: unknown } | null;
+    if (killed?.killed !== true || typeof killed.code === 'string') throw error;
     return await run();
   }
 }

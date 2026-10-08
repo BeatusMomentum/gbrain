@@ -24,7 +24,8 @@ describe('withColdStartRetry', () => {
   });
 
   test('any other failure is not retried', async () => {
-    for (const failure of [new Error('Access rule mismatch'), new Error('Private path input failed'), Object.assign(new Error('exit 1'), { killed: false, code: 1 })]) {
+    for (const failure of [new Error('Access rule mismatch'), new Error('Private path input failed'), Object.assign(new Error('exit 1'), { killed: false, code: 1 }),
+      Object.assign(new Error('stdout maxBuffer length exceeded'), { killed: true, code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' })]) {
       let calls = 0;
       await expect(withColdStartRetry(async () => { calls++; throw failure; })).rejects.toBe(failure);
       expect(calls).toBe(1);
