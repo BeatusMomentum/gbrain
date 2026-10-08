@@ -41,7 +41,7 @@ gbrain doctor --only conversation_label_facts,conversation_outcomes_stale
 | Worker shutdown | An `UnrecoverableError` thrown while a worker shuts down dead-letters with its own message instead of being re-queued for another (possibly paid) run; other errors are still handed back, now keeping the handler's message. |
 | `gbrain jobs supervisor stop` | A recycled worker pid no longer reads as still running, a run that crossed the weekly audit boundary no longer reports a false `drained`, a run with no `started` record reports `unverified`, and a stale PID file whose pid now belongs to another process is never signaled (`stale_pid_file`). |
 | `gbrain takes rebuild` | Works while `gbrain serve` owns a PGLite brain (it used to hang on the lock); same JSON and exit codes as a local rebuild. |
-| Eval judges | With `thinking: off`, Gemini 2.5 Flash sends `thinkingBudget: 0` and GPT-5.1+ sends `reasoningEffort: none`. Models that can't turn reasoning off (Gemini 2.5 Pro and 3.x, gpt-5/-mini/-nano, o-series, gpt-6) run at their lowest setting with a 32,000-token reply cap, and the takes-quality and cross-modal preflights price that cap instead of underestimating it 8-16x. |
+| Eval judges | With `thinking: off`, Gemini 2.5 Flash sends `thinkingBudget: 0` and GPT-5.1+ sends `reasoningEffort: none`. Models that can't turn reasoning off (Gemini 2.5 Pro and 3.x, gpt-5/-mini/-nano, o-series) run at their lowest setting with a 32,000-token reply cap, and the takes-quality and cross-modal preflights price that cap instead of underestimating it 8-16x. |
 
 ### Things to watch
 

@@ -27,8 +27,12 @@ the coverage table only.
 - `fence-repair/llm.ts` (#6188 PR4) used `thinkingOffNamespace`, which lane J
   replaced with the capability table: its Tier 3 ceiling now reserves room to
   reason only where the route's thinking-off option does not turn reasoning
-  fully off (gpt-6 gets the 32,000-token cap the gateway sends; Gemini 2.5
-  Flash, which now sends `thinkingBudget: 0`, gets the table's size).
+  fully off (Gemini 2.5 Flash, which now sends `thinkingBudget: 0`, gets the
+  table's size). Lane J gave gpt-6 the 32,000-token headroom; that reserved
+  $0.32 per page for fence repair's measured default `openai:gpt-6.1-sol`,
+  over its $0.30 per-page cap, so every model-tier page was held
+  (`test/fence-walkthrough.test.ts`). gpt-6 now has no row and keeps the
+  requested cap, as before this wave, until a live check measures it.
 - `repair conversation-labels` replays a still-pending batch with the CLI write
   wait, as #6185 made `repair extractor-facts` do.
 - Wave 12's `repair timeline-comments` row cleanup is listed in the receipt
@@ -156,7 +160,8 @@ Item 5 is confirmed on current master and fixed on this branch. Re-verification 
 | `openai:gpt-5.1`, `-5.2`, `-5.4`(`-mini`/`-nano`), `-5.5`, `-5.6-{luna,sol,terra}` | `reasoningEffort: 'none'` | yes (probe O2) | requested |
 | `openai:gpt-5`, `-5-mini`, `-5-nano` | `reasoningEffort: 'minimal'` | no | 32,000 |
 | `openai:o1`, `o3`, `o3-mini`, `o4-mini` | `reasoningEffort: 'low'` | no | 32,000 |
-| other OpenAI reasoning ids (`-pro`, `-codex`, gpt-6 family, unknown gpt-5+/o-series) | none | no | 32,000 |
+| other OpenAI reasoning ids (`-pro`, `-codex`, unknown gpt-5/o-series) | none | no | 32,000 |
+| `openai:gpt-6*` | none, no row | n/a | requested |
 | `openai:*-chat*`, `gpt-4o*` | none, no row | n/a | requested |
 | every other route | none, no row | when `isThinkingModel` (claude-cli Claude 5, GLM, local reasoning) | 32,000 if thinking, else requested |
 
@@ -164,7 +169,7 @@ Rules the table enforces:
 
 - Never both Google fields: the Google option replaces any configured `thinkingConfig` wholesale (probe G7: both fields together are a 400 on 3.8 Flash).
 - A namespace alone is not an off switch: only the native `google` and `openai` recipes get these rows. `openrouter:openai/gpt-5.2`, `openrouter:google/...` and `litellm:` routes get nothing.
-- gpt-6 has no option because the pinned `@ai-sdk/openai` 3.0.58 lists only `o1`/`o3`/`o4-mini`/`gpt-5*` as reasoning models (`getOpenAILanguageModelCapabilities`) and drops `reasoningEffort` for gpt-6 with a warning. The unit test caught this; a TODO covers it.
+- gpt-6 has no option because the pinned `@ai-sdk/openai` 3.0.58 lists only `o1`/`o3`/`o4-mini`/`gpt-5*` as reasoning models (`getOpenAILanguageModelCapabilities`) and drops `reasoningEffort` for gpt-6 with a warning. With no live measurement either, gpt-6 has no row and keeps the requested cap (see the integration note above); a TODO covers it.
 - Sources: Google's generateContent thinking guide (levels per model, budget ranges), OpenAI's reasoning guide (supported efforts per model), and the probe.
 
 Out of scope on purpose: the Google and OpenAI recipes still declare no `thinking_by_default`, so calls without `thinking: 'off'` keep today's default caps. Flipping them would raise default caps (and budget reservations) for every Gemini and gpt-5.5+ caller, which is a wider change than item 5.

@@ -26,10 +26,13 @@
  *   - Gemini 3.x: the lowest `thinkingLevel` the model accepts (`minimal` is
  *     a 400 on 3.7/3.8 Flash and 3.x Pro, so those get `low`; never a budget)
  *   - OpenAI gpt-5/-mini/-nano (`minimal`) and the o-series (`low`)
- *   - other Gemini 3+ and OpenAI reasoning ids: no option (an unsupported
- *     level or effort is a 400), headroom only. That includes gpt-6: the
- *     pinned @ai-sdk/openai (3.0.58) does not know gpt-6 is a reasoning model
- *     and drops `reasoningEffort` with a warning, so no option would arrive.
+ *   - other Gemini 3+ and OpenAI gpt-5/o-series reasoning ids: no option
+ *     (an unsupported level or effort is a 400), headroom only.
+ * gpt-6 ids have no row: the pinned @ai-sdk/openai (3.0.58) does not know
+ * gpt-6 is a reasoning model and drops `reasoningEffort` with a warning, so
+ * no option would arrive, and no live check measured how much a gpt-6 call
+ * reasons under a small cap. They keep the requested cap, which fence
+ * repair's measured default (`openai:gpt-6.1-sol`) is costed against.
  * The option REPLACES any configured value under the same key: a configured
  * Anthropic `{type:'enabled', budgetTokens}` would otherwise be forwarded
  * verbatim, and a configured Google `thinkingConfig.thinkingLevel` merged
@@ -93,7 +96,7 @@ const OPENAI_DATE_SUFFIX = '(?:-\\d{4}-\\d{2}-\\d{2})?$';
 const OPENAI_EFFORT_NONE_RE = new RegExp(`^gpt-(?:5\\.[1245](?:-mini|-nano)?|5\\.6-(?:luna|sol|terra))${OPENAI_DATE_SUFFIX}`);
 const OPENAI_EFFORT_MINIMAL_RE = new RegExp(`^gpt-5(?:-mini|-nano)?${OPENAI_DATE_SUFFIX}`);
 const OPENAI_EFFORT_LOW_RE = new RegExp(`^(?:o1|o3|o3-mini|o4-mini)${OPENAI_DATE_SUFFIX}`);
-const OPENAI_REASONING_RE = /^(?:gpt-(?:[5-9]|\d{2,})|o\d)/;
+const OPENAI_REASONING_RE = /^(?:gpt-5|o\d)/;
 const OPENAI_NON_REASONING_RE = /-chat(?:-|$)/;
 
 function openaiControl(model: string): ThinkingOffControl | undefined {

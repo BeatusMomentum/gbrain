@@ -52,8 +52,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenanceCallerPreflight, maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { resolveManagedFactsEmbedding } from '../persistence/facts-maintenance.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -710,8 +709,8 @@ export async function runExtractFacts(
   // Managed brains reconcile the same way, but each page's writes publish as
   // a receipted database-only maintenance request. The authority is
   // preflighted on the first page that needs a write, so a run with nothing
-  // to change never needs one.
-  const managed = await managedPersistenceEnabled(engine);
+  // to change never needs one; an unacceptable caller still refuses first.
+  const managed = await maintenanceCallerPreflight(engine, sourceId);
   let authority: Promise<MaintenanceAuthority | null> | undefined;
   const managedAuthority = () => managed ? authority ??= maintenancePreflight(engine, sourceId) : Promise.resolve(null);
   const result: ExtractFactsResult = {

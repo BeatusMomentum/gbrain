@@ -215,10 +215,10 @@ describe("chat({ thinking: 'off' }) capability table: native Google and OpenAI (
     ['gpt-5', 'minimal', H],
     ['gpt-5-mini', 'minimal', H],
     ['o3', 'low', H],
-    ['gpt-6-sol', undefined, H],
-    ['gpt-6-astra', undefined, H],
+    ['gpt-6-sol', undefined, 2000],
+    ['gpt-6-astra', undefined, 2000],
     ['gpt-5.5-pro', undefined, H],
-    ['gpt-6.2-sol', undefined, H],
+    ['gpt-6.2-sol', undefined, 2000],
     ['gpt-5.2-chat-latest', undefined, 2000],
     ['gpt-4o-mini', undefined, 2000],
   ];

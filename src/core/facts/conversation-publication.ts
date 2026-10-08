@@ -65,8 +65,7 @@ import { readJournalLimits } from '../persistence/limits.ts';
 import { principalKey } from '../persistence/model.ts';
 import { PERSISTENCE_IPC_MAX_BYTES } from '../persistence/ipc.ts';
 import { resolveManagedFactsEmbedding } from '../persistence/facts-maintenance.ts';
-import { maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { maintenanceCallerPreflight, maintenancePreflight, submitDatabaseMaintenanceIntent, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { loadConfig } from '../config.ts';
 import { waitForWrite } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
@@ -540,8 +539,10 @@ export interface ManagedPageStart { generation: Generation; attempt: number; sin
 const log = (line: string) => process.stderr.write(`[extract-conversation-facts] ${line}\n`);
 
 /**
- * On a managed brain (not a dry run, which writes and registers nothing),
- * the run's publisher. Once per run, at the first page with managed work and
+ * On a managed brain, refuses a caller the coordinator cannot accept (a
+ * remote job or writer) and an inactive source before any provider work,
+ * dry runs included; then (not for a dry run, which writes and registers
+ * nothing) returns the run's publisher. Once per run, at the first page with managed work and
  * before its model call, it preflights the maintenance authority, resolves
  * the facts embedding signature, checks that the planned batch requests fit
  * the writer's request capacity, and reads its unsettled and failed batches;
@@ -550,7 +551,7 @@ const log = (line: string) => process.stderr.write(`[extract-conversation-facts]
  */
 export async function managedConversationPublisher(engine: BrainEngine, sourceId: string,
   opts: { dryRun?: boolean; slugs?: string[]; slug?: string; limit?: number; force?: boolean; types?: readonly AllowedType[] }): Promise<ManagedConversationPublisher | null> {
-  if (opts.dryRun || !await managedPersistenceEnabled(engine)) return null;
+  if (!await maintenanceCallerPreflight(engine, sourceId) || opts.dryRun) return null;
   const config = loadConfig() ?? { engine: engine.kind };
   const prepare = async (): Promise<ManagedPublisherRun> => {
     const authority = (await maintenancePreflight(engine, sourceId))!;

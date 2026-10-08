@@ -46,6 +46,27 @@ function maintenanceRequestId(value: unknown): string {
   return `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
 }
 
+/**
+ * The cheap up-front part of a managed maintenance preflight, for runs that
+ * resolve `maintenancePreflight` lazily at their first write: refuses a
+ * caller the coordinator cannot accept (a remote job or writer) and an
+ * inactive source before any provider work, dry runs included. Returns
+ * whether the brain is managed; needs no canonical owner.
+ */
+export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  if (!await managedPersistenceEnabled(engine)) return false;
+  assertPersistenceAccepting(engine);
+  const job = currentSubmissionAuthority();
+  if (job && job.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
+    throw trustedCliRequired('Managed fact maintenance requires a local writer; remote maintenance jobs are not supported.');
+  }
+  const [source] = await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id=$1', [sourceId]);
+  if (!source || source.archived) throw opError('source_changed', 'The maintenance source is not active.',
+    `Source '${sourceId}' is missing or archived, so maintenance submitted nothing and no model was called. Check it with the command in fix; restore an archived source with gbrain sources restore ${sourceId} before running maintenance on it.`,
+    { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
+  return true;
+}
+
 export async function maintenancePreflight(engine: BrainEngine, sourceId: string, root?: string,
   opts: { deadlineAtMs?: number | null } = {}): Promise<MaintenanceAuthority | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
