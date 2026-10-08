@@ -12,9 +12,9 @@
  *   | # | claim | kind | who | weight | since | source |
  *   |---|-------|------|-----|--------|-------|--------|
  *   | 1 | CEO of Acme | fact | world | 1.0 | 2017-01 | Crustdata |
- *   | 2 | Strong technical founder | take | garry | 0.85 | 2026-04-29 | OH 2026-04-29 |
- *   | 3 | ~~Will reach $50B~~ | bet | garry | 0.7 | 2026-04-29 → 2026-06 | superseded by #4 |
- *   | 4 | Will reach $30B | bet | garry | 0.55 | 2026-06 | revised after Q2 numbers |
+ *   | 2 | Strong technical founder | take | alice-example | 0.85 | 2026-04-29 | OH 2026-04-29 |
+ *   | 3 | ~~Will reach $50B~~ | bet | alice-example | 0.7 | 2026-04-29 → 2026-06 | superseded by #4 |
+ *   | 4 | Will reach $30B | bet | alice-example | 0.55 | 2026-06 | revised after Q2 numbers |
  *   <!--- gbrain:takes:end -->
  *
  * Parsing rules (Codex P1 #8 fold — strict on canonical, lenient on hand-edits):
@@ -60,11 +60,11 @@ export interface ParsedTake {
    *   NO, it's your analysis of them → holder = brain
    *
    * Examples:
-   *   ✅ holder=people/garry-tan claim="AI will replace 50% of coding" (Garry SAID this)
-   *   ✅ holder=brain claim="Garry has a hero/rescuer pattern" (analysis OF Garry)
-   *   ✅ holder=people/bo-lu claim="We can hit $10M ARR" (Bo Lu SAID this)
-   *   ❌ holder=people/garry-tan claim="Garry has a hero/rescuer pattern" (not his belief)
-   *   ❌ holder=companies/hermes claim="Latency is 15-20s" (Zain said it → people/zain)
+   *   ✅ holder=people/alice-example claim="AI will replace 50% of coding" (Alice SAID this)
+   *   ✅ holder=brain claim="Alice has a hero/rescuer pattern" (analysis OF Alice)
+   *   ✅ holder=people/bob-example claim="We can hit $10M ARR" (Bob SAID this)
+   *   ❌ holder=people/alice-example claim="Alice has a hero/rescuer pattern" (not her belief)
+   *   ❌ holder=companies/widgetco-example claim="Latency is 15-20s" (Dana said it → people/dana-example)
    *
    * Values: 'world' (consensus fact) | 'people/<slug>' (individual's stated belief) |
    *         'companies/<slug>' (institutional fact, no individual claimant) |
@@ -72,7 +72,7 @@ export interface ParsedTake {
    *
    * Additional rules from production eval:
    *   - Amplification ≠ endorsement: retweet-only → max weight 0.55
-   *   - Self-reported ≠ verified: "Saif reports 7 figures" → people/saif, NOT world
+   *   - Self-reported ≠ verified: "Charlie reports 7 figures" → people/charlie-example, NOT world
    *   - Founder describing company → people/founder, NOT companies/slug
    */
   holder: string;
@@ -94,7 +94,7 @@ export interface ParsedTake {
   resolvedEvidence?: string; // human note (alias for resolved_source)
   resolvedValue?: number;
   resolvedUnit?: string;
-  resolvedBy?: string;       // slug or 'garry'
+  resolvedBy?: string;       // slug or 'alice-example'
 }
 
 export interface ParseResult {
@@ -141,10 +141,10 @@ export const TAKES_FENCE_END   = '<!--- gbrain:takes:end -->';
  * the original PR's `[a-z0-9-]+` would have warned on both).
  *
  * Catches the eval-flagged error modes:
- *   - `Garry`            — uppercase letter (rejected: not in [a-z0-9._-])
- *   - `people/Garry-Tan` — mixed case in slug (rejected for same reason)
- *   - `world/garry-tan`  — `world` is a literal, no slash variant
- *   - `users/garry`      — only `people/...` and `companies/...` are namespaced
+ *   - `Alice`            — uppercase letter (rejected: not in [a-z0-9._-])
+ *   - `people/Alice-Ex`  — mixed case in slug (rejected for same reason)
+ *   - `world/alice-ex`   — `world` is a literal, no slash variant
+ *   - `users/alice`      — only `people/...` and `companies/...` are namespaced
  *
  * The legacy bare-slug form is reserved for v0.33 promotion to error;
  * v0.32 emits warnings only.
