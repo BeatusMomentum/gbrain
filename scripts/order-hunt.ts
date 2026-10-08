@@ -79,7 +79,9 @@ function plan(argv: string[]): number {
   const of = positiveInt(arg(argv, '--of'), '--of');
   const shard = positiveInt(arg(argv, '--shard'), '--shard');
   if (of < 1 || shard < 1 || shard > of) throw new Error(`--shard must be 1..${of}`);
-  const listed = spawnSync('bash', ['scripts/run-e2e.sh', '--dry-run-list'], { encoding: 'utf8' });
+  // run-e2e.sh reads SHARD (N/M) to pick a weighted slice; the hunt wants the whole corpus.
+  const { SHARD: _shard, ...env } = process.env;
+  const listed = spawnSync('bash', ['scripts/run-e2e.sh', '--dry-run-list'], { encoding: 'utf8', env });
   if (listed.status !== 0) throw new Error(`run-e2e.sh --dry-run-list failed: ${listed.stderr.trim()}`);
   const files = listed.stdout.split('\n').filter(Boolean);
   for (const f of planShard(files, seed, shard, of)) console.log(f);
@@ -93,7 +95,8 @@ function classify(argv: string[]): number {
   for (const name of failing) {
     const file = order.find(f => f.endsWith(`/${name}`) || f === name);
     if (!file) { console.log(`::warning title=order hunt::${name} failed but is not in this shard's order list; read the run-e2e.sh log. Docs: ${DOCS}`); continue; }
-    const alone = spawnSync('bash', ['scripts/run-e2e.sh', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const { SHARD: _shard, ...env } = process.env;
+    const alone = spawnSync('bash', ['scripts/run-e2e.sh', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
     if (alone.status === 0) {
       orderDependent++;
       console.log(`::error file=${file},title=order-dependent test::${file} fails after the files before it in this order but passes alone, so an earlier file leaks state into it. Why: a test that leaves a config row, setting or rows behind breaks the next file on a shared database. Reproduce: ${reproduceCommand(order, file)} (then bisect the files before it). Fix the leaking file's teardown, not this file. Docs: ${DOCS}`);

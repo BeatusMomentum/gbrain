@@ -743,13 +743,13 @@ jobs:
         shell: bash
         env:
           ORDER_SEED: ${{ inputs.order_seed }}
-          SHARD: ${{ matrix.shard }}
+          HUNT_SHARD: ${{ matrix.shard }}
         run: |
           seed="${ORDER_SEED:-$(( $(date -u +%s) / 86400 ))}"
           case "$seed" in ''|*[!0-9]*) echo "::error::order_seed must be digits, got '$seed'"; exit 2 ;; esac
-          seed=$(( seed * 4 + SHARD ))
-          bun scripts/order-hunt.ts plan --seed "$seed" --shard "$SHARD" --of 4 > "$RUNNER_TEMP/order.txt"
-          echo "order hunt: seed $seed, shard $SHARD/4, $(wc -l < "$RUNNER_TEMP/order.txt") files" | tee -a "$GITHUB_STEP_SUMMARY"
+          seed=$(( seed * 4 + HUNT_SHARD ))
+          bun scripts/order-hunt.ts plan --seed "$seed" --shard "$HUNT_SHARD" --of 4 > "$RUNNER_TEMP/order.txt"
+          echo "order hunt: seed $seed, shard $HUNT_SHARD/4, $(wc -l < "$RUNNER_TEMP/order.txt") files" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run the files in that order on one database
         id: run
         continue-on-error: true
