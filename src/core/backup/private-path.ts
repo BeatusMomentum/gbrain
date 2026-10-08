@@ -42,24 +42,40 @@ foreach ($rule in $rules) {
 [Console]::Write('private')
 `;
 
+/**
+ * PowerShell's first start on a cold Windows machine can take longer than the
+ * 15 s bound (measured 3.3-27.7 s on fresh CI runners; later starts take
+ * 0.2-1.5 s), which failed a user's first backup. A run killed by that bound is
+ * retried once; any other failure, or a second timeout, is final. The script
+ * only sets and verifies the ACL of the same new empty path, so a rerun is safe.
+ */
+export async function withColdStartRetry<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if ((error as { killed?: boolean } | null)?.killed !== true) throw error;
+    return await run();
+  }
+}
+
 export async function protectNewBackupPath(path: string, kind: 'directory' | 'file'): Promise<void> {
   if (process.platform !== 'win32') return;
   try {
     assertNoSymlinks(path);
     const before = lstatSync(path, { bigint: true });
     if (!before.ino || (kind === 'directory' ? !before.isDirectory() || readdirSync(path).length !== 0 : !before.isFile() || before.size !== 0n || before.nlink !== 1n)) throw new Error('Expected a new empty path with stable identity');
-    const result = await new Promise<string>((resolve, reject) => {
+    const result = await withColdStartRetry(() => new Promise<string>((resolve, reject) => {
       let inputFailed = false;
       const child = execFile(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(protect, 'utf16le').toString('base64')], {
           env: { ...process.env, GBRAIN_BACKUP_PRIVATE_PATH: path, GBRAIN_BACKUP_PRIVATE_KIND: kind },
           encoding: 'utf8', timeout: 15_000, maxBuffer: 64 * 1024, windowsHide: true,
-        }, (error, stdout) => error || inputFailed ? reject(error ?? new Error('Private path input failed')) : resolve(stdout));
+        }, (error, stdout) => inputFailed ? reject(new Error('Private path input failed')) : error ? reject(error) : resolve(stdout));
       const inputFailure = () => { inputFailed = true; child.kill(); };
       if (!child.stdin) { inputFailure(); return; }
       child.stdin.once('error', inputFailure);
       try { child.stdin.end(); } catch { inputFailure(); }
-    });
+    }));
     assertNoSymlinks(path);
     const after = lstatSync(path, { bigint: true });
     if (result !== 'private' || before.dev !== after.dev || before.ino !== after.ino
