@@ -1,5 +1,5 @@
 import { isEmbedSkipped } from '../embed-skip.ts';
-import { isQuarantined } from '../quarantine.ts';
+import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -483,6 +483,8 @@ export async function preparePageMutation(engine: BrainEngine, row: WriteRequest
       slug: row.slug, source_id: row.source_id, chunks: ready.result.chunks, noop,
       ...(ready.result.chunks === 0 ? {chunk_skip_reason: noop ? 'write_skipped'
         : isEmbedSkipped(ready.parsedPage.frontmatter) || isQuarantined(ready.parsedPage.frontmatter) ? 'embed_skip' : 'empty_body'} : {}),
+      // #6259: say the gate hid the page, not only why it has no chunks.
+      ...(!noop && quarantineOutcome(ready.parsedPage.frontmatter) ? { quarantined: quarantineOutcome(ready.parsedPage.frontmatter) } : {}),
       ...(row.operation === 'capture' ? { channel: 'capture', content_hash: p.capture_hash } : {}),
       ...(edited ? editDiff(row.slug, edited.before, edited.after) : {}), ...fencesNormalized, ...fenceRepairOutcome };
   } };
