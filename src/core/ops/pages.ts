@@ -16,10 +16,11 @@ import type { Page } from '../types.ts';
 import { decodeDeepResearchId, deepResearchPageUrl } from '../deep-research-id.ts';
 import { PageSnapshotAmbiguousError, type PageSnapshot } from '../page-state/types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { projectGetPage } from './get-page-projection.ts';
+import { projectGetPage, quarantinedView } from './get-page-projection.ts';
+import { hasScope } from '../scope.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { getContentFlag } from '../quarantine.ts';
+import { getContentFlag, pageQuarantinedNotice } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
@@ -82,7 +83,7 @@ const get_page: Operation = {
   name: 'get_page',
   idempotent: true,
   outputRedaction: { exempt: 'explicit page read by slug/id; governed by page visibility, not output redaction (CEO-17 raw-read exception)' },
-  description: 'Read a page by slug (fuzzy optional; renamed slugs redirect). To edit, pass include_content:true and send `content` to put_page, or use edit_page. Timeline rows need include_timeline_entries.',
+  description: 'Read a page by slug. To edit, pass include_content:true and send `content` to put_page, or use edit_page.',
   params: {
     slug: { type: 'string', description: 'Page slug.', required: true },
     fuzzy: { type: 'boolean', description: 'Fuzzy slug match.' },
@@ -91,6 +92,7 @@ const get_page: Operation = {
     include_deleted: { type: 'boolean', description: 'Include soft-deleted pages.' },
     include_timeline_entries: { type: 'boolean', description: 'Also return timeline rows.' },
     source_id: { type: 'string', description: "One source, or '__all__'." },
+    include_quarantined: { type: 'boolean', description: 'Admin: quarantined body.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -205,8 +207,11 @@ const get_page: Operation = {
     // it would double every reader's payload for the round-trip minority.
     const timelineEntries = includeTimelineEntries
       ? await ctx.engine.getTimeline(page.slug, await readPolicyOpts(ctx, { sourceId: page.source_id })) : undefined;
+    // #6259: a quarantined page's body is withheld from untrusted readers (admin may ask); every reader gets a notice.
+    const quarantined = quarantinedView(page, { remote: isUntrustedReader, admin: hasScope(ctx.auth?.scopes ?? [], 'admin'), includeQuarantined: p.include_quarantined === true });
+    if (quarantined) ctx.emitNotice?.(pageQuarantinedNotice(page.slug, quarantined, 'read'));
     return projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly: (p.content_only as boolean) === true, resolved_slug, content_flag,
+      revision: snapshot!.revision, tags, includeContent, contentOnly: (p.content_only as boolean) === true, resolved_slug, content_flag, quarantined,
       ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...(held ? { file_held: fileHeldField(held, isUntrustedReader) } : {}),
     });
