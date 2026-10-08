@@ -126,6 +126,12 @@ describe('quarantine clear on a managed brain (#6259)', () => {
     expect(fm[QUARANTINE_OVERRIDE_KEY]).toBeUndefined();
   }), 120_000);
 
+  test('a managed write the gate quarantines records facts_backstop.skipped quarantined in its receipt', () => run(async () => {
+    const body = `${JUNK_BODY} ${'The rest of the note is ordinary prose that would otherwise be long enough to extract. '.repeat(2)}`;
+    const response = await submitPageMutation(ctx(), { operation: 'put_page', params: { slug: 'notes/junk-facts', content: junkPage('Junk facts', body), request_id: randomUUID() } }) as Record<string, unknown>;
+    expect(response.facts_backstop).toEqual({ skipped: 'quarantined' });
+  }), 120_000);
+
   test('a local managed put_page cannot plant gate-owned markers (only the clear\'s owner kind keeps its override)', () => run(async () => {
     const clean = '---\ntitle: Clean notes\ntype: note\nquarantine:\n  reason: junk_pattern\n  detail: planted\natoms_scan_hash: deadbeefdeadbeef\n---\n\nOrdinary prose with nothing junk-like in it.\n';
     const slug = 'notes/planted-managed';
