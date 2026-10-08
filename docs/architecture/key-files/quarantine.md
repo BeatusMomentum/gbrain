@@ -31,8 +31,10 @@ leave rows projected before it as they are. Tests: `test/facts-eligibility.test.
 `persistence/page-prepare.ts`) and one `page_quarantined` safety notice
 (`pageQuarantinedNotice`, emitted by `emitFenceNotice` in `page-mutations.ts`;
 put_pages marks each page and emits one notice in `page-batch.ts`). get_page
-(`ops/pages.ts`) carries `quarantined` and the notice; an untrusted reader gets
-no body unless it holds `admin` and passes `include_quarantined: true`.
+(`ops/pages.ts`) carries `quarantined` and the notice, and so does `fetch`
+(`metadata.quarantined`, both through `readQuarantined`); an untrusted reader
+gets no body (fetch: empty `text`) unless it holds `admin` and passes
+`include_quarantined: true`.
 Test: `test/quarantine-read-write-surface.test.ts`.
 
 - `src/core/quarantine-override.ts` — #6259 (fix wave 12): the `quarantine_override` frontmatter key `gbrain quarantine clear --force` records: `{ binding, cleared_at }`, where `binding` is a sha256 over the classifier's inputs (title, type, body) as the gate canonicalizes them (`quarantineOverrideFor`). `assessImportSanity` (`import-screen.ts`) wraps its verdict in `withQuarantineOverride`, which removes the junk-pattern, literal and markup-flag outcomes while the binding is current (size outcomes stay). `importFromContent` calls `stripGateOwnedMarkers` (`import-screen.ts`, `GATE_OWNED_FRONTMATTER_KEYS`): every writer loses `quarantine`, `content_flag`, `embed_skip`, `atoms_scan_hash` and `quarantine_override` unless an owner-tier path passes `preserveGateMarkers: true` (`importFromFile`, managed sync and file import, reindex, file repair, reconcile, the cycle derivers and their `managed_maintenance_page` intents, `quarantine clear/scan` and the owner-internal `managed_quarantine_clear` put_page kind); local put_page, connectors and ingest lanes do not. A preserving path keeps its own override only while current, and a current override drops classifier markers the content still carries. `opts.remote` keeps only its fence-merge/hidden-row meaning. Tests: `test/gate-marker-strip.test.ts`. For a stripped write the classifier would hide or markup-flag, `carryStoredQuarantineOverride` reads the stored override and keeps it when it still binds (so a remote tag edit does not re-hide the page); a clean remote write reads nothing extra (#6007 statement budget). Company-brain inspection refuses files carrying it (`hidden_input`). Doctor's quarantine row names `clear <slug> --force` and `content_sanity.disabled_patterns`.

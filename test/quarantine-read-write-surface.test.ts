@@ -97,3 +97,35 @@ describe('get_page of a quarantined page (#6259 item 4)', () => {
     expect(String(page.compiled_truth)).toContain('Ordinary prose');
   }));
 });
+
+describe('fetch of a quarantined page (#6259, same policy as get_page)', () => {
+  const fetchPage = (c: OperationContext, extra: Record<string, unknown> = {}) =>
+    op('fetch').handler(c, { id: 'notes/junk-write', ...extra }) as Promise<{ text: string; metadata: Record<string, unknown> }>;
+
+  test('a trusted local fetch keeps the text, with metadata.quarantined and a notice', () => withEnv(env, async () => {
+    const notices: Notice[] = [];
+    const result = await fetchPage(ctx({ notices }));
+    expect(result.text).toContain('Cloudflare Ray ID');
+    expect(result.metadata.quarantined).toMatchObject({ reason: 'junk_pattern', body_omitted: false });
+    expect(notices.map(n => n.code)).toEqual(['page_quarantined']);
+  }));
+
+  test('an untrusted fetch gets no text, even when a non-admin asks', () => withEnv(env, async () => {
+    for (const extra of [{}, { include_quarantined: true }]) {
+      const notices: Notice[] = [];
+      const result = await fetchPage(ctx({ remote: true, scopes: ['read'], notices }), extra);
+      expect(result.text).toBe('');
+      expect(result.metadata.quarantined).toMatchObject({ body_omitted: true });
+      expect(JSON.stringify(result)).not.toContain('Cloudflare Ray ID: 8f2a');
+      expect(notices[0]!.why).toContain('include_quarantined: true');
+    }
+  }));
+
+  test('an admin-scoped untrusted caller gets the text only when it asks; a clean page is unchanged', () => withEnv(env, async () => {
+    expect((await fetchPage(ctx({ remote: true, scopes: ['admin'] }))).text).toBe('');
+    expect((await fetchPage(ctx({ remote: true, scopes: ['admin'] }), { include_quarantined: true })).text).toContain('Cloudflare Ray ID');
+    const clean = await op('fetch').handler(ctx({ remote: true, scopes: ['read'] }), { id: 'notes/clean-write' }) as { text: string; metadata: Record<string, unknown> };
+    expect(clean.text).toContain('Ordinary prose');
+    expect(clean.metadata.quarantined).toBeUndefined();
+  }));
+});
