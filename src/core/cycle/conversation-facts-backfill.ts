@@ -350,9 +350,7 @@ export async function runPhaseConversationFactsBackfill(
           // downgrading it to a per-source failure record.
           throw err;
         } else if (err instanceof OperationError && err.code === 'owner_unavailable') {
-          // Managed source owned by another host (or not activated here): its extraction publishes only on its owner,
-          // like the fence_repair phase's skip. Reported, not counted as a failure.
-          sourcesNotOwned.push(src.id);
+          sourcesNotOwned.push(src.id); // its owner host extracts it (as fence_repair skips); reported, not a failure
           perSourceResults[src.id] = zeroResult();
         } else {
           // Per-source failure: record + continue with next source.
@@ -428,8 +426,7 @@ export async function runPhaseConversationFactsBackfill(
   const noPricing = [...new Map(Object.values(perSourceResults)
     .flatMap((r) => r.budget_pricing ? [[r.budget_pricing.model, r.budget_pricing] as const] : [])).values()];
   const summary = `${totals.facts_inserted} facts inserted across ${totals.sources_processed}/${sources.length} sources, ~$${totalSpent.toFixed(4)} spent` +
-    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('') +
-    (sourcesNotOwned.length ? `. Skipped ${sourcesNotOwned.length} managed source(s) this host does not own (${sourcesNotOwned.join(', ')}); run the phase on their owner host` : '');
+    noPricing.map((g) => `. ${noPricingMessage(g)}`).join('') + notOwnedNote(sourcesNotOwned);
 
   return {
     phase: 'conversation_facts_backfill',
@@ -470,4 +467,8 @@ export async function runPhaseConversationFactsBackfill(
       per_source: perSourceResults,
     },
   };
+}
+
+function notOwnedNote(ids: string[]): string {
+  return ids.length ? `. Skipped ${ids.length} managed source(s) this host does not own (${ids.join(', ')}); run the phase on their owner host` : '';
 }
