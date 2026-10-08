@@ -11,7 +11,8 @@
  * through JSONB; an embedding model change drops stale vectors, never the
  * batch; a lost insert fails the publication; the intent-bytes,
  * outstanding-request, receipt-byte and lifetime-id bounds stop before any
- * model call. Runs on PGLite, and on
+ * model call; a source this host does not own preflights only when a page
+ * needs work. Runs on PGLite, and on
  * Postgres through test/e2e/conversation-facts-managed-postgres.test.ts.
  * Seams: the Core's injected extractor (no gateway), the persistence fault
  * hook (to stall publication), the maintenance wait and batch-cap test seams.
@@ -413,6 +414,27 @@ for (const backend of testBackends()) {
       expect(error?.message).toContain('3 planned');
       expect(error?.suggestion).toContain(`gbrain extract-conversation-facts --source-id default --limit ${room}`);
       expect(calls.n).toBe(0);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: a source owned by another host preflights nothing when no page needs work, and stops before any model call when one does`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      const other = 'meetings/2026-09-29-plan-sync';
+      await putPage(brain, transcript());
+      await putPage(brain, transcript().replace('Plan sync', 'Plan sync 29'), other);
+      const calls = { n: 0 };
+      expect(await extract(engine, calls)).toMatchObject({ pages_processed: 1, pages_failed: 0 });
+      await engine.transaction(async tx => {
+        await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+        await tx.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$1::uuid', [randomUUID()]);
+      });
+      expect(await extract(engine, calls)).toMatchObject({ pages_processed: 0, pages_failed: 0 });
+      const error = await runExtractConversationFactsCore(engine, { sourceId: 'default', sleepMs: 0, overrideDisabled: true,
+        extractor: async () => { calls.n++; return []; } }).then(() => null, (e: Error & { code?: string }) => e);
+      expect(error?.code).toBe('owner_unavailable');
+      expect(calls.n).toBe(1);
+      expect(await factsOf(engine, other)).toEqual([]);
     }, { databaseUrl });
   }, 120_000);
 }

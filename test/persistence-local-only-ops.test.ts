@@ -136,7 +136,8 @@ describe('localOnly skill administration through a resident owner', () => {
     const { extractTakes } = await import('../src/core/cycle/extract-takes.ts');
     const local = { slug, source_id: 'default', ...await extractTakes(engine, { source: 'db', slugs: [slug], sourceId: 'default', rebuild: true }) };
     expect(JSON.parse(rebuilt.stdout)).toEqual(JSON.parse(JSON.stringify(local)));
-    expect(local.takesUpserted).toBe(2);
+    // A managed page already in sync admits no takes request (wave 9 follow-ups receipts), so neither rebuild rewrites its two rows.
+    expect(local).toMatchObject({ pagesScanned: 1, pagesWithTakes: 1, takesUpserted: 0 });
     const missing = await cli(['takes', 'rebuild', 'notes/ipc-no-such-page', '--json']);
     expect(missing.code).toBe(1);
     expect(JSON.parse(missing.stdout)).toMatchObject({ pagesScanned: 0 });

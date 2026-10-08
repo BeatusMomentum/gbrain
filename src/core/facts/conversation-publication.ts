@@ -455,7 +455,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const vectors = !!signature && !!entry.embedding && signature.model === entry.embedding.model && signature.dimensions === entry.embedding.dimensions;
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
-    ...fact, visibility: entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
+    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
     valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
@@ -496,18 +496,27 @@ export async function prepareConversationFactsPublication(engine: BrainEngine, r
 /** A managed extraction run's publication context; null on an unmanaged brain or a dry run. */
 export interface ManagedConversationPublisher {
   engine: BrainEngine;
-  authority: MaintenanceAuthority;
   config: GBrainConfig;
-  /** The facts embedding signature frozen entries carry (null: no vectors). */
-  embedding: FactEmbeddingSignature | null;
-  /** The writer's unsettled and failed batches by member generation, read once per run. */
-  index: Map<string, GenerationHistory>;
+  /** Resolves the run's publication context once, for the first page with managed work (`readyPublisher`). */
+  prepare: () => Promise<ManagedPublisherRun>;
+  run: Promise<ManagedPublisherRun> | null;
   /** Unsettled batches this run already waited for, by request row id. */
   settled: Map<string, WriteRequest>;
   /** The batch being filled, and its entries' intent bytes. */
   batch: ConversationPageEntry[];
   bytes: number;
 }
+
+interface ManagedPublisherRun {
+  authority: MaintenanceAuthority;
+  /** The facts embedding signature frozen entries carry (null: no vectors). */
+  embedding: FactEmbeddingSignature | null;
+  /** The writer's unsettled and failed batches by member generation, read once per run. */
+  index: Map<string, GenerationHistory>;
+}
+
+/** Errors from resolving a run's publication context: they stop the run, not one page. */
+const RUN_STOPPING = new WeakSet<object>();
 
 /** The run counters a managed batch publication books into. */
 export interface ManagedRunCounters {
@@ -531,28 +540,40 @@ export interface ManagedPageStart { generation: Generation; attempt: number; sin
 const log = (line: string) => process.stderr.write(`[extract-conversation-facts] ${line}\n`);
 
 /**
- * Once per run, before any model work: on a managed brain (not a dry run,
- * which writes and registers nothing) preflight the maintenance authority,
- * resolve the facts embedding signature, check that the planned batch
- * requests fit the writer's request capacity, and read its unsettled and
- * failed batches.
+ * On a managed brain (not a dry run, which writes and registers nothing),
+ * the run's publisher. Once per run, at the first page with managed work and
+ * before its model call, it preflights the maintenance authority, resolves
+ * the facts embedding signature, checks that the planned batch requests fit
+ * the writer's request capacity, and reads its unsettled and failed batches;
+ * a failure there stops the run. A run with nothing to publish preflights
+ * nothing, so a source whose owner is on another host is not reported failed.
  */
 export async function managedConversationPublisher(engine: BrainEngine, sourceId: string,
   opts: { dryRun?: boolean; slugs?: string[]; slug?: string; limit?: number; force?: boolean; types?: readonly AllowedType[] }): Promise<ManagedConversationPublisher | null> {
   if (opts.dryRun || !await managedPersistenceEnabled(engine)) return null;
-  const authority = (await maintenancePreflight(engine, sourceId))!;
   const config = loadConfig() ?? { engine: engine.kind };
-  await assertConversationAdmissionHeadroom(engine, authority, await plannedAdmissions(engine, sourceId, opts));
-  return { engine, authority, config, embedding: await resolveManagedFactsEmbedding(engine, config),
-    index: await loadGenerationIndex(engine, authority), settled: new Map(), batch: [], bytes: 0 };
+  const prepare = async (): Promise<ManagedPublisherRun> => {
+    const authority = (await maintenancePreflight(engine, sourceId))!;
+    await assertConversationAdmissionHeadroom(engine, authority, await plannedAdmissions(engine, sourceId, opts));
+    return { authority, embedding: await resolveManagedFactsEmbedding(engine, config), index: await loadGenerationIndex(engine, authority) };
+  };
+  return { engine, config, prepare, run: null, settled: new Map(), batch: [], bytes: 0 };
 }
 
-async function settledRequest(m: ManagedConversationPublisher, id: string): Promise<WriteRequest> {
+/** The run's publication context, resolved by its first page with managed work, so a run with nothing to publish never preflights. */
+function readyPublisher(m: ManagedConversationPublisher): Promise<ManagedPublisherRun> {
+  return m.run ??= m.prepare().catch((error: unknown) => {
+    if (error && typeof error === 'object') RUN_STOPPING.add(error);
+    throw error;
+  });
+}
+
+async function settledRequest(m: ManagedConversationPublisher, r: ManagedPublisherRun, id: string): Promise<WriteRequest> {
   const cached = m.settled.get(id);
   if (cached) return cached;
   const prior = (await getWriteRequestById(m.engine, id))!;
   await authorizeStoredRequest(m.engine, prior);
-  const wait = m.authority.wait!;
+  const wait = r.authority.wait!;
   const row = wait.observe(await waitForWrite(m.engine, prior, m.config, wait.ms()));
   m.settled.set(id, row);
   return row;
@@ -568,14 +589,15 @@ async function settledRequest(m: ManagedConversationPublisher, id: string): Prom
 export async function startManagedPage(state: ManagedRunState, snapshot: PageSnapshot, sinceIso: string | undefined, segments: number,
 ): Promise<{ done: { newEndIso: null } } | { start: ManagedPageStart }> {
   const m = state.managed!;
+  const r = await readyPublisher(m);
   const { page } = snapshot;
   const done = { done: { newEndIso: null } } as const;
-  const generation = await conversationGeneration(m.engine, m.authority, {
+  const generation = await conversationGeneration(m.engine, r.authority, {
     slug: page.slug, page, versionToken: snapshot.versionToken, since: sinceIso ?? null, segmentLimit: state.segmentLimit,
   });
-  const history = m.index.get(generation.key) ?? { pending: null, failed: [] };
+  const history = r.index.get(generation.key) ?? { pending: null, failed: [] };
   if (history.pending) {
-    const row = await settledRequest(m, history.pending.id);
+    const row = await settledRequest(m, r, history.pending.id);
     if (!isTerminal(row)) {
       state.result.pages_pending = (state.result.pages_pending ?? 0) + 1;
       log(`${page.slug}: its batch request ${row.request_id} is accepted and still pending; rerun to confirm (no model call)`);
@@ -600,14 +622,14 @@ export async function startManagedPage(state: ManagedRunState, snapshot: PageSna
   const attempt = history.failed.length ? Math.max(...history.failed.map(f => f.attempt)) + 1 : 0;
   const last = history.failed.at(-1);
   const stored = last && !REEXTRACT_CODES.has(last.code) ? await storedEntry(m.engine, last.id, generation.key) : null;
-  if (!m.batch.length) await assertConversationAdmissionHeadroom(m.engine, m.authority);
+  if (!m.batch.length) await assertConversationAdmissionHeadroom(m.engine, r.authority);
   if (stored) {
     log(`${page.slug}: resubmitting its stored entry from failed batch request ${last!.requestId} (attempt ${attempt + 1}); no model call`);
     await enqueueEntry(state, { ...stored, attempt });
     return done;
   }
   const planned = state.segmentLimit > 0 ? Math.min(segments, state.segmentLimit) : segments;
-  const estimate = estimateConversationIntentBytes(planned, m.embedding);
+  const estimate = estimateConversationIntentBytes(planned, r.embedding);
   const limit = await conversationIntentByteLimit(m.engine);
   if (estimate > limit) {
     state.result.pages_skipped_too_large++;
@@ -671,7 +693,7 @@ export async function flushManagedBatch(state: ManagedRunState, opts: { afterErr
   const pages = m.batch.splice(0);
   m.bytes = 0;
   try {
-    const receipt = await submitConversationPages(m.engine, m.authority, pages);
+    const receipt = await submitConversationPages(m.engine, (await readyPublisher(m)).authority, pages);
     for (const result of receipt.pages as ConversationPageResult[]) bookPage(state, result);
     log(`published ${pages.length} page(s) in batch request ${String(receipt.request_id)} (${Number(receipt.committed ?? 0)} committed, ${Number(receipt.skipped ?? 0)} skipped, ${Number(receipt.blocked ?? 0)} blocked)`);
   } catch (error) {
@@ -688,5 +710,6 @@ export async function flushManagedBatch(state: ManagedRunState, opts: { afterErr
 }
 /** Managed admission backpressure and exhausted request ids stop the whole run, not one page. */
 export function stopsRun(err: unknown): boolean {
-  return err instanceof OperationError && (err.code === 'maintenance_backpressure' || err.code === 'queue_capacity');
+  return (!!err && typeof err === 'object' && RUN_STOPPING.has(err))
+    || (err instanceof OperationError && (err.code === 'maintenance_backpressure' || err.code === 'queue_capacity'));
 }
