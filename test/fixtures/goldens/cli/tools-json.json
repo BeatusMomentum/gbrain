@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 209498,
-    "stdoutSha256": "6adc60e2acaeac853ffd7e2d29bbdaf4f7eb7942bf8f30b238e35d0aecbe7776",
+    "stdoutBytes": 209744,
+    "stdoutSha256": "c6e089c565d3dfd6051c02f362790822322a3328669521135a2a4d4a79acaf29",
     "toolNames": [
       "remember",
       "entity",
@@ -362,7 +362,7 @@
         "scope": "write"
       },
       {
-        "description": "Read a page by slug (fuzzy optional; renamed slugs redirect). To edit, pass include_content:true and send `content` to put_page, or use edit_page. Timeline rows need include_timeline_entries.",
+        "description": "Read a page by slug. To edit, pass include_content:true and send `content` to put_page, or use edit_page.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -372,6 +372,7 @@
           "fuzzy": "boolean?",
           "include_content": "boolean?",
           "include_deleted": "boolean?",
+          "include_quarantined": "boolean?",
           "include_timeline_entries": "boolean?",
           "slug": "string",
           "source_id": "string?"
@@ -393,6 +394,10 @@
             },
             "include_deleted": {
               "description": "Include soft-deleted pages.",
+              "type": "boolean"
+            },
+            "include_quarantined": {
+              "description": "Admin: quarantined body.",
               "type": "boolean"
             },
             "include_timeline_entries": {
@@ -774,7 +779,8 @@
         "mutating": false,
         "name": "fetch",
         "parameters": {
-          "id": "string"
+          "id": "string",
+          "include_quarantined": "boolean?"
         },
         "required_scopes": [],
         "schema": {
@@ -782,6 +788,10 @@
             "id": {
               "description": "Opaque result id from a prior `search` call. Pass unchanged. Unambiguous legacy slugs are also accepted.",
               "type": "string"
+            },
+            "include_quarantined": {
+              "description": "Admin: quarantined body.",
+              "type": "boolean"
             }
           },
           "required": [
