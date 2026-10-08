@@ -284,7 +284,7 @@ export const conversationLabelsRepair: RepairHandler = {
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const item = entry as BatchItem;
     const result = await managedPersistenceEnabled(ctx.engine)
-      ? await retireManaged(ctx.engine, ctx.config, item)
+      ? await retireManaged(ctx.engine, ctx.config, item, ctx.writeWaitMs)
       : await maintenanceTransaction(ctx.engine, async tx => {
         await tx.lockPageKeys(item.pages.map(page => ({ sourceId: page.source_id, slug: page.slug })));
         return retireBatch(tx, item.pages, item.hash);
@@ -324,7 +324,8 @@ async function retireBatch(tx: BrainEngine, pages: LabelPage[], hash: string): P
   return result;
 }
 
-async function retireManaged(engine: BrainEngine, config: Parameters<typeof waitForWrite>[2], item: BatchItem): Promise<BatchResult> {
+async function retireManaged(engine: BrainEngine, config: Parameters<typeof waitForWrite>[2], item: BatchItem,
+  writeWaitMs: number | undefined): Promise<BatchResult> {
   const authority = (await maintenancePreflight(engine, item.source_id))!;
   for (let attempt = 0; ; attempt++) {
     const requestId = attempt === 0 ? item.request_id : requestIdFor(item.hash, item.pages, attempt);
@@ -333,7 +334,7 @@ async function retireManaged(engine: BrainEngine, config: Parameters<typeof wait
     let receipt: Record<string, unknown>;
     if (prior) {
       await authorizeStoredRequest(engine, prior);
-      receipt = writeResponse(await waitForWrite(engine, prior, config));
+      receipt = writeResponse(await waitForWrite(engine, prior, config, writeWaitMs));
     } else {
       receipt = await submitDatabaseMaintenanceIntent(engine, authority, LABELS_ANCHOR_SLUG,
         { kind: CONVERSATION_LABELS_INTENT, expected_revision: null, preview_hash: item.hash, pages: item.pages }, requestId);
