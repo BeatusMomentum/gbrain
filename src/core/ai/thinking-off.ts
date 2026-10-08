@@ -42,7 +42,7 @@
  *
  * Gemini rows follow Google's generateContent thinking docs; OpenAI rows
  * follow the reasoning guide. Both were checked live on 2026-10-07
- * (docs/w9f/lane-j.md).
+ * (docs/fix-wave-notes/capy-wave-9-followups.md).
  */
 
 import { splitProviderModelId } from '../model-id.ts';
